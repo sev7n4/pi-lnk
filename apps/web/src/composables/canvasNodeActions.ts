@@ -47,10 +47,38 @@ export const MOBILE_NODE_ACTION_REQUEST_KEY: InjectionKey<MobileNodeActionReques
   'mobileNodeActionRequest',
 )
 
-/** 移动端 tap 节点 → 请求打开全屏查看器（图灯箱/视频播放/文本阅读器，R1-T4）：与长按动作 sheet 解耦。 */
+/**
+ * D4 / H1（§4.9 选择模式）：移动端**选择模式下轻点节点** = 切换该节点的选中态
+ * （对标 iOS 照片多选：进入模式后纯靠轻点选节点，不再走「长按 → 弹菜单 → 点多选」）。
+ *
+ * ⭐ 语义：**切换**（已选 ⇒ 取消选中；未选 ⇒ 加入选中）—— 复用页面层既有的
+ *   `toggleNodeInMultiSelect`，不新造选区语义。
+ */
+export type MobileNodeToggleSelectFn = (nodeId: string) => void
+export const MOBILE_NODE_TOGGLE_SELECT_KEY: InjectionKey<MobileNodeToggleSelectFn> = Symbol(
+  'mobileNodeToggleSelect',
+)
+
+/**
+ * 移动端 tap 节点 → 请求打开全屏查看器（图灯箱/视频播放/文本阅读器，R1-T4）：
+ * 与长按动作 sheet 解耦。
+ *
+ * ⚠️ **D2 契约变更（2026-10-25 规格 §9 第 4 项）**：`type` **收窄为不含 `audio`** ——
+ *   音频**永不进查看器**（磁贴内联播放，规格 §6.2 音频例外）；留着 `audio` 就是
+ *   一个死分支（未来有人按契约调它必得空白屏）。
+ *   ⇒ 配套运行时守卫 `isViewableNodeType`（见下）—— 类型收窄后，
+ *   `NodeRenderer` 传来的 `props.type: string` 必须**先守卫再传**，否则 TS 不通过。
+ */
+export type MobileNodeViewableType = 'image' | 'video' | 'text'
+
+/** 运行时守卫：只有这三种类型可进查看器（audio 被显式排除）。 */
+export function isViewableNodeType(type: string): type is MobileNodeViewableType {
+  return type === 'image' || type === 'video' || type === 'text'
+}
+
 export type MobileNodeOpenViewerFn = (node: {
   id?: string
-  type: 'image' | 'video' | 'audio' | 'text'
+  type: MobileNodeViewableType
   data?: any
 }) => void
 export const MOBILE_NODE_OPEN_VIEWER_KEY: InjectionKey<MobileNodeOpenViewerFn> = Symbol(

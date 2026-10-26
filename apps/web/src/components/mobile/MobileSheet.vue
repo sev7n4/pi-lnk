@@ -63,6 +63,15 @@ function dismiss() {
           <div class="m-sheet-body">
             <slot />
           </div>
+          <!--
+            底部主栏 slot（2026-10-25 D8/J1/K1 + L1/M1 引入）：
+            承载「唯一主动作」按钮（如轻量编辑器的「发给 agent 修改」、标注浮层的
+            「⚓ 带回对话」）—— 与内容区分离 ⇒ 内容可滚、动作恒在拇指区（§4.11.6）。
+            ⭐ 可选 slot：未提供时底部不占位。
+          -->
+          <div v-if="$slots.actions" class="m-sheet-actions">
+            <slot name="actions" />
+          </div>
         </div>
       </div>
     </Transition>
@@ -92,7 +101,8 @@ function dismiss() {
   flex-direction: column;
   overflow: hidden;
   padding: 0 var(--lnk-space-3) calc(var(--lnk-space-3) + env(safe-area-inset-bottom, 0px));
-  border-radius: 20px 20px 0 0;
+  /* ⭐ 圆角用令牌（禁硬编码 20px，§4.11.8） */
+  border-radius: var(--lnk-radius-2xl) var(--lnk-radius-2xl) 0 0;
   background: var(--lnk-surface-raised);
   box-shadow: var(--lnk-shadow-lg);
 }
@@ -155,6 +165,14 @@ function dismiss() {
   height: 16px;
 }
 
+/* 底部主栏：动作恒在拇指区，内容区独立滚动（§4.11.6 可达性） */
+.m-sheet-actions {
+  flex: none;
+  padding: var(--lnk-space-3) var(--lnk-space-3)
+    calc(var(--lnk-space-3) + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--lnk-border-subtle);
+}
+
 .m-sheet-body {
   min-height: 0;
   flex: 1;
@@ -163,14 +181,26 @@ function dismiss() {
   -webkit-overflow-scrolling: touch;
 }
 
+/* ⭐ 动效用令牌（禁硬编码 0.25s + 自定义曲线，§4.11.8） */
 .m-sheet-enter-active,
 .m-sheet-leave-active {
-  transition: opacity 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity var(--lnk-duration-base) var(--lnk-ease-decelerate);
 }
 
 .m-sheet-enter-active .m-sheet,
 .m-sheet-leave-active .m-sheet {
-  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform var(--lnk-duration-base) var(--lnk-ease-decelerate);
+}
+
+/* ⭐ 尊重「减弱动态效果」（Apple HIG · Reduce Motion / §4.11.8）——
+   仓库既有先例：neo-node.css:651、LoginVideoPanel.vue:182 */
+@media (prefers-reduced-motion: reduce) {
+  .m-sheet-enter-active,
+  .m-sheet-leave-active,
+  .m-sheet-enter-active .m-sheet,
+  .m-sheet-leave-active .m-sheet {
+    transition: none;
+  }
 }
 
 .m-sheet-enter-from,

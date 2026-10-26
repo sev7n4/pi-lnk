@@ -43,6 +43,12 @@ const emit = defineEmits<{
     | { kind: 'distribute'; axis: 'x' | 'y' }]
   download: [mode: 'full_package' | 'lightweight' | 'media_list_only']
   delete: []
+  /**
+   * D4 / H1（§4.9 选择模式）：全选当前画布所有节点。
+   * ⭐ 本条**只存在于选择模式**（壳层仅在 multiSelectActive 时渲染它）⇒
+   *   不需要额外的 `selectionMode` prop（避免第二个真源）。
+   */
+  selectAll: []
 }>()
 
 const batch = useSelectionBatchActions(() => props.selectionBatch)
@@ -138,6 +144,21 @@ function onWarning() {
           <circle cx="12" cy="12" r="1.8" />
           <circle cx="19" cy="12" r="1.8" />
         </svg>
+      </button>
+
+      <!--
+        D4 / H1（§4.9 选择模式）：「全选」入口
+        —— ⭐ 对标 iOS 照片多选（进入选择模式后可一键全选）。
+        ⛔ **不加「取消」**：既有「完成」已是「退出选择模式」（`exitMultiSelectMode`
+          清空选区），再加「取消」= 两个同义按钮（iOS Photos 也没有）。
+      -->
+      <button
+        type="button"
+        class="msb-select-all"
+        data-testid="msb-select-all"
+        @click="emit('selectAll')"
+      >
+        全选
       </button>
 
       <button
@@ -279,6 +300,24 @@ function onWarning() {
 .msb-more svg {
   width: 18px;
   height: 18px;
+}
+
+/* D4 / H1：选择模式的「全选 / 取消」（与「完成」同级的次级动作） */
+.msb-select-all {
+  display: flex;
+  flex: none;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 var(--lnk-space-3);
+  border: 0.5px solid var(--lnk-border-subtle);
+  border-radius: var(--lnk-radius-full);
+  background: transparent;
+  color: var(--lnk-text-secondary);
+  font-size: var(--lnk-text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .msb-done {

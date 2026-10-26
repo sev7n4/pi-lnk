@@ -65,6 +65,10 @@ describe('走查①：移动端长按单一入口（双卡片框根因闭环）'
       join(HERE, '..', 'components', 'mobile', 'MobileNodeActionSheet.vue'),
       'utf8',
     )
-    expect(sheet).toContain('mobile-action-sheet')
+    // ⚠️ 2026-10-25（§4.11.2 · HIG「Action Sheet ≠ Menu」）：长按承载的是 **Menu**，
+    //    根节点已改走 `MobileSheet` 基座（⛔ 不再有裸 `.mobile-action-sheet` 皮肤，
+    //    旧皮肤无遮罩 ⇒ 点浮层外画布不会关）。⇒ 断言改为「走基座」。
+    expect(sheet).toContain('MobileSheet')
+    expect(sheet).not.toContain('mobile-action-sheet')
   })
 })

@@ -23,6 +23,8 @@ function baseProps(overrides: Record<string, unknown> = {}) {
   }
   const batchActions = {
     done: noop(),
+    // D4 / H1（§4.9 选择模式）：「全选」（接口新增 ⇒ mock 同步）
+    selectAll: noop(),
     generate: noop(),
     regenerate: noop(),
     stop: noop(),
@@ -72,8 +74,18 @@ function baseProps(overrides: Record<string, unknown> = {}) {
     onNodeAction: vi.fn(),
     onNodeActionClose: vi.fn(),
     onNodeRename: vi.fn(),
-    onNodeEditorGenerate: vi.fn(),
-    onNodeEditorRemoveRef: vi.fn(),
+    // D8/J1/K1（2026-10-25）：编辑器改为「发给 agent 修改」，本地提交与删引用 emit 已移除
+    onNodeEditorSendToAgent: vi.fn(),
+    // D8/L1/M1（2026-10-25）：查看器标注 → 标注浮层 的接线
+    onViewerAnnotate: vi.fn(),
+    onViewerMore: vi.fn(),
+    onViewerBottomAction: vi.fn(),
+    mobileAnnotate: null,
+    mobileAnnotateUploading: false,
+    mobileAnnotateDegraded: false,
+    mobileAnnotateError: '',
+    onMobileAnnotateSend: vi.fn(),
+    onMobileAnnotateClose: vi.fn(),
     onNodeEditorClose: vi.fn(),
     onNodeEditorPatch: vi.fn(),
     viewerNode: null,
@@ -112,7 +124,13 @@ beforeEach(() => {
 
 describe('MobileCanvasShell 长按动作集成', () => {
   it('mobileActionNode 设置 → 渲染动作 sheet', () => {
-    const w = mount(MobileCanvasShell, { props: baseProps({ mobileActionNode: actionNode }), attachTo: document.body })
+    const w = mount(MobileCanvasShell, {
+      props: baseProps({ mobileActionNode: actionNode }),
+      attachTo: document.body,
+      // ⚠️ 2026-10-25（§4.11 Menu 化）：动作 sheet 走 `MobileSheet` 基座（含 Teleport）
+      //    ⇒ Teleport 内容被移出 wrapper 子树 ⇒ `w.find` 找不到 ⇒ 必须 stub teleport
+      global: { stubs: { teleport: true } },
+    })
     expect(w.findComponent({ name: 'MobileNodeActionSheet' }).exists()).toBe(true)
     w.unmount()
   })
@@ -122,6 +140,7 @@ describe('MobileCanvasShell 长按动作集成', () => {
     const w = mount(MobileCanvasShell, {
       props: baseProps({ mobileActionNode: actionNode, onNodeAction }),
       attachTo: document.body,
+      global: { stubs: { teleport: true } },
     })
     await w.find('[data-action="delete"]').trigger('click')
     expect(onNodeAction).toHaveBeenCalledWith('delete', 'n1')
@@ -133,16 +152,19 @@ describe('MobileCanvasShell 长按动作集成', () => {
     const w = mount(MobileCanvasShell, {
       props: baseProps({ mobileActionNode: actionNode, onNodeActionClose }),
       attachTo: document.body,
+      global: { stubs: { teleport: true } },
     })
     await w.find('[data-action="cancel"]').trigger('click')
     expect(onNodeActionClose).toHaveBeenCalled()
     w.unmount()
   })
 
-  it('mobileEditor 设置 → 渲染编辑 sheet 且挂载 DockStudioRouter（删 Dock 后编辑不丢链）', () => {
+  it('mobileEditor 设置 → 渲染编辑 sheet（轻量编辑器，不挂 PC dock）', () => {
     const w = mount(MobileCanvasShell, { props: baseProps({ mobileEditor: editorContext }), attachTo: document.body })
     expect(w.findComponent({ name: 'MobileNodeEditorSheet' }).exists()).toBe(true)
-    expect(w.findComponent({ name: 'DockStudioRouter' }).exists()).toBe(true)
+    expect(w.findComponent({ name: 'MobileNodeEditorSheet' }).exists()).toBe(true)
+    // ⛔ D8/J1/K1（2026-10-25）：移动端编辑器**不再挂 PC studio dock**（参数所有权归 agent）
+    expect(w.findComponent({ name: 'DockStudioRouter' }).exists()).toBe(false)
     w.unmount()
   })
 
@@ -177,7 +199,9 @@ describe('MobileCanvasShell 全屏查看器集成（R1-T4/T6）', () => {
       }),
       attachTo: document.body,
     })
-    await w.find('.viewer-back').trigger('click')
+    // ⚠️ 2026-10-25（D2）：左上 `‹`（`.viewer-back`）已删 ⇒ 改为**右上角 X**
+    //    （`data-testid="mobile-viewer-close"`，内联 SVG，§4.11.5 禁文本字符当图标）
+    await w.find('[data-testid="mobile-viewer-close"]').trigger('click')
     expect(onViewerClose).toHaveBeenCalled()
     w.unmount()
   })

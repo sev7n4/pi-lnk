@@ -8,6 +8,17 @@ import MobileNodeEditorSheet from './MobileNodeEditorSheet.vue'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SRC = readFileSync(join(HERE, 'MobileNodeEditorSheet.vue'), 'utf8')
 
+/** 剥离注释（JS 注释 + HTML 注释）后再判定 —— 注释里提到组件名/术语是**规范**，不是引用 */
+function stripComments(src: string): string {
+  return src
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^\s*\/\/.*$/gm, '')
+}
+
+/** 剥注释后的源码（判定「是否真的引用了某组件」时用它） */
+const CODE = stripComments(SRC)
+
 /**
  * 走查④⑤⑥（2026-10-24 真机）：全屏编辑 sheet 的关闭入口与参数选择器。
  *
@@ -52,57 +63,40 @@ describe('走查④⑤：编辑 sheet 的关闭入口', () => {
   })
 })
 
-describe('走查⑥：参数选择器弹层在 sheet 内可用（CSS 契约 + 变异意识）', () => {
-  it('弹层改贴底卡片：fixed + 通宽 + 72vh 封顶 + 内部滚', () => {
-    const block = /<style scoped>([\s\S]*?)<\/style>/.exec(SRC)?.[1] ?? ''
-    const rule = /\.mobile-editor-sheet :deep\(\.neo-popover\)\s*\{([^}]*)\}/.exec(block)?.[1] ?? ''
-    expect(rule, '必须能定位 .neo-popover 覆盖规则（删除即本守卫红）').not.toBe('')
-    expect(rule).toMatch(/position:\s*fixed !important/)
-    expect(rule).toMatch(/inset:\s*auto 0 0 0 !important/)
-    expect(rule).toMatch(/max-height:\s*72vh !important/)
-    expect(rule).toMatch(/overflow-y:\s*auto !important/)
-    expect(rule).toMatch(/z-index:\s*300 !important/)
+/**
+ * 走查⑥ 的**收口**（2026-10-25 D8/J1/K1）：参数选择器整体随 PC dock 一起移除，
+ * ⇒ 组件内那 35 行 `:deep(.neo-popover)` / `:deep(.bottom-toolbar-*)` 补丁
+ * **一并消失**（它们的存在前提是「sheet 里挂着一个 PC 参数面板」）。
+ *
+ * ⭐ 这次修订同时消掉了走查⑥ 的**根因**（PC popover 在窄屏被裁剪 / 包含块压扁），
+ * 而不只是绕过它。
+ */
+describe('走查⑥ 收口：换掉 PC dock 后，参数选择器与其补丁一并消失', () => {
+  it('⛔ 组件内不再有 neo-popover / bottom-toolbar 的 :deep 补丁', () => {
+    const block = /<style scoped>([\s\S]*?)<\/style>/.exec(CODE)?.[1] ?? ''
+    expect(block).not.toContain(':deep(.neo-popover)')
+    expect(block).not.toContain(':deep(.bottom-toolbar')
   })
 
-  it('先摘 backdrop-filter（它会让 fixed 包含块变成面板而非视口）', () => {
-    const block = /<style scoped>([\s\S]*?)<\/style>/.exec(SRC)?.[1] ?? ''
-    const rule =
-      /\.mobile-editor-sheet :deep\(\.bottom-toolbar-container\)\s*\{([^}]*)\}/.exec(block)?.[1] ?? ''
-    expect(rule, '必须能定位 bottom-toolbar-container 覆盖规则').not.toBe('')
-    expect(rule).toMatch(/backdrop-filter:\s*none/)
-    expect(rule).toMatch(/-webkit-backdrop-filter:\s*none/)
-  })
-
-  it('触发器 wrapper 恢复 overflow: visible（弹层不再被裁剪）', () => {
-    const block = /<style scoped>([\s\S]*?)<\/style>/.exec(SRC)?.[1] ?? ''
-    expect(block).toMatch(/\.mobile-editor-sheet :deep\(\.bottom-toolbar-actions > \*:first-child\)\s*\{[^}]*overflow:\s*visible/)
-    // chip 省略改由内部收缩完成（不依赖外层裁剪）
-    expect(block).toMatch(/min-width:\s*0/)
-  })
-
-  it('四个参数选择器的弹层类名都在覆盖范围内（neo-popover 单一承接）', () => {
-    // 模型 / 尺寸 / 视频 / 音频（含音色模型）五个触发器的弹层共用 .neo-popover
-    for (const p of [
-      'canvas/UniversalModelSelector.vue',
-      'canvas/ImageParamsSelector.vue',
-      'canvas/VideoSettingsSelector.vue',
-      'canvas/AudioVoiceSettingsSelector.vue',
-      'canvas/VoiceModelSelector.vue',
+  it('⛔ 组件内不再挂任何参数选择器（ModelSelector / ImageParamsSelector / …）', () => {
+    for (const sel of [
+      'ModelSelector',
+      'ImageParamsSelector',
+      'VideoSettingsSelector',
+      'AudioVoiceSettingsSelector',
+      'VoiceModelSelector',
+      'DockStudioRouter',
     ]) {
-      const code = readFileSync(join(HERE, '..', p), 'utf8')
-      expect(code, `${p} 的弹层必须挂 neo-popover（否则 sheet 内改贴底卡片覆盖不到）`).toMatch(
-        /class="[^"]*neo-popover/,
-      )
+      expect(CODE, `不应再出现 ${sel}`).not.toContain(sel)
     }
   })
 
-  it('覆盖全部限定在 .mobile-editor-sheet 作用域内（PC 浮动 Dock 零 diff）', () => {
-    const block = /<style scoped>([\s\S]*?)<\/style>/.exec(SRC)?.[1] ?? ''
-    // 走查⑥ 之后的所有 :deep 覆盖必须带 .mobile-editor-sheet 前缀
-    const deepRules = block.match(/[^{}:]*:deep\([^{]*\)\s*\{/g) ?? []
-    expect(deepRules.length).toBeGreaterThan(0)
-    for (const r of deepRules) {
-      expect(r, `覆盖规则未限定在 sheet 作用域：${r.trim()}`).toContain('.mobile-editor-sheet')
-    }
+  it('参数以**只读摘要一行**呈现（agent 定的，用户不可改）', () => {
+    const template = (/<template>([\s\S]*?)<\/template>/.exec(SRC)?.[1] ?? '').replace(
+      /<!--[\s\S]*?-->/g,
+      '',
+    )
+    expect(template).toContain('参数')
+    expect(template).toContain('mobile-editor-params')
   })
 })

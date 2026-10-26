@@ -3,6 +3,9 @@ import { computed, inject, useAttrs } from 'vue'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import {
   MOBILE_NODE_OPEN_VIEWER_KEY,
+  MOBILE_NODE_TOGGLE_SELECT_KEY,
+  type MobileNodeToggleSelectFn,
+  isViewableNodeType,
   MOBILE_NODE_OPEN_EDITOR_KEY,
   CANVAS_NODE_RETRY_KEY,
   type MobileNodeOpenViewerFn,
@@ -44,17 +47,30 @@ const openEditor = inject<MobileNodeOpenEditorFn>(MOBILE_NODE_OPEN_EDITOR_KEY, (
 
 /**
  * tap 意图由纯函数单一判定（审阅焦点 #2：策略不在三处各写一遍）。
- * - viewer：有内容的图/视/文 → 全屏查看器
- * - editor：空节点（无 url / 无内容）→ 编辑 sheet（D-C 状态机 empty 行）
- * - inline：有音频的音频节点 → 磁贴内联播放（不进本函数）
+ * - viewer：有产物的图/视/文（pending / confirmed / 失败但有旧产物）→ 全屏查看器
+ * - editor：编辑 sheet（编辑器入口改走长按 Menu；单击不进编辑器）
+ * - inline：音频 → 磁贴内联播放（不进本函数）
+ * - none：空 / 生成中 / 失败且无旧产物 → 无 op（轻提示由磁贴给出，不开任何全屏层）
+ *
+ * ⭐ D1/D3（2026-10-25 规格 §5.1 · 铁律 P1「单击 = 查看」）：'none' 必须
+ *   **既不开 viewer 也不开 editor**——否则空节点又回到 R2 的「空白全屏」症状。
  */
 function onTileOpen() {
   const node = { id: props.id, type: props.type, data: props.data }
-  if (resolveMobileNodeTapIntent(node) === 'editor') {
+  const intent = resolveMobileNodeTapIntent(node)
+  if (intent === 'viewer') {
+    // D2：类型已收窄为不含 audio ⇒ 运行时再守一道（audio 永不进查看器）
+    if (isViewableNodeType(node.type)) {
+      openViewer({ id: node.id, type: node.type, data: node.data })
+    }
+    return
+  }
+  if (intent === 'editor') {
     openEditor(node)
     return
   }
-  openViewer(node)
+  // 'inline'：磁贴自己内联处理（音频播放），不进本函数
+  // 'none'：无 op + 轻提示（提示由 MobileNodeTile 给出）——不开 viewer / editor
 }
 
 /**
@@ -66,6 +82,15 @@ const retryNode = inject<CanvasNodeRetryFn | null>(CANVAS_NODE_RETRY_KEY, null)
 function onTileRetry() {
   if (!retryNode) return
   void retryNode(props.id)
+}
+
+/**
+ * D4 / H1（§4.9 选择模式）：磁贴在选择模式下轻点 = 切换选中（不开查看器）。
+ * ⭐ 走注入键由 CanvasPage 承接（与 tap / retry 同款分层，⛔ 不让磁贴直接依赖壳层）。
+ */
+const toggleSelectNode = inject<MobileNodeToggleSelectFn>(MOBILE_NODE_TOGGLE_SELECT_KEY, () => {})
+function onTileToggleSelect() {
+  toggleSelectNode(props.id)
 }
 </script>
 
@@ -79,5 +104,6 @@ function onTileRetry() {
     @tap="onTileOpen"
     @open-reader="onTileOpen"
     @retry="onTileRetry"
+    @toggle-select="onTileToggleSelect"
   />
 </template>

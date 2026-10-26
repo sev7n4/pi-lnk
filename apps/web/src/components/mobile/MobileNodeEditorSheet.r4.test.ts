@@ -10,18 +10,16 @@ const CP = readFileSync(join(HERE, '..', '..', 'pages', 'CanvasPage.vue'), 'utf8
 const SHELL = readFileSync(join(HERE, 'MobileCanvasShell.vue'), 'utf8')
 
 /**
- * R4-T2：移动端编辑 → 生成闭环。
+ * R4-T2 的**闭环与再定义**（2026-10-25 D8/J1/K1）。
  *
- * ⭐ 断链（代码级取证）：`DockStudioRouter` 声明了 6 个 emit
- *   （patch / removeRef / generate / close / continueShot / refine），
- *   而 `MobileNodeEditorSheet` **只接了 patch / close** ⇒ 其余四个被丢弃。
- *   后果：dock panel 的 `onGenerate`（先 emit patch 再 emit generate）后半段被吞
- *   ⇒ **移动端在编辑 sheet 里改完提示词，点「生成」毫无反应**；
- *   且无法删引用芯片（removeRef 丢失）。
- *
- * ⇒ 移动端提议闭环缺「看提议 → 改 → 生成」这一环（看提议由 R4-T1 补上）。
+ * ⭐ 历史断链（R4-T2 的教训）：`DockStudioRouter` 声明 6 个 emit，而当时的
+ *   `MobileNodeEditorSheet` 只接了 patch / close ⇒ 其余四个被丢弃 ⇒
+ *   移动端改完提示词点提交**毫无反应**。
+ * ⭐ 这次的修法**不是**「再接一个 emit」，而是**换掉整个 dock**：
+ *   移动端编辑器只做「改词 + 提意见」，出口是「发给 agent 修改」
+ *   （`send-to-agent`）⇒ 不存在「被丢弃的 emit」这类断链面。
  */
-describe('R4-T2 移动端编辑 sheet 的 generate / removeRef 透传', () => {
+describe('R4-T2 收口：轻量编辑器的「发给 agent 修改」通道', () => {
   const node = {
     id: 'n1',
     type: 'image',
@@ -33,53 +31,46 @@ describe('R4-T2 移动端编辑 sheet 的 generate / removeRef 透传', () => {
     return mount(MobileNodeEditorSheet, { props: { node } })
   }
 
-  it('透传 generate：DockStudioRouter 的 generate 事件冒泡为 sheet 的 generate', async () => {
+  it('⛔ 不再声明 generate / removeRef（PC dock 专用契约已移除）', () => {
     const w = mountSheet()
-    // 直接触发 DockStudioRouter 根组件上的 generate（DockStudioRouter 是唯一子组件）
-    const router = w.findComponent({ name: 'DockStudioRouter' })
-    expect(router.exists()).toBe(true)
-    router.vm.$emit('generate')
-    await w.vm.$nextTick()
-    expect(w.emitted('generate')).toBeTruthy()
+    expect(w.emitted('generate')).toBeUndefined()
+    expect(w.emitted('removeRef')).toBeUndefined()
     w.unmount()
   })
 
-  it('透传 removeRef：引用删除事件冒泡为 sheet 的 removeRef', async () => {
+  it('提交 ⇒ emit send-to-agent({ prompt, opinion })', async () => {
     const w = mountSheet()
-    const router = w.findComponent({ name: 'DockStudioRouter' })
-    router.vm.$emit('removeRef', { nodeId: 'ref1' })
-    await w.vm.$nextTick()
-    expect(w.emitted('removeRef')?.[0]).toEqual([{ nodeId: 'ref1' }])
+    await w.get('[data-testid="mobile-editor-opinion"]').setValue('加一顶帽子')
+    await w.get('[data-testid="mobile-editor-send"]').trigger('click')
+    expect(w.emitted('send-to-agent')?.[0]).toEqual([{ prompt: '一只猫', opinion: '加一顶帽子' }])
     w.unmount()
   })
 
-  it('既有 patch / close 透传不受影响', async () => {
+  it('提示词改动 ⇒ 同时 emit patch（页面层据此落库）', async () => {
     const w = mountSheet()
-    const router = w.findComponent({ name: 'DockStudioRouter' })
-    router.vm.$emit('patch', { prompt: 'x' })
-    router.vm.$emit('close')
-    await w.vm.$nextTick()
-    expect(w.emitted('patch')?.[0]).toEqual([{ prompt: 'x' }])
-    expect(w.emitted('close')).toBeTruthy()
+    await w.get('[data-testid="mobile-editor-prompt"]').setValue('两只猫')
+    await w.get('[data-testid="mobile-editor-send"]').trigger('click')
+    expect(w.emitted('patch')?.[0]).toEqual([{ prompt: '两只猫' }])
     w.unmount()
   })
 
-  it('壳层把 generate / removeRef 接到页面回调', () => {
-    expect(SHELL).toContain('@generate="props.onNodeEditorGenerate"')
-    expect(SHELL).toContain('@remove-ref="props.onNodeEditorRemoveRef"')
+  it('壳层把 send-to-agent 接到页面回调（⛔ 不再有 generate / remove-ref 接线）', () => {
+    expect(SHELL).toContain('@send-to-agent="props.onNodeEditorSendToAgent"')
+    expect(SHELL).not.toContain('@generate="props.onNodeEditorGenerate"')
+    expect(SHELL).not.toContain('@remove-ref="props.onNodeEditorRemoveRef"')
   })
 
-  it('页面提供移动端生成函数（复用 PC 的判据纯函数，不动 PC 的 handleNodeGenerate）', () => {
-    expect(CP).toContain('async function handleMobileNodeGenerate()')
-    const body = /async function handleMobileNodeGenerate\(\) \{[\s\S]*?\n\}/.exec(CP)?.[0] ?? ''
-    expect(body).toContain('isNodeBusy')
-    expect(body).toContain('shouldConfirmDirectGenerateWithoutRefs')
-    expect(body).toContain('generateForNode')
+  it('页面提供「发给 agent 修改」通道：写回提示词 + 切回对话页 + 意见进 composer', () => {
+    expect(CP).toContain('function handleMobileNodeSendToAgent')
+    const body = /function handleMobileNodeSendToAgent\([\s\S]*?\n\}/.exec(CP)?.[0] ?? ''
+    // ① 落库改后的提示词 ② 意见进 composer 输入框 ③ 切回对话页签
+    expect(body).toContain('patchNodeData')
+    expect(body).toContain('setComposerInput')
+    expect(body).toContain("mobileAppTab.value = 'chat'")
   })
 
   it('PC 的 handleNodeGenerate 未被改动（PC 零 diff）', () => {
-    // PC 仍用 editorNode + debouncedNodePatch.flush()，移动端另起函数但共用纯函数
-    const pcBody = /async function handleNodeGenerate\(\) \{[\s\S]*?\n\}/.exec(CP)?.[0] ?? ''
+    const pcBody = /async function handleNodeGenerate\(\)[\s\S]*?\n\}/.exec(CP)?.[0] ?? ''
     expect(pcBody).toContain('debouncedNodePatch.flush()')
   })
 })

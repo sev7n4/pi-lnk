@@ -149,6 +149,7 @@ import { fileToPersistedPayload, persistMediaUrl } from '@/composables/useMediaU
 import { useDebouncedNodePatch } from '@/composables/useDebouncedNodePatch'
 import {
   CANVAS_MULTI_SELECT_ACTIVE_KEY,
+  MOBILE_NODE_TOGGLE_SELECT_KEY,
   CANVAS_GROUP_RESIZE_KEY,
   CANVAS_NODE_ADD_AGENT_KEY,
   CANVAS_NODE_CANCEL_KEY,
@@ -171,6 +172,7 @@ import {
 } from '@/composables/canvasNodeActions'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
 import { useCanvasRefPickAdd } from '@/composables/useCanvasRefPickAdd'
+import { useSidebarAttachments } from '@/composables/useSidebarAttachments'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import { summarizeMobileNodeTasks } from '@/composables/mobileNodeTaskSummary'
 import { formatElapsed } from '@/components/canvas/nodeTaskChrome'
@@ -2584,6 +2586,26 @@ provide(CANVAS_NODE_CLICK_GUARD_KEY, {
 const mobileMultiSelectActive = ref(false)
 provide(CANVAS_MULTI_SELECT_ACTIVE_KEY, mobileMultiSelectActive)
 
+/**
+ * D4 / H1（§4.9 选择模式）：**轻点即选** —— 选择模式下轻点任意节点 = 切换其选中态。
+ * ⭐ 复用既有 `toggleNodeInMultiSelect`（含 vue-flow selected 同步 + 选区回写），
+ *   不新造第二套选区语义；首次轻点 = 进入模式并选中该节点。
+ */
+provide(MOBILE_NODE_TOGGLE_SELECT_KEY, (nodeId: string) => {
+  if (!mobileMultiSelectActive.value) {
+    enterMultiSelectMode(nodeId)
+    return
+  }
+  toggleNodeInMultiSelect(nodeId)
+})
+
+/** D4 / H1：选择模式的「全选」= 选中当前画布全部节点 */
+function selectAllMobileNodes() {
+  if (!mobileMultiSelectActive.value) return
+  selectNodeIds(nodes.value.map((n) => n.id))
+}
+
+
 const renameRequestNodeId = ref<string | null>(null)
 provide(CANVAS_NODE_RENAME_REQUEST_KEY, renameRequestNodeId)
 
@@ -2647,6 +2669,132 @@ function closeMobileNodeAction() {
   mobileActionNode.value = null
 }
 
+/**
+ * D8 / J1 / K1（2026-10-25 规格 §4.2）：移动端轻量编辑器的「**发给 agent 修改**」。
+ *
+ * ⭐ 模式①（agent 驱动）下**生成权归 agent** —— 本函数**不提交生成**，只做三件事：
+ *   ① 把改后的提示词**写回节点**（落库，磁贴立即可见）
+ *   ② 把「我的意见」放进 **composer 输入框**（用户自己按下发送 = 保留意图表达权）
+ *   ③ **切回对话页签**（看得见落地，§4.5 可见性铁律）
+ *
+ * ⭐ 为什么不给本地提交：参数由 agent 在提议阶段写死（`proposeGeneration`），
+ *   用户看不到也改不了参数 ⇒ 本地提交会让人误以为参数可控。
+ */
+function handleMobileNodeSendToAgent(payload: { prompt: string; opinion: string }) {
+  const node = mobileEditorNode.value
+  if (!node) return
+  // ① 写回改后的提示词
+  const nextPrompt = payload.prompt.trim()
+  if (nextPrompt && nextPrompt !== String((node.data as Record<string, unknown>)?.prompt ?? '')) {
+    patchNodeData(node.id, { prompt: nextPrompt })
+    persistUserEdit()
+  }
+  closeMobileNodeEditor()
+  // ② 意见进 composer 输入框（用户自己发送）
+  const opinion = payload.opinion.trim()
+  if (opinion) {
+    agentRailRef.value?.setComposerInput?.(opinion)
+  }
+  // ③ 切回对话页签（看得见落地）
+  mobileAppTab.value = 'chat'
+}
+
+/* ── 标注层（L1 / M1 · 规格 §4.3 + §4.5）──────────────────────────── */
+
+/**
+ * 每次标注的唯一序号 —— ⭐ `useSidebarAttachments.addFromPayload` 会按
+ * `url` **或** `sourceNodeId` 去重 ⇒ 若同一节点连续两次标注用同一个
+ * `sourceNodeId`，**第二次会被静默丢弃**（用户看不到任何反馈）。
+ * ⇒ 每次标注的 `sourceNodeId` 必须唯一（`${nodeId}#annotate-${n}`）。
+ */
+let mobileAnnotateSeq = 0
+
+/** 标注浮层的当前上下文（节点 id + 意见） */
+const mobileAnnotate = ref<{ nodeId: string; nodeTitle: string } | null>(null)
+/** 标注浮层是否上传中 */
+const mobileAnnotateUploading = ref(false)
+/** 标注浮层是否降级（无 CORS / 取不到帧 ⇒ 只带文字） */
+const mobileAnnotateDegraded = ref(false)
+/** 标注浮层错误文案 */
+const mobileAnnotateError = ref('')
+
+/** 打开标注浮层（由查看器的 `annotate` 事件触发） */
+function openMobileAnnotateSheet(payload: { imageBlob?: Blob; degraded: boolean }) {
+  const node = mobileViewerNode.value
+  if (!node) return
+  mobileAnnotate.value = { nodeId: node.id ?? '', nodeTitle: nodeTitleOf(node) }
+  mobileAnnotateDegraded.value = payload.degraded
+  mobileAnnotateError.value = ''
+}
+
+/** 节点标题（引用标签用） */
+function nodeTitleOf(node: { id?: string; type: string; data?: any }): string {
+  const data = (node.data ?? {}) as Record<string, unknown>
+  const t = typeof data.title === 'string' ? data.title.trim() : ''
+  if (t) return t
+  const label = typeof data.label === 'string' ? data.label.trim() : ''
+  if (label) return label
+  const prompt = typeof data.prompt === 'string' ? data.prompt.trim() : ''
+  if (prompt) return prompt.slice(0, 24)
+  return '节点'
+}
+
+/**
+ * 提交标注 ⇒ 上传合成图 ⇒ 写入 composer 引用 ⇒ 切回对话页（规格 §4.5 M1）。
+ *
+ * ⭐ 契约要点：
+ *  - 引用契约**拒 blob URL** ⇒ 合成图必须先 `fileToPersistedPayload` 上传；
+ *  - ⛔ 降级（无 CORS / 取不到帧）⇒ 只带文字，并**明说**「本条只带文字，未附截图」；
+ *  - `sourceNodeId` 每次唯一（见 `mobileAnnotateSeq`）⇒ 同节点连续两次标注都能进 composer。
+ */
+async function handleMobileAnnotateSend(payload: {
+  opinion: string
+  imageBlob?: Blob
+  degraded: boolean
+}) {
+  const ctx = mobileAnnotate.value
+  if (!ctx) return
+  const opinion = payload.opinion.trim()
+  mobileAnnotateUploading.value = true
+  mobileAnnotateError.value = ''
+  try {
+    let url: string | undefined
+    if (payload.imageBlob) {
+      const file = new File([payload.imageBlob], 'annotate.png', { type: 'image/png' })
+      const uploaded = await fileToPersistedPayload(file)
+      if (uploaded.url.startsWith('blob:')) throw new Error('合成图未持久化')
+      url = uploaded.url
+    }
+    // 唯一 sourceNodeId ⇒ 同节点连续两次标注都会被接收
+    const sourceNodeId = `${ctx.nodeId}#annotate-${++mobileAnnotateSeq}`
+    addFromPayload({
+      id: `annotate-${Date.now()}-${mobileAnnotateSeq}`,
+      mediaType: url ? 'image' : 'text',
+      sourceKind: 'canvasNode',
+      label: ctx.nodeTitle || '标注',
+      ...(url ? { url } : {}),
+      ...(opinion ? { text: opinion } : {}),
+      sourceNodeId,
+    })
+    mobileAnnotate.value = null
+    // 看得见落地（§4.5 可见性铁律）：切回对话页签，用户在 composer 看到芯片
+    mobileAppTab.value = 'chat'
+    if (!url) {
+      ElMessage.info('本条只带文字，未附截图')
+    }
+  } catch (err) {
+    mobileAnnotateError.value = err instanceof Error ? err.message : '上传失败，请重试'
+  } finally {
+    mobileAnnotateUploading.value = false
+  }
+}
+
+/** 关闭标注浮层 */
+function closeMobileAnnotateSheet() {
+  mobileAnnotate.value = null
+  mobileAnnotateError.value = ''
+}
+
 function closeMobileNodeEditor() {
   mobileEditorNode.value = null
 }
@@ -2658,67 +2806,6 @@ function applyMobileEditorPatch(patch: Record<string, unknown>) {
   persistUserEdit()
 }
 
-/**
- * R4-T2：移动端编辑 sheet 的「生成」——补齐被丢弃的 `DockStudioRouter.generate`。
- *
- * ⭐ 断链修复：原先 `MobileNodeEditorSheet` 只接 `patch` / `close` ⇒ dock panel 的
- *   `onGenerate`（先 emit patch 再 emit generate）后半段被吞 ⇒ **移动端改完提示词
- *   点「生成」毫无反应**。
- *
- * 复用 PC 的判据纯函数（`isNodeBusy` / `isDockGenerateBusy` /
- * `shouldConfirmDirectGenerateWithoutRefs` / `resolveNodeRefs`），
- * ⛔ **不动 PC 的 `handleNodeGenerate`**（它依赖 PC dock 上下文 `editorNode` +
- * `debouncedNodePatch.flush()`；移动端 patch 是立即落库，无 flush 步骤）
- * ⇒ PC 零 diff，两端语义靠「共用纯函数」保持一致。
- */
-async function handleMobileNodeGenerate() {
-  const node = mobileEditorNode.value
-  if (!node) return
-  // 生成中再点 = 取消（与 PC dock 生成按钮同语义）
-  if (isNodeBusy(node.id) || isDockGenerateBusy(node.data?.status)) {
-    cancelGeneration(node.id)
-    return
-  }
-  // 卡在 propose 等待 → 先显式确认（与 PC 同：避免 flush 回写 stale draft
-  // 导致 runtime 轮询误判取消——2026-10-06 生产事故的教训）
-  void agentRailRef.value?.confirmProposeWait?.(node.id)
-  const fresh = findNodeById(node.id)
-  if (!fresh) return
-  if (isNodeBusy(fresh.id) || isDockGenerateBusy(fresh.data?.status)) {
-    cancelGeneration(fresh.id)
-    return
-  }
-  // RB-D6①：本轮侧栏有图但节点无任何 refs（宽判定含上游边）⇒ 二次确认
-  const agentStore = useAgentStore()
-  const freshData = (fresh.data ?? {}) as Record<string, unknown>
-  const refCount = resolveNodeRefs({
-    targetNodeId: fresh.id,
-    targetType: String(fresh.type),
-    nodes: nodes.value,
-    edges: edges.value,
-    localRefs: (freshData.localRefs as LocalRefBinding[]) ?? [],
-    refOrder: (freshData.refOrder as string[]) ?? [],
-  }).filter((r) => !r.stale).length
-  if (
-    shouldConfirmDirectGenerateWithoutRefs({
-      nodeType: String(fresh.type),
-      refCount,
-      sidebarImageCount: latestUserSidebarImageCount(agentStore.messages),
-    })
-  ) {
-    try {
-      await ElMessageBox.confirm(MISSING_REFS_CONFIRM_MESSAGE, MISSING_REFS_CONFIRM_TITLE, {
-        confirmButtonText: '直接生成',
-        cancelButtonText: '先绑定参考图',
-        type: 'warning',
-      })
-    } catch {
-      return // 用户取消：不生成（Nest RB-D5 门禁仍兜底）
-    }
-  }
-  closeMobileNodeEditor()
-  await generateForNode(fresh as EditableFlowNode)
-}
 
 /**
  * R4-T2：移动端编辑 sheet 里删除引用芯片。
@@ -2749,11 +2836,11 @@ function handleMobileNodeRemoveRef(ref: NodeRef) {
  */
 const mobileViewerNode = ref<{
   id?: string
-  type: 'image' | 'video' | 'audio' | 'text'
+  type: 'image' | 'video' | 'text'
   data?: any
 } | null>(null)
 
-provide(MOBILE_NODE_OPEN_VIEWER_KEY, (node: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any }) => {
+provide(MOBILE_NODE_OPEN_VIEWER_KEY, (node: { id?: string; type: 'image' | 'video' | 'text'; data?: any }) => {
   mobileViewerNode.value = node
 })
 
@@ -2767,6 +2854,28 @@ provide(MOBILE_NODE_OPEN_VIEWER_KEY, (node: { id?: string; type: 'image' | 'vide
 provide(MOBILE_NODE_OPEN_EDITOR_KEY, (node: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any }) => {
   if (node?.id) openMobileNodeEditor(node.id)
 })
+
+/**
+ * 查看器右上「⋯」⇒ 打开**与长按同一个 Menu**（§4.6 同源同容器，避免双入口分裂）。
+ * ⭐ 长按菜单已经是「节点操作全集」⇒ 复用它，不再做第二套操作集。
+ */
+function openMobileNodeMenuFromViewer() {
+  const node = mobileViewerNode.value
+  if (!node?.id) return
+  mobileActionNode.value = { id: node.id, type: node.type, data: node.data }
+}
+
+/**
+ * 查看器底部主栏动作（§4.11.6：高频操作放下方拇指区）。
+ * ⭐ 当前只承载「改词」⇒ 打开轻量编辑器（模式①：改词 + 意见 → 发给 agent）。
+ */
+function handleMobileViewerBottomAction(key: string) {
+  if (key !== 'edit') return
+  const node = mobileViewerNode.value
+  if (!node?.id) return
+  closeMobileViewer()
+  openMobileNodeEditor(node.id)
+}
 
 function closeMobileViewer() {
   mobileViewerNode.value = null
@@ -4820,6 +4929,49 @@ function handleContextAction(action: string) {
  * 移动端动作 sheet 动作分发（R1-T5）：复用桌面同一套重命名/删除/复制/多选/引用/编辑真源逻辑，
  * 不另起一套。与 PC 右键 `handleContextAction` 解耦——PC 用 `contextMenu` 状态，移动端用注入键触发。
  */
+/**
+ * 删除撤销提示（D5 / 规格 §4.11.10）
+ *
+ * ⭐ iOS HIG：*"Undo beats 'Are you sure?' for reversible actions"* ——
+ *   节点删除**可撤销**（`useCanvasUndoStack` 明确处理 delete→undo 的 url/status
+ *   恢复）⇒ 首选「删除 + 撤销提示」，**不用**二次确认弹层（那是"用模态换安全感"）。
+ *   仅**不可撤销**的删除（级联删上游 / 跨项目）才走确认弹层。
+ *
+ * ⭐ 形态对齐：iOS Toast/HUD ↔ Android Snackbar（MD3 `R5.16`：可撤销操作给
+ *   **一个** action，时长足够）。**不走 `MobileSheet`** —— toast 是短暂反馈，
+ *   Sheet 是模态浮层，语义不同（§4.11.9 对等表）。
+ * ⛔ 只用 `--lnk-*` 令牌（G-15）：结构照既有 `.ref-pick-toast`，但**不复用它的
+ *   `--neo-*` 写法**（AGENTS.md 明令禁用旧令牌）。
+ */
+const UNDO_TOAST_DURATION_MS = 5000
+
+const undoToast = ref<{ message: string; onAction: () => void } | null>(null)
+let undoToastTimer: ReturnType<typeof setTimeout> | null = null
+
+function dismissUndoToast() {
+  if (undoToastTimer) {
+    clearTimeout(undoToastTimer)
+    undoToastTimer = null
+  }
+  undoToast.value = null
+}
+
+/** 展示可撤销提示（单一 action，时长 ≥5s 留出误删恢复窗口） */
+function showUndoToast(message: string, onAction: () => void, durationMs = UNDO_TOAST_DURATION_MS) {
+  if (undoToastTimer) clearTimeout(undoToastTimer)
+  undoToast.value = { message, onAction }
+  undoToastTimer = setTimeout(() => {
+    undoToast.value = null
+    undoToastTimer = null
+  }, durationMs)
+}
+
+/** 点「撤销」⇒ 回退一次并落库（与既有键盘 undo 同一路径） */
+function undoLastDelete() {
+  dismissUndoToast()
+  if (canvasUndo.undo()) void saveCanvas()
+}
+
 function handleMobileNodeAction(action: string, nodeId: string) {
   switch (action) {
     case 'rename':
@@ -4837,9 +4989,28 @@ function handleMobileNodeAction(action: string, nodeId: string) {
     case 'duplicate':
       handleDuplicateSelection(nodeId, 'none')
       break
-    case 'delete':
-      removeSingleNode(nodeId)
+    case 'duplicate-upstream':
+      // D6：副本（含上游）—— 复用 PC 既有能力（CanvasContextMenu 的 'duplicate-upstream' 同一条）
+      handleDuplicateSelection(nodeId, 'upstream')
       break
+    case 'save-asset':
+      // D6：存入资产库 —— 复用 PC 既有能力（CanvasContextMenu 的 'save-asset' 同一条）
+      saveNodeAsset(nodeId)
+      break
+    case 'save-local':
+      // D6：保存到本地 —— 复用 PC 既有能力（CanvasContextMenu 的 'download-image' 同一条）
+      downloadNodeImage(nodeId)
+      break
+    case 'delete': {
+      // D5 / §4.11.10：撤销优先（不是二次确认）—— 分组节点走解组、不真删 ⇒ 不给撤销提示
+      const target = nodes.value.find((n) => n.id === nodeId) as unknown as FlowNode | undefined
+      const isUngroup = target ? isGroupNode(target) : false
+      removeSingleNode(nodeId)
+      if (!isUngroup) {
+        showUndoToast('节点已删除', undoLastDelete)
+      }
+      break
+    }
     case 'edit':
       // 打开复用 DockStudioRouter 的编辑 sheet（删 Dock 后编辑不丢链）
       openMobileNodeEditor(nodeId)
@@ -5361,6 +5532,8 @@ const {
   refPickToast,
 } = useCanvasRefPickAdd()
 const { isMobileLayout } = useAgentMobileLayout()
+// 标注引用写入：直接写 useSidebarAttachments 单例（与 addNodesToRefs 同一条通路）
+const { addFromPayload } = useSidebarAttachments()
 
 // 分组框的 draggable 随布局切换（GC4）：PC 整框可拖是本批的核心诉求；
 // 移动端整块框会吃掉平移/长按手势，所以关掉（沿用侧车时代的口径）。
@@ -5458,6 +5631,8 @@ const agentRailActions: MobileShellAgentActions = {
 }
 const mobileBatchActions: MobileShellBatchActions = {
   done: exitMultiSelectMode,
+  // D4 / H1（§4.9 选择模式）：「全选」
+  selectAll: selectAllMobileNodes,
   generate: handleSelectionBatchGenerate,
   regenerate: handleSelectionBatchRegenerate,
   stop: handleSelectionBatchStop,
@@ -5784,6 +5959,24 @@ onUnmounted(() => {
             role="status"
             aria-live="polite"
           >已引用 {{ refPickToast.count }} 个节点，可在对话中发送</div>
+        </Teleport>
+        <!-- 删除撤销提示（D5 / §4.11.10）：底部浮层 + 单一「撤销」action（MD3 R5.16） -->
+        <Teleport to="body">
+          <div
+            v-if="undoToast"
+            class="mobile-undo-toast"
+            role="status"
+            aria-live="polite"
+            data-testid="mobile-undo-toast"
+          >
+            <span class="mobile-undo-toast-text">{{ undoToast.message }}</span>
+            <button
+              type="button"
+              class="mobile-undo-toast-action"
+              data-testid="mobile-undo-toast-action"
+              @click="undoLastDelete"
+            >撤销</button>
+          </div>
         </Teleport>
         <CanvasFloatingChrome
           v-if="!canvasChromeHidden && !isMobileLayout"
@@ -6253,7 +6446,16 @@ onUnmounted(() => {
       :on-node-rename="handleMobileNodeRename"
       :on-node-editor-close="closeMobileNodeEditor"
       :on-node-editor-patch="applyMobileEditorPatch"
-      :on-node-editor-generate="handleMobileNodeGenerate"
+      :on-node-editor-send-to-agent="handleMobileNodeSendToAgent"
+      :on-viewer-annotate="openMobileAnnotateSheet"
+      :on-viewer-more="openMobileNodeMenuFromViewer"
+      :on-viewer-bottom-action="handleMobileViewerBottomAction"
+      :mobile-annotate="mobileAnnotate"
+      :mobile-annotate-uploading="mobileAnnotateUploading"
+      :mobile-annotate-degraded="mobileAnnotateDegraded"
+      :mobile-annotate-error="mobileAnnotateError"
+      :on-mobile-annotate-send="handleMobileAnnotateSend"
+      :on-mobile-annotate-close="closeMobileAnnotateSheet"
       :on-node-editor-remove-ref="handleMobileNodeRemoveRef"
       :viewer-node="mobileViewerNode"
       :on-viewer-close="closeMobileViewer"
@@ -6318,6 +6520,59 @@ onUnmounted(() => {
 }
 
 @keyframes ref-pick-toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+/* 删除撤销提示（D5 / §4.11.10）：底部浮层 + 单一「撤销」action
+   —— 结构参照 .ref-pick-toast，但**只用 --lnk-* 令牌**（禁 --neo-*，G-15） */
+.mobile-undo-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 88px);
+  z-index: 4000;
+  display: flex;
+  align-items: center;
+  gap: var(--lnk-space-3);
+  transform: translateX(-50%);
+  max-width: min(420px, calc(100% - 24px));
+  padding: var(--lnk-space-2) var(--lnk-space-2) var(--lnk-space-2) var(--lnk-space-4);
+  border-radius: var(--lnk-radius-full);
+  background: var(--lnk-surface-raised);
+  box-shadow: var(--lnk-shadow-lg);
+  font-size: var(--lnk-text-sm);
+  font-weight: var(--lnk-weight-medium);
+  color: var(--lnk-text-primary);
+  white-space: nowrap;
+  animation: mobile-undo-toast-in 160ms ease-out;
+}
+
+.mobile-undo-toast-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 单一 action（MD3 R5.16：限一个 action） */
+.mobile-undo-toast-action {
+  flex: none;
+  min-height: 32px;
+  padding: 0 var(--lnk-space-3);
+  border: none;
+  border-radius: var(--lnk-radius-full);
+  background: transparent;
+  color: var(--lnk-accent);
+  font-size: var(--lnk-text-sm);
+  font-weight: var(--lnk-weight-semibold);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-undo-toast-action:active {
+  background: var(--lnk-pressed-overlay);
+}
+
+@keyframes mobile-undo-toast-in {
   from { opacity: 0; transform: translateX(-50%) translateY(8px); }
   to { opacity: 1; transform: translateX(-50%) translateY(0); }
 }

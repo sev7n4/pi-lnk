@@ -25,12 +25,31 @@ const CP = readFileSync(join(HERE, '..', '..', 'pages', 'CanvasPage.vue'), 'utf8
  */
 describe('R4-T3/R4-T4 移动端节点操作类', () => {
   describe('T3 重命名：动作 sheet 内联输入', () => {
+    // ⚠️ 2026-10-25（§4.11 Menu 化）：Menu 走 `MobileSheet` 基座 ⇒ **必须 stub
+    //    teleport**（VTU 默认把 Teleport 内容送到 document.body，wrapper.find 找不到）。
+    //    且「重命名」是**二级**项（§4.11.3 低频下沉）⇒ 需先点「更多」。
     function mountSheet(node = { id: 'n1', type: 'image', data: { title: '旧标题' } }) {
-      return mount(MobileNodeActionSheet, { props: { node } })
+      return mount(MobileNodeActionSheet, {
+        props: { node },
+        global: { stubs: { teleport: true } },
+      })
+    }
+
+    /**
+     * 展开二级「更多」菜单（**容错**）。
+     *
+     * ⚠️ 本组用例的节点**无 url**（empty 态）⇒ 一级不足 5 项 ⇒ 「重命名」被
+     *   **回填到一级**（§4.11.3 的上下文裁剪）⇒ 此处根本没有「更多」按钮。
+     *   故：存在才展开，不存在就直接点一级项。
+     */
+    async function openMore(w: ReturnType<typeof mountSheet>) {
+      const more = w.find('[data-action="more"]')
+      if (more.exists()) await more.trigger('click')
     }
 
     it('点「重命名」→ 出现输入框（不再静默）', async () => {
       const w = mountSheet()
+      await openMore(w)
       await w.find('[data-action="rename"]').trigger('click')
       expect(w.find('[data-testid="mobile-action-rename-input"]').exists()).toBe(true)
       w.unmount()
@@ -38,6 +57,7 @@ describe('R4-T3/R4-T4 移动端节点操作类', () => {
 
     it('输入框初值 = 当前标题', async () => {
       const w = mountSheet()
+      await openMore(w)
       await w.find('[data-action="rename"]').trigger('click')
       const input = w.find('[data-testid="mobile-action-rename-input"]')
       expect((input.element as HTMLInputElement).value).toBe('旧标题')
@@ -46,6 +66,7 @@ describe('R4-T3/R4-T4 移动端节点操作类', () => {
 
     it('确定 → emit rename(新标题)', async () => {
       const w = mountSheet()
+      await openMore(w)
       await w.find('[data-action="rename"]').trigger('click')
       await w.find('[data-testid="mobile-action-rename-input"]').setValue('新标题')
       await w.find('[data-action="rename-confirm"]').trigger('click')
@@ -55,6 +76,7 @@ describe('R4-T3/R4-T4 移动端节点操作类', () => {
 
     it('取消 → 不 emit rename', async () => {
       const w = mountSheet()
+      await openMore(w)
       await w.find('[data-action="rename"]').trigger('click')
       await w.find('[data-action="rename-cancel"]').trigger('click')
       expect(w.emitted('rename')).toBeUndefined()
@@ -63,6 +85,7 @@ describe('R4-T3/R4-T4 移动端节点操作类', () => {
 
     it('重命名态下不再列出动作列表（避免同时可点的歧义）', async () => {
       const w = mountSheet()
+      await openMore(w)
       await w.find('[data-action="rename"]').trigger('click')
       expect(w.find('[data-action="duplicate"]').exists()).toBe(false)
       w.unmount()

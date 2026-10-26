@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
 import { useLongPress } from '@/composables/useLongPress'
+import { resolveMobileNodeTapIntent } from '@/composables/mobileNodeOpenPolicy'
 import {
   MOBILE_NODE_ACTION_REQUEST_KEY,
   CANVAS_NODE_CLICK_GUARD_KEY,
@@ -66,6 +67,11 @@ const emit = defineEmits<{
   (e: 'tap'): void
   (e: 'open-reader'): void
   (e: 'retry'): void
+  /**
+   * D4 / H1（§4.9 选择模式）：选择模式下轻点 = **切换选中**（对标 iOS 照片多选）
+   * —— 不开查看器、不弹 Menu。⛔ 只在选择模式下发；常态轻点仍走 `tap`。
+   */
+  (e: 'toggle-select'): void
 }>()
 const tts = useTextToSpeech()
 
@@ -187,12 +193,18 @@ const mediaInfoText = computed(() => {
 })
 
 /**
- * 空态主动作提示（走查③，2026-10-24）：新建节点不再自动弹编辑 sheet
- * （用户裁决：创建 ≠ 编辑，auto-open 是 R2 的权宜），空瓦片自身必须
- * 把「点按进入编辑」这个入口写出来——否则用户拿到一个不知能干嘛的空卡。
- * 文案与 D-C 状态机 empty 行的主动作一致（ tap ⇒ 编辑 sheet）。
+ * 空态主动作提示（走查③，2026-10-24；D1/D3 修订 2026-10-25）：
+ * 新建节点不再自动弹编辑 sheet（用户裁决：创建 ≠ 编辑，auto-open 是 R2 的权宜），
+ * 空瓦片自身必须把「长按编辑 / 长按撰写」这个入口写出来——否则用户拿到一个不知能干嘛的空卡。
+ *
+ * ⭐ D1/D3（2026-10-25 规格 §5.1 · 铁律 P1「单击 = 查看」）：
+ * 单击不再进编辑器 ⇒ CTA 文案随之从「点按生成 / 点按撰写」改为「长按编辑 / 长按撰写」
+ * （文案与「轻提示」共用同一串，见 `longPressLabel`）。
  */
-const emptyCtaLabel = computed(() => (props.type === 'text' ? '点按撰写' : '点按生成'))
+const longPressLabel = computed(() => (props.type === 'text' ? '长按撰写' : '长按编辑'))
+
+/** 空瓦片 CTA 文案（= 长按引导文案，与 P1「单击 = 查看」一致）。 */
+const emptyCtaLabel = longPressLabel
 
 /**
  * 磁贴外框：与桌面包络同源（图 280 / 视频 320，见 mediaNodeDisplaySize）；
@@ -233,6 +245,16 @@ const placeholderLabel = computed(() => (props.type === 'video' ? '视频' : '�
  */
 const multiSelectActive = inject(CANVAS_MULTI_SELECT_ACTIVE_KEY, ref(false))
 const isMultiSelected = computed(() => multiSelectActive.value && props.selected === true)
+/**
+ * D4 / H1：选择模式是否激活（**统一取布尔**）。
+ *
+ * ⭐ 为什么不用模板直接判 `multiSelectActive`：注入方可能是**真 ref**（生产：
+ *   CanvasPage `provide(CANVAS_MULTI_SELECT_ACTIVE_KEY, mobileMultiSelectActive)`），
+ *   也可能是**普通对象 `{ value: boolean }`**（测试注入形态）⇒ 模板对真 ref 会解包、
+ *   对普通对象不解包 ⇒ 直接判会得到「对象恒 truthy」的错判。走 computed 后两种
+ *   形态都取 `.value` ⇒ 一致。
+ */
+const isSelectionMode = computed(() => multiSelectActive.value === true)
 
 const mobileActionRequest = inject<MobileNodeActionRequestFn>(MOBILE_NODE_ACTION_REQUEST_KEY, () => {})
 const clickGuard = inject<CanvasNodeClickGuard>(CANVAS_NODE_CLICK_GUARD_KEY, {
@@ -242,6 +264,12 @@ const clickGuard = inject<CanvasNodeClickGuard>(CANVAS_NODE_CLICK_GUARD_KEY, {
 
 const { bindings } = useLongPress(() => {
   const id = props.id
+  // D4 / H1（§4.9）：**选择模式内的长按 = 同义切换选中**，不再弹单节点 Menu
+  // （避免退回单节点管理语境，破坏 selection mode 的心智）。
+  if (isSelectionMode.value) {
+    emit('toggle-select')
+    return
+  }
   if (id && mobileActionRequest) {
     mobileActionRequest({ id, type: props.type, data: props.data })
   }
@@ -279,14 +307,41 @@ function toggleAudio() {
 }
 
 function onTileClick() {
+  /**
+   * ⭐ D4 / H1（§4.9 选择模式）：**选择模式下轻点 = 切换选中**，不打开查看器、
+   *   不弹 Menu（对标 iOS 照片多选：进入模式后纯靠轻点选节点）。
+   *   ⭐ 多选态信号用**已有的** `CANVAS_MULTI_SELECT_ACTIVE_KEY` 注入
+   *   （R4-T4 起用于多选徽标）⇒ 不新增第二个真源。
+   */
+  if (isSelectionMode.value) {
+    emit('toggle-select')
+    return
+  }
+
+  /**
+   * ⭐ D1/D3（2026-10-25 规格 §5.1 · 铁律 P1「单击 = 查看」）：
+   * tap 意图由纯函数 `resolveMobileNodeTapIntent` 单一判定（不各写一遍，审阅焦点 #2）。
+   * - 'none'（空 / 生成中 / 失败无旧产物）⇒ 无 op + 轻提示「长按编辑 / 长按撰写」，
+   *   **不开 viewer、不开 editor**（管理操作只走长按）；
+   * - 'viewer'（pending / confirmed / 失败但有旧产物）⇒ 交 NodeRenderer 开查看器；
+   * - 'inline'（音频）⇒ 磁贴内联播放（不进查看器 / 编辑器）。
+   */
+  const intent = resolveMobileNodeTapIntent({
+    type: props.type,
+    data: props.data as Record<string, unknown>,
+  })
+
   if (props.type === 'audio') {
-    // R2-T2：空音频（无 url）不播一个不存在的源，改为交策略（→ 编辑 sheet）。
-    // 有 url 时仍内联播放（不进 viewer/editor 路由）。
+    // R2-T2：空音频（无 url）不播一个不存在的源；P1 下也不再进编辑器 ⇒ 轻提示。
     if (!props.data?.url) {
-      emit('tap')
+      showHint()
       return
     }
     toggleAudio()
+    return
+  }
+  if (intent === 'none') {
+    showHint()
     return
   }
   if (props.type === 'text') {
@@ -296,6 +351,36 @@ function onTileClick() {
   if (clickGuard?.shouldSuppress?.()) return
   emit('tap')
 }
+
+/**
+ * 轻提示（P1「单击 = 查看」的落地）：无 op 时告诉用户「改走长按」，1.5s 自动消失。
+ *
+ * ⭐ 为什么在磁贴内而不是全局 toast：全局 toast 需 CanvasPage 承接（本任务不碰），
+ *   而磁贴本身就在用户手指底下 ⇒ 就地提示最短路径、不遮挡画布。
+ * ⛔ 不进任何全屏层（规格 §6.2：「无 op + 提示」= 轻 toast，不开查看器 / 编辑器）。
+ */
+const HINT_DURATION_MS = 1500
+const hint = ref('')
+let hintTimer: ReturnType<typeof setTimeout> | null = null
+
+function showHint() {
+  hint.value = longPressLabel.value
+  if (hintTimer) clearTimeout(hintTimer)
+  hintTimer = setTimeout(() => {
+    hint.value = ''
+    hintTimer = null
+  }, HINT_DURATION_MS)
+}
+
+function clearHint() {
+  if (hintTimer) {
+    clearTimeout(hintTimer)
+    hintTimer = null
+  }
+  hint.value = ''
+}
+
+onBeforeUnmount(clearHint)
 
 /** 文本范式反转（D-A）：长文朗读、短文开阅读器；主动作不再"打开节点详情" */
 function handleTextTap() {
@@ -425,10 +510,37 @@ function handleTextTap() {
     </div>
 
     <!--
+      轻提示（P1「单击 = 查看」）：空 / 生成中 / 失败无旧产物时 tap 的唯一反馈——
+      就地告诉用户「改走长按」，1.5s 自动消失（不进任何全屏层）。
+    -->
+    <span v-if="hint" class="mobile-node-hint" data-testid="mobile-node-hint" role="status">
+      {{ hint }}
+    </span>
+
+    <!--
       状态角标（R3-T2）。⚠️ pending 态让位给提议卡自带的「待确认」chip
       （R4-T1）：否则同一节点上会出现「角标：待确认 + chip：待确认」两处重复标识。
     -->
     <span v-if="badge && !showPropose" class="mobile-node-badge" :data-tone="badge.tone">{{ badge.label }}</span>
+
+    <!--
+      D4 / H1（§4.9 选择模式）：**全局圆圈指示器** —— 进入选择模式后画布上
+      **所有**节点右上角浮现圆形指示器（未选 = 空心圈 / 已选 = 实心 + 对勾），
+      这是模式的**唯一发现入口**（对标 iOS 照片多选）。
+      ⭐ 与上面的「多选勾选徽标」并存：徽标只在**已选**时出现（既有 R4-T4 行为），
+      指示器在**选择模式全程**出现（含未选节点）—— 两者形态不同、不冲突。
+    -->
+    <span
+      v-if="isSelectionMode"
+      class="mobile-node-select-indicator"
+      :class="{ 'is-selected': isMultiSelected }"
+      data-testid="mobile-node-select-indicator"
+      aria-hidden="true"
+    >
+      <svg v-if="isMultiSelected" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.4">
+        <path d="M3.5 8.5l3 3 6-7" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+    </span>
 
     <!-- R4-T4：多选勾选徽标（PC 的 `.neo-node-multi-badge` 选择器绑定 `.neo-node`，移动端命中不到） -->
     <span v-if="isMultiSelected" class="mobile-node-multi-badge" aria-hidden="true">
@@ -587,6 +699,26 @@ function handleTextTap() {
   text-overflow: ellipsis;
 }
 
+/* 轻提示（P1「单击 = 查看」）：tap 无 op 时的就地引导（1.5s 自动消失）
+   —— 绝对定位浮在磁贴上方，不占布局、不遮挡长按。 */
+.mobile-node-hint {
+  position: absolute;
+  left: 50%;
+  bottom: var(--lnk-space-2);
+  transform: translateX(-50%);
+  max-width: calc(100% - var(--lnk-space-4));
+  padding: var(--lnk-space-1) var(--lnk-space-2);
+  border-radius: var(--lnk-radius-sm);
+  background: var(--lnk-surface-overlay);
+  color: var(--lnk-text-primary);
+  font-size: var(--lnk-text-2xs);
+  line-height: var(--lnk-lh-2xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
 /* 空态主动作提示（走查③）：小而清晰，accent 文本色读作「可点」 */
 .mobile-node-empty-cta {
   margin-top: 2px;
@@ -692,6 +824,30 @@ function handleTextTap() {
 .mobile-node-propose :deep(.node-pending-prompt-text) {
   -webkit-line-clamp: 3;
   line-clamp: 3;
+}
+
+/* D4 / H1：选择模式圆形指示器（未选 = 空心圈 / 已选 = 实心 + 对勾）
+   —— 视觉尺寸 20px（磁贴小），但它是**纯信号**不承载点击（点击走整块磁贴） */
+.mobile-node-select-indicator {
+  position: absolute;
+  top: var(--lnk-space-2);
+  right: var(--lnk-space-2);
+  z-index: 2;
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--lnk-radius-full);
+  background: var(--lnk-surface-canvas);
+  border: 2px solid var(--lnk-text-primary);
+  color: var(--lnk-accent-on-signature);
+  pointer-events: none;
+}
+
+.mobile-node-select-indicator.is-selected {
+  background: var(--lnk-accent);
+  border-color: var(--lnk-accent);
 }
 
 /* R4-T4：多选勾选徽标（磁贴自有类名，不复用 PC 的 `.neo-node-multi-badge`——那个绑定 `.neo-node`） */

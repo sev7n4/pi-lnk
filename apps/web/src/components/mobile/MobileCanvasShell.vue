@@ -40,6 +40,7 @@ import MobileMultiSelectBar from './MobileMultiSelectBar.vue'
 import MobileNodeActionSheet, { type MobileNodeActionNode } from './MobileNodeActionSheet.vue'
 import MobileNodeEditorSheet from './MobileNodeEditorSheet.vue'
 import MobileNodeViewer from './MobileNodeViewer.vue'
+import MobileNodeAnnotateSheet from './MobileNodeAnnotateSheet.vue'
 import MobileNodeCoachMark from './MobileNodeCoachMark.vue'
 import type { EditableFlowNode } from '@/composables/useSelectedNodeEditor'
 import type { UpstreamNodeContext } from '@/composables/useUpstreamNodeContext'
@@ -62,6 +63,8 @@ export interface MobileShellAgentActions {
 
 export interface MobileShellBatchActions {
   done: () => void
+  /** D4 / H1（§4.9 选择模式）：全选当前画布所有节点 */
+  selectAll: () => void
   generate: () => void
   regenerate: () => void
   stop: () => void
@@ -139,13 +142,27 @@ const props = defineProps<{
   onNodeActionClose: () => void
   onNodeEditorClose: () => void
   onNodeEditorPatch: (patch: Record<string, unknown>) => void
-  /** R4-T2：移动端编辑 sheet 的「生成」（补齐被丢弃的 DockStudioRouter.generate） */
-  onNodeEditorGenerate: () => void
-  /** R4-T2：移动端编辑 sheet 里删除引用芯片 */
-  onNodeEditorRemoveRef: (ref: NodeRef) => void
+  /**
+   * D8 / J1 / K1（2026-10-25）：移动端**轻量编辑器**的「发给 agent 修改」出口
+   * —— ⛔ 不再有本地提交（生成权归 agent）与删除引用 emit（PC dock 专用契约已移除）。
+   */
+  onNodeEditorSendToAgent: (payload: { prompt: string; opinion: string }) => void
   /** 移动端全屏查看器（R1-T4/T6）：图灯箱/视频播放/文本阅读器；null = 未打开 */
-  viewerNode: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any } | null
+  viewerNode: { id?: string; type: 'image' | 'video' | 'text'; data?: any } | null
   onViewerClose: () => void
+  /** 右上「⋯」= 打开与长按同一个 Menu（同源同容器，§4.6） */
+  onViewerMore: () => void
+  /** 查看器底部主栏动作（如「改词」，§4.11.6 高频下沉） */
+  onViewerBottomAction: (key: string) => void
+  /** D8/L1/M1：查看器标注完成（带标记整图 blob 或降级） */
+  onViewerAnnotate: (payload: { imageBlob?: Blob; degraded: boolean }) => void
+  /** L1/M1：标注浮层打开（由页面层持上下文） */
+  mobileAnnotate: { nodeId: string; nodeTitle: string } | null
+  mobileAnnotateUploading: boolean
+  mobileAnnotateDegraded: boolean
+  mobileAnnotateError: string
+  onMobileAnnotateSend: (payload: { opinion: string; imageBlob?: Blob; degraded: boolean }) => void
+  onMobileAnnotateClose: () => void
   /** ── R3-T4 壳层聚合状态栏（D-C 状态机的壳层聚合）── */
   /** 正在生成的节点数（0 = 无） */
   nodeGeneratingCount: number
@@ -158,6 +175,22 @@ const props = defineProps<{
   /** 拒绝 = 走桌面同一套 propose cancel 语义 */
   onNodePendingCancel: (nodeId: string) => void
 }>()
+
+/**
+ * 查看器底部主栏动作（§4.11.6 可达性：高频操作放下方拇指区）。
+ * ⭐ 只有**有产物**的节点才给「改词」（空节点走长按才进编辑器；§5.1 门控）。
+ */
+const viewerBottomActions = computed(() => {
+  const node = props.viewerNode
+  if (!node) return []
+  const data = (node.data ?? {}) as Record<string, unknown>
+  const hasContent =
+    node.type === 'text'
+      ? Boolean(String(data.content ?? '').trim())
+      : Boolean(String(data.url ?? '').trim())
+  if (!hasContent) return []
+  return [{ key: 'edit', label: '改词', variant: 'primary' as const }]
+})
 
 /** 移动端编辑 sheet 上下文：节点 + 上游/引用/提及（与桌面 DockStudioToolbar 同源） */
 export interface MobileEditorContext {
@@ -353,7 +386,10 @@ onUnmounted(() => stopMobileTaskPolling())
         aria-label="关闭"
         @click="closeMobileAccountPane"
       >
-        ×
+                <!-- ⛔ 禁文本字符当图标（§4.11.5）⇒ 内联 SVG（与 MobileSheet 关闭钮同款） -->
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                  <path d="M18 6 6 18M6 6l12 12" stroke-linecap="round" />
+                </svg>
       </button>
     </div>
     <div class="mobile-account-body">
@@ -377,6 +413,7 @@ onUnmounted(() => stopMobileTaskPolling())
     :selection-batch="(selectionBatch as any)"
     :can-ungroup="multiSelectCanUngroup"
     :group-color-key="multiSelectGroupColorKey"
+    @select-all="batchActions.selectAll"
     @done="batchActions.done"
     @generate="batchActions.generate"
     @regenerate="batchActions.regenerate"
@@ -441,15 +478,28 @@ onUnmounted(() => stopMobileTaskPolling())
     :generating="mobileEditor.generating"
     @close="props.onNodeEditorClose"
     @patch="props.onNodeEditorPatch"
-    @generate="props.onNodeEditorGenerate"
-    @remove-ref="props.onNodeEditorRemoveRef"
+    @send-to-agent="props.onNodeEditorSendToAgent"
   />
   <!-- R1-T4/T6：移动端全屏查看器（tap 图/视频/短文文本经注入键在此承接） -->
   <MobileNodeViewer
     v-if="viewerNode"
     :type="viewerNode.type"
     :data="viewerNode.data"
+    :bottom-actions="viewerBottomActions"
     @close="props.onViewerClose"
+    @annotate="props.onViewerAnnotate"
+    @more="props.onViewerMore"
+    @bottom-action="props.onViewerBottomAction"
+  />
+  <!-- 标注浮层（L1/M1）：⛔ 走 MobileSheet 基座（无第二套 sheet 皮肤，G-15） -->
+  <MobileNodeAnnotateSheet
+    v-if="props.mobileAnnotate"
+    :node-title="props.mobileAnnotate.nodeTitle"
+    :uploading="props.mobileAnnotateUploading"
+    :degraded="props.mobileAnnotateDegraded"
+    :error="props.mobileAnnotateError"
+    @send="props.onMobileAnnotateSend"
+    @close="props.onMobileAnnotateClose"
   />
   <!-- R1-T7：节点交互范式反转一次性引导（点按播放 · 长按编辑），仅画布页签首进一次 -->
   <MobileNodeCoachMark v-if="mobileAppTab === 'canvas'" />

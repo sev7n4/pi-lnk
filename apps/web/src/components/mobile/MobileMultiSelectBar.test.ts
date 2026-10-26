@@ -103,4 +103,32 @@ describe('MobileMultiSelectBar（PR3 S3 动作条）', () => {
     expect(colors.find((el) => el.classList.contains('is-active'))?.getAttribute('data-color')).toBe('moss')
     w.unmount()
   })
+
+  // ── 选择模式（D4 / H1）：补「全选 / 取消」两个入口 ──────────────────────
+  // ⭐ 本条已**已有**「完成」钮 + 「更多」sheet（删除/引用/副本）—— 本任务只补
+  //   「全选 / 取消」，**不重复造**既有能力。
+  // ⭐ `selectionMode` 与「已选 N」是**两个不同语义**：模式可开着而当前选区为 0
+  //   （进入模式后一个都还没选）⇒ 底部条必须能显示「全选 / 取消」。
+  describe('选择模式（全选）', () => {
+    it('底部条含「全选 / 完成」', () => {
+      const w = mountBar({})
+      const html = w.html()
+      expect(html).toContain('全选')
+      expect(html).toContain('完成')
+      w.unmount()
+    })
+
+    it('⛔ 不加「取消」钮：既有「完成」已是「退出选择模式」（两个同义按钮是噪音，iOS Photos 也没有）', () => {
+      const w = mountBar({})
+      expect(w.find('[data-testid="msb-cancel-select"]').exists()).toBe(false)
+      w.unmount()
+    })
+
+    it('点「全选」emit selectAll', async () => {
+      const w = mountBar({})
+      await w.find('[data-testid="msb-select-all"]').trigger('click')
+      expect(w.emitted('selectAll')).toBeTruthy()
+      w.unmount()
+    })
+  })
 })
