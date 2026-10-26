@@ -49,6 +49,12 @@ import { buildObserverStreamUrl, extractSseFrames, parseSseFrameSeq } from './ob
 /** 只取本模块用得到的 reader 结构（真实 fetch 的 Response 结构上满足它）。 */
 interface TailReaderLike {
   read: () => Promise<{ done: boolean; value?: Uint8Array }>
+  /**
+   * ⭐ 2026-10-26 连接卫生：读循环结束（done / 异常 / abort / 换程）后**必须**显式
+   *   cancel —— 只 abandon 不 cancel 时，浏览器对这条流施加背压、TCP 连接保持
+   *   开放（服务端永远看不到客户端离开），逐程累积吃满同源 6 连接（生产实测 7 条）。
+   */
+  cancel?: () => unknown
 }
 
 /** 只取本模块用得到的 Response 结构（真实 fetch 的 Response 结构上满足它）。 */
@@ -117,6 +123,13 @@ interface RunToken {
   round: AbortController
   /** 当前这一程的 controller：显式 abort 与 idle 闸门都会掐它。 */
   attempt: AbortController | null
+  /**
+   * ⭐ 2026-10-26 连接卫生：本轮**全部**已开出的 attempt。
+   *
+   * ⛔ 单字段 `attempt` 每开新一程就被覆盖 ⇒ 旧 controller 丢失 ⇒ 旧连接再也掐不掉。
+   *   掐一轮 = 遍历这里全掐（Set 自动去重，已结束的在 finally 摘除）。
+   */
+  attempts: Set<AbortController>
 }
 
 /**
@@ -212,7 +225,8 @@ export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTail
       token.stopped = true
       // 掐整轮：退避 / 冷却等待立刻醒来（否则要等满时长 ⇒ 幽灵订阅）。
       token.round.abort()
-      // 掐当前这一程：在途 fetch 立即失败。
+      // ⭐ 掐掉本轮**全部**在途 attempt（只掐 `attempt` 单字段 ⇒ 旧连接泄漏）。
+      for (const ac of token.attempts) ac.abort()
       token.attempt?.abort()
     }
     live.clear()
@@ -253,6 +267,7 @@ export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTail
       seq: ++roundSeq,
       round: new AbortController(),
       attempt: null,
+      attempts: new Set(),
     }
     current = token
     live.add(token)
@@ -279,11 +294,26 @@ export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTail
         const url = buildObserverStreamUrl(deps.baseUrl(), lastSeq)
         const attempt = new AbortController()
         token.attempt = attempt
+        token.attempts.add(attempt)
+        // ⭐⭐⭐ 2026-10-26 根因修复：idle 闸门的重置**不得**用 `timer.refresh()`。
+        //
+        // 生产事故（浏览器实测 7 条并发 SSE）：浏览器里 `setTimeout` 返回 **number**，
+        //   `number.refresh()` 不存在 ⇒ 响应头一到、第一次 `idleTimer.refresh()`
+        //   就抛 TypeError ⇒ 被 catch 吞掉 ⇒ 立即重连 ⇒ 旧连接未释放 ⇒ 逐程累积。
+        //   单测没抓住：vitest fake timers 的 setTimeout 返回模仿 Node 的 Timeout
+        //   对象（恰好有 refresh）⇒ 测试全绿、浏览器爆炸（平台差异回归）。
+        // ⇒ 改为 clearTimeout + setTimeout 重设（所有平台一致）。
+        let idleTimer: ReturnType<typeof setTimeout> | undefined
+        const armIdle = () => {
+          if (idleTimer !== undefined) clearTimeout(idleTimer)
+          idleTimer = setTimeout(() => attempt.abort(), idleMs)
+        }
+        armIdle()
         // 本连接是否产出过 **data 帧**（`: observer-ready` 这类注释帧不算——
         // 它只证明「连上了」，不证明「服务端服务了一段」）。
         let sawData = false
-        // 本程的 idle 闸门：掐**这一程**（而不是整轮）⇒ 触发后可以换一程继续听。
-        const idleTimer = setTimeout(() => attempt.abort(), idleMs)
+        /** 本程的 body reader：finally 里**必须** cancel（见 TailReaderLike.cancel 注释）。 */
+        let reader: TailReaderLike | null = null
         try {
           const res = await deps.fetchImpl(url, {
             headers: deps.headers(),
@@ -295,13 +325,17 @@ export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTail
           // 两者重连都无意义（重连只会再拿一次同样的状态码）⇒ 直接退，避免重连风暴。
           if (res.status === 404 || res.status === 401 || res.status === 403) return
           if (!res.ok || !res.body) throw new Error(`observer stream HTTP ${res.status}`)
-          idleTimer.refresh()
+          armIdle()
           state = 'streaming'
-          const reader = res.body.getReader()
+          reader = res.body.getReader()
           const decoder = new TextDecoder()
           let buffer = ''
 
           while (true) {
+            // ⭐ 轮次被更新一轮取代 / 被显式终止 ⇒ 立刻退出（finally 统一 cancel 释放连接）。
+            //   ⛔ 旧实现只在**外层**循环顶检查 ⇒ 已进入读循环的轮次对「被取代」无感知，
+            //     连接一直挂到服务端/网关掐断为止。
+            if (token.stopped || token.seq !== roundSeq) break
             const { done, value } = await reader.read()
             if (done) break
             buffer += decoder.decode(value, { stream: true })
@@ -314,7 +348,7 @@ export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTail
               // 任何帧（含心跳与就绪注释帧）都刷新 idle：常驻订阅的寿命由服务端决定，
               // 前端闸门只兜「服务端彻底静默」。旧契约「只认业务事件」是为 tail 设计的
               // （有硬上限），常驻化后若沿用，静默会话会被前端自己 20s 掐断。
-              idleTimer.refresh()
+              armIdle()
               // 游标先落帧：哪怕 payload 解析失败也不丢断点位置
               const seq = parseSseFrameSeq(frame)
               if (seq !== undefined) lastSeq = seq
@@ -386,8 +420,20 @@ export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTail
           state = 'backoff'
           await delay(backoffWithJitter(backoffBaseMs, backoffCapMs, reconnects), token.round.signal)
         } finally {
-          clearTimeout(idleTimer)
+          if (idleTimer !== undefined) clearTimeout(idleTimer)
+          token.attempts.delete(attempt)
           token.attempt = null
+          // ⭐ 连接卫生：无论 done / 异常 / abort / 换程，都要显式释放流 ⇒
+          //   关闭底层连接。cancel 对已结束的流是安全 no-op（可能 reject，吞掉即可）。
+          if (reader) {
+            const r = reader
+            reader = null
+            try {
+              void r.cancel?.()
+            } catch {
+              /* 释放失败不影响主流程 */
+            }
+          }
         }
       }
     } finally {

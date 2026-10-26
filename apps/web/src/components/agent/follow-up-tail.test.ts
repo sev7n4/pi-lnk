@@ -619,4 +619,88 @@ describe('follow-up-tail：abort 立刻掐断（无幽灵订阅）', () => {
     await flush()
     expect(listener.getLiveCount(), 'abort 后在途轮次必须归零（不能只掐 current 一个）').toBe(0)
   })
+
+  // ── 2026-10-26 生产事故·根因：idle 闸门用了 `timer.refresh()`（Node 专属 API）──
+  // 浏览器里 `setTimeout` 返回 number ⇒ `refresh()` 抛 TypeError ⇒ 被 catch 吞掉
+  // ⇒ 立即重连且旧连接未释放 ⇒ 实测 7 条并发 SSE 吃满同源 6 连接 ⇒ 画布空白/积分假 0。
+  // ⚠️ 这两条用例**必须用真实 timers**：fake timers 的 setTimeout 返回模仿 Node 的
+  //   Timeout 对象（恰好有 refresh）⇒ 永远复现不了浏览器行为（本轮事故的教训本体）。
+
+  it('⭐⭐ 根因回归（浏览器语义 setTimeout）：连接健康挂住时，不得在观测窗内冒出第二条订阅', async () => {
+    vi.useRealTimers()
+    // ⚠️ 必须把 setTimeout stub 成**浏览器语义**（返回 number）：Node 的 Timeout 对象
+    //   恰好有 refresh() ⇒ 不 stub 的话，连 Node 测试环境都复现不了浏览器事故。
+    const realSetTimeout = globalThis.setTimeout.bind(globalThis)
+    // 返回**真 number**（浏览器语义）：调度仍走真实时钟，但句柄是 number ⇒
+    // Node 的 clearTimeout 对 number 静默忽略（无害）；关键是 `number.refresh()` 不存在，
+    // 与浏览器完全一致 ⇒ 变异（改回 .refresh()）能在此判红。
+    let idSeq = 0
+    const browserSetTimeout = ((fn: () => void, ms?: number) => {
+      void realSetTimeout(fn, ms)
+      return ++idSeq
+    }) as unknown as typeof setTimeout
+    vi.stubGlobal('setTimeout', browserSetTimeout)
+    let fetchCount = 0
+    const deps = makeDeps({
+      idleMs: 60_000, // 不触发 idle 闸门 ⇒ 唯一的重连来源就是「异常路径」
+      fetchImpl: (_url, init) => {
+        fetchCount += 1
+        // read 永久挂起等 abort ⇒ 仿「服务端心跳保活、不发业务帧」的健康常驻连接
+        return Promise.resolve({ status: 200, ok: true, body: streamOf([], init.signal) } as TailResponseLike)
+      },
+    })
+    const listener = createFollowUpTailListener(deps)
+    await listener.start()
+    // 真实时钟等 800ms：若 refresh() 抛 TypeError，catch 后 ~250ms 就会开第二程
+    await new Promise((r) => setTimeout(r, 800))
+    expect(fetchCount, '健康连接挂住时不得重连（重连 ⇒ 浏览器里 refresh() TypeError 的回归）').toBe(1)
+    listener.abort()
+  })
+
+  it('⭐⭐ 连接卫生（真实 timers）：换程时上一程的 reader 必须 cancel（否则连接泄漏）', async () => {
+    vi.useRealTimers()
+    const cancelled: boolean[] = []
+    const signals: AbortSignal[] = []
+    let fetchCount = 0
+    const deps = makeDeps({
+      idleMs: 150, // 真实时钟下 150ms 触发 idle ⇒ 换程
+      fetchImpl: (_url, init) => {
+        fetchCount += 1
+        signals.push(init.signal)
+        return Promise.resolve({
+          status: 200,
+          ok: true,
+          body: {
+            getReader: () => ({
+              // ⚠️ 必须像真实浏览器一样响应 abort（abort ⇒ pending read() reject）
+              read: () =>
+                new Promise<{ done: boolean; value?: Uint8Array }>((_res, rej) => {
+                  const onAbort = () => rej(new DOMException('aborted', 'AbortError'))
+                  if (init.signal.aborted) onAbort()
+                  else init.signal.addEventListener('abort', onAbort, { once: true })
+                }),
+              cancel: () => {
+                cancelled[fetchCount - 1] = true
+              },
+            }),
+          },
+        } as TailResponseLike)
+      },
+    })
+    const listener = createFollowUpTailListener(deps)
+    await listener.start()
+    // 等 idle(150ms) 触发 + backoff(≥100ms) + 第二程建连
+    await new Promise((r) => setTimeout(r, 700))
+    expect(fetchCount, '前置：确实发生了换程').toBeGreaterThanOrEqual(2)
+    expect(cancelled[0], '第 1 程结束（idle 换程）后其 reader 必须 cancel —— 不 cancel ⇒ 连接在浏览器侧永远开着（背压） ⇒ 逐程累积吃满 6 连接').toBe(true)
+    listener.abort()
+    // abort 后：所有已开出的一程都必须被掐 + 全部 cancel
+    for (let i = 0; i < signals.length; i++) {
+      expect(signals[i].aborted, `第 ${i + 1} 程在 abort 后必须被掐掉`).toBe(true)
+    }
+    await new Promise((r) => setTimeout(r, 50))
+    for (let i = 0; i < cancelled.length; i++) {
+      expect(cancelled[i], `第 ${i + 1} 程在 abort 后必须 cancel`).toBe(true)
+    }
+  })
 })
