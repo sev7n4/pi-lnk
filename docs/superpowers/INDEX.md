@@ -1,6 +1,6 @@
 # superpowers 文档索引
 
-> 全部 **397 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
+> 全部 **398 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
 > **文档正文未改动** —— 本索引只做导航与状态标注。
 
 ## 怎么用这份索引
@@ -15,14 +15,14 @@
 |---|---|---|
 | 🟢 living | 137 | 仍在演进，改动前先看这份 |
 | 🔒 frozen | 254 | 内容已定稿或功能已落地，作为历史依据 |
-| ⛔ superseded | 6 | 已被后续决策取代，勿再参考 |
+| ⛔ superseded | 7 | 已被后续决策取代，勿再参考 |
 
 ## 主题分布
 
 | 主题 | 份数 | 其中 living |
 |---|---|---|
 | 其他 | 73 | 21 |
-| 画布工具与交互 | 64 | 28 |
+| 画布工具与交互 | 65 | 28 |
 | 生成管线（图像/视频/3D） | 40 | 9 |
 | 画布产品能力（原子/意图/neowow） | 34 | 8 |
 | Agent 交互与可见性 | 31 | 15 |
@@ -127,7 +127,7 @@
 
 </details>
 
-### 画布工具与交互（64 份）
+### 画布工具与交互（65 份）
 
 <details><summary>🟢 living · 28 份</summary>
 
@@ -200,6 +200,12 @@
 - `docs/superpowers/specs/2026-07-19-c21-canvas-refs-design.md` ★design
 - `docs/superpowers/plans/2026-07-18-node-data-flow-refs.md`
 - `docs/superpowers/specs/2026-07-18-node-data-flow-refs-design.md` ★design
+
+</details>
+
+<details><summary>⛔ superseded · 1 份</summary>
+
+- `docs/superpowers/specs/2026-10-25-mobile-node-lifecycle-review-draft.md` ★design
 
 </details>
 

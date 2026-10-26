@@ -66,6 +66,9 @@
 
 | [`superpowers/specs/2026-10-21-multi-device-consistency-design.md`](./superpowers/specs/2026-10-21-multi-device-consistency-design.md) | **多端同会话一致性** —— 手机/PC 同画布的对话记录实时同步 + 并发发起归属。生产取证（样本会话 Nest 表 7 行 vs pi transcript 66 entry / 4 run；**第一个 run 618.6s 成功但零落库**；插话不入表刷新即消失；209 thread 中 29 个 user>assistant）+ 四层拆分（执行/观测/投影/队列）+ vendor `lane.watch()` 等**此前全零使用**的上游原语盘点 + Codex/Claude Code/IM 对标 + 六条可复用判据 D1–D6 | 活资产 —— 产品级交互契约 |
 | [`superpowers/plans/2026-10-21-multi-device-consistency.md`](./superpowers/plans/2026-10-21-multi-device-consistency.md) | **多端同会话一致性实施计划** —— 三批（止血 / 观察-投影-队列结构 / 对账与身份），Task 1 专门复现长任务丢库根因（假设不成立则 P0-2 重评，不基于假设改架构） | 活资产 —— 实现依据 |
+| [`superpowers/specs/2026-10-25-mobile-node-lifecycle-design.md`](./superpowers/specs/2026-10-25-mobile-node-lifecycle-design.md) | **移动端节点生命周期与载体分工** —— 模式①（agent 驱动画布，主战场）/ 模式②（用户主动 FAB+，次要）分工；模式① 三载体 = 类型原生查看器 + 轻量「提示词+意见」编辑器（参数只读）+ 生成权归 agent；标注 = 手指自由圈选出一张带标记的整图（零新契约）；锚 = 双向连接器与统一载荷信封，标注经「⚓ 带回对话」回传。含六条铁律 P1–P6、6 张 Mermaid 结构图、18 项文件级改动清单、12 条行为级守卫、21 项真机走查清单、9 条风险；**新增 §4.11 跨端视觉与组件哲学**（iOS HIG / Material 3 对齐：长按改 Menu 语义、一级 ≤5 项、破坏性置顶、撤销优先、图标内联 SVG、浮层统一 `MobileSheet` 基座） | 活资产 —— 产品级交互契约 + 实现依据 |
+| [`superpowers/specs/2026-10-25-mobile-node-lifecycle-review-draft.md`](./superpowers/specs/2026-10-25-mobile-node-lifecycle-review-draft.md) | **移动端节点生命周期原始评审稿（v1.4）** —— 上述规范化继任者的原稿，**原样归档**（含 §10–§18 全部评审补充章节与 §9 A–M 十三项拍板项的原始论证）。⚠️ 已校正 4 处跨章节逻辑冲突后规范化；实施依据一律以规范化继任者 + ADR-0013 为准 | 归档 —— 决策追溯依据 |
+| [`superpowers/plans/2026-10-25-mobile-node-lifecycle.md`](./superpowers/plans/2026-10-25-mobile-node-lifecycle.md) | **移动端节点生命周期实施计划** —— 9 个 task（tap 门控 / 查看器退出 / 删除撤销优先 / **长按菜单化+操作集** / 多选选择模式 / **轻量编辑器替换 PC dock** / **标注层+锚回传** / 行为级守卫 / **跨端组件哲学落地**），每 task 含「写失败测试→跑失败→最小实现→跑通过→commit」五步与真实测试代码；含 21 条全局约束、6 条 Review Focus、25 项文件级改动清单映射 + 5 个 PR 分组建议 | 活资产 —— 实现依据 |
 
 > 该规格的两条实证前提已在文首标注：① 长任务丢库**缺一条直接日志**（生产日志已轮转），
 > 须由计划 Task 1 复现；② 插话不入库已有生产实证。

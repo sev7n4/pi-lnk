@@ -1,13 +1,13 @@
 {
- "total": 397,
+ "total": 398,
  "by_status": {
   "living": 137,
   "frozen": 254,
-  "superseded": 6
+  "superseded": 7
  },
  "by_topic": {
   "other": 73,
-  "canvas-tool": 64,
+  "canvas-tool": 65,
   "generation-pipeline": 40,
   "canvas-product": 34,
   "agent-ux": 31,
@@ -27,7 +27,7 @@
   "2026-07": 41,
   "2026-08": 79,
   "2026-09": 155,
-  "2026-10": 122
+  "2026-10": 123
  },
  "items": [
   {
@@ -1765,6 +1765,15 @@
    "kind": "spec",
    "status": "living",
    "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-25-mobile-node-lifecycle-review-draft.md",
+   "name": "2026-10-25-mobile-node-lifecycle-review-draft.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "superseded",
+   "reason": "文内标注已废弃/被取代",
    "topic": "canvas-tool"
   },
   {
