@@ -89,7 +89,7 @@ describe('useProjectManager', () => {
     m.openMenuId.value = 'a'
     // 触发已注册的 handler：目标在 menu-anchor 外 → 关菜单
     const handler = addSpy.mock.calls.find((c) => c[0] === 'pointerdown')![1] as (e: PointerEvent) => void
-    handler({ target: document.body } as PointerEvent)
+    handler({ target: document.body } as unknown as PointerEvent)
     expect(m.openMenuId.value).toBeNull()
     // 卸载：组合式注册在组件上下文；此处以调用移除路径验证（onScopeDispose 语义由 Vue 保证）
     // 实现 must 用 onScopeDispose/onBeforeUnmount —— 由实现评审核对，不在此硬断言 Vue 内部

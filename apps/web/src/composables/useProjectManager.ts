@@ -3,7 +3,6 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { sessionsApi } from '@/services/sessions-api'
 import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
-import type { ProjectCard } from '@/composables/useProjectWorkspace'
 import { displayCanvasTitle } from '@/utils/displayCanvasTitle'
 
 /**
