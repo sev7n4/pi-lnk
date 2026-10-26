@@ -305,6 +305,28 @@ flowchart LR
 
 - 提示词编辑 = 「改词」进**轻量编辑器**（模式①：提示词可改 + 意见 + 参数只读 → 发给 agent 修改，§4.2 J1）；查看器内**不内联编辑**——编辑是输入态、查看是阅读态，不混一屏。
 
+#### 4.8.1 共享阅读面（2026-10-26 拍板：chip 内容查看 / 审核层 / 文本阅读器三形态收敛）
+
+**背景**：提议生成卡片落画布后，用户从图片 / 音频 / 视频节点（及后续对话页 chip）打开的「内容查看」本质是**读文本**（提示词全文 + 参数摘要）——与文本阅读器交互范式同构。三方收敛裁决：
+
+1. **抽共享阅读面**（新组件，落 `components/mobile/MobileReadingSurface.vue`，后续 PR）：承载 全屏可滚动文本面 + X + 下滑可退（P3）+ 朗读/停 + 标题行。文本阅读器（`viewer-reader`）与 pending 审核内容层（`viewer-review`）**都迁入**，`MobileNodeViewer` 只留媒体分支（灯箱 / 播放器 / 标注）。
+2. **数据层必须分开**：共享的是**交互范式与壳**，不是取数。文本阅读器取 `data.content`；审核层 / chip 面取 `data.prompt` + 参数字段（`imageModel` / `imageAspect` / `imageResolution`，磁贴 `proposeParams` 同源）。⛔ 共享面内部不得再摸 `data.content`（否则复刻硬编码）。
+3. **⛔ 禁做成 `MobileNodeViewer` 的一个 type**：D2 契约变更**刚删掉 `audio` type**（死分支教训：契约留死分支 = 未来按契约调用必得空白屏）；再加 `type='audio' | 'chip' | 'prompt'` 是重蹈覆辙。且 type 分支会连带卷入圈选/标注门控（annotate 按 type 排除），阅读面无底图天然无标注，塞回 viewer 处处是补丁。
+
+**代码证据（开发免重新推导；行号以 master `4c86f9b6` 基线为准）**：
+
+| # | 证据 | 位置 | 说明 |
+|---|---|---|---|
+| ① | TTS 取词硬编码 `data.content` | `MobileNodeViewer.vue:64` | `const text = String((props.data …)?.content ?? '')` —— 共享面若复用朗读，必须由调用方喂文本，不能沿用该取数 |
+| ② | 阅读器渲染硬编码 `data?.content` | `MobileNodeViewer.vue:365` | `<div v-else-if="type === 'text'" class="viewer-reader">{{ data?.content }}</div>` —— type 分支 + content 硬编码即「禁新 type」的病灶本体 |
+| ③ | 圈选入口按 type 排除 | `MobileNodeViewer.test.ts:87-91` | `it('文本节点不提供圈选入口…')` 断言 text 无 annotate —— 证明 type 与标注能力是耦合的，新形态进 type 必被卷入 |
+| ④ | `audio` type 已删（死分支教训） | `MobileNodeViewer.vue:15-17`（D2 注释） | 契约收窄为 `'image' \| 'video' \| 'text'` —— 「再补一个 type」直接违反 D2 拍板 |
+
+**两条边界（防过度收敛）**：
+
+- ⚠️ 「100% 复用」**只限「读文本内容」形态**。有产物的媒体查看（图片灯箱缩放 / 视频逐帧播放 / 标注圈选）仍归 **I1 类型原生查看器**（§4.2 拍板），共享阅读面不得吞并。
+- ⚠️ 音频「无查看器」（§6.2 例外）指**媒体播放**不进全屏查看器；音频的 **prompt 文本审读**走共享阅读面**不违反**该例外（D2 删的是媒体分支，阅读面不是媒体查看器）。
+
 ### 4.9 决定八：多选选择模式（H1）
 
 **现状痛点**：进入多选后，要继续选第二个节点仍需「回画布 → 找节点 → 长按 → 弹菜单 → 点多选」，每加一个节点都走一遍长按菜单。
@@ -893,6 +915,7 @@ flowchart TD
 | 34 | `apps/web/src/pages/CanvasPage.mobileDeleteUndo.test.ts` | **改（V-7 补齐）** | **V-7** | 新增**端到端**行为级断言：删除 → 点「撤销」⇒ **节点真的恢复**（现有仅 composable 层 `undo restores previous snapshot`） |
 | 35 | `apps/web/src/components/mobile/mobileVisualLanguage.guards.test.ts` | **新增守卫（§15.10 / 令牌纪律）** | V-9 / A5 | 新增移动端表面样式**零新增 hex / rgba / 魔法值**（一律消费 design-tokens L2/L3，防硬编码回潮）；图标按钮含 `aria-label`；撤销 toast 含 live region |
 | 36 | `apps/web/src/components/mobile/MobileNodeViewer.vue` + `MobileCanvasShell.vue` | **改（§4.8 审核内容层）** | **§4.8** | pending 且无产物 ⇒ 查看器主体 = **审核内容层**（提示词全文 + 参数只读摘要；⛔ 禁空媒体区/满屏黑）；无产物不给圈选入口；pending 底部主栏「改词」门控放宽为**有产物或有提示词**（propose 确认前无产物 ⇒ 原门控使待确认图/视频节点无改词入口）。⭐ 本行系 2026-10-26 用户走查实证后**补列** |
+| 37 | `apps/web/src/components/mobile/MobileReadingSurface.vue`（**新增**）+ `MobileNodeViewer.vue` 迁移 | **新增/重构（§4.8.1，后续 PR）** | **§4.8.1** | **共享阅读面**：文本阅读器（`viewer-reader`）与 pending 审核内容层（`viewer-review`）迁入；承载滚动 + X + 下滑可退（P3）+ 朗读；数据层分开（调用方喂 `content` 或 `prompt+params`，面内禁摸 `data.content`）；⛔ `MobileNodeViewer` **禁新增 type**（D2 死分支教训 + 证据表 ①–④）。chip 内容查看落地时一并实施 |
 
 > ⭐ **2026-10-26 对账补列说明**：上列 #28–#34 系规格 ↔ 实现逐条对账后**补列**的条目 —— 它们在 §12（M2 路线图）、§10.3（走查 W-5 / W-10 / W-16）里都被列为本轮必做，但**原 §9 文件级清单漏列**、实施计划的 9 个 Task 也无对应项 ⇒ **PR #600 未实现**。
 > **根因教训**：§9 是「文件级改动清单」，是实施排期的**唯一输入**；§9 漏列 ⇒ 计划无 Task ⇒ 实现漏做 ⇒ **三处一致地漏**才没被发现。
