@@ -83,6 +83,7 @@ import {
 import { isSystemEventText } from '@/components/agent/systemEventRender'
 import {
   buildIdempotencyKey,
+  clearForkedThreadId,
   createAgentThreadId,
   persistActiveThreadId,
   persistForkedThreadId,
@@ -1638,6 +1639,10 @@ async function selectThread(threadId: string) {
   clearComposer()
   agentThreadId.value = threadId
   persistActiveThreadId(props.sessionId, threadId)
+  // 守卫保证此处 threadId === sessionId（共享线程）：用户显式离开重跑分支，
+  // 必须同步清 fork key，否则下次刷新 resolveBootstrapThreadId 会把本端弹回分支
+  // ——「返回主对话」活不过一次刷新（Phase 1 评审发现 F1）。
+  clearForkedThreadId(props.sessionId)
   historyOpen.value = false
   taskProgress.value = emptyTaskProgress()
   runCancelled.value = false
