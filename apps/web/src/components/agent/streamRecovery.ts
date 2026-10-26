@@ -92,14 +92,30 @@ export function randomThreadSuffix(): string {
   return randomId()
 }
 
-/** Build a session-scoped agent thread id (never reuse `:main`). */
+/**
+ * 多端共享对话（2026-10-26）：threadId 由 sessionId **确定派生**，不再随机。
+ *
+ * 同一画布在任意设备登录都收敛到同一条 threadId ⇒ 跨设备实时同步（observer SSE /
+ * 历史接口 / 共享订阅频道均以 threadId 为键）与续聊自然成立。
+ * 推翻 2026-08-07「重进生成新 threadId」的隔离语义（详见
+ * docs/superpowers/specs/2026-10-21-multi-device-consistency-design.md §4.1 / 证据报告）。
+ *
+ * ⚠️ 不要再加随机后缀：那是「每端各玩各的」的根因。需要多条对话时另行设计，
+ * 而非回到随机 threadId。
+ */
 export function createAgentThreadId(sessionId: string): string {
-  return `${sessionId}:${randomThreadSuffix()}`
+  return sessionId
 }
 
 /**
- * Pick thread to restore after canvas refresh.
- * Avoids blank UI when localStorage points at an empty thread (e.g. after「新建对话」).
+ * 多端共享对话（2026-10-26）：bootstrap 默认收敛到确定式共享 threadId（= sessionId），
+ * 跨设备实时 + 续聊成立。
+ *
+ * ⚠️ 但与「③ 重跑」共存：re-run 会把活跃线程切到 pi fork 出的分支线程（newKey）并持久化。
+ * 若一律回落共享线程，重跑结果在刷新后丢失（Phase 1 曾引入此回归）。
+ * 故优先恢复专用 fork key 记录的分支线程（仅当其确有消息），否则回落共享线程。
+ * 用专用 key 而非复用 normal key / 解析 newKey 格式：彻底绕开格式猜测，
+ * 也避免旧隔离时代 sessionId:random 随机线程（陈旧缓存）回潮成「每端各玩各的」。
  */
 export async function resolveBootstrapThreadId(
   sessionId: string,
@@ -109,25 +125,42 @@ export async function resolveBootstrapThreadId(
     messageCountFor: (threadId: string) => Promise<number>
   },
 ): Promise<string> {
-  const { cachedThreadId, threads, messageCountFor } = opts
-
-  if (cachedThreadId) {
-    const cachedCount = await messageCountFor(cachedThreadId)
-    if (cachedCount > 0) return cachedThreadId
+  const { messageCountFor } = opts
+  const shared = createAgentThreadId(sessionId)
+  const forked = getForkedThreadId(sessionId)
+  if (forked && forked !== shared) {
+    const count = await messageCountFor(forked)
+    if (count > 0) return forked
+    clearForkedThreadId(sessionId) // 分支线程已空（异常/竞态）→ 清陈旧 fork key，回落共享
   }
-
-  for (const th of threads) {
-    const count = await messageCountFor(th.id)
-    if (count > 0) return th.id
-  }
-
-  if (cachedThreadId) return cachedThreadId
-  if (threads[0]?.id) return threads[0].id
-  return createAgentThreadId(sessionId)
+  return shared
 }
 
 export function persistActiveThreadId(sessionId: string, threadId: string) {
   localStorage.setItem(lastThreadStorageKey(sessionId), threadId)
+}
+
+/**
+ * ③ 重跑分支线程专用持久化 key。
+ *
+ * 多端共享对话下，普通活跃线程恒为确定式共享线程 `sessionId`（见 createAgentThreadId）。
+ * 但「③ 重跑」会 fork 出一条 pi 分支线程（newKey）作为新活跃线程，必须单独持久化，
+ * 否则刷新后 bootstrap 回落共享线程会把重跑结果丢掉（Phase 1 曾引入此回归）。
+ *
+ * 不写入普通 `lastThreadStorageKey`（那是共享线程的键，写它会与 legacy 随机线程混淆），
+ * 也不解析 newKey 字符串格式（pi 的 key 格式不稳定），专用一把 key 记录「当前激活的分支线程」。
+ */
+export function lastForkedThreadStorageKey(sessionId: string) {
+  return `lnkpi:agentThreadFork:${sessionId}`
+}
+export function getForkedThreadId(sessionId: string): string | null {
+  return localStorage.getItem(lastForkedThreadStorageKey(sessionId))
+}
+export function persistForkedThreadId(sessionId: string, threadId: string) {
+  localStorage.setItem(lastForkedThreadStorageKey(sessionId), threadId)
+}
+export function clearForkedThreadId(sessionId: string) {
+  localStorage.removeItem(lastForkedThreadStorageKey(sessionId))
 }
 
 /** Generate an idempotency key for POST /api/agent/chat/conversation. */

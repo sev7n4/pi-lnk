@@ -6,6 +6,8 @@ import {
   randomThreadSuffix,
   resolveBootstrapThreadId,
   persistActiveThreadId,
+  persistForkedThreadId,
+  lastForkedThreadStorageKey,
   shouldPollRuntimeHealth,
   checkRuntimeHealthViaNest,
   isStreamStale,
@@ -35,33 +37,85 @@ vi.mock('@/services/api-base', () => ({
  *   · falls back to first non-empty thread when cached…  ⇒ INV-3 兜底（缓存空了就找有消息的）
  *   · creates new thread when nothing has messages       ⇒ 唯一允许新建 thread 的场景（真空项目）
  */
-describe('resolveBootstrapThreadId', () => {
-  it('prefers cached thread when it has messages', async () => {
+describe('resolveBootstrapThreadId（多端共享对话）', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('始终收敛到确定式共享 threadId（= sessionId），忽略缓存与历史列表', async () => {
+    const store: Record<string, string> = {}
+    vi.stubGlobal('localStorage', {
+      setItem: (k: string, v: string) => {
+        store[k] = v
+      },
+      getItem: (k: string) => store[k] ?? null,
+    })
     const id = await resolveBootstrapThreadId('sess1', {
       cachedThreadId: 'sess1:cached',
       threads: [{ id: 'sess1:other' }],
-      messageCountFor: async (tid) => (tid === 'sess1:cached' ? 3 : 0),
+      messageCountFor: async () => 0,
     })
-    expect(id).toBe('sess1:cached')
+    expect(id).toBe('sess1')
+  })
+})
+
+describe('resolveBootstrapThreadId（③ 重跑分支线程恢复）', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
-  it('falls back to first non-empty thread when cached is empty', async () => {
+  it('无 fork key → 收敛到共享线程，即便 legacy 随机线程有消息也不恢复', async () => {
+    const store: Record<string, string> = {}
+    vi.stubGlobal('localStorage', {
+      setItem: (k: string, v: string) => {
+        store[k] = v
+      },
+      getItem: (k: string) => store[k] ?? null,
+    })
     const id = await resolveBootstrapThreadId('sess1', {
-      cachedThreadId: 'sess1:empty',
-      threads: [{ id: 'sess1:empty' }, { id: 'sess1:busy' }],
-      messageCountFor: async (tid) => (tid === 'sess1:busy' ? 5 : 0),
+      cachedThreadId: 'sess1:legacy-random',
+      threads: [{ id: 'sess1:legacy-random' }],
+      messageCountFor: async () => 5,
     })
-    expect(id).toBe('sess1:busy')
+    expect(id).toBe('sess1')
   })
 
-  it('creates new thread when nothing has messages', async () => {
-    vi.stubGlobal('crypto', { randomUUID: () => 'new-thread' })
+  it('有 fork key 且分支线程有消息 → 恢复分支线程', async () => {
+    const store: Record<string, string> = {}
+    vi.stubGlobal('localStorage', {
+      setItem: (k: string, v: string) => {
+        store[k] = v
+      },
+      getItem: (k: string) => store[k] ?? null,
+    })
+    persistForkedThreadId('sess1', 'pi-fork-xyz')
+    const id = await resolveBootstrapThreadId('sess1', {
+      cachedThreadId: null,
+      threads: [],
+      messageCountFor: async (tid: string) => (tid === 'pi-fork-xyz' ? 3 : 0),
+    })
+    expect(id).toBe('pi-fork-xyz')
+  })
+
+  it('有 fork key 但分支线程已空 → 清 fork key 并回落共享线程', async () => {
+    const store: Record<string, string> = {}
+    vi.stubGlobal('localStorage', {
+      setItem: (k: string, v: string) => {
+        store[k] = v
+      },
+      getItem: (k: string) => store[k] ?? null,
+      removeItem: (k: string) => {
+        delete store[k]
+      },
+    })
+    persistForkedThreadId('sess1', 'pi-fork-empty')
     const id = await resolveBootstrapThreadId('sess1', {
       cachedThreadId: null,
       threads: [],
       messageCountFor: async () => 0,
     })
-    expect(id).toBe('sess1:new-thread')
+    expect(id).toBe('sess1')
+    expect(store[lastForkedThreadStorageKey('sess1')]).toBeUndefined()
   })
 })
 
@@ -96,14 +150,12 @@ describe('randomThreadSuffix', () => {
   })
 })
 
-describe('createAgentThreadId', () => {
-  afterEach(() => {
-    vi.restoreAllMocks()
+describe('createAgentThreadId（多端共享对话）', () => {
+  it('等于 sessionId（确定式，跨设备收敛到同一条对话）', () => {
+    expect(createAgentThreadId('sess1')).toBe('sess1')
   })
 
   it('never uses :main suffix', () => {
-    vi.stubGlobal('crypto', { randomUUID: () => 'abc-def' })
-    expect(createAgentThreadId('sess1')).toBe('sess1:abc-def')
     expect(createAgentThreadId('sess1')).not.toContain(':main')
   })
 })

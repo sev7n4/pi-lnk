@@ -85,6 +85,7 @@ import {
   buildIdempotencyKey,
   createAgentThreadId,
   persistActiveThreadId,
+  persistForkedThreadId,
   resolveBootstrapThreadId,
   checkRuntimeHealthViaNest,
   fetchThreadStateSafe,
@@ -1623,6 +1624,13 @@ async function toggleHistoryOpen() {
 }
 
 async function selectThread(threadId: string) {
+  // 多端共享对话（2026-10-26）：只允许切到确定式共享 threadId（= sessionId）。
+  // 历史面板可能列出旧的随机 thread，切到它们会让本端与该画布其它设备发散，
+  // 故直接忽略（关闭面板、不切换）。
+  if (threadId !== props.sessionId) {
+    historyOpen.value = false
+    return
+  }
   if (threadId === agentThreadId.value) {
     historyOpen.value = false
     return
@@ -3389,6 +3397,8 @@ function handleEvent(event: { type: string; data: unknown }) {
       if (nextThreadId && nextThreadId !== agentThreadId.value) {
         agentThreadId.value = nextThreadId
         persistActiveThreadId(props.sessionId, nextThreadId)
+        // ③ 重跑分支线程写入专用 fork key：bootstrap 刷新后据此恢复，否则回落共享线程会丢重跑结果
+        persistForkedThreadId(props.sessionId, nextThreadId)
       }
       break
     }
