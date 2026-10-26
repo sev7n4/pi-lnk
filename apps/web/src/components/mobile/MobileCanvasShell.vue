@@ -178,18 +178,31 @@ const props = defineProps<{
 
 /**
  * 查看器底部主栏动作（§4.11.6 可达性：高频操作放下方拇指区）。
- * ⭐ 只有**有产物**的节点才给「改词」（空节点走长按才进编辑器；§5.1 门控）。
+ * ⭐ pending 节点：决策层（拒绝 / 确认）+ 操作层（改词，有产物才给）——
+ *   与壳层状态栏同源同语义（§4.8：确认/取消同时出现在状态栏与查看器底部）。
+ * confirmed / 其它有产物节点：仅「改词」。
  */
 const viewerBottomActions = computed(() => {
   const node = props.viewerNode
   if (!node) return []
   const data = (node.data ?? {}) as Record<string, unknown>
+  const status = String(data.status ?? '')
+  const isPending = status === 'pending_confirm' || status === 'pending'
   const hasContent =
     node.type === 'text'
       ? Boolean(String(data.content ?? '').trim())
       : Boolean(String(data.url ?? '').trim())
-  if (!hasContent) return []
-  return [{ key: 'edit', label: '改词', variant: 'primary' as const }]
+  const actions: Array<{ key: string; label: string; variant?: 'primary' | 'danger' }> = []
+  if (isPending) {
+    actions.push({ key: 'pending-cancel', label: '拒绝' })
+    if (hasContent) actions.push({ key: 'edit', label: '改词' })
+    actions.push({ key: 'pending-confirm', label: '确认', variant: 'primary' })
+    return actions
+  }
+  if (hasContent) {
+    actions.push({ key: 'edit', label: '改词', variant: 'primary' })
+  }
+  return actions
 })
 
 /** 移动端编辑 sheet 上下文：节点 + 上游/引用/提及（与桌面 DockStudioToolbar 同源） */

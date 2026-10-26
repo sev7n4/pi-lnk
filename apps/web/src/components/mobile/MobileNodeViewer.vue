@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { sameOriginApiMediaUrl } from '@/services/media-url'
 import { composeAnnotatedImage, type AnnotateMark } from './annotate/composeAnnotatedImage'
+import { useTextToSpeech } from '@/composables/useTextToSpeech'
 
 /**
  * 全屏查看器（D2 · 2026-10-25 规格 §6.2 / §4.1 P3）
@@ -44,6 +45,57 @@ const emit = defineEmits<{
   /** 底部主栏动作被点击（key 透传） */
   (e: 'bottom-action', key: string): void
 }>()
+
+/** 文本阅读器朗读（规格 §6.2「可朗读、可停」）：朗读状态本地维护，退出即停 */
+const tts = useTextToSpeech()
+const ttsSpeaking = ref(false)
+
+/** 朗读自然结束复位：SpeechSynthesis 在 utterance 结束时派发 'end' 事件
+ * （onend 在实例上、不在 SpeechSynthesis 上）。用具名 handler 以便重复朗读时
+ * 不累积监听器、卸载时移除。 */
+let ttsEndHandler: (() => void) | null = null
+
+function toggleReaderSpeak() {
+  if (ttsSpeaking.value) {
+    tts.stop()
+    ttsSpeaking.value = false
+    return
+  }
+  const text = String((props.data as Record<string, unknown> | undefined)?.content ?? '')
+  if (!text.trim()) return
+  const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined
+  if (ttsEndHandler && synth) synth.removeEventListener('end', ttsEndHandler)
+  ttsEndHandler = () => {
+    ttsSpeaking.value = false
+  }
+  if (synth) synth.addEventListener('end', ttsEndHandler)
+  ttsSpeaking.value = true
+  tts.speak(text)
+}
+
+onBeforeUnmount(() => {
+  if (ttsEndHandler && typeof window !== 'undefined' && window.speechSynthesis) {
+    window.speechSynthesis.removeEventListener('end', ttsEndHandler)
+  }
+})
+
+/**
+ * 查看器底部主栏动作：外部注入的 bottomActions + 文本节点的「朗读 / 停止」。
+ * ⭐ TTS 状态在查看器内局部维护（按钮态切换 + 退出即停），不走页面层 handler。
+ * pending 节点决策层优先，故朗读按钮让位（决策层见壳层 viewerBottomActions）。
+ */
+const resolvedBottomActions = computed(() => {
+  const base = props.bottomActions ?? []
+  const isText = props.type === 'text'
+  const isPending = ['pending_confirm', 'pending'].includes(
+    String((props.data as Record<string, unknown> | undefined)?.status ?? ''),
+  )
+  const hasText = Boolean(String((props.data as Record<string, unknown> | undefined)?.content ?? '').trim())
+  if (isText && hasText && !isPending) {
+    return [...base, { key: 'tts', label: ttsSpeaking.value ? '停止' : '朗读' }]
+  }
+  return base
+})
 
 /* ── 标注态（L1：只有一支笔 —— 手指自由圈选）──────────────────────── */
 const annotating = ref(false)
@@ -200,6 +252,8 @@ const SWIPE_CLOSE_THRESHOLD = 100
 /** 统一退出入口：先停播放，再 emit close */
 function requestClose() {
   videoRef.value?.pause()
+  tts.stop()
+  ttsSpeaking.value = false
   emit('close')
 }
 
@@ -314,16 +368,16 @@ defineExpose({ videoRef })
       底部主栏（§4.11.6 可达性）：高频动作放**下方拇指区**，顶部只留低频退出类。
       ⭐ 「改词」经此下沉（§4.6 / §4.8 修订：⛔ 不再放右上角）。
     -->
-    <div v-if="props.bottomActions.length" class="viewer-bottom-actions">
+    <div v-if="resolvedBottomActions.length" class="viewer-bottom-actions">
       <button
-        v-for="a in props.bottomActions"
+        v-for="a in resolvedBottomActions"
         :key="a.key"
         type="button"
         class="viewer-bottom-action"
         :class="{ 'is-primary': a.variant === 'primary' }"
         :data-action="a.key"
         :data-testid="`mobile-viewer-bottom-${a.key}`"
-        @click="emit('bottom-action', a.key)"
+        @click="a.key === 'tts' ? toggleReaderSpeak() : emit('bottom-action', a.key)"
       >
         {{ a.label }}
       </button>

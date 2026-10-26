@@ -206,3 +206,43 @@ describe('MobileCanvasShell 全屏查看器集成（R1-T4/T6）', () => {
     w.unmount()
   })
 })
+
+describe('MobileCanvasShell 查看器底部主栏（pending 决策层，§4.8）', () => {
+  it('pending_confirm + 有产物 → 拒绝 / 改词 / 确认 三按钮（决策层可见，修复「看得见确认不了」）', () => {
+    const w = mount(MobileCanvasShell, {
+      props: baseProps({
+        viewerNode: { id: 'n1', type: 'text', data: { content: '长文内容', status: 'pending_confirm' } },
+      }),
+      attachTo: document.body,
+    })
+    const labels = w.findAll('.viewer-bottom-action').map((b) => b.text())
+    expect(labels).toEqual(expect.arrayContaining(['拒绝', '改词', '确认']))
+    w.unmount()
+  })
+
+  it('pending_confirm + 无产物 → 拒绝 / 确认（不给改词）', () => {
+    const w = mount(MobileCanvasShell, {
+      props: baseProps({
+        viewerNode: { id: 'n1', type: 'text', data: { status: 'pending_confirm' } },
+      }),
+      attachTo: document.body,
+    })
+    const labels = w.findAll('.viewer-bottom-action').map((b) => b.text())
+    expect(labels).toEqual(['拒绝', '确认'])
+    w.unmount()
+  })
+
+  it('confirmed + 有产物 → 仅改词，决策层不泄漏到非 pending 节点', () => {
+    const w = mount(MobileCanvasShell, {
+      props: baseProps({
+        viewerNode: { id: 'n1', type: 'text', data: { content: '正文', status: 'confirmed' } },
+      }),
+      attachTo: document.body,
+    })
+    const labels = w.findAll('.viewer-bottom-action').map((b) => b.text())
+    expect(labels).not.toContain('拒绝')
+    expect(labels).not.toContain('确认')
+    expect(labels).toContain('改词')
+    w.unmount()
+  })
+})

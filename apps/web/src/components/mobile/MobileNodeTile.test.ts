@@ -10,11 +10,12 @@ describe('MobileNodeTile', () => {
     expect(w.find('.neo-node-preview-btn').exists()).toBe(false)
   })
 
-  it('video: preload=none + 海报', () => {
+  it('video: preload=metadata + 播放态提示（避免白框）', () => {
     const w = mount(MobileNodeTile, { props: { type: 'video', data: { url: 'v.mp4', poster: 'p.png' } } })
     const v = w.find('video')
     expect(v.exists()).toBe(true)
-    expect(v.attributes('preload')).toBe('none')
+    expect(v.attributes('preload')).toBe('metadata')
+    expect(w.find('.mobile-node-video-play').exists()).toBe(true)
   })
 
   it('audio: 渲染波形占位 + 播放钮，无原生 controls', () => {

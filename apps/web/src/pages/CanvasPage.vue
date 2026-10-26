@@ -2866,15 +2866,29 @@ function openMobileNodeMenuFromViewer() {
 }
 
 /**
- * 查看器底部主栏动作（§4.11.6：高频操作放下方拇指区）。
- * ⭐ 当前只承载「改词」⇒ 打开轻量编辑器（模式①：改词 + 意见 → 发给 agent）。
+ * 查看器底部主栏动作（§4.11.6 高频下沉）。
+ * - 'edit'：打开轻量编辑器（模式①：改词 + 意见 → 发给 agent）
+ * - 'pending-confirm' / 'pending-cancel'：pending 节点在查看器内的决策层
+ *   （§4.8：与壳层状态栏同源，确认 / 拒绝后关闭查看器回画布）
  */
 function handleMobileViewerBottomAction(key: string) {
-  if (key !== 'edit') return
   const node = mobileViewerNode.value
   if (!node?.id) return
-  closeMobileViewer()
-  openMobileNodeEditor(node.id)
+  if (key === 'edit') {
+    closeMobileViewer()
+    openMobileNodeEditor(node.id)
+    return
+  }
+  if (key === 'pending-confirm') {
+    closeMobileViewer()
+    void handleAgentGenerateNode(node.id)
+    return
+  }
+  if (key === 'pending-cancel') {
+    closeMobileViewer()
+    void handleProposeConfirmCancel(node.id)
+    return
+  }
 }
 
 function closeMobileViewer() {
@@ -6114,7 +6128,7 @@ onUnmounted(() => {
                确认 = handleAgentGenerateNode（confirmProposeWait + 生成，与 dock 同路径）；
                取消 = AgentSideRail 节点级 decline（与侧栏同源）；编辑 = 显式意图开 dock。 -->
           <ProposeConfirmOverlay
-            v-if="proposeConfirmNode"
+            v-if="proposeConfirmNode && !isMobileLayout"
             :node="proposeConfirmNode"
             @confirm="handleAgentGenerateNode"
             @cancel="handleProposeConfirmCancel"
