@@ -117,7 +117,8 @@ LITERALS=(
   "mobile-viewer-annotate"         # Task 7 标注入口
   "mobile-undo-toast"              # Task 3 删除撤销提示
   "mobile-node-hint"               # Task 1 空节点轻提示
-  "mobile-viewer-bottom-edit"      # Task 9 底部主栏「改词」
+  "改词"                            # Task 9 底部主栏按钮文案（testid 动态 ⇒ 用文案判）
+  "viewer-bottom-actions"          # Task 9 底部主栏（testid 是动态插值，判据用类名）
 )
 FOUND_LIT=0
 for lit in "${LITERALS[@]}"; do
@@ -189,6 +190,31 @@ for lit in "__lnk_definitely_not_exists_9f3a__" "zzz_never_deployed_marker_7c2e"
   HIT=$(grep -rl -- "$lit" "$TMP"/assets_js "$TMP"/assets_css 2>/dev/null | head -1)
   [[ -z "$HIT" ]] && ok "负向对照正确未命中: ${lit}" || bad "负向对照竟然命中 ⇒ 检索方法有误"
 done
+
+# ── 4.5 CSS 实际内容抽检（第四层取证：CSS 内容 hash 跨构建确定）────────
+echo ""
+echo "【4.5】CSS 实际内容抽检（判上线看 CSS，不看 JS hash）"
+# ⭐ AGENTS.md 铁律：**CSS 内容 hash 跨构建确定、JS hash 不确定** ⇒
+#   判「我的样式是否已上线」必须看 CSS 分包里的类名与令牌，不能只看入口 hash。
+# 抽检：主 CSS 分包里是否含本次新增的令牌引用（--lnk-radius-2xl / --lnk-duration-base）
+CSS_MAIN=$(ls "$TMP"/assets_css/index-*.css 2>/dev/null | head -1)
+if [[ -n "$CSS_MAIN" ]]; then
+  for tok in "--lnk-radius-2xl" "--lnk-duration-base" "--lnk-touch-target"; do
+    if grep -q -- "$tok" "$CSS_MAIN" 2>/dev/null; then
+      ok "主 CSS 含令牌: ${tok}"
+    else
+      info "主 CSS 未见令牌: ${tok}（可能拆到其他 CSS 分包）"
+    fi
+  done
+else
+  info "未取到主 CSS 分包（入口 CSS 未下载成功）"
+fi
+# reduce-motion 分支（Task 9 落地判据）
+if grep -rq "prefers-reduced-motion" "$TMP"/assets_css 2>/dev/null; then
+  ok "生产 CSS 含 prefers-reduced-motion 分支（Task 9 落地）"
+else
+  info "生产 CSS 未见 prefers-reduced-motion（可能未上线或未在该分包）"
+fi
 
 # ── 5. 回归探测（部署没打破既有能力）────────────────────────────
 echo ""
