@@ -44,6 +44,52 @@ describe('跨端视觉与组件哲学守卫（§4.11）', () => {
     expect(src).not.toMatch(/position:\s*fixed/)
   })
 
+  // ⭐ V-3 收紧（2026-10-26 对账）：原守卫**只点名** 2 个文件 ⇒
+  //   `MobileNodeEditorSheet.vue` 的裸 `position:fixed` 全屏浮层**逃过守卫**
+  //   （规格 V-3 原文要求「扫 `components/mobile/*.vue` **全目录**」）。
+  //   ⇒ 改为**扫全目录** + 白名单**逐个显式列出并写明豁免理由**
+  //     （⛔ 禁「只点名个别文件」—— 那正是让缺口逃过的原因）。
+  it('V-3 全目录扫描：**全屏遮罩型**浮层不得用裸 position:fixed（白名单须显式 + 写明理由）', () => {
+    // ⚠️ 判据**精确化**（2026-10-26 对账）：V-3 原文是「禁裸 `position:fixed`
+    //   **全屏浮层**」—— ⛔ 不是禁**所有** fixed：FAB / 状态栏 / tab bar / 动作条
+    //   用 fixed 是**正确**的（它们本就贴视口，不该跟着文档流）。
+    //   ⇒ 判据 = `position:fixed` **且** `inset:0`（或等价四边铺满）= 全屏遮罩。
+    //   ⭐ 修这条判据前，守卫**只点名 2 个文件** ⇒ 缺口全逃过；现在**扫全目录**。
+    //
+    // 白名单：文件名 → 豁免理由（新增豁免必须在此写清理由，否则守卫拒绝放行）
+    const WHITELIST: Record<string, string> = {
+      'MobileSheet.vue': '基座自身（scrim + 把手 + Teleport）—— 全屏遮罩的标准形态',
+      // ⚠️ 以下三个是**非选择型**的全屏形态，规格 §4.11.8「浮层统一基座」未含
+      //   这类豁免 ⇒ **待规格升版补明**（对账报告 §2.3 P0-2）：
+      'MobileNodeViewer.vue': '全屏**媒体查看器**（灯箱/逐帧/全屏阅读）—— 非选择型浮层，待规格补明',
+      'MobileNodeEditorSheet.vue': '全屏**表单**（长提示词需整屏输入面；MobileSheet 是 62vh 选择型）—— 待规格补明',
+      'ProfilePane.vue': '全屏**资料面板**（既有能力，非本轮范围）—— 待规格补明',
+      'DiscoverPane.vue': '全屏**发现面板**（既有能力，非本轮范围）—— 待规格补明',
+      'MobileCanvasShell.vue': '内含 `.mobile-account-pane` 全屏「我的」面板（**既有**能力，非本轮引入）—— 待规格补明',
+    }
+    const files = readdirSync(MOBILE_DIR).filter((f) => f.endsWith('.vue'))
+    const offenders: string[] = []
+    for (const f of files) {
+      if (f in WHITELIST) continue
+      const src = stripComments(read(f))
+      // 全屏遮罩 = fixed 且四边铺满（inset:0 或 top+bottom+left+right）
+      // ⚠️ 四边判定必须**排除 padding-top / margin-left 之类**：
+      //   `/top:\s*0/` 会误命中 `padding-top: 0` ⇒ 把底部 tab bar / 顶部 bar
+      //   当成全屏（第一版就踩了 ⇒ 收紧为「属性名前不可有 `-`」）。
+      const isFullScreenFixed =
+        /position:\s*fixed/.test(src) &&
+        (/inset:\s*0/.test(src) ||
+          [/(?<![-\w])top:\s*0;/, /(?<![-\w])bottom:\s*0;/, /(?<![-\w])left:\s*0;/, /(?<![-\w])right:\s*0;/]
+            .every((re) => re.test(src)))
+      if (isFullScreenFixed) offenders.push(f)
+    }
+    expect(offenders, `这些文件用了裸全屏 position:fixed（须走 MobileSheet 或加白名单+理由）`).toEqual([])
+    // 白名单本身也要有理由（防空名单放行）
+    for (const [f, reason] of Object.entries(WHITELIST)) {
+      expect(reason.trim().length, `白名单项 ${f} 必须写明豁免理由`).toBeGreaterThan(4)
+    }
+  })
+
   it('G-15b 标注浮层同样走 MobileSheet 基座', () => {
     const src = stripComments(read('MobileNodeAnnotateSheet.vue'))
     expect(src).toContain('MobileSheet')
@@ -65,6 +111,53 @@ describe('跨端视觉与组件哲学守卫（§4.11）', () => {
   it('G-18 命中区令牌被使用（44px 触控下限）', () => {
     const src = read('MobileSheet.vue')
     expect(src).toContain('--lnk-touch-target')
+  })
+
+  // ⭐ V-5 补齐（2026-10-26 对账）：V-5 原文要求「令牌守卫已覆盖
+  //   `--lnk-touch-target`；**新增：图标按钮 `min-width/min-height` 断言**」
+  //   —— 原实现只查了令牌**被使用**，**没有**断言图标按钮真的用它 ⇒ 缺口。
+  //   ⇒ 断言「图标按钮」类必须同时具备 min-width 与 min-height，且值为
+  //     var(--lnk-touch-target)（44px 触控下限，§4.11.6）。
+  it('V-5 图标按钮命中区：min-width + min-height 均 ≥ --lnk-touch-target', () => {
+    // 移动端的图标按钮（视觉 glyph 可小，但命中区必须 44px）
+    const ICON_BUTTON_CLASSES = [
+      'viewer-close',      // 查看器右上 X
+      'viewer-more',       // 查看器右上 ⋯
+      'viewer-annotate',   // 圈选入口
+      'mobile-account-close', // 「我的」面板关闭钮
+    ]
+    for (const cls of ICON_BUTTON_CLASSES) {
+      const src = stripComments(read('MobileNodeViewer.vue')) + stripComments(read('MobileCanvasShell.vue'))
+      const m = new RegExp(`\\.${cls}\\s*\\{[^}]*\\}`).exec(src)
+      expect(m, `找不到 .${cls} 的样式规则`).toBeTruthy()
+      const rule = m![0]
+      // ⭐ 判据是**实质**（命中区实际 ≥44px），不是字面（必须写 min-*）：
+      //   固定 `width: 44px` 与 `min-width: 44px` **同样**满足命中区下限
+      //   ⇒ 取「min-* 优先，否则 width/height」再判是否达到 44px。
+      const sizeOf = (rule: string, kind: 'width' | 'height'): number | null => {
+        const min = new RegExp(`min-${kind}:\\s*([^;]+)`).exec(rule)
+        if (min) {
+          const tok = min[1].trim()
+          if (tok.includes('--lnk-touch-target')) return 44
+          const n = parseFloat(tok)
+          return Number.isFinite(n) ? n : null
+        }
+        const fixed = new RegExp(`(?:^|[;\\s])${kind}:\\s*([^;]+)`).exec(rule)
+        if (fixed) {
+          const tok = fixed[1].trim()
+          if (tok.includes('--lnk-touch-target')) return 44
+          const n = parseFloat(tok)
+          return Number.isFinite(n) ? n : null
+        }
+        return null
+      }
+      const w = sizeOf(rule, 'width')
+      const h = sizeOf(rule, 'height')
+      expect(w, `.${cls} 未声明命中区宽度（需 min-width 或 width ≥ 44px）`).not.toBeNull()
+      expect(h, `.${cls} 未声明命中区高度（需 min-height 或 height ≥ 44px）`).not.toBeNull()
+      expect(w!, `.${cls} 命中区宽度 ${w}px < 44px`).toBeGreaterThanOrEqual(44)
+      expect(h!, `.${cls} 命中区高度 ${h}px < 44px`).toBeGreaterThanOrEqual(44)
+    }
   })
 
   it('⛔ 零 --neo-* 旧令牌（AGENTS.md 明令禁用；G-15）', () => {
