@@ -132,7 +132,6 @@ import {
   type UtterancePool,
 } from './composer/exampleUtterances'
 import { levelLabel, THINKING_LEVELS, type ThinkingLevel } from './composer/thinkingLevels'
-import RecentProjectsStrip from '@/components/project/RecentProjectsStrip.vue'
 import ProjectPanel from '@/components/project/ProjectPanel.vue'
 import { useProjectWorkspace, type ProjectCard } from '@/composables/useProjectWorkspace'
 import { useUtteranceRotation } from '@/composables/useUtteranceRotation'
@@ -3963,22 +3962,7 @@ const {
 } = useProjectWorkspace()
 
 /**
- * 点作品 = 打开该画布；带 focusNode 时**定位到那张产物图**
- * （跨项目定位通道由 CanvasPage 的 consumeFocusNodeQuery 消费，见
- * `CanvasPage.focusNodeQuery.test.ts` 的接线顺序契约）。
- *
- * ⚠️ 2026-10-24 性能修复：改用 router.push，不再 window.location.assign。
- *    assign = 整页刷新 ⇒ 丢弃当前 DOM，重下 index.html + 入口 JS(384KB gzip)
- *    + 入口 CSS(68KB gzip)，再叠加画布页自己的分包 ⇒ 从对话页进画布要多付一倍。
- */
-function handleRecentWorkOpen(payload: { id: string; focusNodeId: string | null }) {
-  const target = payload.focusNodeId
-    ? `/workflow/${encodeURIComponent(payload.id)}?focusNode=${encodeURIComponent(payload.focusNodeId)}`
-    : `/workflow/${encodeURIComponent(payload.id)}`
-  void router.push(target)
-}
-/**
- * 拉取项目列表（抽屉 + 作品带共用）。委托给 useProjectWorkspace 单一数据源
+ * 拉取项目列表（抽屉共用）。委托给 useProjectWorkspace 单一数据源
  * （INV-10：本函数不再直接调 canvasApi.list），失败由 workspace 的 `error` 兜底。
  * 防重入：已有请求在途时直接返回，避免抽屉打开与挂载两处并发重复拉取。
  * ⚠️ 抽屉的「预览 8 条 + 展开更多」逻辑已随 ProjectPanel 抽出（断点中立，PC 同用）。
@@ -4319,21 +4303,8 @@ defineExpose({
               class="agent-chat-scroll min-h-0 flex-1 overflow-y-auto py-3"
               @scroll.passive="onChatScroll"
             >
-            <!-- A3 · 回访作品带（断点中立：PC 左栏与移动端对话框顶部共用同一组件）：
-                 「画布记得你的模样」= 最近作品条。
-                 ⚠️ 位置在**空态块之前**（不是塞进空态块里）：空态判据是
-                 `!agent.messages.length`，而进项目即 loadHistory ⇒ 有历史时
-                 空态不渲染 ⇒ 塞进去等于「上线后没人看得见」。
-                 在滚动流内 ⇒ 随消息流上推，不常驻吸顶（设计规范 §3.2 简洁三原则）。
-                 IA v4（2026-10-23）：首卡【新建项目】复用抽屉 newProject（同一行为），
-                 「全部 N 个 ›」开抽屉项目区（全量列表 + 重命名/删除，零新页面）。
-                 数据来自 useProjectWorkspace 单一数据源（`:works="projects"`），与抽屉共用。 -->
-            <RecentProjectsStrip
-              :works="projects"
-              @open="handleRecentWorkOpen"
-              @create="newProject"
-              @open-all="openSessionDrawer"
-            />
+            <!-- A3 · 回访作品带已删（规格收敛 v2 P2-a，2026-10-26）：续作面唯一收敛到
+                 创作首页（/canvases 行卡）；「全部 N 个 ›」/「项目名 ▾」触发器随 P2-b/c 收口。 -->
             <div v-if="showProductVisualEmptyState" class="agent-empty agent-pv-empty px-3 py-10 text-center">
               <p class="text-sm">描述你的产品视觉需求</p>
               <p class="mt-1 text-[11px] opacity-70">上传产品图后说明用途；风格在方案卡片中选择</p>

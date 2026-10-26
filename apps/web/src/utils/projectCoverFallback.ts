@@ -6,7 +6,7 @@ import type { ProjectCard } from '@/composables/useProjectWorkspace'
  * ⚠️ 兜底走组件层 `CanvasCoverFallback`（画布墨点纸纹语言）——**不做**首字符块：
  *    home-profile-p3 守卫裁定「紫底首字母 = 头像位语言」禁用于画布封面。
  * ⚠️ `coverNodeId` 不是封面字段：它的职责是 open 时的 focusNode 深链
- *    （见 RecentProjectsStrip 的消费方式），此处不参与渲染判定。
+ *    （CanvasPage 经 route.query.focusNode 消费），此处不参与渲染判定。
  */
 export type ProjectCover =
   | { type: 'image'; value: string }
