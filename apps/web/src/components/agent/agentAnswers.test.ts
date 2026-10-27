@@ -70,4 +70,18 @@ describe('submitAnswers', () => {
     await submitAnswers(base, post)
     expect(JSON.parse(calls[0].init.body)).not.toHaveProperty('decision')
   })
+
+  it('decline 携带 note ⇒ body 含 note；无 note ⇒ 不发送该键（§17.8 批注流防抢跑）', async () => {
+    const { calls, post } = postOk()
+    await submitAnswers(
+      { ...base, answers: {}, decision: 'decline', note: '圈选的配色太冷了' },
+      post,
+    )
+    await submitAnswers({ ...base, answers: {}, decision: 'decline' }, post)
+
+    const first = JSON.parse(calls[0].init.body)
+    const second = JSON.parse(calls[1].init.body)
+    expect(first.note).toBe('圈选的配色太冷了')
+    expect(second).not.toHaveProperty('note')
+  })
 })
