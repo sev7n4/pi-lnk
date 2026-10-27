@@ -245,4 +245,36 @@ describe('CanvasesPage 空态三态（D12 / bug④）', () => {
     await flushPromises()
     expect(wrapper.findAll('.session-card-menu-anchor')).toHaveLength(3)
   })
+
+  it('封面兜底陷阱（v2.4 生产回归）：兜底层必须锚定在 relative 封面按钮内', async () => {
+    // ⛔ 生产事故实证（2026-10-27）：封面按钮缺 relative ⇒ CanvasCoverFallback 的
+    //    absolute inset-0 锚定到 App 壳 main.relative ⇒ 每个无封面项目都拉成
+    //    全屏墨点纸叠在整页上 ⇒ 创作首页黑屏（数据/控制台全部正常）。
+    const wrapper = await mountPage()
+    await flushPromises()
+    const fallback = wrapper.find('[data-testid="canvas-cover-fallback"]')
+    expect(fallback.exists()).toBe(true)
+    expect(fallback.element.parentElement?.classList.contains('relative')).toBe(true)
+  })
+
+  it('音/视频封面（.wav/.mp4）走墨点兜底，不渲染裂图 <img>（v2.4）', async () => {
+    // 清空单例（前一用例的 3 条会被 fresh 判定命中，本用例的 mock 不会被打）
+    await resetWorkspaceCache()
+    canvasList.mockResolvedValue({
+      data: {
+        data: [
+          { id: 'av1', title: '音频封面项目', coverUrl: 'http://x/u/1-0399355e.wav' },
+          { id: 'av2', title: '视频封面项目', coverUrl: 'https://x/v/task.mp4' },
+          { id: 'img1', title: '图片封面项目', coverUrl: 'https://x/img/a.png' },
+        ],
+      },
+    })
+    const wrapper = await mountPage()
+    await flushPromises()
+    const srcs = wrapper.findAll('img').map((i) => i.attributes('src')).join('\n')
+    expect(srcs).toContain('https://x/img/a.png')
+    expect(srcs).not.toContain('.wav')
+    expect(srcs).not.toContain('.mp4')
+    expect(wrapper.findAll('[data-testid="canvas-cover-fallback"]')).toHaveLength(2)
+  })
 })
