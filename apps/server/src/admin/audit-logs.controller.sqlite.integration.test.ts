@@ -37,16 +37,19 @@ describe('AuditLogsAdminController（Ops Console §5.1）', () => {
     await prisma.adminAuditLog.deleteMany()
   })
 
-  // 顺序播种（createdAt 由 DB 默认 now()，逐条插入天然递增）
+  // 顺序播种。⛔ 显式递增 createdAt：SQLite 时间戳为秒级精度，本机默认 now()
+  // 两次 INSERT 落进同一秒时 ORDER BY createdAt DESC 并列 ⇒ 前两行顺序翻转 ⇒
+  // 分页断言随机红（2026-10-27 CI 双连败实证，全体并行 PR 被卡）。
   async function seedRows() {
+    const t0 = Date.now()
     await prisma.adminAuditLog.create({
-      data: { actor: 'admin', action: 'model-catalog.create', resource: 'model-catalog:a', after: '{}' },
+      data: { actor: 'admin', action: 'model-catalog.create', resource: 'model-catalog:a', after: '{}', createdAt: new Date(t0) },
     })
     await prisma.adminAuditLog.create({
-      data: { actor: 'admin', action: 'upstream-routes.update', resource: 'upstream-routes:r1', before: '{}', after: '{}' },
+      data: { actor: 'admin', action: 'upstream-routes.update', resource: 'upstream-routes:r1', before: '{}', after: '{}', createdAt: new Date(t0 + 1000) },
     })
     await prisma.adminAuditLog.create({
-      data: { actor: 'admin', action: 'platform-channel.pricing.set', resource: 'platform-channel:m1', after: '{"inputPerM":1}' },
+      data: { actor: 'admin', action: 'platform-channel.pricing.set', resource: 'platform-channel:m1', after: '{"inputPerM":1}', createdAt: new Date(t0 + 2000) },
     })
   }
 
