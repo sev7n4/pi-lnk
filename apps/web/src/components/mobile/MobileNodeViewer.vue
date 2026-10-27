@@ -367,6 +367,7 @@ function cycleVideoRate() {
 
 /** 可滚动内容容器（文本阅读器等）—— 滚动守卫的真源（§6.2 退出表仲裁规则） */
 const readerRef = ref<HTMLElement | null>(null)
+const reviewRef = ref<HTMLElement | null>(null)
 
 /** 下滑手势：起始 Y 与当前 Y；起始时滚动容器的 scrollTop（守卫用） */
 const touchStartY = ref(0)
@@ -395,7 +396,18 @@ function onTouchStart(e: TouchEvent) {
   // ⭐ 滚动守卫（2026-10-27 走查③）：touchstart 时记下滚动位置，
   // 只有从顶部（scrollTop ≤ 0）开始的手势才允许累计成「下滑关闭」；
   // 阅读器滚动途中一律不触发（长文误关根因之二）。
-  touchStartScrollTop.value = readerRef.value?.scrollTop ?? 0
+  touchStartScrollTop.value = (readerRef.value ?? reviewRef.value)?.scrollTop ?? 0
+}
+
+/**
+ * 可滚动内容是否已到底（⭐ 回归⑤：上滑关闭的判据）。
+ * - 媒体查看器（图/视频/音频）无可滚动内容 ⇒ 恒 true（上滑任意位置可关）；
+ * - 文本阅读器 / 审核内容层 ⇒ 仅滚到底后才 true（滚动途中上滑 = 读下文，永不关）。
+ */
+function scrollContentAtBottom(): boolean {
+  const el = readerRef.value ?? reviewRef.value
+  if (!el) return true
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= 2
 }
 
 function onTouchMove(e: TouchEvent) {
@@ -423,6 +435,12 @@ function onTouchEnd() {
   // 正中判据 ⇒ 读几行就回到画布。上滑永不关闭（iOS Photos 惯例：下滑关）。
   const deltaY = touchCurrentY.value - touchStartY.value
   if (deltaY > SWIPE_CLOSE_THRESHOLD && touchStartScrollTop.value <= 0) {
+    requestClose()
+  } else if (-deltaY > SWIPE_CLOSE_THRESHOLD && scrollContentAtBottom()) {
+    // ⭐ 回归⑤（真机二轮）：**双向关闭**。下拉在真机被浏览器下拉刷新/边缘回弹
+    // 抢手势（passive 监听无法 preventDefault），体感「基本不可用」⇒ 恢复用户
+    // 习惯的上滑关闭，但加**到底守卫**：媒体查看器（无可滚动内容）上滑任意位置
+    // 可关；长文/审核层仅在滚到底后上滑才关——走查③「滚动途中永不关」不回退。
     requestClose()
   }
   touchStartY.value = 0
@@ -483,9 +501,15 @@ defineExpose({ videoRef })
     </button>
 
     <!--
+      ⭐ 2026-10-27 真机回归③④结构性修复：媒体区收进 `.viewer-body`（flex:1 +
+      position:relative），底部主栏改**文档流**（原 absolute bottom:0 把同位钉底的
+      圈选 / 倍速 / 音频控制条全部盖住——音频播/停/拖/圈选与视频倍速「不可用」的根因）。
+      圈选 / 倍速的 absolute 锚点随之变为 body 底部 ⇒ 恒在主栏上方，互不遮挡。
+    -->
+    <div class="viewer-body">
+    <!--
       标注入口（L1 · §4.3）：**显式进入**标注态（⛔ 不做隐式双击手势 ——
       单指拖动已是媒体滚动/缩放，隐式手势在移动端极易误触）。
-      ⭐ 音频不进查看器 ⇒ 音频的标注入口在磁贴上（本期不做，见 §12 后续包）。
       ⭐ pending 且无产物时**不提供**（§4.8 修订：propose 确认前无产物底图，
       圈选无从谈起 ⇒ 意见走文字通道 = 底部「改词」进轻量编辑器）。
     -->
@@ -513,7 +537,7 @@ defineExpose({ videoRef })
     />
 
     <!-- pending 无产物 ⇒ 审核内容层（提示词全文 + 参数只读），⛔ 禁空黑媒体区 -->
-    <div v-if="showReviewLayer" class="viewer-review" data-testid="mobile-viewer-review">
+    <div v-if="showReviewLayer" ref="reviewRef" class="viewer-review" data-testid="mobile-viewer-review">
       <p class="viewer-review-title" data-testid="mobile-viewer-review-title">待确认 · 提议内容</p>
       <p v-if="reviewPrompt" class="viewer-review-prompt" data-testid="mobile-viewer-review-prompt">{{ reviewPrompt }}</p>
       <p v-if="reviewParams" class="viewer-review-params" data-testid="mobile-viewer-review-params">{{ reviewParams }}</p>
@@ -526,22 +550,12 @@ defineExpose({ videoRef })
       controls
       class="viewer-media"
     />
-    <!-- 倍速循环（走查⑤ · W-32）：仅视频；进度条用原生 controls 不自制 -->
-    <button
-      v-if="type === 'video'"
-      class="viewer-speed"
-      type="button"
-      :aria-label="`倍速 ${videoRateLabel}`"
-      data-testid="mobile-viewer-speed"
-      @click="cycleVideoRate"
-    >
-      {{ videoRateLabel }}
-    </button>
     <!-- 音频波形查看器（D2 修订 2026-10-27，走查④）：全屏波形 + 播放控制 + 可拖进度 -->
     <div v-else-if="type === 'audio'" class="viewer-audio" data-testid="mobile-viewer-audio">
       <audio
         ref="audioRef"
         :src="data?.url"
+        preload="metadata"
         @play="audioPlaying = true"
         @pause="audioPlaying = false"
         @timeupdate="onAudioTime"
@@ -586,8 +600,24 @@ defineExpose({ videoRef })
     </div>
     <div v-else-if="type === 'text'" ref="readerRef" class="viewer-reader">{{ data?.content }}</div>
 
+    <!-- 倍速循环（走查⑤ · W-32）：仅视频；进度条用原生 controls 不自制。
+         ⭐ 回归④：原钉在容器 bottom 区被底部主栏盖住 ⇒ 收进 viewer-body（锚点=媒体区底部） -->
+    <button
+      v-if="type === 'video'"
+      class="viewer-speed"
+      type="button"
+      :aria-label="`倍速 ${videoRateLabel}`"
+      data-testid="mobile-viewer-speed"
+      @click="cycleVideoRate"
+    >
+      {{ videoRateLabel }}
+    </button>
+    </div><!-- /viewer-body -->
+
     <!--
       底部主栏（§4.11.6 可达性）：高频动作放**下方拇指区**，顶部只留低频退出类。
+      ⭐ 回归③④：改**文档流**（原 absolute bottom:0 覆盖圈选/倍速/音频控制条）——
+      媒体区（viewer-body）自动让出主栏高度，四者互不遮挡。
       ⭐ 「改词」经此下沉（§4.6 / §4.8 修订：⛔ 不再放右上角）。
     -->
     <div v-if="resolvedBottomActions.length" class="viewer-bottom-actions">
@@ -620,6 +650,20 @@ defineExpose({ videoRef })
   box-sizing: border-box;
   /* 下滑手势：纵向滚动交由内部媒体处理，横向不拦 */
   touch-action: pan-y;
+  /* ⭐ 回归⑤：压住浏览器下拉刷新 / 边缘回弹对手势的抢占（passive 监听无法
+     preventDefault，浏览器层不退让则下拉关闭真机形同虚设） */
+  overscroll-behavior: none;
+}
+
+/* ⭐ 回归③④：媒体区容器——flex:1 吃掉底部主栏以外的全部空间；
+   position:relative 作为圈选 / 倍速 / 画布覆盖层的定位锚点（此前锚到
+   容器 bottom 区，被底部主栏整体盖住）。 */
+.viewer-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 /* 右上角 X：44px 触控热区（图标视觉 18px，热区达标 ⇒ G-18） */
@@ -670,13 +714,10 @@ defineExpose({ videoRef })
   background: var(--lnk-pressed-overlay);
 }
 
-/* 底部主栏：高频动作恒在拇指区（§4.11.6） */
+/* 底部主栏：高频动作恒在拇指区（§4.11.6）。
+   ⭐ 回归③④：文档流（原 absolute bottom:0 z-3 覆盖同区按钮群）——
+   viewer-body（flex:1）自动让出本栏高度，圈选/倍速/音频控制条不再被盖。 */
 .viewer-bottom-actions {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 3;
   display: flex;
   gap: var(--lnk-space-2);
   padding: var(--lnk-space-3) var(--lnk-space-3)
