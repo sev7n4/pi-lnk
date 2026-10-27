@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import CanvasesPage from './CanvasesPage.vue'
+import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
 
 const { sessionsList, sessionsCreate, sessionsRemoveMany, canvasList, canvasCreate, authState, pushMock, elMessage } =
   vi.hoisted(() => ({
@@ -134,5 +135,64 @@ describe('CanvasesPage 项目管理器（P1；IA v4 画布+对话=项目）', ()
     const wrapper = await mountPage()
     expect(wrapper.text()).toContain('创作首页')
     expect(wrapper.text()).not.toContain('我的项目')
+  })
+})
+
+/**
+ * 2026-10-27 v2.2（D12 / bug④）：空态三态 —— 加载失败-重试 / 真无项目-引导。
+ * ⚠️ `useProjectWorkspace` 是模块级单例（projects/error/loadedAt 跨用例共享），
+ *    故每个用例先用 `seedProjects` 把内存清单复位到已知值，避免上一用例的新鲜缓存泄漏。
+ */
+describe('CanvasesPage 空态三态（D12 / bug④）', () => {
+  const ws = useProjectWorkspace()
+
+  async function seedProjects(list: { id: string; title: string }[]) {
+    canvasList.mockResolvedValue({ data: { data: list } })
+    await ws.list()
+    await flushPromises()
+  }
+
+  beforeEach(() => {
+    canvasList.mockReset()
+    authState.isLoggedIn = true
+  })
+
+  it('加载失败（连接饥饿）：显示「项目加载失败 · 重试」，不误报「还没有项目」', async () => {
+    // 先把内存清单复位为空，确保 mount 的 loadIfStale 会真正发起（注定失败的）请求
+    await seedProjects([])
+    canvasList.mockRejectedValue(new Error('timeout'))
+    const wrapper = await mountPage()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="canvases-load-error"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="canvases-retry"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('项目加载失败')
+    expect(wrapper.text()).not.toContain('还没有项目')
+    // 失败态不渲染卡片（不留空白报错）
+    expect(wrapper.findAll('.session-card-menu-anchor')).toHaveLength(0)
+  })
+
+  it('真无项目：显示「还没有项目」，新建入口唯一（canvases-create 全仓仅顶栏一处）', async () => {
+    await seedProjects([])
+    canvasList.mockResolvedValue({ data: { data: [] } })
+    const wrapper = await mountPage()
+    await flushPromises()
+    expect(wrapper.text()).toContain('还没有项目')
+    expect(wrapper.find('[data-testid="canvases-empty"]').exists()).toBe(true)
+    // ⛔ 空态不再内联「新建项目」按钮 ⇒ 全仓唯一
+    expect(wrapper.findAll('[data-testid="canvases-create"]')).toHaveLength(1)
+    expect(wrapper.find('[data-testid="canvases-retry"]').exists()).toBe(false)
+  })
+
+  it('加载失败时点击重试会重新拉取列表并渲染', async () => {
+    await seedProjects([])
+    canvasList.mockRejectedValue(new Error('timeout'))
+    const wrapper = await mountPage()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="canvases-retry"]').exists()).toBe(true)
+    // 重试：复位 mock 使本次成功
+    canvasList.mockResolvedValue({ data: { data: makeSessions(3) } })
+    await wrapper.find('[data-testid="canvases-retry"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.session-card-menu-anchor')).toHaveLength(3)
   })
 })
