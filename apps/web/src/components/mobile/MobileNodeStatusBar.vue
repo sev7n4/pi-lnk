@@ -27,6 +27,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   confirm: [nodeId: string]
   cancel: [nodeId: string]
+  /** 点「N 个生成中」区打开任务 sheet（§16-① 顶栏退役后的任务入口承接，2026-10-27） */
+  'open-tasks': []
 }>()
 
 const hasTask = computed(() => props.generatingCount > 0 || props.pendingNodes.length > 0)
@@ -43,12 +45,19 @@ const firstPending = computed(() => props.pendingNodes[0])
     role="status"
     aria-live="polite"
   >
-    <!-- 生成中：数量 + 已耗时（无百分比） -->
-    <span v-if="generatingCount > 0" class="mobile-node-status-generating">
+    <!-- 生成中：数量 + 已耗时（无百分比）。整区可点 = 任务 sheet 入口（顶栏退役承接） -->
+    <button
+      v-if="generatingCount > 0"
+      type="button"
+      class="mobile-node-status-generating"
+      aria-label="查看任务"
+      data-testid="mobile-node-status-open-tasks"
+      @click="emit('open-tasks')"
+    >
       <span class="mobile-node-status-spinner" aria-hidden="true" />
       <span class="mobile-node-status-text">{{ generatingCount }} 个生成中</span>
       <span v-if="elapsedText" class="mobile-node-status-elapsed">{{ elapsedText }}</span>
-    </span>
+    </button>
 
     <!-- 待确认：拍板动作（复用批次 2 confirm 语义） -->
     <span v-if="firstPending" class="mobile-node-status-pending">
@@ -105,6 +114,17 @@ const firstPending = computed(() => props.pendingNodes[0])
   display: inline-flex;
   align-items: center;
   gap: var(--lnk-space-2);
+}
+
+/* 生成中区已 button 化（任务入口承接）：重置浏览器默认，视觉与原 span 一致 */
+button.mobile-node-status-generating {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .mobile-node-status-spinner {

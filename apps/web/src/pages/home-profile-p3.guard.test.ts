@@ -9,6 +9,9 @@
  *   B. 每页恰好一个 <h1>：主页唯一 h1 来自 SignatureHero 主标题；个人中心唯一 h1 是「个人中心」。
  *   C. 主页两区块栅格统一（我的画布 / 社区精选 同一组响应式列数）。
  *
+ * 2026-10-26 规格收敛 v2（PR #614）后：主页品牌化，SessionCard 退役——
+ *   C 反转为「主页不得再有内容栅格」；画布卡面守卫载体换成 CanvasesPage 行卡。
+ *
  * 为什么用「读源码断言」而非渲染快照：这些都是静态结构不变量，源码断言更快、更稳，
  * 失败信息能直接指到文件；运行时交互另由组件自身测试覆盖。
  */
@@ -23,7 +26,9 @@ const read = (rel: string) => readFileSync(join(HERE, rel), 'utf8')
 const PROFILE = read('ProfilePage.vue')
 const HERO = read('../components/workflow/SignatureHero.vue')
 const WORKFLOW = read('WorkflowPage.vue')
-const SESSION_CARD = read('../components/workflow/SessionCard.vue')
+// 2026-10-26 规格收敛 v2：SessionCard 退役（创作首页行卡取代媒体卡形态），
+// 画布卡面守卫改指向 CanvasesPage（行卡是列表行语言，不挂 lnk-media-card）。
+const CANVASES = read('CanvasesPage.vue')
 const WORK_CARD = read('../components/works/WorkCard.vue')
 const COVER_FALLBACK = read('../components/workflow/CanvasCoverFallback.vue')
 const LAUNCHER = read('../components/workflow/CreativeLauncher.vue')
@@ -71,14 +76,15 @@ describe('P3-B 每页恰好一个 <h1>', () => {
   })
 })
 
-describe('P3-C 主页两区块栅格统一', () => {
+describe('P3-C 主页内容栅格（2026-10-26 规格收敛 v2 后反转为「退场守卫」）', () => {
   const UNIFIED = 'grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5'
 
-  it('✅ 我的画布 + 社区精选（加载态 + 作品态）共用同一组响应式栅格', () => {
+  it('⛔ 主页品牌化后 WorkflowPage 不得再承载内容栅格（列表唯一真身=创作首页 /canvases）', () => {
     expect(
       occurrences(WORKFLOW, UNIFIED),
-      '三处栅格（我的画布 / 社区精选加载态 / 社区精选作品态）应完全一致',
-    ).toBe(3)
+      '主页只剩 hero；「我的项目/社区精选」两区块栅格已随区块整体退场',
+    ).toBe(0)
+    expect(WORKFLOW, '主页不得残留任何网格列（内容全数迁出）').not.toContain('grid-cols-')
   })
 
   it('⛔ 不得残留旧的「无 sm / 无 xl」分裂栅格', () => {
@@ -90,7 +96,8 @@ describe('P3-C 主页两区块栅格统一', () => {
 })
 
 describe('P3-G 画布兜底 / 标题口径 / 墨圈（走查「没有设计品味」轮）', () => {
-  const CARD = stripComments(SESSION_CARD)
+  // 2026-10-26 规格收敛 v2：守卫意图不变，载体从 SessionCard 换成 CanvasesPage 行卡。
+  const CARD = stripComments(CANVASES)
   const HERO_SRC = stripComments(HERO)
   const FALLBACK_SRC = stripComments(COVER_FALLBACK)
 
@@ -183,14 +190,13 @@ describe('P3-H 锚是唯一创作入口（走查「入口是锚」轮）', () =>
 })
 
 describe('P3-I 媒体卡片语言统一（走查「两区块颜色割裂」轮）', () => {
-  const CARD = stripComments(SESSION_CARD)
+  // 2026-10-26 规格收敛 v2：SessionCard 退役，创作首页行卡是「列表行」语言（紧凑单行、
+  // 不挂 lnk-media-card）；媒体卡语言只剩作品卡（/community）一个消费方，割裂问题随
+  // 双卡共存形态一并消失 ⇒ 本组只守 WorkCard 侧不变量。
   const WORK = stripComments(WORK_CARD)
 
-  it('画布卡与作品卡共用全局 .lnk-media-card（面 / 描边 / hover 单一真相源）', () => {
-    expect(CARD, 'SessionCard 应挂全局卡片语言').toContain('lnk-media-card')
+  it('作品卡继续挂全局 .lnk-media-card（面 / 描边 / hover 单一真相源）', () => {
     expect(WORK, 'WorkCard 应挂全局卡片语言').toContain('lnk-media-card')
-    // 各自 scoped 不得再写第二套 hover / 面语言（那正是「割裂」的成因）
-    expect(CARD).not.toContain('border-color: var(--lnk-border-subtle)')
     expect(WORK).not.toContain('hover:border-accent')
     expect(WORK).not.toContain('hover:shadow-glow')
   })

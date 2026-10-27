@@ -3,9 +3,9 @@
 > 来源：`docs/superpowers/specs/2026-10-20-agent-canvas-batch-layout-design.md` §12 路线图
 > 「**SP-D 连线校验**：isValidConnection + 服务端端点/环校验 + add_edge 去重」（SP-A §12 / SP-B §15.4 / SP-C §8 同述）。
 > 前置：SP-A（批量创建即整齐，#529/#554）、SP-B（对齐与参考线，#554/#557/#561）、SP-C（视口恢复，#564/#576）均已上线。
-> 本规格为 **Draft 一稿（代码级取证后成文），待评审、待决策拍板**。
->
-> ⚠️ 与上游台账不一致声明：本仓过往台账曾记「SP-D 规格已就位、待评审」，**经本稿独立核对，SP-D 独立规格/计划文件在本仓（含 git 历史）从未创建**（见 §4.0）。本稿即为从零起草原稿，不是「评审既有稿」。
+> **状态：已实施并上线**（2026-10-27 收口）——实施 PR #610（squash `4c86f9b6`，CI 3/3 绿）、决策记录 ADR-0014（`docs/adr/0014-edge-validation-dag-and-unified-channel.md`，D1–D6 推荐项全部采纳）、runtime-deploy 已部署（tag=`4c86f9b`）、生产复测 6/6 通过（见 §13）。实施计划：`docs/superpowers/plans/2026-10-26-sp-d-edge-validation.md`。
+> 前置：SP-A（批量创建即整齐，#529/#554）、SP-B（对齐与参考线，#554/#557/#561）、SP-C（视口恢复，#564/#576）均已上线。
+> 原稿状态存档：Draft 一稿（代码级取证后成文）；§4.0 台账澄清为起草时的历史事实，保留不删。
 
 ## 0. 配图索引
 
@@ -237,7 +237,9 @@ export function wouldCreateCycle(existingEdges: RawEdge[], source: string, targe
 - SP-D 的 `validateEdgeAdditions` 是 SP-E「并发写 canvasData」的自然前置：环/端点校验与 CAS 冲突裁决可在同一 `add_edge` 落地处叠加。
 - 存量环诊断脚本（§9-R1）属一次性工具，登记在此、不进主流程。
 
-## 11. 决策表（待用户拍板）
+## 11. 决策表（已拍板，2026-10-26；记录于 ADR-0014）
+
+> 用户拍板：D1–D6 推荐项全部采纳（「同意决策，写入 ADR」）。
 
 | # | 议题 | 选项 / 推荐 | 影响 |
 |---|---|---|---|
@@ -250,4 +252,39 @@ export function wouldCreateCycle(existingEdges: RawEdge[], source: string, targe
 
 ## 12. 配图规范自检
 
-待本稿定稿后跑：`pnpm verify-spec-figures --file docs/superpowers/specs/2026-10-26-sp-d-edge-validation-design.md`（本文档 2 张 Mermaid 结构图，无 SVG 附件，R1/R6/R8 天然满足）。
+`pnpm verify-spec-figures --file docs/superpowers/specs/2026-10-26-sp-d-edge-validation-design.md`：**0 错误**（本文档 2 张 Mermaid 结构图，无 SVG 附件，R1/R6/R8 天然满足；实施 PR CI 同名 check 亦绿）。
+
+## 13. 实施记录（2026-10-27 收口）
+
+### 13.1 交付链路
+
+| 环节 | 结果 |
+|---|---|
+| 实施 | PR #610（分支 `feat/sp-d-edge-validation`，6 任务 TDD 计划）squash 合并 ⇒ master `4c86f9b6` |
+| CI | 三 required 全绿：Verify spec figures / Build monorepo 5m16s（含全量 pnpm test）/ Build API Docker image |
+| 决策记录 | ADR-0014 `docs/adr/0014-edge-validation-dag-and-unified-channel.md`（Accepted） |
+| 部署 | runtime-deploy tag=`4c86f9b` run 40353158502 十二步全绿（含 Rollout + triple verify digest/env/healthz）；生产容器 `lnkpi-api:4c86f9b68d51…` healthy |
+| SDD 台账 | `.superpowers/sdd/2026-10-26-sp-d-edge-validation/progress.md` |
+
+实现落点：shared 原语 `packages/shared/src/canvas/graph.ts`（`validateEdgeAdditions`/`wouldCreateCycle`/`edgeIdOf` + 10 金样）；服务端 `connectNodes`/`addNodesBatch` 接入（fail-closed 400 整批 + duplicate 幂等）；浏览器新端点 `POST /agent/canvas/connect-nodes`（`assertSessionOwned` + `@Optional ModuleRef` 惰性解析避免 AgentModule↔CanvasModule 构造环）；前端 `isValidConnection`（自环+本地同向对，不做实时判环 D5）+ `onConnect` 乐观 add/失败回滚 + `canvasApi.connectNodes`。
+
+### 13.2 生产复测取证（2026-10-27 01:24 CST，CVM 实测）
+
+环境：`lnkpi-api:4c86f9b68d51…`（镜像 dist grep 确认 `validateEdgeAdditions` 与错误消息在位）；web dist `Oct 27 01:15`（含 #610 前端改动的 master 构建）。方法：CVM 内以真实用户签 30min 测试 token，API 直测后即删测试画布（零残留、未触碰任何真实用户数据）。
+
+| # | 场景 | 期望 | 实测 | 结论 |
+|---|---|---|---|---|
+| A | 合法连线 n1→n2 | 201，返回 add_edge 动作，落库 | `{"actions":[{"type":"add_edge","payload":{"id":"e-n1-n2",…}}]}`；DB 复读 `edges=[{"id":"e-n1-n2","source":"n1","target":"n2"}]` | ✅ |
+| B | 自环 n1→n1 | 400 + self-loop | `400`：「n1 -> n1 (self-loop)」 | ✅ |
+| C | 反向 2-环 n2→n1（n1→n2 已存在） | 400 + cycle | `400`：「n2 -> n1 (cycle)」 | ✅ |
+| D | 重复连线 n1→n2 | 201 + actions 空（幂等跳过） | `{"actions":[]}` | ✅ |
+| E | 悬空端点 n1→ghost | 400 + missing-node | `400`：「n1 -> ghost (missing-node)」 | ✅ |
+| F | 前端 bundle 字面量（三处） | 新通道与新文案已进生产分包 | `agent/canvas/connect-nodes` ∈ 共享 chunk `formatSessionTime-DwiZHKa8.js`；`连线被拒`/`连线保存失败` ∈ `CanvasPage-B3CzTDYO.js` | ✅ |
+
+前端行为级语义（`isValidConnection` 拦截、乐观 add 失败回滚、ElMessage 反馈）由 bundle 字面量 + `CanvasPage.edgeValidation.wiring.test.ts` 静态契约 + CI 全量测试三方覆盖；真机手工拖拽走查归入日常移动端走查清单，不阻塞本规格收口。
+
+### 13.3 遗留欠账（不阻塞收口，已记账）
+
+- `wouldCreateCycle` 变异验证：本机环境（delete 类 syscall 被安全策略拦截）恢复后，改坏判定条件 ⇒ `graph.test.ts` 须转红；
+- 本地补跑 `agent-canvas-tools.service.test.ts` / `graph.test.ts` / `edgeValidation.wiring.test.ts` / `vue-tsc -b`（本轮由 CI 全量替代）；
+- 存量环诊断脚本（§9-R1）：一次性工具，属 SP-E 前置，随下一程实施。

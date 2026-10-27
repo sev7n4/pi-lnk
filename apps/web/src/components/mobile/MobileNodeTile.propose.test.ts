@@ -112,4 +112,24 @@ describe('R4-T1 提议内容上瓦片', () => {
     expect(lines).not.toMatch(/#[0-9a-fA-F]{3,8}/)
     expect(lines).not.toMatch(/rgba?\(/)
   })
+
+  it('§16-④ 长提示词（>80 字）→ 显示「点按查看全文」引导（短提示词不显示）', () => {
+    const long = 'a'.repeat(90)
+    const wLong = mountTile({ status: 'pending_confirm', prompt: long })
+    expect(wLong.find('[data-testid="mobile-node-propose-hint"]').exists()).toBe(true)
+    wLong.unmount()
+    const wShort = mountTile({ status: 'pending_confirm', prompt: '一只猫' })
+    expect(wShort.find('[data-testid="mobile-node-propose-hint"]').exists()).toBe(false)
+    wShort.unmount()
+  })
+
+  it('§16-④ 引导行是被动提示（磁贴内不挂按钮——tap 手势归页面级单一出处）', () => {
+    const src = TILE.replace(/<!--[\s\S]*?-->/g, '')
+    const hintTag = /<p[^>]*mobile-node-propose-hint[^>]*>/.exec(src)?.[0] ?? ''
+    expect(hintTag, '引导行应为 p 被动提示且带 testid').toContain(
+      'data-testid="mobile-node-propose-hint"',
+    )
+    expect(hintTag).not.toContain('button')
+    expect(hintTag).not.toContain('@click')
+  })
 })

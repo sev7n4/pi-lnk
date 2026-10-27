@@ -31,7 +31,7 @@ import { applyActionsToFlow, extrasForCanvasSave, flowToCanvasData } from '@/com
 import { patchDiffers, pickInflightRecords, shouldPollNode } from '@/utils/generationPollScope'
 import { shouldBlockCanvasOverwrite, type CanvasLoadState } from './canvas/canvasLoadGuard'
 import { createViewportRestorer, createViewportTracker } from '@/composables/useCanvasViewport'
-import { useProjectWorkspace, type ProjectCard } from '@/composables/useProjectWorkspace'
+import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
 import { annotateEdgesForSelection } from '@/utils/edgeHighlight'
 import { useGenerationPolling, parseRecordText, parseRecordUrl, parseRecordUrls, parseRecordLastFrameUrl, type GenerationPollTask } from '@/composables/useGenerationPolling'
 import { buildNodeMediaInfoSummary, useMediaInspector } from '@/composables/useMediaInspector'
@@ -64,8 +64,6 @@ import NodePanelDock from '@/components/canvas/NodePanelDock.vue'
 import DockStudioToolbar from '@/components/canvas/DockStudioToolbar.vue'
 import DockNoticeLayer from '@/components/notice/DockNoticeLayer.vue'
 import CanvasFloatingChrome from '@/components/canvas/CanvasFloatingChrome.vue'
-// 2026-10-25 PR-2：PC 端项目面板（与移动端共用 ProjectPanel，断点中立）。
-import ProjectPanel from '@/components/project/ProjectPanel.vue'
 import CanvasAccountChrome from '@/components/canvas/CanvasAccountChrome.vue'
 import ThemeToggle from '@/components/layout/ThemeToggle.vue'
 import RefineCanvasBack from '@/components/canvas/RefineCanvasBack.vue'
@@ -5664,7 +5662,9 @@ function onMobileTabChange(tab: MobileAppTab) {
  * AgentSideRail、mobileStudioDockOpen、focusNodeById、pickMode watch 共用）。
  */
 const agentRailActions: MobileShellAgentActions = {
-  openDrawer: () => agentRailRef.value?.openSessionDrawer(),
+  // 2026-10-26 规格收敛 v2（D7/D10）：≡ 原「项目抽屉」退场，语义升级为返回创作首页
+  // （项目列表唯一真身 = /canvases 行卡；切换/新建项目都在列表页完成）。
+  backToCreationHome: () => void router.push('/canvases'),
   newChat: () => agentRailRef.value?.newAgentSession(),
   openHistory: () => agentRailRef.value?.openThreadHistory(),
   // IA v4（2026-10-23）：顶栏品牌字标 → 回工作台 hero。移动端全链路的前门，
@@ -5768,89 +5768,16 @@ provide(CANVAS_REF_PICK_NODE_IDS_KEY, pickMode.pickedNodeIds)
 provide(CANVAS_REF_PICK_REJECT_KEY, pickRejectNodeId)
 
 /**
- * PC 端项目面板（2026-10-25 PR-2 Task 8）。
- *
- * - 数据源：`useProjectWorkspace`（项目 CRUD + 最近项目记忆的**单一真源**），
- *   与移动端抽屉同源；面板本体复用 `ProjectPanel`（断点中立，PR-2 Task 7 抽出）。
- * - ⛔ 列表**按需拉取**（点开时才 list）：AgentSideRail 的作品带已拉过同一份数据，
- *   挂载期再拉一遍就是 INV-10 收敛前的「同一接口请求两遍」老毛病。
- * - 处理器语义与 AgentSideRail 的项目抽屉保持一致（同样的确认框/报错文案），
- *   避免两端同一动作两种反馈。
+ * 最近项目记忆（2026-10-25 PR-2 Task 8）：挂载时写入，供下次「进入创作」解析最近项目。
+ * 数据源 = useProjectWorkspace（单一真源）。
+ * 2026-10-26 规格收敛 v2（D7 纯微信式）：PC 项目面板整体退场——切换项目 =
+ * 返回创作首页（/canvases）再点另一个；原面板状态机（open/close/create/open/
+ * rename/remove/retry）随之删除，管理能力由创作首页行卡承载。
  */
-const {
-  projects: projectWsProjects,
-  loading: projectWsLoading,
-  error: projectWsError,
-  loadIfStale: loadProjectList,
-  create: createProjectEntry,
-  rename: renameProjectEntry,
-  remove: removeProjectEntry,
-  rememberProject,
-} = useProjectWorkspace()
+const { rememberProject } = useProjectWorkspace()
 
-const projectPanelOpen = ref(false)
-
-function openProjectPanel() {
-  projectPanelOpen.value = true
-  void loadProjectList()
-}
-
-function closeProjectPanel() {
-  projectPanelOpen.value = false
-}
-
-async function handleProjectCreate() {
-  try {
-    const created = await createProjectEntry()
-    closeProjectPanel()
-    void router.push(`/workflow/${created.id}`)
-  } catch {
-    ElMessage.error('新建项目失败，请重试')
-  }
-}
-
-function handleProjectOpen(id: string) {
-  closeProjectPanel()
-  // ⚠️ 2026-10-24 性能修复：router.push 而非 location.assign（整页刷新代价翻倍）
-  void router.push(`/workflow/${id}`)
-}
-
-async function handleProjectRename(project: ProjectCard) {
-  try {
-    const { value } = await ElMessageBox.prompt('项目名称', '重命名项目', {
-      inputValue: project.title,
-      confirmButtonText: '保存',
-      cancelButtonText: '取消',
-      inputPattern: /\S+/,
-      inputErrorMessage: '名称不能为空',
-    })
-    await renameProjectEntry(project.id, value.trim())
-    ElMessage.success('已重命名')
-  } catch {
-    /* 取消/失败静默 */
-  }
-}
-
-async function handleProjectRemove(project: ProjectCard) {
-  try {
-    await ElMessageBox.confirm(
-      `确定删除「${project.title || '未命名项目'}」？此操作不可恢复。`,
-      '删除项目',
-      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' },
-    )
-  } catch {
-    return
-  }
-  try {
-    await removeProjectEntry(project.id)
-    ElMessage.success('已删除')
-  } catch {
-    ElMessage.error('删除失败，请稍后重试')
-  }
-}
-
-function handleProjectRetry() {
-  void loadProjectList()
+function backToCreationHome() {
+  void router.push('/canvases')
 }
 
 onMounted(() => {
@@ -6029,27 +5956,10 @@ onUnmounted(() => {
           @publish="openPublish"
           @import-workflow="openWorkflowImportPicker"
           @export-workflow="handleExportPack([], 'full_package')"
-          @project-click="openProjectPanel"
+          @back="backToCreationHome"
         />
 
-        <!-- 2026-10-25 PR-2：PC 端项目面板（与移动端共用 ProjectPanel）。
-             v-if="!isMobileLayout"：移动端项目抽屉由 AgentSideRail 自己的那份负责，
-             此处不再重复挂载一个同款 Teleport 面板。 -->
-        <ProjectPanel
-          v-if="!isMobileLayout"
-          :open="projectPanelOpen"
-          :projects="projectWsProjects"
-          :current-id="sessionId"
-          :loading="projectWsLoading"
-          :error="projectWsError"
-          :reserve-tabbar="false"
-          @close="closeProjectPanel"
-          @create="handleProjectCreate"
-          @open="handleProjectOpen"
-          @rename="handleProjectRename"
-          @remove="handleProjectRemove"
-          @retry="handleProjectRetry"
-        />
+        <!-- 2026-10-26 规格收敛 v2（D7）：PC 项目面板已退场（切换项目 = 返回创作首页）。 -->
 
         <RefineCanvasBack
           v-if="refinePanelNode"
@@ -6468,6 +6378,7 @@ onUnmounted(() => {
       :canvas-chrome-hidden="canvasChromeHidden"
       :dock-expanded="mobileDockExpanded"
       :composer-visible="mobileCanvasComposerVisible"
+      :canvas-view-visible="mobileCanvasView"
       :on-tab-change="onMobileTabChange"
       :on-save="saveCanvas"
       :on-publish="openPublish"

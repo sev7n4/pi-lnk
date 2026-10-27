@@ -177,6 +177,22 @@ const showPropose = computed(() => {
 })
 
 /**
+ * 「查看全文」引导（§16-④，2026-10-27 真机走查裁决）。
+ *
+ * 现状 = **点磁贴任意处进查看器**（resolveMobileNodeTapIntent pending 恒 viewer），
+ * 但正文 5 行截断（NodePendingPrompt）⇒ 长提示词用户不知道能点开看全量。
+ * 被动引导行（非按钮）：磁贴 tap 手势归页面级 resolveMobileNodeTapIntent 单一出处
+ * （CanvasPage.gestureWiring.test.ts），磁贴内再挂按钮会分叉手势出处。
+ *
+ * 阈值：正文 5 行 ≈ 100+ 字可见（CJK≈1.14em），> 80 字大概率已截断。
+ */
+const PROMPT_HINT_THRESHOLD = 80
+const showProposeViewHint = computed(() => {
+  if (!showPropose.value) return false
+  return String(props.data?.prompt ?? '').length > PROMPT_HINT_THRESHOLD
+})
+
+/**
  * 媒体属性一行（走查②，2026-10-24）。
  *
  * PC 三卡（CanvasNodeImage/Video/Audio）都有 `MediaInfoSummary` footer：
@@ -479,6 +495,14 @@ function handleTextTap() {
       />
       <p v-if="proposeParams" class="mobile-node-params" data-testid="mobile-node-params">
         {{ proposeParams }}
+      </p>
+      <!-- §16-④：长提示词的查看引导（被动行——tap 手势归页面级单一出处，磁贴内不挂按钮） -->
+      <p
+        v-if="showProposeViewHint"
+        class="mobile-node-propose-hint"
+        data-testid="mobile-node-propose-hint"
+      >
+        点按查看全文
       </p>
     </div>
     <div v-else-if="type === 'image' && data?.url" class="mobile-node-media-box">
@@ -894,6 +918,14 @@ function handleTextTap() {
   color: var(--lnk-text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 「查看全文」引导行（§16-④）：被动提示，tap 仍由页面级手势统一处理 */
+.mobile-node-propose-hint {
+  margin: 0;
+  font-size: var(--lnk-text-2xs);
+  line-height: var(--lnk-lh-2xs);
+  color: var(--lnk-text-muted);
 }
 
 /* 移动端磁贴比 PC 节点小 ⇒ 提示词正文截断更短（PC 5 行，移动端 3 行）。

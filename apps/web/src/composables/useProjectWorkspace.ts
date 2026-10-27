@@ -18,9 +18,9 @@ import { useAuthStore } from '@/stores/auth'
  *      list/create/update/material 四个端点，**没有删除端点**；删除只存在于
  *      `sessions.controller.ts` 的 `@Delete(':id')`。⇒ 这不是分裂，是后端现状。
  *
- * ⚠️ 与 `useMySessions`（/canvases 管理态）**有意并存**：它走 `GET /sessions`
- *    全量列表，本模块走瘦身的 `/agent/canvas/list`。管理页要全量可管，入口要
- *    轻量可览；强行统一会把 /canvases 拖进回归面。
+ * ⭐ 2026-10-26 规格收敛 v2（D1/R2）：本模块成为**全站唯一列表源**（INV-10）。
+ *    原「与 /canvases 管理态有意并存」的双源已删（管理动作通道见
+ *    `useProjectManager` 文件头）；create 仍为本仓唯一 create 通道。
  */
 
 /**

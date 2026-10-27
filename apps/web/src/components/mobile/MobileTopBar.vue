@@ -27,7 +27,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  'open-drawer': []
+  'back-to-creation-home': []
   'new-chat': []
   'open-history': []
   /** IA v4（2026-10-23）：顶栏品牌字标可点 = 回工作台 hero（品牌回家）。
@@ -94,13 +94,14 @@ onUnmounted(() => {
        z 序：抽屉(95) > 顶栏(85) > 面板(70)。 -->
   <Teleport to="body">
     <header class="mobile-top-bar" :class="{ 'is-ghost': isGhost, 'is-chat': props.tab === 'chat' }">
-    <!-- 对话页签：左上 ≡ 会话抽屉（项目世界唯一入口） -->
+    <!-- 对话页签：左上 ≡ 返回创作首页（2026-10-26 D7/D10：原项目抽屉退场，
+         项目列表唯一真身 = /canvases 行卡；≡ 图标不变，语义 = 回列表） -->
     <button
       v-if="props.tab === 'chat'"
       type="button"
       class="bar-btn"
-      aria-label="会话与项目"
-      @click="emit('open-drawer')"
+      aria-label="返回创作首页"
+      @click="emit('back-to-creation-home')"
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
         <path stroke-linecap="round" d="M5 9h14M8 15h11" />

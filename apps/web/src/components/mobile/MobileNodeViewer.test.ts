@@ -10,12 +10,15 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 
 // 评审 I2：包装真实 useNodeWaveform，捕获每次调用的 opts —— 断言非音频类型的
 // url getter 返回 undefined（不发起解码）。（jsdom 无 fetch，用 fetch spy 判据恒绿，弃用）
-const wfState = vi.hoisted(() => ({ lastOpts: null as { url: () => string | undefined } | null }))
+type WfOpts = Parameters<
+  typeof import('@/composables/useNodeWaveform')['useNodeWaveform']
+>[0]
+const wfState = vi.hoisted(() => ({ lastOpts: null as import('@/composables/useNodeWaveform').UseNodeWaveformOptions | null }))
 vi.mock('@/composables/useNodeWaveform', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/composables/useNodeWaveform')>()
   return {
     ...actual,
-    useNodeWaveform: (opts: { url: () => string | undefined }) => {
+    useNodeWaveform: (opts: WfOpts) => {
       wfState.lastOpts = opts
       return actual.useNodeWaveform(opts)
     },
@@ -281,6 +284,61 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
       const w = mount(MobileNodeViewer, { props: { type: 'image', data: { url: 'https://x/a.png' } } })
       const src = readFileSync(join(HERE, 'MobileNodeViewer.vue'), 'utf-8')
       expect(src).toMatch(/\.viewer-ink\s*\{[^}]*touch-action:\s*none/)
+      w.unmount()
+    })
+  })
+
+  /**
+   * pending 审核内容层（§4.8 修订，2026-10-26）：
+   * propose_generation 产物确认后才生成 ⇒ pending 打开查看器时无 url。
+   * 历史缺陷：空媒体区 + `--lnk-surface-canvas` ⇒ 满屏黑 + 只剩底部决策按钮
+   * （R2-T2「空白全屏」在 pending 分支复活）。本组断言钉住修复。
+   */
+  describe('pending 审核内容层（§4.8 修订）', () => {
+    it('pending + 无产物 → 渲染审核内容层（提示词全文 + 参数摘要），不渲染空媒体区', () => {
+      const w = mount(MobileNodeViewer, {
+        props: {
+          type: 'image',
+          data: {
+            status: 'pending_confirm',
+            prompt: '赛博朋克城市夜景，霓虹雨后反射，电影感构图，超长提示词……'.repeat(3),
+            imageAspect: '16:9',
+            imageResolution: '2K',
+          },
+        },
+      })
+      expect(w.find('[data-testid="mobile-viewer-review"]').exists()).toBe(true)
+      expect(w.find('[data-testid="mobile-viewer-review-prompt"]').text()).toContain('霓虹雨后反射')
+      expect(w.find('[data-testid="mobile-viewer-review-params"]').text()).toBe('16:9 · 2K')
+      expect(w.find('img').exists()).toBe(false)
+      expect(w.find('video').exists()).toBe(false)
+      w.unmount()
+    })
+
+    it('pending + 无产物 → 不提供圈选（无产物底图，意见走文字通道 = 改词）', () => {
+      const w = mount(MobileNodeViewer, {
+        props: { type: 'image', data: { status: 'pending_confirm', prompt: '一段提示词' } },
+      })
+      expect(w.find('[data-testid="mobile-viewer-annotate"]').exists()).toBe(false)
+      w.unmount()
+    })
+
+    it('pending + 有产物 → 正常渲染媒体，不出审核内容层（产物预览为主，§4.7）', () => {
+      const w = mount(MobileNodeViewer, {
+        props: { type: 'image', data: { status: 'pending_confirm', url: 'x.png', prompt: '一段提示词' } },
+      })
+      expect(w.find('[data-testid="mobile-viewer-review"]').exists()).toBe(false)
+      expect(w.find('img').exists()).toBe(true)
+      expect(w.find('[data-testid="mobile-viewer-annotate"]').exists()).toBe(true)
+      w.unmount()
+    })
+
+    it('非 pending 节点不受审核层影响（confirmed 正常灯箱）', () => {
+      const w = mount(MobileNodeViewer, {
+        props: { type: 'image', data: { status: 'confirmed', url: 'x.png' } },
+      })
+      expect(w.find('[data-testid="mobile-viewer-review"]').exists()).toBe(false)
+      expect(w.find('img').exists()).toBe(true)
       w.unmount()
     })
   })

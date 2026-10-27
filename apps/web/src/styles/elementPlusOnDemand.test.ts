@@ -95,7 +95,9 @@ describe('element-plus 按需引入：配置与样式兜底', () => {
   it('样式与 JS 的归属一致：函数式 API 的 JS 在主入口，样式也在主入口', () => {
     // ElMessage 的 JS 由那 32 处显式 import 引入（tree-shaking 后落在主入口），
     // 样式也放主入口 ⇒ 两边生命周期一致，不会出现「样式在分包、JS 在入口」的错配。
-    const jsImports = read('../composables/useMySessions.ts')
+    // 2026-10-26：代表文件换成继任组合式 useProjectManager
+    // ——同为函数式 API（ElMessage/ElMessageBox）的显式 import 消费者。
+    const jsImports = read('../composables/useProjectManager.ts')
     expect(jsImports, '函数式 API 仍走 element-plus 主入口（tree-shaking 已验证有效）').toContain(
       "from 'element-plus'",
     )

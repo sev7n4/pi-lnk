@@ -54,7 +54,8 @@ import TopupModal from '@/components/membership/TopupModal.vue'
 import MembershipModal from '@/components/membership/MembershipModal.vue'
 
 export interface MobileShellAgentActions {
-  openDrawer: () => void
+  /** 2026-10-26（D7/D10）：≡ 原唤起项目抽屉，抽屉退场后 = 返回创作首页（/canvases）。 */
+  backToCreationHome: () => void
   newChat: () => void
   openHistory: () => void
   /** IA v4（2026-10-23）：顶栏品牌字标 → 回工作台 hero（项目页回前门） */
@@ -117,6 +118,10 @@ const props = defineProps<{
   /** 画布视图的「窗态」：composer 空闲条与 FAB 同一基线（见 MobileCanvasCreateFab
    *  的尺寸计算——48=48 无内缩余量，窗态下 ＋FAB 直接不渲染，由 composer 盖住这一带） */
   composerVisible: boolean
+  /** 画布视图可见（跨形态真相源：窗态 / 沉浸满屏 / 画布页签门态三形态共用，§16-②）。
+   *  节点状态栏与保存状态行的门控判据——有画布在眼前，待确认/生成中就该看见（真机走查
+   *  2026-10-27 实证：定位切画布=窗态看不到确认/取消，点节点进 viewer 才有决策按钮）。 */
+  canvasViewVisible: boolean
   /** ── 共享动作（CanvasPage 核心逻辑）── */
   onTabChange: (tab: MobileAppTab) => void
   onSave: () => void
@@ -178,8 +183,12 @@ const props = defineProps<{
 
 /**
  * 查看器底部主栏动作（§4.11.6 可达性：高频操作放下方拇指区）。
- * ⭐ pending 节点：决策层（拒绝 / 确认）+ 操作层（改词，有产物才给）——
+ * ⭐ pending 节点：决策层（拒绝 / 确认）+ 操作层（改词，**有产物或有提示词即给**）——
  *   与壳层状态栏同源同语义（§4.8：确认/取消同时出现在状态栏与查看器底部）。
+ *   ⚠️ 2026-10-26 修订（§4.8 审核内容层）：propose 产物要确认后才生成 ⇒
+ *   pending 改词门控不能再挂「有产物」（否则待确认的图/视频节点无改词入口）；
+ *   改为「有产物 **或** data.prompt 非空」——改词 = 放弃 propose 回传 agent，
+ *   恰是无产物态的核心修改路径。
  * confirmed / 其它有产物节点：仅「改词」。
  */
 const viewerBottomActions = computed(() => {
@@ -193,9 +202,10 @@ const viewerBottomActions = computed(() => {
       ? Boolean(String(data.content ?? '').trim())
       : Boolean(String(data.url ?? '').trim())
   const actions: Array<{ key: string; label: string; variant?: 'primary' | 'danger' }> = []
+  const hasPrompt = Boolean(String(data.prompt ?? '').trim())
   if (isPending) {
     actions.push({ key: 'pending-cancel', label: '拒绝' })
-    if (hasContent) actions.push({ key: 'edit', label: '改词' })
+    if (hasContent || hasPrompt) actions.push({ key: 'edit', label: '改词' })
     actions.push({ key: 'pending-confirm', label: '确认', variant: 'primary' })
     return actions
   }
@@ -344,11 +354,16 @@ onUnmounted(() => stopMobileTaskPolling())
   <!-- 移动端应用骨架（IA v3）：顶栏三区 + 底部四页签 + 发现/我的两页 + 账号二级面板
        + 自动保存状态行 + ＋FAB + 新建/任务 sheet + 多选动作条。
        本壳层由 CanvasPage 的 `v-if="isMobileLayout"` 包裹，内部不再判断断点。 -->
+  <!-- 2026-10-27 用户裁决（§16-①）：画布页签**不渲染顶栏卡片**——「整个这个卡片在
+       移动端画布页就不应该存在」。桌面式项目管理卡（⋯ 任务/发布作品/导入导出工作流）
+       退役：任务入口迁状态栏（点击「N 个生成中 / 待确认」开任务 sheet），发布/导入导出
+       为工作流页级操作（hero 前门可达，低频不占画布）。仅保留安全区占位防瓦片顶入刘海。 -->
   <MobileTopBar
+    v-if="mobileAppTab !== 'canvas'"
     :tab="mobileAppTab"
     :task-active-count="mobileTaskActiveCount"
     :has-task-history="mobileTaskHasHistory"
-    @open-drawer="agentActions.openDrawer"
+    @back-to-creation-home="agentActions.backToCreationHome"
     @new-chat="agentActions.newChat"
     @open-history="agentActions.openHistory"
     @go-home="agentActions.goHome"
@@ -363,19 +378,23 @@ onUnmounted(() => stopMobileTaskPolling())
        ⚠️ 与 R3-T4 的节点状态栏**互斥**：保存失败优先（丢数据比任务态更急），
        否则有节点任务时让位给状态栏（两者同在底部带，会重叠）。 -->
   <MobileSaveStatus
-    v-if="mobileAppTab === 'canvas' && !multiSelectActive && (saveFailed || !hasNodeTaskState)"
+    v-if="canvasViewVisible && !multiSelectActive && (saveFailed || !hasNodeTaskState)"
     :saving="saving"
     :failed="saveFailed"
     @save="onSave"
   />
-  <!-- R3-T4：壳层聚合状态栏——把画布各节点的「生成中 / 待确认」收敛成一条 -->
+  <!-- R3-T4：壳层聚合状态栏——把画布各节点的「生成中 / 待确认」收敛成一条。
+       门控（§16-② 修订，2026-10-27 真机实证）：**画布视图可见即常驻**——
+       窗态（定位切画布、页签停对话）/ 沉浸满屏 / 画布页签门态三形态都在眼前；
+       原门控 `mobileAppTab==='canvas'` 漏掉窗态 ⇒ 定位落地后确认/取消不可见。 -->
   <MobileNodeStatusBar
-    v-if="mobileAppTab === 'canvas' && !multiSelectActive && hasNodeTaskState"
+    v-if="canvasViewVisible && !multiSelectActive && hasNodeTaskState"
     :generating-count="nodeGeneratingCount"
     :pending-nodes="nodePendingNodes"
     :elapsed-text="nodeGeneratingElapsed"
     @confirm="onNodePendingConfirm"
     @cancel="onNodePendingCancel"
+    @open-tasks="showMobileTaskSheet = true"
   />
   <DiscoverPane v-if="mobileAppTab === 'discover'" />
   <ProfilePane

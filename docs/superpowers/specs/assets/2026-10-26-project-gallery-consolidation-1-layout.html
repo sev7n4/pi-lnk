@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>图 3 交互补充稿 v2 · 创作首页 + 对话页（微信式收敛）</title>
+<style>
+  :root{
+    --ink:#1c1c1e; --ink-2:#3a3f47; --ink-3:#6b7078;
+    --surface:#ffffff; --sunken:#f0f1f5; --bubble:#e7e9ee;
+    --line:#d5d8de; --accent:#5b4be0; --accent-soft:#efedfd;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
+    background:#f5f5f7;color:var(--ink);padding:28px 24px 40px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .head{max-width:980px;margin:0 auto 18px}
+  .head h1{font-size:18px;font-weight:700}
+  .head p{font-size:13px;color:var(--ink-3);margin-top:6px;line-height:1.6}
+  .toggle{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+  .toggle button{
+    font:inherit;font-size:13px;padding:7px 14px;border-radius:999px;
+    border:1px solid var(--line);background:var(--surface);color:var(--ink-2);
+    cursor:pointer;transition:all .15s ease;
+  }
+  .toggle button.on{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+  .frames{max-width:980px;margin:20px auto 0;display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap}
+  .frame{flex:1 1 380px;background:var(--surface);border:1px solid var(--line);border-radius:16px;overflow:hidden}
+  .frame-title{font-size:13.5px;font-weight:700;padding:14px 18px 10px;display:flex;align-items:center;gap:8px}
+  .badge{
+    display:inline-flex;width:20px;height:20px;border-radius:50%;
+    border:1.5px solid var(--accent);color:var(--accent);
+    font-size:12px;font-weight:700;align-items:center;justify-content:center;flex:none;
+  }
+  /* 顶栏 */
+  .topbar{
+    margin:0 14px;display:flex;align-items:center;gap:14px;
+    background:var(--sunken);border:1px solid var(--line);border-radius:10px;
+    padding:10px 14px;font-size:13px;
+  }
+  .topbar .title{font-weight:600}
+  .topbar .action{margin-left:auto;color:var(--ink-3);font-size:12px}
+  .topbar .plus{color:var(--accent);font-weight:700;font-size:15px}
+  .topbar .back{color:var(--accent);font-weight:600}
+  /* 列表卡 */
+  .list{margin:10px 14px 0;display:flex;flex-direction:column;gap:8px}
+  .row{
+    display:flex;align-items:center;gap:12px;padding:9px 12px;
+    background:var(--surface);border:1px solid var(--line);border-radius:10px;
+    cursor:pointer;transition:background .12s ease;
+  }
+  .row:hover{background:#fafafd}
+  .cover{
+    width:40px;height:40px;border-radius:8px;flex:none;
+    background:var(--accent-soft);display:flex;align-items:center;justify-content:center;
+    color:var(--accent);font-weight:700;font-size:16px;overflow:hidden;
+  }
+  .row .meta{min-width:0;flex:1}
+  .row .name{font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .prev{font-size:11.5px;color:var(--ink-3);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .time{font-size:11px;color:#8a8f98;flex:none;align-self:flex-start;margin-top:2px}
+  /* 空态 */
+  .empty{
+    display:none;margin:10px 14px 0;padding:34px 16px;text-align:center;
+    border:1px dashed var(--line);border-radius:10px;background:#fafbfc;
+  }
+  .empty p{font-size:13px;color:var(--ink-2)}
+  .empty button{
+    margin-top:14px;font:inherit;font-size:13.5px;font-weight:600;padding:9px 22px;
+    border:none;border-radius:999px;background:var(--accent);color:#fff;cursor:pointer;
+  }
+  body.empty-mode .list{display:none}
+  body.empty-mode .empty{display:block}
+  /* 对话页 */
+  .chat{
+    margin:10px 14px 14px;border:1px solid var(--line);border-radius:10px;
+    background:#fafbfc;padding:14px;display:flex;flex-direction:column;gap:12px;min-height:300px;
+  }
+  .chat .cap{font-size:12px;font-weight:600;color:var(--ink-2)}
+  .chat .cap small{font-weight:400;color:var(--ink-3);margin-left:6px}
+  .bub{height:30px;border-radius:14px;background:var(--bubble)}
+  .bub.w1{width:62%}.bub.w2{width:74%}.bub.w3{width:52%}
+  .composer{
+    margin-top:auto;height:32px;border-radius:14px;background:var(--accent);
+    color:#fff;font-size:13px;display:flex;align-items:center;padding:0 14px;
+  }
+  .legend{
+    max-width:980px;margin:22px auto 0;padding-top:14px;border-top:1px solid var(--line);
+    font-size:12.5px;color:var(--ink-2);line-height:1.9;
+  }
+  .legend b{color:var(--ink)}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<div class="head">
+  <h1>图 3 交互补充稿 v2 · 创作首页 + 对话页（微信式收敛）</h1>
+  <p>正式图 3 为同目录 SVG（<code>2026-10-26-project-gallery-consolidation-1-layout.svg</code>）；本 HTML 为其交互补充稿，额外可切换「有项目 / 零项目空态」（D9）。列表即作品带：封面 + 项目名 + 最近时间；点任意项目进入干净对话页，‹ 返回切换。</p>
+  <div class="toggle" role="tablist" aria-label="创作首页状态切换">
+    <button class="on" data-state="list">有项目 · 列表态</button>
+    <button data-state="empty">零项目 · 空态（D9 首建引导）</button>
+  </div>
+</div>
+
+<div class="frames">
+  <!-- 创作首页 -->
+  <section class="frame" aria-label="创作首页">
+    <div class="frame-title"><span class="badge">1</span>创作首页（原 /canvases 升级 · 唯一续作面）</div>
+    <div class="topbar">
+      <span class="title">创作</span>
+      <span class="action">🔍 搜索</span>
+      <span class="plus" title="新建项目">⊕</span>
+    </div>
+    <div class="list">
+      <div class="row" role="button" tabindex="0">
+        <div class="cover">A</div>
+        <div class="meta">
+          <div class="name">电商主图 · 秋季新品</div>
+          <div class="prev">最近一句预览…（后端后续包，先显示占位）</div>
+        </div>
+        <div class="time">21:47</div>
+      </div>
+      <div class="row" role="button" tabindex="0">
+        <div class="cover" style="background:#e7e9ee;color:#3a3f47">分</div>
+        <div class="meta">
+          <div class="name">分镜脚本 · 短剧第一集</div>
+          <div class="prev">封面缺省 → 首字符占位（projectCoverFallback）</div>
+        </div>
+        <div class="time">昨天</div>
+      </div>
+      <div class="row" role="button" tabindex="0">
+        <div class="cover">角</div>
+        <div class="meta">
+          <div class="name">角色设定 · 墨鱼π</div>
+          <div class="prev">点任意项目 → 直接进入对话</div>
+        </div>
+        <div class="time">周三</div>
+      </div>
+    </div>
+    <div class="empty">
+      <p>还没有项目<br><span style="font-size:11.5px;color:var(--ink-3)">说一句想法，从第一个项目开始</span></p>
+      <button type="button">新建第一个项目</button>
+    </div>
+  </section>
+
+  <!-- 对话页 -->
+  <section class="frame" aria-label="对话页">
+    <div class="frame-title"><span class="badge">3</span>对话页（进入任意项目后 · 100% 干净）</div>
+    <div class="topbar">
+      <span class="back">‹ 返回创作首页</span>
+      <span class="title" style="margin:0 auto;transform:translateX(-30px)">电商主图 · 秋季新品</span>
+    </div>
+    <div class="chat">
+      <div class="cap">对话主位 <small>无作品带 · 无列表块 · 无抽屉 · v1 P4 状态机整体作废</small></div>
+      <div class="bub w1"></div><div class="bub w2"></div><div class="bub w3"></div>
+      <div class="composer">说一句，开始创作…</div>
+    </div>
+  </section>
+</div>
+
+<div class="legend">
+  <b>① 创作首页 = 唯一续作面</b>：「项目列表本身就是作品带」——列表卡加封面即替代原「继续你的创作」strip（G2）；搜索/多选/批删管理能力保留；⊕ 新建 + 空态首建是「新建项目」仅存入口（G5/D9）。<br>
+  <b>③ 对话页切换 = 纯微信式（D7）</b>：顶部 ‹ 返回创作首页 + 项目名纯标题；ProjectPanel 抽屉从对话页退场（D10）。切换项目 = 返回列表再点另一个。与 ADR-0012「品牌页点锚 = 进入创作」衔接：点锚落点见规格 D9。
+</div>
+
+<script>
+  const btns=document.querySelectorAll('.toggle button');
+  btns.forEach(b=>b.addEventListener('click',()=>{
+    document.body.classList.toggle('empty-mode',b.dataset.state==='empty');
+    btns.forEach(x=>x.classList.toggle('on',x===b));
+  }));
+  document.querySelectorAll('.row, .empty button').forEach(el=>{
+    el.addEventListener('click',()=>{
+      el.closest('.frame').animate(
+        [{opacity:1},{opacity:.35},{opacity:1}],{duration:420,easing:'ease'}
+      );
+    });
+  });
+</script>
+</body>
+</html>

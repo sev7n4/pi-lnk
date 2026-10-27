@@ -29,7 +29,21 @@ import MobileNodeWaveform from './MobileNodeWaveform.vue'
 const props = withDefaults(
   defineProps<{
     type: 'image' | 'video' | 'audio' | 'text'
-    data?: { url?: string; poster?: string; content?: string }
+    /**
+     * 节点数据全量透传（§4.8 审核内容层：pending 时读 status / prompt /
+     * imageModel / imageAspect / imageResolution 渲染提议内容层；
+     * D2 修订：audio 分支读 url）。
+     */
+    data?: {
+      url?: string
+      poster?: string
+      content?: string
+      status?: string
+      prompt?: string
+      imageModel?: string
+      imageAspect?: string
+      imageResolution?: string
+    }
     /**
      * 底部主栏动作（§4.11.6 可达性：高频操作放下方拇指区，顶部只放低频退出类）。
      * ⭐ 如 confirmed 态的「改词」—— ⛔ 不放右上角（那是低频区）。
@@ -90,14 +104,38 @@ onBeforeUnmount(() => {
  * ⭐ TTS 状态在查看器内局部维护（按钮态切换 + 退出即停），不走页面层 handler。
  * pending 节点决策层优先，故朗读按钮让位（决策层见壳层 viewerBottomActions）。
  */
+const nodeData = computed(() => (props.data ?? {}) as Record<string, unknown>)
+const isPendingNode = computed(() =>
+  ['pending_confirm', 'pending'].includes(String(nodeData.value.status ?? '')),
+)
+const hasProduct = computed(() => Boolean(String(nodeData.value.url ?? '').trim()))
+
+/**
+ * pending 审核内容层（规格 §4.8 修订，2026-10-26）：
+ * propose_generation 的产物要**确认后**才生成 ⇒ pending 打开查看器时无 url 可看。
+ * ⛔ 此时**禁止**渲染空媒体区（历史缺陷：满屏 `--lnk-surface-canvas` 黑底 +
+ * 只剩底部决策按钮，R2-T2「空白全屏」在 pending 分支复活）。
+ * ✅ 改为渲染「审核内容层」：提议提示词全文 + 参数只读摘要——
+ * 磁贴放不下的长提示词在这里全量可读，确认 / 拒绝因此有据可依。
+ */
+const showReviewLayer = computed(() => isPendingNode.value && !hasProduct.value)
+const reviewPrompt = computed(() => String(nodeData.value.prompt ?? '').trim())
+/** 参数只读摘要：与磁贴 proposeParams 同源（缺省模型不猜、不显示占位） */
+const reviewParams = computed(() => {
+  const d = nodeData.value
+  const model = d.imageModel ?? d.videoModel ?? d.textModel ?? d.audioModel
+  const parts: string[] = []
+  if (typeof model === 'string' && model.trim()) parts.push(model.trim())
+  if (typeof d.imageAspect === 'string' && d.imageAspect.trim()) parts.push(d.imageAspect.trim())
+  if (typeof d.imageResolution === 'string' && d.imageResolution.trim()) parts.push(d.imageResolution.trim())
+  return parts.join(' · ')
+})
+
 const resolvedBottomActions = computed(() => {
   const base = props.bottomActions ?? []
   const isText = props.type === 'text'
-  const isPending = ['pending_confirm', 'pending'].includes(
-    String((props.data as Record<string, unknown> | undefined)?.status ?? ''),
-  )
-  const hasText = Boolean(String((props.data as Record<string, unknown> | undefined)?.content ?? '').trim())
-  if (isText && hasText && !isPending) {
+  const hasText = Boolean(String(nodeData.value.content ?? '').trim())
+  if (isText && hasText && !isPendingNode.value) {
     return [...base, { key: 'tts', label: ttsSpeaking.value ? '停止' : '朗读' }]
   }
   return base
@@ -448,9 +486,11 @@ defineExpose({ videoRef })
       标注入口（L1 · §4.3）：**显式进入**标注态（⛔ 不做隐式双击手势 ——
       单指拖动已是媒体滚动/缩放，隐式手势在移动端极易误触）。
       ⭐ 音频不进查看器 ⇒ 音频的标注入口在磁贴上（本期不做，见 §12 后续包）。
+      ⭐ pending 且无产物时**不提供**（§4.8 修订：propose 确认前无产物底图，
+      圈选无从谈起 ⇒ 意见走文字通道 = 底部「改词」进轻量编辑器）。
     -->
     <button
-      v-if="type !== 'text'"
+      v-if="type !== 'text' && !showReviewLayer"
       class="viewer-annotate"
       type="button"
       :aria-label="annotating ? '取消圈选' : '圈选'"
@@ -472,11 +512,17 @@ defineExpose({ videoRef })
       @touchcancel="onInkEnd"
     />
 
-    <img v-if="type === 'image' && data?.url" :src="data.url" class="viewer-media" alt="" />
+    <!-- pending 无产物 ⇒ 审核内容层（提示词全文 + 参数只读），⛔ 禁空黑媒体区 -->
+    <div v-if="showReviewLayer" class="viewer-review" data-testid="mobile-viewer-review">
+      <p class="viewer-review-title" data-testid="mobile-viewer-review-title">待确认 · 提议内容</p>
+      <p v-if="reviewPrompt" class="viewer-review-prompt" data-testid="mobile-viewer-review-prompt">{{ reviewPrompt }}</p>
+      <p v-if="reviewParams" class="viewer-review-params" data-testid="mobile-viewer-review-params">{{ reviewParams }}</p>
+    </div>
+    <img v-else-if="type === 'image' && data?.url" :src="data.url" class="viewer-media" alt="" />
     <video
-      v-else-if="type === 'video'"
+      v-else-if="type === 'video' && data?.url"
       ref="videoRef"
-      :src="data?.url"
+      :src="data.url"
       controls
       class="viewer-media"
     />
@@ -790,5 +836,35 @@ defineExpose({ videoRef })
   font-size: var(--lnk-text-sm);
   color: var(--lnk-text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+/* pending 审核内容层（§4.8 修订）：提示词全文 + 参数只读摘要，可滚动 */
+.viewer-review {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--lnk-space-4) var(--lnk-space-4) calc(var(--lnk-space-5) + env(safe-area-inset-bottom));
+}
+
+.viewer-review-title {
+  margin-bottom: var(--lnk-space-2);
+  font-size: var(--lnk-text-sm);
+  line-height: var(--lnk-lh-sm);
+  color: var(--lnk-text-secondary);
+}
+
+.viewer-review-prompt {
+  font-size: var(--lnk-text-base);
+  line-height: var(--lnk-lh-base);
+  color: var(--lnk-text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.viewer-review-params {
+  margin-top: var(--lnk-space-3);
+  font-size: var(--lnk-text-sm);
+  line-height: var(--lnk-lh-sm);
+  color: var(--lnk-text-secondary);
 }
 </style>
