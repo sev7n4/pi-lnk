@@ -86,22 +86,24 @@ export function useEnterCreation() {
         return
       }
       if (!projects.length) {
-        if (opts?.allowImplicitCreate === false) return // 穿透路径 ⇒ 留品牌页
-        try {
-          const created = await ws.create()
-          await navigate({ path: `/workflow/${created.id}`, query: { openAgent: '1' } })
-        } catch {
-          // 不跳转、不进 demo-（spec §3.6）：失败要让用户看见并能重试
-          error.value = '创建画布失败，请检查网络后重试'
-        }
+        // 零项目：手势（点锚）统一进创作首页空态引导新建（D9 落地）；
+        // 自动分发（无手势，移动端一次性）留品牌页，不静默创建（IA v4）。
+        if (opts?.allowImplicitCreate === false) return
+        await navigate('/canvases')
         return
       }
-      const target = ws.resolveTarget() ?? projects[0]!
-      ws.rememberProject(target.id)
-      // ⚠️ openAgent=1 两条路径都带（INV-9）：其真实作用是
-      //    `agentRailRef.openPanel()`（PC 左栏 agent 面板）。不带 ⇒ 老项目不进
-      //    对话态，D-3「默认切到对话页」在 PC 上假绿。
-      await navigate({ path: `/workflow/${target.id}`, query: { openAgent: '1' } })
+      if (opts?.allowImplicitCreate === false) {
+        // 自动分发（移动端一次性）：跳最近项目（IA v4 效率优先），不经列表。
+        const target = ws.resolveTarget() ?? projects[0]!
+        ws.rememberProject(target.id)
+        // ⚠️ openAgent=1 两条路径都带（INV-9）：其真实作用是
+        //    `agentRailRef.openPanel()`（PC 左栏 agent 面板）。不带 ⇒ 老项目不进
+        //    对话态，D-3「默认切到对话页」在 PC 上假绿。
+        await navigate({ path: `/workflow/${target.id}`, query: { openAgent: '1' } })
+        return
+      }
+      // 手势（点锚）：已登录统一进「创作首页」列表（D9 落地；修复"创作首页无正向入口"bug①）。
+      await navigate('/canvases')
     } finally {
       entering.value = false
     }

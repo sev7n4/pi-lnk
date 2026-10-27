@@ -5,6 +5,7 @@ import { ref } from 'vue'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
+import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
 import WorkflowPage from './WorkflowPage.vue'
 
 const { apiGet, apiPost, canvasList, canvasCreate, sessionsCreate, mobileFlag, locationAssign } = vi.hoisted(() => ({
@@ -218,7 +219,7 @@ describe('锚入口接线（Task 4：createCanvas → enterCreation）', () => {
     expect(pageSrc).not.toContain('recentProjectId')
   })
 
-  it('点锚（已登录、有项目）：不新建，进目标项目并带 openAgent', async () => {
+  it('点锚（已登录、有项目）：不新建，落创作首页列表（D9 / 修复 bug①）', async () => {
     mobileFlag.isMobile = false // PC：不穿透，点锚才进
     canvasList.mockResolvedValue({
       data: { data: [{ id: 'proj-1', coverUrl: 'https://cdn/x.png' }] },
@@ -228,10 +229,8 @@ describe('锚入口接线（Task 4：createCanvas → enterCreation）', () => {
     await flushPromises()
     expect(sessionsCreate, '点锚不得再走 sessionsApi.create').not.toHaveBeenCalled()
     expect(canvasCreate, '有项目时点锚不得新建').not.toHaveBeenCalled()
-    expect(routerMocks.push).toHaveBeenCalledWith({
-      path: '/workflow/proj-1',
-      query: { openAgent: '1' },
-    })
+    // D9 修订：点锚手势（有项目）统一进创作首页列表，而非直跳某项目
+    expect(routerMocks.push).toHaveBeenCalledWith('/canvases')
   })
 
   it('点锚（未登录）：弹登录，不创建、不跳转（D-1）', async () => {
@@ -429,5 +428,79 @@ describe('移动端品牌页边界（第 3/4 点）', () => {
     //      · `allowImplicitCreate: false` ⇒ 防退回「无项目静默新建」（IA v3.1，10-23 已撤）
     //      · `replace: true`            ⇒ 防自动分发改用 push，返回键把用户弹回品牌页
     expect(pageSrc).toContain('enterCreation({ allowImplicitCreate: false, replace: true })')
+  })
+})
+
+/**
+ * 2026-10-27 v2.2（D6 恢复）：已登录回访用户的「继续：<上次项目名>」幽灵链接。
+ * 仅作便捷入口；未登录 / 无记忆项目 → 不渲染。
+ * ⚠️ `useProjectWorkspace` 模块级单例（projects 跨用例共享），每个用例先 seed 复位。
+ */
+describe('D6 幽灵链接（v2.2 恢复）', () => {
+  const ws = useProjectWorkspace()
+
+  async function seedProjects(
+    list: {
+      id: string
+      title: string
+      coverUrl?: string | null
+      coverNodeId?: string | null
+      updatedAt?: string
+    }[],
+  ) {
+    canvasList.mockResolvedValue({ data: { data: list } })
+    await ws.list()
+    await flushPromises()
+  }
+
+  beforeEach(() => {
+    localStorage.clear()
+    mobileFlag.isMobile = false
+    canvasList.mockReset()
+    routerMocks.push.mockReset()
+    routerMocks.replace.mockReset()
+    routerMocks.back.mockReset()
+  })
+
+  it('已登录 + 有记忆项目：渲染「继续：<标题>」并跳转 /workflow/:id', async () => {
+    localStorage.setItem('lnkpi:lastProjectId:u_1', 'proj-ghost')
+    await seedProjects([
+      { id: 'proj-ghost', title: '墨色日记', coverUrl: null, coverNodeId: null, updatedAt: '' },
+    ])
+    const wrapper = await mountWorkflow({ loggedIn: true })
+    await flushPromises()
+    const link = wrapper.find('[data-testid="brand-ghost-continue"]')
+    expect(link.exists()).toBe(true)
+    expect(link.text()).toContain('继续')
+    expect(link.text()).toContain('墨色日记')
+    await link.trigger('click')
+    await flushPromises()
+    expect(routerMocks.push).toHaveBeenCalledWith('/workflow/proj-ghost')
+  })
+
+  it('已登录但无记忆项目：不渲染幽灵链接', async () => {
+    await seedProjects([{ id: 'proj-1', title: 'x', coverUrl: null, coverNodeId: null, updatedAt: '' }])
+    const wrapper = await mountWorkflow({ loggedIn: true })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="brand-ghost-continue"]').exists()).toBe(false)
+  })
+
+  it('未登录：不渲染幽灵链接（无记忆键）', async () => {
+    const wrapper = await mountWorkflow()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="brand-ghost-continue"]').exists()).toBe(false)
+  })
+
+  it('记忆项目已删除（list 无匹配）：兜底「继续创作」仍可凭记忆 id 跳转', async () => {
+    localStorage.setItem('lnkpi:lastProjectId:u_1', 'proj-gone')
+    await seedProjects([{ id: 'proj-other', title: 'y', coverUrl: null, coverNodeId: null, updatedAt: '' }])
+    const wrapper = await mountWorkflow({ loggedIn: true })
+    await flushPromises()
+    const link = wrapper.find('[data-testid="brand-ghost-continue"]')
+    expect(link.exists()).toBe(true)
+    expect(link.text()).toBe('继续创作')
+    await link.trigger('click')
+    await flushPromises()
+    expect(routerMocks.push).toHaveBeenCalledWith('/workflow/proj-gone')
   })
 })

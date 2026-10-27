@@ -45,36 +45,67 @@ beforeEach(() => {
   createMock.mockReset()
 })
 
-describe('useEnterCreation', () => {
-  it('回访用户连点 3 次：create 0 次，落在最近项目（INV-1 / Review Focus #1）', async () => {
+/**
+ * v2.2（D9 修订）：点锚手势路径（`allowImplicitCreate` 非 false）无论有无项目
+ * 统一落「创作首页」`/canvases`；自动分发路径（`allowImplicitCreate: false`）
+ * 保持进最近项目（穿透、不创建）。本组钉这两侧落点。
+ */
+describe('useEnterCreation · D9 落点（v2.2）', () => {
+  it('⭐ 手势（有项目）：落创作首页列表，不进具体项目（修复 bug①）', async () => {
     seedLoggedIn()
     listMock.mockResolvedValue({ data: { data: [PROJ('p-latest'), PROJ('p-old')] } })
-    createMock.mockResolvedValue({ data: { data: PROJ('p-new') } })
+    const { enterCreation } = useEnterCreation()
+    await enterCreation()
+    expect(createMock, '手势不创建').not.toHaveBeenCalled()
+    expect(push).toHaveBeenCalledWith('/canvases')
+    expect(push).toHaveBeenCalledTimes(1)
+  })
+
+  it('⭐ 手势（零项目）：落创作首页空态，不静默创建（D9 落地）', async () => {
+    seedLoggedIn()
+    listMock.mockResolvedValue({ data: { data: [] } })
+    const { enterCreation } = useEnterCreation()
+    await enterCreation()
+    expect(createMock, '手势零项目不再自动创建').not.toHaveBeenCalled()
+    expect(push).toHaveBeenCalledWith('/canvases')
+  })
+
+  it('手势连点 3 次：均落 /canvases、create 0 次（INV-1 / INV-8）', async () => {
+    seedLoggedIn()
+    listMock.mockResolvedValue({ data: { data: [PROJ('p-latest')] } })
     const { enterCreation } = useEnterCreation()
     await enterCreation()
     await enterCreation()
     await enterCreation()
     expect(createMock).not.toHaveBeenCalled()
-    // ⚠️ 对象形式（带 openAgent）—— 这条断言在 brief 初版里是字符串形式，
-    //    与其余用例矛盾；实现统一为对象，故此处同步。
-    expect(push).toHaveBeenCalledWith({ path: '/workflow/p-latest', query: { openAgent: '1' } })
+    expect(push).toHaveBeenCalledWith('/canvases')
     expect(push).toHaveBeenCalledTimes(3)
   })
 
-  it('零项目：首次建 1 个，第二次复用（例外条款 / Review Focus #3）', async () => {
+  it('⭐ 自动分发（有项目）：跳最近项目（IA v4 效率优先），不经列表、不创建', async () => {
     seedLoggedIn()
-    listMock.mockResolvedValue({ data: { data: [] } })
-    createMock.mockResolvedValue({ data: { data: PROJ('p-new') } })
+    listMock.mockResolvedValue({ data: { data: [PROJ('p-latest'), PROJ('p-old')] } })
     const { enterCreation } = useEnterCreation()
-    await enterCreation()
-    expect(createMock).toHaveBeenCalledTimes(1)
-    // 第二次：list 已能返回刚建的项目 ⇒ 不再创建
-    listMock.mockResolvedValue({ data: { data: [PROJ('p-new')] } })
-    await enterCreation()
-    expect(createMock).toHaveBeenCalledTimes(1)
+    await enterCreation({ allowImplicitCreate: false, replace: true })
+    expect(createMock).not.toHaveBeenCalled()
+    // 自动分发走 replace（不留「返回即回品牌页」的历史）
+    expect(replace).toHaveBeenCalledWith({ path: '/workflow/p-latest', query: { openAgent: '1' } })
+    expect(push).not.toHaveBeenCalled()
   })
 
-  it('⭐ 2026-10-26 事故修复：list 失败 + 有记忆的项目 ⇒ 进记忆项目（不被错误态堵死）', async () => {
+  it('自动分发（零项目）：留品牌页，不创建、不跳转', async () => {
+    seedLoggedIn()
+    listMock.mockResolvedValue({ data: { data: [] } })
+    const { enterCreation } = useEnterCreation()
+    await enterCreation({ allowImplicitCreate: false })
+    expect(createMock).not.toHaveBeenCalled()
+    expect(push).not.toHaveBeenCalled()
+    expect(replace).not.toHaveBeenCalled()
+  })
+})
+
+describe('useEnterCreation · 手势 list 失败兜底（记忆项目，仅手势路径）', () => {
+  it('手势：list 失败 + 有记忆项目 ⇒ 进记忆项目（不被错误态堵死）', async () => {
     seedLoggedIn('u1')
     // 记忆键 = lnkpi:lastProjectId:<userId>（useProjectWorkspace.storageKey）
     localStorage.setItem('lnkpi:lastProjectId:u1', 'p-remembered')
@@ -87,7 +118,7 @@ describe('useEnterCreation', () => {
     expect(createMock).not.toHaveBeenCalled()
   })
 
-  it('list 失败 + 无记忆 ⇒ 仍是「项目加载失败」且不跳转（INV-6 不动）', async () => {
+  it('手势：list 失败 + 无记忆 ⇒ 仍是「项目加载失败」且不跳转（INV-6 不动）', async () => {
     seedLoggedIn('u1')
     listMock.mockRejectedValue(new Error('timeout'))
     const { enterCreation, error } = useEnterCreation()
@@ -97,7 +128,7 @@ describe('useEnterCreation', () => {
     expect(createMock).not.toHaveBeenCalled()
   })
 
-  it('移动端自动分发（allowImplicitCreate:false）+ list 失败 ⇒ 兜底**不生效**（不跳转）', async () => {
+  it('自动分发：list 失败 ⇒ 兜底**不生效**（不跳转），error 有文案', async () => {
     seedLoggedIn('u1')
     localStorage.setItem('lnkpi:lastProjectId:u1', 'p-remembered')
     listMock.mockRejectedValue(new Error('timeout'))
@@ -105,9 +136,12 @@ describe('useEnterCreation', () => {
     await enterCreation({ allowImplicitCreate: false })
     // ⛔ 自动分发路径没有用户手势 ⇒ 不得替用户决定进哪个项目（既有契约）
     expect(push).not.toHaveBeenCalled()
+    expect(replace).not.toHaveBeenCalled()
     expect(error.value).toBe('项目加载失败')
   })
+})
 
+describe('useEnterCreation · 其他既有契约（INV / D-1 等，D9 不动）', () => {
   it('未登录：弹登录，不创建、不自动进项目（D-1）', async () => {
     const auth = useAuthStore()
     auth.isLoggedIn // computed：只读，确认可访问
@@ -118,40 +152,6 @@ describe('useEnterCreation', () => {
     expect(openLogin).toHaveBeenCalled()
     expect(push).not.toHaveBeenCalled() // ⛔ 不自动进项目（与 pendingIntent 形态的差别）
     expect(createMock).not.toHaveBeenCalled()
-  })
-
-  it('穿透路径零项目：不创建、不跳转（allowImplicitCreate:false / INV-7c）', async () => {
-    seedLoggedIn()
-    listMock.mockResolvedValue({ data: { data: [] } })
-    const { enterCreation } = useEnterCreation()
-    await enterCreation({ allowImplicitCreate: false })
-    expect(createMock).not.toHaveBeenCalled()
-    expect(push).not.toHaveBeenCalled()
-  })
-
-  it('点锚路径零项目：创建 1 个并带 openAgent=1（D-3 / INV-9）', async () => {
-    seedLoggedIn()
-    listMock.mockResolvedValue({ data: { data: [] } })
-    createMock.mockResolvedValue({ data: { data: PROJ('p-new') } })
-    const { enterCreation } = useEnterCreation()
-    await enterCreation({ allowImplicitCreate: true })
-    expect(createMock).toHaveBeenCalledTimes(1)
-    expect(push).toHaveBeenCalledWith({
-      path: '/workflow/p-new',
-      query: { openAgent: '1' },
-    })
-  })
-
-  it('进入既有项目也带 openAgent=1（INV-9：与新建路径对话态一致）', async () => {
-    seedLoggedIn()
-    listMock.mockResolvedValue({ data: { data: [PROJ('p-latest')] } })
-    const { enterCreation } = useEnterCreation()
-    await enterCreation()
-    expect(createMock).not.toHaveBeenCalled()
-    expect(push).toHaveBeenCalledWith({
-      path: '/workflow/p-latest',
-      query: { openAgent: '1' },
-    })
   })
 
   it('entering 期间再次调用直接 return（INV-8 防连点）', async () => {
@@ -168,22 +168,12 @@ describe('useEnterCreation', () => {
     expect(entering.value).toBe(false)
   })
 
-  it('list 失败：不创建、不跳转，error 有文案（INV-6）', async () => {
+  it('手势 list 失败：不创建、不跳转，error 有文案（INV-6）', async () => {
     seedLoggedIn()
     listMock.mockRejectedValue(new Error('boom'))
     const { enterCreation, error } = useEnterCreation()
     await enterCreation()
     expect(createMock).not.toHaveBeenCalled() // ⛔ 不得把失败当成零项目去创建
-    expect(push).not.toHaveBeenCalled()
-    expect(error.value).toBeTruthy()
-  })
-
-  it('create 失败：不跳转、不进 demo-，error 有文案（spec §3.6）', async () => {
-    seedLoggedIn()
-    listMock.mockResolvedValue({ data: { data: [] } })
-    createMock.mockRejectedValue(new Error('boom'))
-    const { enterCreation, error } = useEnterCreation()
-    await enterCreation()
     expect(push).not.toHaveBeenCalled()
     expect(error.value).toBeTruthy()
   })
@@ -196,20 +186,9 @@ describe('useEnterCreation', () => {
     expect(error.value).toBeTruthy()
     listMock.mockResolvedValue({ data: { data: [PROJ('p-latest')] } })
     await enterCreation()
+    // 手势有项目 ⇒ 落创作首页；error 在每次进入开头清空
     expect(error.value).toBeNull()
-  })
-
-  it('replace:true 走 router.replace，且不碰 push（自动分发不留历史，INV-7b 配套）', async () => {
-    seedLoggedIn()
-    listMock.mockResolvedValue({ data: { data: [PROJ('p-latest')] } })
-    const { enterCreation } = useEnterCreation()
-    await enterCreation({ allowImplicitCreate: false, replace: true })
-    expect(replace).toHaveBeenCalledWith({
-      path: '/workflow/p-latest',
-      query: { openAgent: '1' },
-    })
-    // ⛔ 2026-10-24 性能修复的结论：push 会让用户按返回键又弹回品牌页
-    expect(push).not.toHaveBeenCalled()
+    expect(push).toHaveBeenCalledWith('/canvases')
   })
 
   it('默认走 router.push（用户手势理应能返回）', async () => {

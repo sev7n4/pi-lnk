@@ -2,11 +2,14 @@
 // 2026-10-26 规格收敛 v2（P3 主页品牌化）：「我的项目」网格与「社区精选」整体退场
 // ——列表唯一真身 = 创作首页（/canvases 行卡），社区唯一入口 = /community（发现）。
 // 主页回归：纯品牌 + 一个锚点 CTA（ADR-0012 点锚仪式，本页不承载内容）。
-import { onMounted, watch } from 'vue'
+import { computed, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useSessionRedirect } from '@/composables/useSessionRedirect'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import { useEnterCreation } from '@/composables/useEnterCreation'
+import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
+import { displayCanvasTitle } from '@/utils/displayCanvasTitle'
 import SignatureHero from '@/components/workflow/SignatureHero.vue'
 
 const auth = useAuthStore()
@@ -49,6 +52,28 @@ const { isMobileLayout } = useAgentMobileLayout()
 //    若把解构放在 watch 之后会撞 TDZ（"Cannot access 'enterCreation' before initialization"）。
 const { enterCreation, entering, error } = useEnterCreation()
 
+// D6 恢复（v2.2）：已登录回访用户的「继续：<上次项目名>」幽灵链接。
+// 仅作便捷入口，不抢锚的唯一创作入口地位；未登录 / 无记忆项目 → 不渲染。
+// 数据面复用 useProjectWorkspace 模块级单例（与创作首页同源）。
+const { projects, loadIfStale, resolveLastProjectId } = useProjectWorkspace()
+const router = useRouter()
+
+const ghostProjectId = computed(() => (auth.isLoggedIn ? resolveLastProjectId() : null))
+const ghostProject = computed(() =>
+  ghostProjectId.value
+    ? (projects.value.find((p) => p.id === ghostProjectId.value) ?? null)
+    : null,
+)
+// 标题未知（list 未回 / 项目已删）时兜底「继续创作」，仍可凭记忆 id 跳回上次项目。
+const ghostLabel = computed(() =>
+  ghostProject.value ? `继续：${displayCanvasTitle(ghostProject.value.title)}` : '继续创作',
+)
+const showGhostLink = computed(() => !!ghostProjectId.value)
+
+function continueProject() {
+  if (ghostProjectId.value) router.push(`/workflow/${ghostProjectId.value}`)
+}
+
 watch(
   isMobileLayout,
   (mobile) => {
@@ -87,11 +112,14 @@ onMounted(() => {
   //    此刻用户已明确表达意图，且首屏早已就绪 ⇒ 不抢任何连接。
   //    兜底那一路（首屏 load 之后预热）在 App.vue。
   // 2026-10-26 P3：主页品牌化后无列表消费方，fetchWorks/listProjects 一并退场。
+  // 2026-10-27 v2.2（D6）：已登录时取最近项目标题供幽灵链接显示；
+  //   loadIfStale 命中新鲜缓存时不发请求，避免重复排队（连接饥饿纪律）。
+  if (auth.isLoggedIn) void loadIfStale()
 })
 </script>
 
 <template>
-  <div>
+  <div class="brand-page-root">
     <!-- 2026-10-22 用户裁定「霸屏铺满」：hero 是全宽首屏。
          2026-10-26 规格收敛 v2（P3）：滚动区已清空——「我的项目」唯一真身 = 创作首页
          （/canvases），「社区精选」唯一入口 = /community（发现，与移动端同构）；
@@ -100,5 +128,48 @@ onMounted(() => {
          点那行「重试」会再发一次 create ⇒ 走 enterCreation ⇒ 未登录则弹登录，
          已登录则重跑一次进入。重试与点锚同一意图，故共用 create 事件。 -->
     <SignatureHero :creating="entering" :error="error ?? undefined" @create="() => enterCreation({ allowImplicitCreate: true })" />
+    <!-- D6 恢复（v2.2）：已登录回访的「继续：<上次项目名>」幽灵链接。
+         浮动在 hero 底部、不抢锚的唯一创作入口地位；未登录 / 无记忆项目 → 不渲染。 -->
+    <a
+      v-if="showGhostLink"
+      data-testid="brand-ghost-continue"
+      class="brand-ghost-continue"
+      role="button"
+      tabindex="0"
+      @click.prevent="continueProject"
+      @keydown.enter.prevent="continueProject"
+    >
+      {{ ghostLabel }}
+    </a>
   </div>
 </template>
+
+<style scoped>
+.brand-page-root {
+  position: relative;
+}
+/* 幽灵链接：刻意弱于锚（一行小字、低对比、无边框），仅作便捷续作入口。
+   ⛔ 只用 on-signature 家族令牌（浮在恒深签名底上，主题不变式）。 */
+.brand-ghost-continue {
+  position: absolute;
+  bottom: 1.75rem;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  font-size: var(--lnk-text-sm);
+  line-height: var(--lnk-lh-sm);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  color: var(--lnk-text-on-signature-muted);
+  text-decoration: none;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: color 0.15s ease;
+}
+.brand-ghost-continue:hover,
+.brand-ghost-continue:focus-visible {
+  color: var(--lnk-text-on-signature);
+  outline: none;
+}
+</style>
