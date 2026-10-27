@@ -16,6 +16,8 @@ import { resolveMobileNodeState } from '@/composables/mobileNodeState'
 import { formatElapsed } from '@/components/canvas/nodeTaskChrome'
 import NodePendingPrompt from '@/components/canvas/NodePendingPrompt.vue'
 import { mediaInfoLine } from '@/utils/mediaInfoFormat'
+import { useNodeMediaInfoFooter } from '@/composables/useNodeMediaInfoFooter'
+import type { NodeMediaInfoSummary } from '@/composables/useMediaInspector'
 import {
   resolveImageNodeDisplaySize,
   resolveVideoNodeDisplaySize,
@@ -191,6 +193,47 @@ const mediaInfoText = computed(() => {
   if (!info || typeof info !== 'object') return ''
   return mediaInfoLine(info as Parameters<typeof mediaInfoLine>[0])
 })
+
+/* ── 走查①②（2026-10-27 规格 §6.2「磁贴属性行构成」）──────────────────
+ * 属性行 = **节点名称（居首）** + 类型属性；音/视频在移动端自行 ensure
+ * mediaInfo（此前 probe 只在 PC 组件跑 ⇒ 移动端会话恒缺属性行）。
+ */
+/** 节点名称（`data.label`，与 PC nodeLabel / 下载名同源）；无则空串 */
+const nodeName = computed(() => {
+  const l = props.data?.label
+  return typeof l === 'string' ? l.trim() : ''
+})
+
+/** 媒体三类属性行：名称（有才拼） · 媒体属性（无则缺省该段，不渲染空行） */
+const attributeLine = computed(() =>
+  [nodeName.value, mediaInfoText.value].filter(Boolean).join(' · '),
+)
+
+/** 文本节点属性行：名称 · 字数（空文本不渲染） */
+const textAttrLine = computed(() => {
+  const content = props.data?.content ?? ''
+  if (!content) return ''
+  return [nodeName.value, `${content.length} 字`].filter(Boolean).join(' · ')
+})
+
+/**
+ * 移动端 mediaInfo ensure（走查②根因修复）：复用 PC 同一 composable
+ * （probe 单一真源 + 模块级 url 去重），有 patch 通道才生效（磁贴在
+ * CanvasPage 树内 ⇒ CANVAS_NODE_PATCH_KEY 可注入；独立挂载（测试）安全 no-op）。
+ */
+const { applyDurationSec } = useNodeMediaInfoFooter({
+  nodeId: () => props.id ?? '',
+  url: () => props.data?.url,
+  // text 无 url，ensureProbe 对空 url 直接短路；类型收窄仅为满足签名
+  kind: () => props.type as 'image' | 'video' | 'audio',
+  mediaInfo: () => props.data?.mediaInfo as NodeMediaInfoSummary | undefined,
+})
+
+/** 音频元数据就绪 ⇒ 时长落 mediaInfo（PC CanvasNodeAudio 同款路径） */
+function onAudioMeta(e: Event) {
+  const d = (e.target as HTMLAudioElement).duration
+  if (Number.isFinite(d)) applyDurationSec(d)
+}
 
 /**
  * 空态主动作提示（走查③，2026-10-24；D1/D3 修订 2026-10-25）：
@@ -448,9 +491,9 @@ function handleTextTap() {
     </div>
     <div v-else-if="type === 'image' && data?.url" class="mobile-node-media-box">
       <img :src="data.url" class="mobile-node-media" alt="" />
-      <!-- 走查②：PC MediaInfoSummary 的移动端对等物（尺寸 · 比例 · 大小） -->
-      <p v-if="mediaInfoText" class="mobile-node-media-info" data-testid="mobile-node-media-info">
-        {{ mediaInfoText }}
+      <!-- 走查②：PC MediaInfoSummary 的移动端对等物 + 名称居首（走查①，§6.2 属性行构成） -->
+      <p v-if="attributeLine" class="mobile-node-media-info" data-testid="mobile-node-media-info">
+        {{ attributeLine }}
       </p>
     </div>
     <div v-else-if="type === 'video' && data?.url" class="mobile-node-media-box">
@@ -471,8 +514,8 @@ function handleTextTap() {
           <polygon points="8 5 19 12 8 19 8 5" fill="currentColor" stroke="none" />
         </svg>
       </span>
-      <p v-if="mediaInfoText" class="mobile-node-media-info" data-testid="mobile-node-media-info">
-        {{ mediaInfoText }}
+      <p v-if="attributeLine" class="mobile-node-media-info" data-testid="mobile-node-media-info">
+        {{ attributeLine }}
       </p>
     </div>
     <div v-else-if="type === 'audio'" class="mobile-node-media-box">
@@ -484,15 +527,19 @@ function handleTextTap() {
           :loading="waveformLoading"
         />
       </div>
-      <audio ref="audioEl" :src="data?.url" />
-      <p v-if="mediaInfoText" class="mobile-node-media-info" data-testid="mobile-node-media-info">
-        {{ mediaInfoText }}
+      <audio ref="audioEl" :src="data?.url" @loadedmetadata="onAudioMeta" />
+      <p v-if="attributeLine" class="mobile-node-media-info" data-testid="mobile-node-media-info">
+        {{ attributeLine }}
       </p>
     </div>
     <div v-else-if="type === 'text'" class="mobile-node-text-wrap">
       <p class="mobile-node-text">{{ data?.content || '空文本' }}</p>
       <!-- 走查③：空文本也要有点按入口（tap ⇒ 编辑 sheet） -->
       <span v-if="!data?.content" class="mobile-node-text-cta">{{ emptyCtaLabel }}</span>
+      <!-- 走查①：文本节点属性行 = 名称 · 字数（§6.2 属性行构成） -->
+      <p v-if="textAttrLine" class="mobile-node-media-info" data-testid="mobile-node-text-info">
+        {{ textAttrLine }}
+      </p>
     </div>
     <!--
       空图 / 空视频的类型占位（2026-10-23 真机走查）：
