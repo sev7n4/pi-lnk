@@ -147,8 +147,8 @@ const props = defineProps<{
    * —— ⛔ 不再有本地提交（生成权归 agent）与删除引用 emit（PC dock 专用契约已移除）。
    */
   onNodeEditorSendToAgent: (payload: { prompt: string; opinion: string }) => void
-  /** 移动端全屏查看器（R1-T4/T6）：图灯箱/视频播放/文本阅读器；null = 未打开 */
-  viewerNode: { id?: string; type: 'image' | 'video' | 'text'; data?: any } | null
+  /** 移动端全屏查看器（R1-T4/T6）：图灯箱/视频播放/音频波形/文本阅读器；null = 未打开 */
+  viewerNode: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any } | null
   onViewerClose: () => void
   /** 右上「⋯」= 打开与长按同一个 Menu（同源同容器，§4.6） */
   onViewerMore: () => void

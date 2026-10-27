@@ -379,23 +379,15 @@ function onTileClick() {
    * tap 意图由纯函数 `resolveMobileNodeTapIntent` 单一判定（不各写一遍，审阅焦点 #2）。
    * - 'none'（空 / 生成中 / 失败无旧产物）⇒ 无 op + 轻提示「长按编辑 / 长按撰写」，
    *   **不开 viewer、不开 editor**（管理操作只走长按）；
-   * - 'viewer'（pending / confirmed / 失败但有旧产物）⇒ 交 NodeRenderer 开查看器；
-   * - 'inline'（音频）⇒ 磁贴内联播放（不进查看器 / 编辑器）。
+   * - 'viewer'（pending / confirmed / 失败但有旧产物）⇒ 交 NodeRenderer 开查看器。
+   * ⚠️ 2026-10-27（D2 修订，走查④）：音频不再特殊分流——有产物 tap = 波形查看器；
+   *   磁贴内联播放保留（走播放按钮 `@click.stop="toggleAudio"`，非 tap）。
    */
   const intent = resolveMobileNodeTapIntent({
     type: props.type,
     data: props.data as Record<string, unknown>,
   })
 
-  if (props.type === 'audio') {
-    // R2-T2：空音频（无 url）不播一个不存在的源；P1 下也不再进编辑器 ⇒ 轻提示。
-    if (!props.data?.url) {
-      showHint()
-      return
-    }
-    toggleAudio()
-    return
-  }
   if (intent === 'none') {
     showHint()
     return

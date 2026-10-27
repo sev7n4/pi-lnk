@@ -34,6 +34,46 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
     expect(wrapper.find('video').exists()).toBe(false)
   })
 
+  it('audio: 渲染波形查看器（D2 修订 2026-10-27，走查④）——audio 元素 + 波形 + 播放 + 可拖进度', () => {
+    const w = mount(MobileNodeViewer, { props: { type: 'audio', data: { url: 'x.mp3' } } })
+    expect(w.find('[data-testid="mobile-viewer-audio"]').exists()).toBe(true)
+    expect(w.find('audio').exists()).toBe(true)
+    expect(w.find('[data-testid="mobile-viewer-audio-play"]').exists()).toBe(true)
+    expect(w.find('input[type="range"]').exists()).toBe(true)
+    expect(w.findComponent({ name: 'MobileNodeWaveform' }).exists()).toBe(true)
+  })
+
+  it('audio: 点播放 ⇒ audio.play 被调用（磁贴内联保留，查看器全屏控制）', async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+    try {
+      const w = mount(MobileNodeViewer, { props: { type: 'audio', data: { url: 'x.mp3' } } })
+      await w.get('[data-testid="mobile-viewer-audio-play"]').trigger('click')
+      expect(play).toHaveBeenCalled()
+    } finally {
+      play.mockRestore()
+    }
+  })
+
+  it('audio: 有圈选入口（底图 = 波形图，§4.3）', async () => {
+    const w = mount(MobileNodeViewer, { props: { type: 'audio', data: { url: 'x.mp3' } } })
+    const btn = w.find('[data-testid="mobile-viewer-annotate"]')
+    expect(btn.exists()).toBe(true)
+    await btn.trigger('click')
+    expect(w.find('[data-testid="mobile-viewer-ink"]').isVisible()).toBe(true)
+    w.unmount()
+  })
+
+  it('audio: 退出即停（close 前调用 pause，P3）', async () => {
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {})
+    try {
+      const w = mount(MobileNodeViewer, { props: { type: 'audio', data: { url: 'x.mp3' } } })
+      await w.get('[data-testid="mobile-viewer-close"]').trigger('click')
+      expect(pause).toHaveBeenCalled()
+    } finally {
+      pause.mockRestore()
+    }
+  })
+
   it('image: 全屏灯箱（根容器有 testid + 渲染 img）', () => {
     const w = mount(MobileNodeViewer, { props: { type: 'image', data: { url: 'x.png' } } })
     expect(w.find('[data-testid="mobile-viewer"]').exists()).toBe(true)

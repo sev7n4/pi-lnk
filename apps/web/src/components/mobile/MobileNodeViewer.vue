@@ -3,6 +3,9 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import { sameOriginApiMediaUrl } from '@/services/media-url'
 import { composeAnnotatedImage, type AnnotateMark } from './annotate/composeAnnotatedImage'
 import { useTextToSpeech } from '@/composables/useTextToSpeech'
+import { useNodeWaveform } from '@/composables/useNodeWaveform'
+import { formatMediaDuration } from '@/utils/mediaInfoFormat'
+import MobileNodeWaveform from './MobileNodeWaveform.vue'
 
 /**
  * 全屏查看器（D2 · 2026-10-25 规格 §6.2 / §4.1 P3）
@@ -12,11 +15,12 @@ import { useTextToSpeech } from '@/composables/useTextToSpeech'
  *   ② **下滑关闭**（下拉 > 100px；⭐ 2026-10-27 走查③加仲裁规则：
  *      只认下拉（上滑永不关闭——旧实现方向写反成上滑关）+
  *      滚动守卫（可滚动容器 scrollTop>0 时一律不触发））
- *   且**退出即停**——视频 `pause()`、朗读停止（后续任务扩展）。
+ *   且**退出即停**——视频 `pause()`、音频 `pause()`、朗读停止。
  *
- * ⚠️ **D2 契约变更**：props `type` 收窄为 `'image' | 'video' | 'text'`，
- *   **删掉 `audio`** —— 音频永不进查看器（磁贴内联播放，§6.2 音频例外），
- *   留着就是个死分支（未来有人按契约调它必得空白屏）。
+ * ⚠️ **D2 修订（2026-10-27 真机走查④）**：恢复 **audio** 分支——
+ *   不是恢复死分支，而是**正经的音频波形查看器**（全屏波形 + 播放控制 +
+ *   可拖进度 + 圈选标注，§4.3 音频底图 = 波形图）。原「音频永不进查看器」
+ *   使 §4.3 的音频标注承诺没有全屏载体，真机实证后修订（§14 拍板 D）。
  *
  * ⚠️ **§4.11.5 图标纪律**：原左上 `‹` 是 U+2039 **文本字符**（细笔画、
  *   形态随字重不稳 ⇒ 识别失败）⇒ 改为内联 SVG（照抄 `MobileSheet.vue`
@@ -24,7 +28,7 @@ import { useTextToSpeech } from '@/composables/useTextToSpeech'
  */
 const props = withDefaults(
   defineProps<{
-    type: 'image' | 'video' | 'text'
+    type: 'image' | 'video' | 'audio' | 'text'
     data?: { url?: string; poster?: string; content?: string }
     /**
      * 底部主栏动作（§4.11.6 可达性：高频操作放下方拇指区，顶部只放低频退出类）。
@@ -225,6 +229,27 @@ async function captureBaseImage(): Promise<{ image: CanvasImageSource; width: nu
     ctx.drawImage(video, 0, 0, w, h)
     return { image: c, width: w, height: h }
   }
+  if (type === 'audio') {
+    // 底图 = 波形图（§4.3）：显示组件是 SVG 不可 drawImage ⇒ 用同一 peaks
+    // 真源画一份 canvas。峰值全零（占位且静音）时诚实降级。
+    const p = wavePeaks.value
+    if (!p.length || !p.some((v) => v > 0)) return null
+    const barW = 4
+    const gap = 2
+    const h = 160
+    const w = Math.max(320, p.length * (barW + gap))
+    const c = document.createElement('canvas')
+    c.width = w
+    c.height = h
+    const ctx = c.getContext('2d')
+    if (!ctx) return null
+    ctx.fillStyle = 'rgba(110, 110, 110, 0.9)'
+    p.forEach((peak, i) => {
+      const bh = Math.max(2, peak * (h - 8))
+      ctx.fillRect(i * (barW + gap), (h - bh) / 2, barW, bh)
+    })
+    return { image: c, width: w, height: h }
+  }
   // 图片：⛔ 必须**同源化**后再 drawImage（否则 canvas 被污染 ⇒ toBlob 抛错）
   const url = String((props.data as Record<string, unknown> | undefined)?.url ?? '')
   if (!url) return null
@@ -244,6 +269,48 @@ async function captureBaseImage(): Promise<{ image: CanvasImageSource; width: nu
 /** 视频元素引用（退出即停用） */
 const videoRef = ref<HTMLVideoElement | null>(null)
 
+/* ── 音频波形查看器（D2 修订 2026-10-27，走查④）────────────────────── */
+const audioRef = ref<HTMLAudioElement | null>(null)
+const audioPlaying = ref(false)
+const audioCurrent = ref(0)
+const audioDuration = ref(0)
+/** 波形真源与磁贴同一 composable（peaks 占位/真实 + 模块级 url 去重） */
+const { peaks: wavePeaks, source: waveSource, loading: waveLoading } = useNodeWaveform({
+  nodeId: () => props.data?.url,
+  url: () => props.data?.url,
+})
+
+function toggleAudioPlay() {
+  const el = audioRef.value
+  if (!el) return
+  if (audioPlaying.value) {
+    el.pause()
+    return
+  }
+  void el.play().catch(() => {
+    /* 自动播放策略拦截：用户再点一次即可，不静默失败 */
+  })
+}
+
+function onAudioTime() {
+  audioCurrent.value = audioRef.value?.currentTime ?? 0
+}
+
+function onAudioMeta() {
+  const d = audioRef.value?.duration
+  if (Number.isFinite(d)) audioDuration.value = d
+}
+
+function onAudioSeek(e: Event) {
+  const el = audioRef.value
+  const v = Number((e.target as HTMLInputElement).value)
+  if (el && Number.isFinite(v)) el.currentTime = v
+}
+
+const audioTimeLabel = computed(
+  () => `${formatMediaDuration(audioCurrent.value) ?? '0:00'} / ${formatMediaDuration(audioDuration.value) ?? '--:--'}`,
+)
+
 /** 可滚动内容容器（文本阅读器等）—— 滚动守卫的真源（§6.2 退出表仲裁规则） */
 const readerRef = ref<HTMLElement | null>(null)
 
@@ -258,6 +325,7 @@ const SWIPE_CLOSE_THRESHOLD = 100
 /** 统一退出入口：先停播放，再 emit close */
 function requestClose() {
   videoRef.value?.pause()
+  audioRef.value?.pause()
   tts.stop()
   ttsSpeaking.value = false
   emit('close')
@@ -377,6 +445,47 @@ defineExpose({ videoRef })
       controls
       class="viewer-media"
     />
+    <!-- 音频波形查看器（D2 修订 2026-10-27，走查④）：全屏波形 + 播放控制 + 可拖进度 -->
+    <div v-else-if="type === 'audio'" class="viewer-audio" data-testid="mobile-viewer-audio">
+      <audio
+        ref="audioRef"
+        :src="data?.url"
+        @play="audioPlaying = true"
+        @pause="audioPlaying = false"
+        @timeupdate="onAudioTime"
+        @loadedmetadata="onAudioMeta"
+      />
+      <div class="viewer-audio-wave">
+        <MobileNodeWaveform :peaks="wavePeaks" :source="waveSource" :loading="waveLoading" />
+      </div>
+      <div class="viewer-audio-controls">
+        <button
+          class="viewer-audio-play"
+          type="button"
+          :aria-label="audioPlaying ? '暂停' : '播放'"
+          data-testid="mobile-viewer-audio-play"
+          @click="toggleAudioPlay"
+        >
+          <svg v-if="!audioPlaying" viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+          <svg v-else viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
+            <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
+          </svg>
+        </button>
+        <input
+          class="viewer-audio-seek"
+          type="range"
+          min="0"
+          :max="audioDuration || 0"
+          step="0.1"
+          :value="audioCurrent"
+          aria-label="播放进度"
+          @input="onAudioSeek"
+        />
+        <span class="viewer-audio-time">{{ audioTimeLabel }}</span>
+      </div>
+    </div>
     <div v-else-if="type === 'text'" ref="readerRef" class="viewer-reader">{{ data?.content }}</div>
 
     <!--
@@ -552,5 +661,59 @@ defineExpose({ videoRef })
   color: var(--lnk-text-primary);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* 音频波形查看器（D2 修订 2026-10-27）：波形居中 + 底部控制条 */
+.viewer-audio {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--lnk-space-4);
+  padding: var(--lnk-space-4) var(--lnk-space-4) calc(var(--lnk-space-8) + env(safe-area-inset-bottom));
+}
+
+.viewer-audio-wave {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+}
+
+.viewer-audio-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--lnk-space-3);
+}
+
+.viewer-audio-play {
+  display: inline-flex;
+  width: var(--lnk-touch-target);
+  height: var(--lnk-touch-target);
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border: none;
+  border-radius: var(--lnk-radius-full);
+  background: var(--lnk-accent);
+  color: var(--lnk-accent-on-signature);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.viewer-audio-seek {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--lnk-touch-target);
+  accent-color: var(--lnk-accent);
+}
+
+.viewer-audio-time {
+  flex: none;
+  font-size: var(--lnk-text-sm);
+  color: var(--lnk-text-muted);
+  font-variant-numeric: tabular-nums;
 }
 </style>

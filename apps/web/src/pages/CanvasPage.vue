@@ -2864,11 +2864,11 @@ function handleMobileNodeRemoveRef(ref: NodeRef) {
  */
 const mobileViewerNode = ref<{
   id?: string
-  type: 'image' | 'video' | 'text'
+  type: 'image' | 'video' | 'audio' | 'text'
   data?: any
 } | null>(null)
 
-provide(MOBILE_NODE_OPEN_VIEWER_KEY, (node: { id?: string; type: 'image' | 'video' | 'text'; data?: any }) => {
+provide(MOBILE_NODE_OPEN_VIEWER_KEY, (node: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any }) => {
   mobileViewerNode.value = node
 })
 
