@@ -16,6 +16,7 @@ import { resolveMobileNodeState } from '@/composables/mobileNodeState'
 import { formatElapsed } from '@/components/canvas/nodeTaskChrome'
 import NodePendingPrompt from '@/components/canvas/NodePendingPrompt.vue'
 import { mediaInfoLine } from '@/utils/mediaInfoFormat'
+import { getNeoNodeMeta } from '@/components/canvas/neoNodeMeta'
 import { useNodeMediaInfoFooter } from '@/composables/useNodeMediaInfoFooter'
 import type { NodeMediaInfoSummary } from '@/composables/useMediaInspector'
 import {
@@ -214,10 +215,17 @@ const mediaInfoText = computed(() => {
  * 属性行 = **节点名称（居首）** + 类型属性；音/视频在移动端自行 ensure
  * mediaInfo（此前 probe 只在 PC 组件跑 ⇒ 移动端会话恒缺属性行）。
  */
-/** 节点名称（`data.label`，与 PC nodeLabel / 下载名同源）；无则空串 */
+/**
+ * 节点名称——⭐ 2026-10-27 真机回归①修复：与 PC `resolveNeoNodeTitle` 完全同源
+ * （`label ?? title`，都没有则**类型名兜底**）。此前只读 `data.label`，用户节点
+ * 绝大多数没有自定义名 ⇒ 属性行整条不渲染（真机四类磁贴全部无名称的根因）。
+ * 截断交给 CSS ellipsis（PC 的 20 字截断是标题条语义，磁贴属性行是单行省略）。
+ */
 const nodeName = computed(() => {
-  const l = props.data?.label
-  return typeof l === 'string' ? l.trim() : ''
+  const d = props.data as Record<string, unknown> | undefined
+  const custom = [d?.label, d?.title].find((v) => typeof v === 'string' && v.trim()) as string | undefined
+  if (custom) return custom.trim()
+  return getNeoNodeMeta(props.type).label
 })
 
 /** 媒体三类属性行：名称（有才拼） · 媒体属性（无则缺省该段，不渲染空行） */
@@ -291,7 +299,7 @@ const tileStyle = computed(() => ({
  * 空图 / 空视频的类型名（占位标签）。
  * 与音频波纹、文本「空文本」并列，让空节点自解释类型。
  */
-const placeholderLabel = computed(() => (props.type === 'video' ? '视频' : '图片'))
+const placeholderLabel = computed(() => getNeoNodeMeta(props.type).label)
 
 /**
  * R4-T4：多选勾选徽标。
@@ -534,7 +542,12 @@ function handleTextTap() {
         {{ attributeLine }}
       </p>
     </div>
-    <div v-else-if="type === 'audio'" class="mobile-node-media-box">
+    <!--
+      ⭐ 2026-10-27 真机回归②修复：音频分支加 `data?.url` 门控（图片/视频同款）——
+      此前空音频也渲染占位波形 + 播放键，用户无法区分「有产物 / 无产物」。
+      空音频落到下方类型占位分支（音频图标 + 类型名），与空图 / 空视频同型。
+    -->
+    <div v-else-if="type === 'audio' && data?.url" class="mobile-node-media-box">
       <div class="mobile-audio-wave">
         <button class="mobile-audio-play" type="button" :aria-label="playing ? '暂停' : '播放'" @click.stop="toggleAudio">▶</button>
         <MobileNodeWaveform
@@ -587,6 +600,19 @@ function handleTextTap() {
       >
         <polygon points="23 7 16 12 23 17 23 7" />
         <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+      </svg>
+      <!-- 音频图标：path 复用 NeoBaseNode.vue 同款（回归②，空音频与空图/空视频同型） -->
+      <svg
+        v-else-if="type === 'audio'"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        aria-hidden="true"
+      >
+        <path d="M9 18V5l12-2v13" />
+        <circle cx="6" cy="18" r="3" />
+        <circle cx="18" cy="16" r="3" />
       </svg>
       <span class="mobile-node-placeholder-label">{{ placeholderLabel }}</span>
       <!-- 走查③：空态主动作提示（tap 整卡 ⇒ 编辑 sheet，D-C empty 行） -->

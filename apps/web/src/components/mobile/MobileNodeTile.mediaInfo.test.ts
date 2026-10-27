@@ -51,7 +51,7 @@ describe('MobileNodeTile 媒体属性行（走查②）', () => {
     })
     const info = w.find('[data-testid="mobile-node-media-info"]')
     expect(info.exists()).toBe(true)
-    expect(info.text()).toBe('1024×768 · 4:3 · 2.0KB')
+    expect(info.text()).toBe('图片 · 1024×768 · 4:3 · 2.0KB')
     // 属性行是媒体盒的沉底一行，媒体元素仍在
     expect(w.find('img.mobile-node-media').exists()).toBe(true)
     w.unmount()
@@ -68,7 +68,7 @@ describe('MobileNodeTile 媒体属性行（走查②）', () => {
         } as never,
       },
     })
-    expect(w.find('[data-testid="mobile-node-media-info"]').text()).toBe('720p · 16:9 · 3.0MB')
+    expect(w.find('[data-testid="mobile-node-media-info"]').text()).toBe('视频 · 720p · 16:9 · 3.0MB')
     w.unmount()
   })
 
@@ -83,13 +83,13 @@ describe('MobileNodeTile 媒体属性行（走查②）', () => {
         } as never,
       },
     })
-    expect(w.find('[data-testid="mobile-node-media-info"]').text()).toBe('1:05 · MP3 · 1.0MB')
+    expect(w.find('[data-testid="mobile-node-media-info"]').text()).toBe('音频 · 1:05 · MP3 · 1.0MB')
     // 波纹播放器仍在（属性行不挤占播放区）
     expect(w.find('.mobile-audio-wave').exists()).toBe(true)
     w.unmount()
   })
 
-  it('无 mediaInfo ⇒ 不渲染属性行（不猜不占位）', () => {
+  it('无 mediaInfo ⇒ 行 = 类型名兜底（回归①：PC resolveNeoNodeTitle 同源，恒有名称）', () => {
     const w = mount(MobileNodeTile, {
       props: {
         id: 'n4',
@@ -97,11 +97,11 @@ describe('MobileNodeTile 媒体属性行（走查②）', () => {
         data: { url: 'https://example.com/a.png' } as never,
       },
     })
-    expect(w.find('[data-testid="mobile-node-media-info"]').exists()).toBe(false)
+    expect(w.find('[data-testid="mobile-node-media-info"]').text()).toBe('图片')
     w.unmount()
   })
 
-  it('mediaInfo 全字段缺失 ⇒ 不渲染属性行（空串即隐藏）', () => {
+  it('mediaInfo 全字段缺失 ⇒ 行 = 类型名兜底（回归①）', () => {
     const w = mount(MobileNodeTile, {
       props: {
         id: 'n5',
@@ -109,7 +109,7 @@ describe('MobileNodeTile 媒体属性行（走查②）', () => {
         data: { url: 'https://example.com/a.png', mediaInfo: { kind: 'image' } } as never,
       },
     })
-    expect(w.find('[data-testid="mobile-node-media-info"]').exists()).toBe(false)
+    expect(w.find('[data-testid="mobile-node-media-info"]').text()).toBe('图片')
     w.unmount()
   })
 
@@ -170,7 +170,7 @@ describe('MobileNodeTile 名称 + 属性行（走查①②，2026-10-27）', () 
     w.unmount()
   })
 
-  it('无名称 ⇒ 行与旧口径逐字一致（无前导分隔符）', () => {
+  it('无名称（label/title 均缺）⇒ 类型名兜底居首（回归①，PC resolveNeoNodeTitle 同源）', () => {
     const w = mount(MobileNodeTile, {
       props: {
         id: 'nm2',
@@ -181,7 +181,19 @@ describe('MobileNodeTile 名称 + 属性行（走查①②，2026-10-27）', () 
         } as never,
       },
     })
-    expect(w.find('[data-testid="mobile-node-media-info"]').text()).toBe('1024×768 · 4:3 · 2.0KB')
+    expect(w.find('[data-testid="mobile-node-media-info"]').text()).toBe('图片 · 1024×768 · 4:3 · 2.0KB')
+    w.unmount()
+  })
+
+  it('title 兜底：label 缺失但 title 有值 ⇒ 取 title（PC label ?? title 同链）', () => {
+    const w = mount(MobileNodeTile, {
+      props: {
+        id: 'nm2b',
+        type: 'text',
+        data: { title: '来自 title 的名字', content: '一二三' } as never,
+      },
+    })
+    expect(w.find('[data-testid="mobile-node-text-info"]').text()).toBe('来自 title 的名字 · 3 字')
     w.unmount()
   })
 
@@ -203,7 +215,7 @@ describe('MobileNodeTile 名称 + 属性行（走查①②，2026-10-27）', () 
     const w = mount(MobileNodeTile, {
       props: { id: 'nm4', type: 'text', data: { content: 'abcdef' } as never },
     })
-    expect(w.find('[data-testid="mobile-node-text-info"]').text()).toBe('6 字')
+    expect(w.find('[data-testid="mobile-node-text-info"]').text()).toBe('文本 · 6 字')
     w.unmount()
     const empty = mount(MobileNodeTile, {
       props: { id: 'nm5', type: 'text', data: { label: '空', content: '' } as never },
@@ -238,6 +250,21 @@ describe('MobileNodeTile 名称 + 属性行（走查①②，2026-10-27）', () 
     } finally {
       probeState.holder = null
     }
+  })
+
+  it('空音频（无 url）⇒ 类型占位分支：音频图标 + 「音频」，无波形无播放键（回归②）', () => {
+    const w = mount(MobileNodeTile, {
+      props: { id: 'nm8', type: 'audio', data: { url: '' } as never },
+    })
+    expect(w.find('.mobile-audio-wave').exists()).toBe(false)
+    expect(w.find('.mobile-audio-play').exists()).toBe(false)
+    expect(w.find('audio').exists()).toBe(false)
+    const ph = w.find('.mobile-node-placeholder')
+    expect(ph.exists()).toBe(true)
+    expect(ph.attributes('data-type')).toBe('audio')
+    expect(ph.find('.mobile-node-placeholder-label').text()).toBe('音频')
+    expect(ph.find('svg').exists()).toBe(true)
+    w.unmount()
   })
 
   it('音频 loadedmetadata ⇒ applyDurationSec 补时长到 mediaInfo', async () => {
