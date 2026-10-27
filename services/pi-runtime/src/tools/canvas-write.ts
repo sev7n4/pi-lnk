@@ -635,16 +635,17 @@ export function createCanvasWriteTools(
 						}
 					}
 				})();
-				const outcome = await Promise.race([
-					confirmResult,
-					wait.then((r) =>
-						r.status === "answered"
-							? { confirmed: true, reason: "answered" }
-							: r.status === "aborted"
-								? { confirmed: false, reason: "aborted" }
-								: { confirmed: false, reason: "timeout" },
-					),
-				]);
+			const outcome = await Promise.race([
+				confirmResult,
+				wait.then((r) =>
+					r.status === "answered"
+						? { confirmed: true, reason: "answered" }
+						: r.status === "aborted"
+							? // §17.8：decline 携带的批注意见随 outcome 透传给 tool_result 文案（防抢跑）。
+								{ confirmed: false, reason: "aborted", note: r.note }
+							: { confirmed: false, reason: "timeout" },
+				),
+			]);
 				settled = true;
 				// P2 结算归因（spec 2026-10-13 §2）：race 收敛单点，恰好一条观测。
 				// stale_status:<status> 的 label 归一在 Metrics.observeProposeOutcome 内做，
@@ -670,7 +671,11 @@ export function createCanvasWriteTools(
 									outcome.reason === "timeout"
 										? "用户未在时限内确认，请等待用户后续指示，不要自行执行 run_*。"
 										: outcome.reason === "aborted"
-											? "用户已中止。"
+											? // §17.8（2026-10-27）：批注流锚带回 ⇒ decline 携带批注意见，
+												// 明说「反馈正从对话发来」，防模型抢在截图到达前凭空重提议。
+												outcome.note
+												? `用户已拒绝本次提议（批注模式）。批注意见：${outcome.note}。带标记的批注截图正从对话发来，请等待用户消息后再修改提示词并重新提议，不要在收到用户消息前盲目重试。`
+												: "用户已中止。"
 											: outcome.reason?.startsWith("stale_status:")
 												// 2026-10-12 事故形态：状态被 stale 覆盖回旧终态，零生成。
 												// 必须明说「未启动」，禁止模型复述「正在出图」。
