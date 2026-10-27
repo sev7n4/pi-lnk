@@ -965,10 +965,10 @@ flowchart TD
 | 28 | `apps/web/src/components/mobile/MobileNodeTile.vue` | **改（§4.7 G1）** | **G1** | 提示词**分级显示**：empty/撰写 = 提示词填满磁贴（主内容）；有产物态 = 降级为**一行可点的「提示词」chips**，单击在**查看器内展开全文**。⭐ 本行系 2026-10-26 对账**补列**（原 §9 漏列 ⇒ PR #600 未实现） |
 | 29 | `apps/web/src/components/mobile/MobileNodeTile.vue` | **改（§4.7 G1）** | **G1** | generating（改词重生成）态：**旧产物淡化保留**（不闪空）+「**重新生成中**」角标 + chips 可见；局部反馈时附加「含 N 处局部反馈」标记。⭐ 本行系 2026-10-26 对账**补列**（原 §9 漏列 ⇒ PR #600 未实现） |
 | 30 | `apps/web/src/components/mobile/MobileNodeViewer.vue` | **改（§4.8 决策层）** | **§4.8** | **pending 态查看器底部主栏 = 「确认 / 取消」**（决策层），与壳层状态栏**两处一致**；confirmed 态底部主栏 = 「改词」（无确认栏）。⭐ 本行系 2026-10-26 对账**补列**（原 §9 漏列 ⇒ PR #600 未实现；走查项 W-10 因此不可能通过） |
-| 31 | `apps/web/src/components/mobile/MobileNodeViewer.vue` | **改** | **§4.6 / I1** | 灯箱**支持双指缩放**（W-5；类型原生查看器的隐含底线 —— 拍板项 I1 选它正是因为「文本节点承载不了缩放/逐帧/波形」）+ 查看器内展示**提示词全文**（承接 #28 的 chips 展开）。⭐ 本行系 2026-10-26 对账**补列** |
+| 31 | `apps/web/src/components/mobile/MobileNodeViewer.vue` | **改** | **§4.6 / I1** | 灯箱**支持双指缩放**（W-5；类型原生查看器的隐含底线 —— 拍板项 I1 选它正是因为「文本节点承载不了缩放/逐帧/波形」）+ 查看器内展示**提示词全文**（承接 #28 的 chips 展开）。⭐ 本行系 2026-10-26 对账**补列**。✅ 缩放部分已实现（2026-10-27 S2 批，#57）；全文承接改走独立全文层（#54，S1 Ruling） |
 | 32 | `apps/web/src/components/mobile/mobileVisualLanguage.guards.test.ts` | **改（V-3 守卫收紧）** | **V-3** | 静态守卫改为**扫 `components/mobile/*.vue` 全目录**禁裸 `position:fixed`；白名单**逐个显式列出并写明豁免理由**（⛔ 禁「只点名个别文件」—— 那会让缺口逃过守卫） |
 | 33 | `apps/web/src/components/mobile/mobileVisualLanguage.guards.test.ts` | **改（V-5 补齐）** | **V-5** | 新增「图标按钮 `min-width`/`min-height` ≥ `--lnk-touch-target`」断言（V-5 明写"新增"） |
-| 34 | `apps/web/src/pages/CanvasPage.mobileDeleteUndo.test.ts` | **改（V-7 补齐）** | **V-7** | 新增**端到端**行为级断言：删除 → 点「撤销」⇒ **节点真的恢复**（现有仅 composable 层 `undo restores previous snapshot`） |
+| 34 | `apps/web/src/pages/CanvasPage.mobileDeleteUndo.test.ts` | **改（V-7 补齐）** | **V-7** | 新增**端到端**行为级断言：删除 → 点「撤销」⇒ **节点真的恢复**（现有仅 composable 层 `undo restores previous snapshot`）。✅ 已实现（2026-10-27 S2 批，#58） |
 | 35 | `apps/web/src/components/mobile/mobileVisualLanguage.guards.test.ts` | **新增守卫（§15.10 / 令牌纪律）** | V-9 / A5 | 新增移动端表面样式**零新增 hex / rgba / 魔法值**（一律消费 design-tokens L2/L3，防硬编码回潮）；图标按钮含 `aria-label`；撤销 toast 含 live region |
 | 36 | `apps/web/src/components/mobile/MobileNodePromptReviewSheet.vue` | **新增（场景1 补齐，2026-10-26 三轮审视）** | **§4.7.1** | 提示词全文层：全文 + 参数只读摘要 + 「圈选」进标注态（底图=全文渲染页，§4.3 第五行）+ ⚓ 带回；⛔ 无确认/拒绝按钮、无参数控件 |
 | 37 | `apps/web/src/components/mobile/MobileNodePromptReviewSheet.test.ts` | **新增** | **V-11** | 断言：四类节点（含音频）可达；无确认/拒绝按钮；标注入口存在；回传走 §5.3 契约（image=满屏截图 + text + sourceNodeId） |
@@ -991,6 +991,8 @@ flowchart TD
 | 54 | `MobileNodePromptReviewSheet.vue` + `.test.ts`（新） | **新增（全文审核层，2026-10-27 S1）** | §4.7.1 / V-11 / W-26 / W-27 | 独立全屏文本阅读面（消费 #53）：全文 + 参数只读摘要 + 批注（底图 `renderReviewBaseImage` 滚动感知 `skipLines`）/ 编辑（就地改字）/ 朗读；⛔ 无确认/拒绝、无参数控件（V-11 组件断言）；pending 不走本层（单一确认面 Ruling） |
 | 55 | `MobileNodeViewer.vue` + `NodeRenderer.vue` + `NodeRenderer.test.ts` | **改（入口② + 转发，2026-10-27 S1）** | §4.7.1 | 查看器**提示词摘要条**（confirmed/error 一行截断，单击 → 全文层）；NodeRenderer 转发磁贴 `open-prompt-review`（新注入键 `MOBILE_NODE_OPEN_PROMPT_REVIEW_KEY`） |
 | 56 | `MobileCanvasShell.vue` + `CanvasPage.vue` + `canvasNodeActions.ts` + `.nodeActions.test.ts` | **改（壳层/页面接线，2026-10-27 S1）** | §4.7.1 / §4.8.1 | 壳层渲染全文层 + 摘要条转发；页面层 `mobilePromptReviewNode` 状态 + 注入键承接 + 锚回传/编辑保存处理器（`handleMobileAnnotateAnchor` / `handleMobileViewerEditSave` 参数化来源与关闭回调，M5 原路径零破坏） |
+| 57 | `MobileNodeViewer.vue` + `.test.ts` | **改（W-5 缩放，2026-10-27 S2）** | §4.6 / I1 / W-5 | 图片双指捏合缩放（1~4x）+ 放大态单指平移（`clampPan` = ±(scale−1)·半尺寸）+ 缩回复位（translate(0,0)）；消费的手势不触发关闭；换 url 复位（7 用例 + jsdom clientWidth stub） |
+| 58 | `MobileUndoToast.vue` + `.test.ts`（新）+ `CanvasPage.vue` + `.mobileDeleteUndo.test.ts` | **改（V-7 组件化，2026-10-27 S2）** | V-7 / §4.11.10 | 撤销 toast 抽独立展示组件（props `message` + emit `action`，**含 reduce-motion 分支**）；计时与快照恢复逻辑留页面层；端到端断言「点撤销 ⇒ 节点真的恢复」 |
 
 > ⭐ **2026-10-26 对账补列说明**：上列 #28–#34 系规格 ↔ 实现逐条对账后**补列**的条目 —— 它们在 §12（M2 路线图）、§10.3（走查 W-5 / W-10 / W-16）里都被列为本轮必做，但**原 §9 文件级清单漏列**、实施计划的 9 个 Task 也无对应项 ⇒ **PR #600 未实现**。
 > **根因教训**：§9 是「文件级改动清单」，是实施排期的**唯一输入**；§9 漏列 ⇒ 计划无 Task ⇒ 实现漏做 ⇒ **三处一致地漏**才没被发现。
@@ -1049,7 +1051,7 @@ flowchart TD
 | W-2b | Menu 内点「更多」 | 二级浮层含「副本含上游 / 存入资产库 / 保存到本地」 | ☐ |
 | W-3 | pending 节点 tap | 进查看器看 propose 产出 | ☐ |
 | W-4 | pending 节点长按 | 全集（含三项新操作） | ☐ |
-| W-5 | confirmed 图片节点 tap | 灯箱，可双指缩放 | ☐ |
+| W-5 | confirmed 图片节点 tap | 灯箱，可双指缩放 | ☐ ✅ 代码已实现（2026-10-27 S2 批，#57），待真机复测 |
 | W-6 | confirmed 音频节点 tap | **进波形查看器**（2026-10-27 D2 修订）；磁贴内联播放保留（轻听不改页） | ☐ |
 | W-7 | 查看器右上 X | 关闭回画布，视频已暂停 | ☐ |
 | W-8 | 查看器下滑 | 关闭回画布 | ☐ |

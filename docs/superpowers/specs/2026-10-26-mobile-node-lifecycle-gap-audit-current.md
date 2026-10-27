@@ -293,3 +293,20 @@ ADR-0013 的 14 项拍板 **12 项完全落地、2 项部分**，跨端组件哲
 
 **测试**：磁贴 11 文件 102/102 · viewer/policy/壳层 89/89 · 共享面+全文层 18/18 · 渲染器+渲染转发 10/10 · 令牌守卫 124/124；vue-tsc -b 绿。
 **⏳ 待真机复测**：W-26/W-27（全文层圈选带回）、W-16 可见部分（重生成淡化+角标）、chips 入口四类可达。
+
+## §2-M S2 批次（2026-10-27 深夜）——W-5 双指缩放 + V-7 撤销 toast 组件化 + S1 CI 修复，已实现
+
+| 任务 | 内容 | 落点 |
+|---|---|---|
+| W-5 双指缩放（§10.3 / §9 #31 剩余部分） | 图片双指捏合缩放 1~4x + 放大态单指平移（`clampPan` = ±(scale−1)·半尺寸，不拖出白边）+ 缩回复位 translate(0,0)；消费的手势（缩放/平移）不触发下滑关闭；换 url 复位 | `MobileNodeViewer.vue`（imgScale/imgTx/imgTy/pinchState + `imgTransformStyle`）+ 7 用例 |
+| V-7 撤销 toast 组件化（§10.3 / §9 #34） | toast 抽独立展示组件 `MobileUndoToast`（props message + emit action，含 reduce-motion 分支）；计时与快照恢复逻辑留页面层；端到端断言「删除 → 点撤销 ⇒ 节点真的恢复」 | `MobileUndoToast.vue` + `.test.ts`（新）+ `CanvasPage.vue` 接线 + 5 用例 |
+| S1 CI 红 5 处修复 | ①lightState 旧断言按 G1 重写（改词重生成=淡化+角标 / 首生成骨架）；②V-3 守卫白名单补 2 新组件（§4.11.8 有据豁免）；③sheet 批注断言**环境无关**（CI 装 canvas 包 ⇒ 合成走 marks 路径 `degraded:false`，纯 jsdom 才降级——勿假设必降级）；④`CanvasPage.mobileAnnotateRef.test.ts` 锚改参数化后函数体（`close = closeMobileViewer` 默认参数 + `close()` 收尾） | 见各测试文件 |
+
+**本批新坑（记死）**：
+- jsdom `img.clientWidth` 恒 0（getter 返 0 非 undefined，`?? 320` 不兜底）⇒ `clampPan` 归零 ⇒ 测试用 `Object.defineProperty(img, 'clientWidth', { value, configurable: true })` stub 实例尺寸。
+- REST push v4 多提交链：父校验改**链式**（每提交 parent = 前一提交）；S1 重建对象与上次推送 sha 逐字节一致（Git 内容寻址复现 894b7332）= 强零夹带证明。
+
+**测试**：批 1（annotateRef 11 + sheet 9 + viewer 53）73/73；批 2（guards + lightState 12 + promptChip 10）32/32；vue-tsc -b 绿。
+**交付**：commit 07a5fbe2 → REST push v4（FINAL tree MATCH，分支 head 6a859e4e）→ PR #624 更新。
+**规格回写**：§9 #31/#34 已实现注 + 新增 #57/#58；§10.3 W-5 行注（代码已实现，待真机复测）。
+**⏳ 待真机复测**：W-5（缩放/平移手感）、W-20/V-7 链、W-26/W-27、W-16 可见部分、chips 四类可达。
