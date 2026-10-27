@@ -42,8 +42,9 @@ describe('AgentSideRail — IA v4 命名（对话级动作统一叫「新对话�
     ).not.toContain('新建对话')
   })
 
-  it('桌面侧栏 header 的新建会话按钮 title 是「新对话」', () => {
-    expect(src).toContain('title="新对话"')
+  it('桌面侧栏 header 已退役「新对话 / 历史」按钮（ADR-0015 统一单对话，建/切对话收口到创作空间与移动端顶栏）', () => {
+    expect(src).not.toContain('title="新对话"')
+    expect(src).not.toContain('title="对话历史"')
   })
 
   it('对话级动作与项目级动作级差仍在：项目级仍叫「新建项目」', () => {

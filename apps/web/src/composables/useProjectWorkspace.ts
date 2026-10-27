@@ -77,6 +77,11 @@ function storageKey(userId: string): string {
 const projects = ref<ProjectCard[]>([])
 const loading = ref(false)
 const error = ref(false)
+/**
+ * 画廊（创作空间）搜索开合共享态：🔍 在全局 `AppHeader`、搜索输入框在 `CanvasesPage`，
+ * 二者跨组件共享（规格 §7）。模块级单例，全站一份。
+ */
+const gallerySearchOpen = ref(false)
 const lastProjectId = ref<string | null>(null)
 /** 最近一次**成功**取到列表的时间戳（0 = 从未成功过） */
 const loadedAt = ref(0)
@@ -227,6 +232,7 @@ export function useProjectWorkspace() {
     projects,
     loading,
     error,
+    gallerySearchOpen,
     lastProjectId,
     loadedAt,
     list,

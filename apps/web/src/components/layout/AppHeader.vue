@@ -1,12 +1,17 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute, useRouter }  from 'vue-router'
 import BrandLogo from '@/components/brand/BrandLogo.vue'
 import AccountChrome from '@/components/account/AccountChrome.vue'
 import ThemeToggle from '@/components/layout/ThemeToggle.vue'
+import { useAuthStore } from '@/stores/auth'
+import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
+import { ElMessage } from 'element-plus'
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
+const { create, gallerySearchOpen } = useProjectWorkspace()
 
 // 2026-10-21 P1：导航更名 + 重组。
 // 「画布」→「创作」（它已经是创作入口，不只是画布列表）、「超创站」→「发现」
@@ -30,8 +35,37 @@ const activeTab = computed(() => {
 // 也不展示个人积分——品牌叙事位保持纯净；主题切换仍可用画布页右上角入口。
 const isBrandPage = computed(() => route.path === '/workflow')
 
+// 2026-10-27 规格（mobile-web-three-page-topbar-redesign §6.1/§6.7）：创作空间（画廊）
+// 走**裸栏**——仅 logo + 🔍 + ＋，去掉 创作/发现/主题/账号。移动 + WEB 同一组件、同一视觉。
+const isGalleryRoute = computed(() => route.path === '/canvases')
+
 function navigate(path: string) {
   router.push(path)
+}
+
+// 🔍 切换画廊搜索开合（共享状态，CanvasesPage 消费，见 §7）
+function toggleGallerySearch() {
+  gallerySearchOpen.value = !gallerySearchOpen.value
+}
+
+// ＋ 新建项目（画廊裸栏；复用 useProjectWorkspace 唯一 create 通道 + 20s 超时 + 登录守卫）
+async function createProject() {
+  if (!auth.isLoggedIn) {
+    auth.openLogin()
+    return
+  }
+  const loading = ElMessage({ type: 'info', message: '正在创建画布…', duration: 0 })
+  try {
+    const created = await create({ timeoutMs: 20_000 })
+    loading.close()
+    router.push({
+      path: `/workflow/${created.id}`,
+      query: { openAgent: '1' },
+    })
+  } catch {
+    loading.close()
+    ElMessage.error('创建画布失败，请检查网络后重试')
+  }
 }
 </script>
 
@@ -51,7 +85,8 @@ function navigate(path: string) {
           <BrandLogo size="sm" show-name />
         </button>
 
-        <nav class="hidden items-center gap-1 md:flex">
+        <!-- 创作/发现 文字导航：画廊裸栏时隐藏（规格 §6.1/§6.7） -->
+        <nav v-if="!isGalleryRoute" class="hidden items-center gap-1 md:flex">
           <button
             v-for="tab in tabs"
             :key="tab.path"
@@ -66,7 +101,35 @@ function navigate(path: string) {
         </nav>
       </div>
 
-      <div class="flex shrink-0 items-center gap-2 sm:gap-3">
+      <!-- 右簇：画廊裸栏（🔍 + ＋）vs 常规（主题 + 账号） -->
+      <template v-if="isGalleryRoute">
+        <div class="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            class="gallery-icon-btn"
+            data-testid="gallery-search-toggle"
+            aria-label="搜索项目"
+            @click="toggleGallerySearch"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+              <circle cx="11" cy="11" r="7" />
+              <path stroke-linecap="round" d="M21 21l-4.3-4.3" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="gallery-create-btn"
+            data-testid="gallery-create"
+            aria-label="新建项目"
+            @click="createProject"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+              <path stroke-linecap="round" d="M12 5v14M5 12h14" />
+            </svg>
+          </button>
+        </div>
+      </template>
+      <div v-else class="flex shrink-0 items-center gap-2 sm:gap-3">
         <!-- 主题切换提到全站：此前只有画布页有入口，其余 16 条路由进不去。
              ⛔ 品牌页（/workflow）例外：签名画面恒为墨色，不随主题翻转 -->
         <ThemeToggle v-if="!isBrandPage" class="h-8 w-8 rounded-lg text-fg-2 hover:bg-surface-elevated hover:text-fg" />
@@ -75,3 +138,51 @@ function navigate(path: string) {
     </div>
   </header>
 </template>
+
+<style scoped>
+/* 画廊裸栏图标钮：44px 命中区（触控达标），视觉 20px 图标 */
+.gallery-icon-btn,
+.gallery-create-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--lnk-text-primary);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.gallery-icon-btn::after,
+.gallery-create-btn::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+}
+.gallery-icon-btn svg {
+  width: 20px;
+  height: 20px;
+}
+/* ＋ 建项目：紫粉渐变圆盘白加号（与画布左下 FAB 同族视觉，语义=建项目） */
+.gallery-create-btn {
+  background: var(--lnk-accent-gradient);
+  color: var(--lnk-text-on-accent);
+}
+.gallery-create-btn svg {
+  width: 18px;
+  height: 18px;
+}
+.gallery-icon-btn:active,
+.gallery-create-btn:active {
+  background: color-mix(in srgb, var(--lnk-text-primary) 8%, transparent);
+}
+.gallery-create-btn:active {
+  background: var(--lnk-accent-gradient);
+  transform: scale(0.94);
+}
+</style>

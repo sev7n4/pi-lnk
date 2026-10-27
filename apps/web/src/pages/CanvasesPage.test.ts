@@ -93,6 +93,8 @@ describe('CanvasesPage 项目管理器（P1；IA v4 画布+对话=项目）', ()
     // 2026-10-26 规格收敛 v2（INV-10）：列表唯一真身 = useProjectWorkspace ⇒ canvasApi.list。
     canvasList.mockReset()
     canvasList.mockResolvedValue({ data: { data: makeSessions(6) } })
+    // 2026-10-27 顶栏重构：gallerySearchOpen 是模块级单例，跨用例复位
+    useProjectWorkspace().gallerySearchOpen.value = false
   })
 
   it('渲染全部画布（不截断到5个——管理器是完整列表）', async () => {
@@ -101,14 +103,23 @@ describe('CanvasesPage 项目管理器（P1；IA v4 画布+对话=项目）', ()
     expect(wrapper.text()).not.toContain('查看更多')
   })
 
-  it('完整管理器能力：搜索框 / 管理按钮 / 新建入口都在', async () => {
+  it('顶栏职责上移后：页面标题「创作空间 · N 个」，搜索框受 gallerySearchOpen 门控，页内零新建入口', async () => {
     const wrapper = await mountPage()
+    // 标题行（规格 §6.1：h1/副标题/返回/新建/常驻搜索全部退役）
+    expect(wrapper.text()).toContain('创作空间')
+    expect(wrapper.text()).toContain('· 6 个')
+    expect(wrapper.text()).not.toContain('创作首页')
+    // 搜索框：gallerySearchOpen=false 时不可见（开关在 AppHeader 🔍，跨组件共享）
+    expect(wrapper.find('[data-testid="canvases-search"]').exists()).toBe(false)
+    useProjectWorkspace().gallerySearchOpen.value = true
+    await flushPromises()
     expect(wrapper.find('[data-testid="canvases-search"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="canvases-manage"]').exists()).toBe(true)
-    expect(wrapper.find('[data-testid="canvases-create"]').exists()).toBe(true)
+    // 新建入口已上移 AppHeader 裸栏（gallery-create）⇒ 页面内零 create
+    expect(wrapper.find('[data-testid="canvases-create"]').exists()).toBe(false)
   })
 
-  it('搜索框过滤画布列表', async () => {
+  it('搜索框过滤画布列表（gallerySearchOpen 展开后）', async () => {
+    useProjectWorkspace().gallerySearchOpen.value = true
     const wrapper = await mountPage()
     await wrapper.find('[data-testid="canvases-search"]').setValue('画布1')
     await flushPromises()
@@ -116,29 +127,43 @@ describe('CanvasesPage 项目管理器（P1；IA v4 画布+对话=项目）', ()
   })
 
   it('搜索无结果时给出空态文案', async () => {
+    useProjectWorkspace().gallerySearchOpen.value = true
     const wrapper = await mountPage()
     await wrapper.find('[data-testid="canvases-search"]').setValue('不存在的画布')
     await flushPromises()
     expect(wrapper.text()).toContain('没有匹配的项目')
   })
 
-  it('进入管理模式后出现批删按钮', async () => {
+  it('长按项目卡进入多选态（管理按钮退役，规格 §7），出现批删动作条', async () => {
+    // ⚠️ flushPromises 内部走 setTimeout ⇒ 必须先在真实计时器下 mount，再切假计时器测长按
     const wrapper = await mountPage()
     expect(wrapper.find('[data-testid="canvases-batch-delete"]').exists()).toBe(false)
-    await wrapper.find('[data-testid="canvases-manage"]').trigger('click')
+    vi.useFakeTimers()
+    try {
+      // 长按第一行 450ms ⇒ 进入 manageMode 并自动选中该行
+      await wrapper.find('.session-card-menu-anchor').trigger('pointerdown')
+      await vi.advanceTimersByTimeAsync(450)
+    } finally {
+      vi.useRealTimers()
+    }
     await flushPromises()
-    expect(wrapper.find('[data-testid="canvases-manage"]').text()).toContain('完成')
+    expect(wrapper.find('[data-testid="canvases-batch-delete"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="canvases-manage-done"]').text()).toContain('完成')
   })
 
-  it('新建项目走 useProjectWorkspace（唯一 create 通道）并跳转', async () => {
+  it('短按（<450ms）不触发管理态（长按手势判据）', async () => {
     const wrapper = await mountPage()
-    canvasCreate.mockResolvedValue({ data: { data: { id: 's_new' } } })
-    await wrapper.find('[data-testid="canvases-create"]').trigger('click')
+    vi.useFakeTimers()
+    try {
+      await wrapper.find('.session-card-menu-anchor').trigger('pointerdown')
+      await vi.advanceTimersByTimeAsync(100)
+      await wrapper.find('.session-card-menu-anchor').trigger('pointerup')
+      await vi.advanceTimersByTimeAsync(400)
+    } finally {
+      vi.useRealTimers()
+    }
     await flushPromises()
-    expect(canvasCreate).toHaveBeenCalled()
-    // 旧通道不得再被调用（收敛的回归守卫）
-    expect(sessionsCreate, '新建不得再走 sessionsApi.create').not.toHaveBeenCalled()
-    expect(pushMock).toHaveBeenCalled()
+    expect(wrapper.find('[data-testid="canvases-batch-delete"]').exists()).toBe(false)
   })
 
   it('未登录时不请求列表，给出登录引导', async () => {
@@ -150,9 +175,9 @@ describe('CanvasesPage 项目管理器（P1；IA v4 画布+对话=项目）', ()
     expect(wrapper.find('[data-testid="canvases-login"]').exists()).toBe(true)
   })
 
-  it('页面标题为「创作首页」（规格收敛 v2：本页即项目唯一列表，无需返回主页链接）', async () => {
+  it('页面标题为「创作空间」（2026-10-27 顶栏重构 §6.1：创作首页更名）', async () => {
     const wrapper = await mountPage()
-    expect(wrapper.text()).toContain('创作首页')
+    expect(wrapper.text()).toContain('创作空间')
     expect(wrapper.text()).not.toContain('我的项目')
   })
 
@@ -221,15 +246,15 @@ describe('CanvasesPage 空态三态（D12 / bug④）', () => {
     expect(wrapper.findAll('.session-card-menu-anchor')).toHaveLength(0)
   })
 
-  it('真无项目：显示「还没有项目」，新建入口唯一（canvases-create 全仓仅顶栏一处）', async () => {
+  it('真无项目：显示「还没有项目」，页内零新建入口（create 已上移 AppHeader 裸栏 gallery-create）', async () => {
     await seedProjects([])
     canvasList.mockResolvedValue({ data: { data: [] } })
     const wrapper = await mountPage()
     await flushPromises()
     expect(wrapper.text()).toContain('还没有项目')
     expect(wrapper.find('[data-testid="canvases-empty"]').exists()).toBe(true)
-    // ⛔ 空态不再内联「新建项目」按钮 ⇒ 全仓唯一
-    expect(wrapper.findAll('[data-testid="canvases-create"]')).toHaveLength(1)
+    // ⛔ 空态与页面均不得再内联「新建项目」⇒ 唯一入口 = AppHeader 裸栏 gallery-create
+    expect(wrapper.findAll('[data-testid="canvases-create"]')).toHaveLength(0)
     expect(wrapper.find('[data-testid="canvases-retry"]').exists()).toBe(false)
   })
 

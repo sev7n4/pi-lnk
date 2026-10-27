@@ -13,7 +13,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 
 function mountBar(props: Record<string, unknown> = {}) {
   return mount(MobileTopBar, {
-    props: { tab: 'canvas', ...props },
+    props: { tab: 'canvas', projectName: '测试项目', ...props },
     attachTo: document.body,
   })
 }
@@ -27,27 +27,37 @@ beforeEach(() => {
   document.body.innerHTML = ''
 })
 
-// IA v4（2026-10-23 用户裁决）：① 品牌字标可点回 hero；② 「新建对话」→「新对话」
-// 与抽屉「新建项目」拉开级差（线程级 vs 项目级）。
-describe('MobileTopBar：IA v4 品牌字标与「新对话」改名', () => {
-  it('对话页签：品牌字标存在且点击 emit go-home（项目页回 hero 唯一常驻路）', async () => {
+// 规格 §6.2/§6.3（mobile-web-three-page-topbar-redesign）：对话/画布顶栏同构——
+// ‹ 返回创作空间（go-gallery）+ 项目名 + ⋯；画布额外 ⤢。品牌字标回城 / 新对话 / 历史
+// 等冗余回城与入口已退役（单一返回路径 + ADR-0015 单对话模型）。
+describe('MobileTopBar：对话/画布同构（规格 §6.2/§6.3）', () => {
+  it('对话页签：单一返回路径 ‹ 返回创作空间（go-gallery）+ 项目名 + ⋯；无品牌字标 / 无「新对话」', async () => {
     const wrapper = mountBar({ tab: 'chat' })
-    const brand = q('[data-testid="mobile-topbar-brand"]')
-    expect(brand).not.toBeNull()
-    brand!.click()
+    expect(q('[data-testid="mobile-topbar-back"]')).not.toBeNull()
+    expect(q('[data-testid="mobile-topbar-project-name"]')).not.toBeNull()
+    expect(q('[data-testid="mobile-topbar-menu"]')).not.toBeNull()
+    // 品牌字标回城已退役（只剩单一返回路径）
+    expect(q('[data-testid="mobile-topbar-brand"]')).toBeNull()
+    // 新对话入口已退役（ADR-0015 单对话模型；建/切对话收口到创作空间与移动端顶栏）
+    expect(document.body.textContent).not.toContain('新对话')
+    const back = q('[data-testid="mobile-topbar-back"]')!
+    back.click()
     await flushPromises()
-    expect(wrapper.emitted('go-home')).toHaveLength(1)
+    expect(wrapper.emitted('go-gallery')).toHaveLength(1)
     wrapper.unmount()
   })
 
-  it('对话页签：文案是「新对话」而非「新建对话」（与「新建项目」拉开级差）', () => {
-    const wrapper = mountBar({ tab: 'chat' })
-    expect(q('.create-card__label')?.textContent).toBe('新对话')
-    expect(document.body.textContent).not.toContain('新建对话')
+  it('画布页签：额外 ⤢ 适应画布（fit-view），同一返回路径', async () => {
+    const wrapper = mountBar({ tab: 'canvas' })
+    expect(q('[data-testid="mobile-topbar-fit"]')).not.toBeNull()
+    const fit = q('[data-testid="mobile-topbar-fit"]')!
+    fit.click()
+    await flushPromises()
+    expect(wrapper.emitted('fit-view')).toHaveLength(1)
     wrapper.unmount()
   })
 
-  it('画布页签不显示品牌字标（字标只服务对话页回 hero）', () => {
+  it('画布页签不渲染品牌字标（字标回城已退役）', () => {
     const wrapper = mountBar({ tab: 'canvas' })
     expect(q('[data-testid="mobile-topbar-brand"]')).toBeNull()
     wrapper.unmount()
@@ -57,7 +67,7 @@ describe('MobileTopBar：IA v4 品牌字标与「新对话」改名', () => {
 describe('MobileTopBar：⋯ 菜单任务动态项（PR2）', () => {
   it('无任务记录 → 菜单项不出现', async () => {
     const wrapper = mountBar({ hasTaskHistory: false, taskActiveCount: 0 })
-    q('.bar-btn[aria-label="项目管理菜单"]')!.click()
+    q('.bar-btn[aria-label="项目菜单"]')!.click()
     await flushPromises()
     expect(q('[data-testid="bar-menu-task"]')).toBeNull()
     wrapper.unmount()
@@ -65,7 +75,7 @@ describe('MobileTopBar：⋯ 菜单任务动态项（PR2）', () => {
 
   it('有任务 + 运行中 2 → 「任务（2）」，点按 emit open-tasks', async () => {
     const wrapper = mountBar({ hasTaskHistory: true, taskActiveCount: 2 })
-    q('.bar-btn[aria-label="项目管理菜单"]')!.click()
+    q('.bar-btn[aria-label="项目菜单"]')!.click()
     await flushPromises()
     const item = q('[data-testid="bar-menu-task"]')
     expect(item).not.toBeNull()
@@ -78,7 +88,7 @@ describe('MobileTopBar：⋯ 菜单任务动态项（PR2）', () => {
 
   it('仅有历史无运行中 → 纯「任务」文案（仍可达，不成死角）', async () => {
     const wrapper = mountBar({ hasTaskHistory: true, taskActiveCount: 0 })
-    q('.bar-btn[aria-label="项目管理菜单"]')!.click()
+    q('.bar-btn[aria-label="项目菜单"]')!.click()
     await flushPromises()
     const item = q('[data-testid="bar-menu-task"]')
     expect(item!.textContent?.trim()).toBe('任务')

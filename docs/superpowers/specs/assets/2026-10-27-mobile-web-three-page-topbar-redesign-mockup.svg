@@ -1,0 +1,90 @@
+<svg viewBox="0 0 680 900" xmlns="http://www.w3.org/2000/svg">
+  <rect width="680" height="900" fill="#FFFFFF"/>
+  <text x="40" y="34" font-family="-apple-system,system-ui,sans-serif" font-size="14" font-weight="600" fill="#2C2C2A">三页顶栏重构示意（终稿 · 移动端 ①②③ + WEB ④⑤ · 项目名用次级静默样式并截断）</text>
+
+  <!-- ① 移动端 创作空间 -->
+  <text x="40" y="66" font-family="-apple-system,system-ui,sans-serif" font-size="12" fill="#8A8A8E">① 移动端 · 创作空间（画廊 / 启动器，独立页，无底部栏）</text>
+  <rect x="40" y="76" width="600" height="54" rx="14" fill="#FFFFFF" stroke="#D3D1C7" stroke-width="0.5"/>
+  <circle cx="70" cy="103" r="11" fill="#2C2C2A"/>
+  <text x="88" y="108" font-family="-apple-system,system-ui,sans-serif" font-size="14" font-weight="600" fill="#2C2C2A">lnk π</text>
+  <circle cx="556" cy="103" r="9" fill="none" stroke="#8A8A8E" stroke-width="1.5"/>
+  <line x1="562" y1="109" x2="569" y2="116" stroke="#8A8A8E" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="600" cy="103" r="13" fill="#534AB7"/>
+  <path d="M600 96 v14 M593 103 h14" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round"/>
+  <text x="40" y="150" font-family="-apple-system,system-ui,sans-serif" font-size="12" fill="#8A8A8E">左：logo 回品牌页　右：🔍 展开搜索 + ＋ 建项目（去掉大 H1 / 主题 / 积分 / 头像 / 常驻搜索框 / 管理）</text>
+
+  <!-- ② 移动端 对话页 -->
+  <text x="40" y="186" font-family="-apple-system,system-ui,sans-serif" font-size="12" fill="#8A8A8E">② 移动端 · 对话页（项目内）：单一 &lt; 返回创作空间 + 项目名（次级静默、超长截断）</text>
+  <rect x="40" y="196" width="600" height="54" rx="14" fill="#FFFFFF" stroke="#D3D1C7" stroke-width="0.5"/>
+  <path d="M72 223 L64 230 L72 237" fill="none" stroke="#2C2C2A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="82" y="235" font-family="-apple-system,system-ui,sans-serif" font-size="13" fill="#2C2C2A">创作空间</text>
+  <text x="180" y="235" font-family="-apple-system,system-ui,sans-serif" font-size="14" fill="#8A8A8E">agent 模特换装工作流…</text>
+  <circle cx="594" cy="223" r="1.6" fill="#8A8A8E"/>
+  <circle cx="602" cy="223" r="1.6" fill="#8A8A8E"/>
+  <circle cx="610" cy="223" r="1.6" fill="#8A8A8E"/>
+  <text x="40" y="268" font-family="-apple-system,system-ui,sans-serif" font-size="12" fill="#8A8A8E">项目名用次级灰、不抢眼、超长截断（…）；移除 抽屉 / 品牌 / 新对话 / 历史；⋯ = 项目菜单</text>
+
+  <!-- ③ 移动端 画布页 -->
+  <text x="40" y="304" font-family="-apple-system,system-ui,sans-serif" font-size="12" fill="#8A8A8E">③ 移动端 · 画布页（项目内，原缺失顶栏）：补回 &lt; 返回创作空间 + 项目名；⤢ 并入右侧</text>
+  <rect x="40" y="314" width="600" height="54" rx="14" fill="#FFFFFF" stroke="#D3D1C7" stroke-width="0.5"/>
+  <path d="M72 341 L64 348 L72 355" fill="none" stroke="#2C2C2A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="82" y="353" font-family="-apple-system,system-ui,sans-serif" font-size="13" fill="#2C2C2A">创作空间</text>
+  <text x="180" y="353" font-family="-apple-system,system-ui,sans-serif" font-size="14" fill="#8A8A8E">好莱坞动画片</text>
+  <path d="M558 338 h3 v3 M568 338 h-3 v3 M558 354 h3 v-3 M568 354 h-3 v-3" fill="none" stroke="#8A8A8E" stroke-width="1.5" stroke-linecap="round"/>
+  <circle cx="594" cy="341" r="1.6" fill="#8A8A8E"/>
+  <circle cx="602" cy="341" r="1.6" fill="#8A8A8E"/>
+  <circle cx="610" cy="341" r="1.6" fill="#8A8A8E"/>
+  <text x="40" y="386" font-family="-apple-system,system-ui,sans-serif" font-size="12" fill="#8A8A8E">补顶栏：&lt; 返回创作空间 + 项目名（次级）；⤢ 适应画布并入右侧（取代原浮动钮）；⋯ 项目菜单</text>
+
+  <line x1="40" y1="414" x2="640" y2="414" stroke="#D3D1C7" stroke-width="0.5"/>
+  <text x="40" y="442" font-family="-apple-system,system-ui,sans-serif" font-size="13" font-weight="600" fill="#2C2C2A">导航层级（每层只有一个返回，互不打架）</text>
+  <rect x="40" y="456" width="150" height="40" rx="10" fill="#F1EFE8" stroke="#D3D1C7" stroke-width="0.5"/>
+  <text x="115" y="481" text-anchor="middle" font-family="-apple-system,system-ui,sans-serif" font-size="13" fill="#2C2C2A">品牌页</text>
+  <path d="M196 476 L224 476" stroke="#8A8A8E" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="230" y="456" width="150" height="40" rx="10" fill="#F1EFE8" stroke="#D3D1C7" stroke-width="0.5"/>
+  <text x="305" y="481" text-anchor="middle" font-family="-apple-system,system-ui,sans-serif" font-size="13" fill="#2C2C2A">创作空间</text>
+  <path d="M386 476 L414 476" stroke="#8A8A8E" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <rect x="420" y="456" width="180" height="40" rx="10" fill="#EEEDFE" stroke="#AFA9EC" stroke-width="0.5"/>
+  <text x="510" y="481" text-anchor="middle" font-family="-apple-system,system-ui,sans-serif" font-size="13" fill="#3C3489">项目工作区</text>
+
+  <!-- WEB 分隔 -->
+  <line x1="40" y1="520" x2="640" y2="520" stroke="#D3D1C7" stroke-width="0.5"/>
+  <text x="40" y="548" font-family="-apple-system,system-ui,sans-serif" font-size="13" font-weight="600" fill="#2C2C2A">WEB 端（同一 IA 层 · 不同形态：画廊裸栏 + 工作台顶部统一栏）</text>
+
+  <!-- ④ WEB 创作空间 -->
+  <text x="40" y="580" font-family="-apple-system,system-ui,sans-serif" font-size="12" fill="#8A8A8E">④ WEB · 创作空间（画廊）：AppHeader 按路由渲染裸栏（logo + 🔍 + ＋），去 创作/发现/主题/账号；页面仅一行标题</text>
+  <rect x="40" y="590" width="600" height="50" rx="12" fill="#FFFFFF" stroke="#D3D1C7" stroke-width="0.5"/>
+  <circle cx="68" cy="615" r="10" fill="#2C2C2A"/>
+  <text x="86" y="620" font-family="-apple-system,system-ui,sans-serif" font-size="13" font-weight="600" fill="#2C2C2A">lnk π</text>
+  <circle cx="556" cy="615" r="9" fill="none" stroke="#8A8A8E" stroke-width="1.5"/>
+  <line x1="562" y1="621" x2="569" y2="628" stroke="#8A8A8E" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="600" cy="615" r="12" fill="#534AB7"/>
+  <path d="M600 609 v12 M594 615 h12" stroke="#FFFFFF" stroke-width="2.5" stroke-linecap="round"/>
+  <text x="40" y="662" font-family="-apple-system,system-ui,sans-serif" font-size="12" fill="#8A8A8E">页面：创作空间 · 200 个（次级灰小字） + 卡片网格；无 h1 / 新建按钮 / 管理 / 常驻搜索框；单栏无双叠</text>
+
+  <!-- ⑤ WEB 工作台 -->
+  <text x="40" y="694" font-family="-apple-system,system-ui,sans-serif" font-size="12" fill="#8A8A8E">⑤ WEB · 工作台（对话+画布同屏）：新增统一顶栏 WorkspaceTopBar，取代原漂浮簇与聊天栏冗余入口</text>
+  <rect x="40" y="704" width="600" height="50" rx="12" fill="#FFFFFF" stroke="#D3D1C7" stroke-width="0.5"/>
+  <path d="M68 731 L60 738 L68 745" fill="none" stroke="#2C2C2A" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="78" y="743" font-family="-apple-system,system-ui,sans-serif" font-size="13" fill="#2C2C2A">创作空间</text>
+  <text x="172" y="743" font-family="-apple-system,system-ui,sans-serif" font-size="14" fill="#8A8A8E">好莱坞动画片</text>
+  <rect x="470" y="722" width="48" height="26" rx="13" fill="#F1EFE8"/>
+  <text x="494" y="739" text-anchor="middle" font-family="-apple-system,system-ui,sans-serif" font-size="12" fill="#3C3489">发现</text>
+  <rect x="524" y="722" width="48" height="26" rx="13" fill="#F1EFE8"/>
+  <text x="548" y="739" text-anchor="middle" font-family="-apple-system,system-ui,sans-serif" font-size="12" fill="#3C3489">我的</text>
+  <circle cx="588" cy="729" r="9" fill="none" stroke="#8A8A8E" stroke-width="1.5"/>
+  <circle cx="608" cy="729" r="9" fill="#D3D1C7"/>
+  <circle cx="624" cy="735" r="1.6" fill="#8A8A8E"/>
+  <circle cx="632" cy="735" r="1.6" fill="#8A8A8E"/>
+  <circle cx="640" cy="735" r="1.6" fill="#8A8A8E"/>
+  <text x="40" y="782" font-family="-apple-system,system-ui,sans-serif" font-size="12" fill="#8A8A8E">左：‹ 返回创作空间 + 项目名（§6.4 次级灰、截断）；右簇：发现 / 我的 / 主题 / 账号 / ⋯；聊天栏头部 新对话/历史 已移除</text>
+  <text x="40" y="808" font-family="-apple-system,system-ui,sans-serif" font-size="12" fill="#8A8A8E">注：原画布右上漂浮 ThemeToggle+AccountChrome 已并入顶栏右簇，画布页不再「进即迷路」。</text>
+
+  <text x="40" y="846" font-family="-apple-system,system-ui,sans-serif" font-size="12" fill="#8A8A8E">说明：移动端底部四页签（对话/画布/发现/我的）与 WEB 工作台顶栏右簇（发现/我的）为同一 IA 层的不同形态，可见性对等。</text>
+
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke="#8A8A8E" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+</svg>

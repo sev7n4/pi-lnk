@@ -10,12 +10,16 @@ const here = dirname(fileURLToPath(import.meta.url))
 const source = readFileSync(join(here, 'CanvasPage.vue'), 'utf8')
 
 describe('SP-C：CanvasPage 视口接线（静态契约）', () => {
-  it('N3：回合末不得出现无条件的全览 fitView —— 每个 fitView 调用都必须带 nodes', () => {
+  it('N3：回合末不得出现无条件的全览 fitView —— 每个 fitView 要么 nodes 定向，要么是 ⤢ 手动桥', () => {
     const allFitView = source.match(/fitView\(/g) ?? []
     const nodesScoped = source.match(/fitView\(\{\s*nodes:/g) ?? []
+    // 2026-10-27 三页顶栏重构 §6.3：⤢ 适应画布从浮动胶囊上提到顶栏，经 agentRailActions
+    // 桥接 VueFlow——这是**用户显式动作**，不属于「回合末自动全览」的禁域。标记注释
+    // `/* ⤢ 手动桥（N3 例外）` 是唯一豁免凭据；新增任何无标记的无条件 fitView ⇒ 红。
+    const manualBridge = source.match(/\/\* ⤢ 手动桥（N3 例外）/g) ?? []
     expect(allFitView.length).toBeGreaterThan(0)
-    // 有人加回一个「不看新节点、直接全览」的 fitView ⇒ 两数不再相等 ⇒ 红
-    expect(nodesScoped.length).toBe(allFitView.length)
+    expect(manualBridge.length, '⤢ 手动桥标记必须恰好一处（多了=有人夹带无标记全览）').toBe(1)
+    expect(nodesScoped.length + manualBridge.length).toBe(allFitView.length)
   })
 
   it('N3：SP-B 时期那句无条件全览已删除（防回归，逐字）', () => {

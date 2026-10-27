@@ -43,17 +43,16 @@ describe('mobile bare bar structure (P1-5)', () => {
     expect(tpl).toContain('composer-bare-bar')
     expect(tpl.indexOf('class="composer-status-line"')).toBeLessThan(tpl.indexOf('composer-bare-bar'))
   })
-  it('history popover opens UPWARD inside the mobile bottom dock (fix-2)', () => {
-    // 有效性配对：popover 原地渲染（非 Teleport），模板存在历史入口/popover 才谈得上方向
-    expect(tpl).toContain('historyOpen')
-    expect(tpl).toContain('neo-popover absolute right-0 top-full')
-    // 移动端作用域规则：翻转为向上展开（bottom 锚定），桌面选择器不受影响
+  it('history popover retired（ADR-0015 单对话 + 2026-10-27 三页顶栏重构 T5）', () => {
+    // 有效性配对：popover 原地渲染的形态与向上展开规则都必须**整体退役**；
+    // 历史入口由多对话 UI 退役收敛（「1 项目 = 1 对话」，无历史可列）
+    expect(tpl).not.toContain('historyOpen')
+    expect(tpl).not.toContain('neo-popover absolute right-0 top-full')
+    // 移动端作用域翻转规则一并删除（不留死样式）
     const rule = sfc.match(
       /\.agent-panel-mobile-dock \.agent-panel-header \.neo-popover\s*\{[^}]*\}/,
-    )?.[0]
-    expect(rule, '移动端历史 popover 向上展开规则缺失').toBeTruthy()
-    expect(rule).toContain('top: auto')
-    expect(rule).toContain('bottom: calc(100%')
+    )
+    expect(rule, '移动端历史 popover 规则应已随功能退役删除').toBeNull()
   })
   it('pure module contract: barShape routes the three bar shapes', () => {
     // 有效性断言：mobileBarLayout 的 barShape 被组件消费（防空集假绿——类名存在但没接线）；

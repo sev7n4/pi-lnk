@@ -23,31 +23,30 @@ function stripComments(s: string): string {
 
 describe('PR4 视觉与卫生（移动端画布）', () => {
   const page = read('./CanvasPage.vue')
-  const topControls = readComponent('canvas/MobileCanvasTopControls.vue')
   const topBar = readComponent('mobile/MobileTopBar.vue')
   // PR5（D-9）：移动端导航/面板/状态/入口层收敛到 MobileCanvasShell 单一壳层，
   // 以下「移动端子组件接线」断言改读壳层源码（CanvasPage 仅委托该壳层）。
   const shell = readComponent('mobile/MobileCanvasShell.vue')
 
-  it('视口控件：单枚 ⤢ 适应画布，零 --neo-*，令牌走 --lnk-*', () => {
-    expect(topControls).not.toContain('--neo-')
-    expect(topControls).toContain('aria-label="适应画布"')
-    expect(topControls).toContain('fitView')
-    expect(topControls).toContain('var(--lnk-surface-overlay)')
-    expect(topControls).toContain('var(--lnk-border-subtle)')
+  it('视口控件：单枚 ⤢ 适应画布（已上提至 MobileTopBar fit-view），零 --neo-*，令牌走 --lnk-*', () => {
+    // 2026-10-27 mobile-web-three-page-topbar-redesign（T4）：移动端浮动 ⤢ 退役，
+    // 改由 MobileTopBar canvas 分支的 fit-view 按钮承载（经壳层桥接 VueFlow fitView）。
+    expect(topBar).not.toContain('--neo-')
+    expect(topBar).toContain('aria-label="适应画布"')
+    expect(topBar).toContain('fit-view')
+    expect(topBar).toContain('var(--lnk-surface-overlay)')
+    expect(topBar).toContain('var(--lnk-border-subtle)')
   })
 
   it('视口减法（2026-10-21 裁决）：缩放 ±/% 与小地图入口不得回潮', () => {
-    // 小地图：组件不再引用 MiniMap，CanvasPage 不再传开关接线
-    expect(topControls).not.toContain('MiniMap')
-    expect(topControls).not.toContain('toggle-minimap')
-    const panel = page.match(/<MobileCanvasTopControls[\s\S]*?\/>/)?.[0] ?? ''
-    expect(panel, '必须能定位视口控件开标签').toContain('<MobileCanvasTopControls')
-    expect(panel).not.toContain('minimap-expanded')
-    expect(panel).not.toContain('@toggle-minimap')
+    // 小地图：MobileTopBar 不再引用 MiniMap，CanvasPage 不再传开关接线
+    expect(topBar).not.toContain('MiniMap')
+    expect(topBar).not.toContain('toggle-minimap')
+    // 浮动 ⤢ 实例已从 CanvasPage 移除（上提至 MobileTopBar）；注释里的旧名不计
+    expect(page).not.toMatch(/<MobileCanvasTopControls[\s\S]*?\/>/)
     // 缩放：±/% 是 PC 心智，移动端双指捏合已覆盖
-    expect(topControls).not.toContain('zoomBy')
-    expect(topControls).not.toContain('zoomPercent')
+    expect(topBar).not.toContain('zoomBy')
+    expect(topBar).not.toContain('zoomPercent')
     // 有效性配对：PC 端全量视口工具仍在（cycleMinimap 仍有消费方）
     expect(page).toContain('@cycle-minimap="cycleMinimap"')
   })
@@ -92,7 +91,7 @@ describe('PR4 视觉与卫生（移动端画布）', () => {
     expect(topBarCode).not.toContain('pointsText')
     // 有效性配对：顶栏仍有真实入口（对话页新建卡 / 画布页 ⋯ 菜单）
     expect(topBarCode).toContain('create-card--bar')
-    expect(topBarCode).toContain('项目管理菜单')
+    expect(topBarCode).toContain('data-testid="mobile-topbar-menu"')
   })
 
   it('⋯ 菜单按频次重排 + 导出二级（完整包 / 轻量包）', () => {

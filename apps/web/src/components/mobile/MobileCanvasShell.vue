@@ -54,12 +54,10 @@ import TopupModal from '@/components/membership/TopupModal.vue'
 import MembershipModal from '@/components/membership/MembershipModal.vue'
 
 export interface MobileShellAgentActions {
-  /** 2026-10-26（D7/D10）：≡ 原唤起项目抽屉，抽屉退场后 = 返回创作首页（/canvases）。 */
-  backToCreationHome: () => void
-  newChat: () => void
-  openHistory: () => void
-  /** IA v4（2026-10-23）：顶栏品牌字标 → 回工作台 hero（项目页回前门） */
-  goHome: () => void
+  /** 规格 §6.2/§6.3：‹ 返回创作空间（/canvases） */
+  goGallery: () => void
+  /** 规格 §6.3：⤢ 适应画布（桥接到 VueFlow fitView） */
+  fitView: () => void
 }
 
 export interface MobileShellBatchActions {
@@ -97,6 +95,8 @@ export interface MobileShellBatchActions {
 const props = defineProps<{
   /** 页签——共享真源在 CanvasPage，壳层只接收渲染 */
   mobileAppTab: MobileAppTab
+  /** 当前项目名（规格 §6.4：次级灰、15px、超长截断） */
+  projectName: string
   /** 自动保存状态行（2026-10-21 改版：静默成功只报异常） */
   saving: boolean
   saveFailed: boolean
@@ -358,19 +358,17 @@ onUnmounted(() => stopMobileTaskPolling())
   <!-- 移动端应用骨架（IA v3）：顶栏三区 + 底部四页签 + 发现/我的两页 + 账号二级面板
        + 自动保存状态行 + ＋FAB + 新建/任务 sheet + 多选动作条。
        本壳层由 CanvasPage 的 `v-if="isMobileLayout"` 包裹，内部不再判断断点。 -->
-  <!-- 2026-10-27 用户裁决（§16-①）：画布页签**不渲染顶栏卡片**——「整个这个卡片在
-       移动端画布页就不应该存在」。桌面式项目管理卡（⋯ 任务/发布作品/导入导出工作流）
-       退役：任务入口迁状态栏（点击「N 个生成中 / 待确认」开任务 sheet），发布/导入导出
-       为工作流页级操作（hero 前门可达，低频不占画布）。仅保留安全区占位防瓦片顶入刘海。 -->
+  <!-- 移动端顶栏（对话 + 画布 共用，规格 §6.2/§6.3）：‹ 返回创作空间 + 项目名 + ⋯；
+       画布分支额外带 ⤢ 适应画布。⭐ 取代生命周期规格 §16-①「画布页签不渲染顶栏卡片」：
+       §16-① 让画布页签完全不渲染顶栏 ⇒ 用户实测「进画布即迷路」（缺项目名/返回），
+       本规格（2026-10-27 三页顶栏统一重构，后裁）改与 chat 同构常驻渲染。 -->
   <MobileTopBar
-    v-if="mobileAppTab !== 'canvas'"
     :tab="mobileAppTab"
+    :project-name="projectName"
     :task-active-count="mobileTaskActiveCount"
     :has-task-history="mobileTaskHasHistory"
-    @back-to-creation-home="agentActions.backToCreationHome"
-    @new-chat="agentActions.newChat"
-    @open-history="agentActions.openHistory"
-    @go-home="agentActions.goHome"
+    @go-gallery="agentActions.goGallery"
+    @fit-view="agentActions.fitView"
     @publish="onPublish"
     @import-workflow="onImportWorkflow"
     @export-workflow="onExportPack([], 'full_package')"
