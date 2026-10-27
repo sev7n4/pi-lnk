@@ -113,10 +113,14 @@ describe('MobileNodePromptReviewSheet 动作（§17 v2 收敛）', () => {
     await ink.trigger('touchend')
     expect(w.find('[data-testid="mobile-annotation-capsule"]').exists()).toBe(true)
     await w.find('[data-testid="mobile-annotation-capsule-input"]').setValue('构图太挤')
-    // jsdom 无真实 canvas ⇒ toBlob 不可用 ⇒ 走 catch 降级路径（诚实降级，不静默丢意见）
+    // ⭐ 环境无关断言：CI 装了 canvas 包 ⇒ 合成成功走 marks 路径（degraded:false + Blob）；
+    //   纯 jsdom ⇒ toBlob 不可用 ⇒ 走 catch 诚实降级（degraded:true，只带文字）。
+    //   两条路径都必须带上意见文字，不静默丢意见 ⇒ 只断 degraded 为 boolean + text 透传。
     await w.find('[data-testid="mobile-annotation-capsule-anchor"]').trigger('click')
     await vi.waitFor(() => expect(w.emitted('annotate')).toBeTruthy())
-    expect(w.emitted('annotate')![0]![0]).toMatchObject({ degraded: true, text: '构图太挤' })
+    const payload = w.emitted('annotate')![0]![0] as { degraded: boolean; text?: string }
+    expect(typeof payload.degraded).toBe('boolean')
+    expect(payload.text).toBe('构图太挤')
     w.unmount()
   })
 

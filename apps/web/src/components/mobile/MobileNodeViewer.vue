@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { sameOriginApiMediaUrl } from '@/services/media-url'
 import { composeAnnotatedImage, type AnnotateMark } from './annotate/composeAnnotatedImage'
 import { renderReviewBaseImage } from './annotate/renderReviewBaseImage'
@@ -403,6 +403,65 @@ async function captureBaseImage(): Promise<{ image: CanvasImageSource; width: nu
 /** 视频元素引用（退出即停用） */
 const videoRef = ref<HTMLVideoElement | null>(null)
 
+/* ── 图片双指缩放（W-5 · 拍板 I1 隐含底线，2026-10-27 S2 批次）──────────────
+ * 双指捏合 ⇒ scale 1..4；放大后单指 = 平移（不再参与关闭判定）；
+ * 缩回 1 ⇒ 位移复位。⭐ 仲裁纪律：发生捏合/平移的本次触控一律**不触发关闭**
+ * （gestureConsumed），与评审 C1「画笔手势不参与关闭」同型。 */
+const imgScale = ref(1)
+const imgTx = ref(0)
+const imgTy = ref(0)
+const pinchState = ref<{ initDist: number; initScale: number; initTx: number; initTy: number; initMidX: number; initMidY: number } | null>(null)
+const panLast = ref<{ x: number; y: number } | null>(null)
+/** 本次触控已消费（捏合/平移）⇒ touchend 不做关闭判定 */
+const gestureConsumed = ref(false)
+/** 缩放中的 img 元素引用（平移边界按其渲染尺寸折算） */
+const imgElRef = ref<HTMLImageElement | null>(null)
+
+const imgTransformStyle = computed(() =>
+  props.type === 'image'
+    ? {
+        transform: `translate(${imgTx.value}px, ${imgTy.value}px) scale(${imgScale.value})`,
+        willChange: 'transform' as const,
+      }
+    : undefined,
+)
+
+function pinchDistance(e: TouchEvent): number {
+  const a = e.touches[0]!
+  const b = e.touches[1]!
+  return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
+}
+
+function pinchMidpoint(e: TouchEvent): { x: number; y: number } {
+  const a = e.touches[0]!
+  const b = e.touches[1]!
+  return { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 }
+}
+
+/** 平移边界：放大后允许把图边缘拉进视口，但不许拖出白边（±(scale-1)·半尺寸） */
+function clampPan(tx: number, ty: number): { x: number; y: number } {
+  const el = imgElRef.value
+  const hw = (el?.clientWidth ?? 320) / 2
+  const hh = (el?.clientHeight ?? 480) / 2
+  const limX = (imgScale.value - 1) * hw
+  const limY = (imgScale.value - 1) * hh
+  return { x: Math.max(-limX, Math.min(limX, tx)), y: Math.max(-limY, Math.min(limY, ty)) }
+}
+
+function resetImageZoom() {
+  imgScale.value = 1
+  imgTx.value = 0
+  imgTy.value = 0
+  pinchState.value = null
+  panLast.value = null
+}
+
+// 节点切换（组件复用场景）⇒ 缩放态复位，不把上一张图的 zoom 带进下一张
+watch(
+  () => props.data?.url,
+  () => resetImageZoom(),
+)
+
 /* ── 音频波形查看器（D2 修订 2026-10-27，走查④）────────────────────── */
 const audioRef = ref<HTMLAudioElement | null>(null)
 const audioPlaying = ref(false)
@@ -483,6 +542,28 @@ function onTouchStart(e: TouchEvent) {
   // ⭐ 评审 C1：标注态画笔手势不参与关闭判定——任何 >100px 的圈选笔画
   // 都不得关掉查看器（否则 onInkEnd 的异步合成还没 emit，节点已被清空，标注静默丢失）。
   if (annotating.value) return
+  // ⭐ W-5：图片双指捏合进入缩放态——本次手势被消费，不参与关闭判定。
+  if (props.type === 'image' && e.touches.length === 2) {
+    const mid = pinchMidpoint(e)
+    pinchState.value = {
+      initDist: pinchDistance(e),
+      initScale: imgScale.value,
+      initTx: imgTx.value,
+      initTy: imgTy.value,
+      initMidX: mid.x,
+      initMidY: mid.y,
+    }
+    gestureConsumed.value = true
+    panLast.value = null
+    return
+  }
+  // ⭐ W-5：放大态（scale>1）单指 = 平移——同样消费掉，不触发关闭。
+  if (props.type === 'image' && imgScale.value > 1 && e.touches.length === 1) {
+    panLast.value = { x: e.touches[0]!.clientX, y: e.touches[0]!.clientY }
+    gestureConsumed.value = true
+    return
+  }
+  gestureConsumed.value = false
   const y = e.touches?.[0]?.clientY ?? 0
   touchStartY.value = y
   touchCurrentY.value = y
@@ -504,6 +585,33 @@ function scrollContentAtBottom(): boolean {
 }
 
 function onTouchMove(e: TouchEvent) {
+  // ⭐ W-5：双指捏合 ⇒ 缩放 + 双指中点平移；缩回 1 时位移复位。
+  if (pinchState.value && e.touches.length === 2) {
+    const s = pinchState.value
+    const scale = Math.max(1, Math.min(4, s.initScale * (pinchDistance(e) / s.initDist)))
+    imgScale.value = scale
+    const mid = pinchMidpoint(e)
+    if (scale > 1) {
+      const p = clampPan(s.initTx + (mid.x - s.initMidX), s.initTy + (mid.y - s.initMidY))
+      imgTx.value = p.x
+      imgTy.value = p.y
+    } else {
+      imgTx.value = 0
+      imgTy.value = 0
+    }
+    return
+  }
+  // ⭐ W-5：放大态单指平移。
+  if (panLast.value && e.touches.length === 1 && imgScale.value > 1) {
+    const p = clampPan(
+      imgTx.value + (e.touches[0]!.clientX - panLast.value.x),
+      imgTy.value + (e.touches[0]!.clientY - panLast.value.y),
+    )
+    imgTx.value = p.x
+    imgTy.value = p.y
+    panLast.value = { x: e.touches[0]!.clientX, y: e.touches[0]!.clientY }
+    return
+  }
   // ⭐ 评审 I5：多点触控（捏合/换指）时 touches[0] 身份会跳变 ⇒ 位移不可信，
   // 冻结本次手势（当前点回拨到起点），second finger 抬起后重新开始累计。
   if (e.touches.length > 1) {
@@ -521,6 +629,16 @@ function onTouchCancel() {
 }
 
 function onTouchEnd() {
+  // ⭐ W-5：捏合/平移消费掉的本次触控不做关闭判定；缩回 1 时已复位。
+  if (gestureConsumed.value || pinchState.value) {
+    pinchState.value = null
+    panLast.value = null
+    gestureConsumed.value = false
+    touchStartY.value = 0
+    touchCurrentY.value = 0
+    touchStartScrollTop.value = 0
+    return
+  }
   // ⭐ 评审 C1：标注态（含 onInkEnd 异步合成期间）不触发关闭
   if (annotating.value) return
   // ⭐ 方向判据（2026-10-27 走查③修）：currentY − startY > 0 才是「下拉」。
@@ -649,7 +767,15 @@ defineExpose({ videoRef })
       <p v-else-if="reviewPrompt" class="viewer-review-prompt" data-testid="mobile-viewer-review-prompt">{{ reviewPrompt }}</p>
       <p v-if="reviewParams" class="viewer-review-params" data-testid="mobile-viewer-review-params">{{ reviewParams }}</p>
     </div>
-    <img v-else-if="type === 'image' && data?.url" :src="data.url" class="viewer-media" alt="" />
+    <img
+      v-else-if="type === 'image' && data?.url"
+      ref="imgElRef"
+      :src="data.url"
+      class="viewer-media"
+      :class="{ 'is-zoomed': imgScale > 1 }"
+      :style="imgTransformStyle"
+      alt=""
+    />
     <video
       v-else-if="type === 'video' && data?.url"
       ref="videoRef"
@@ -816,6 +942,8 @@ defineExpose({ videoRef })
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /* ⭐ W-5：缩放变换不得溢出媒体区（盖住底栏/顶栏） */
+  overflow: hidden;
 }
 
 /* 右上角 X：44px 触控热区（图标视觉 18px，热区达标 ⇒ G-18） */

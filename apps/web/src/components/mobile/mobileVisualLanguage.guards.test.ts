@@ -59,13 +59,16 @@ describe('跨端视觉与组件哲学守卫（§4.11）', () => {
     // 白名单：文件名 → 豁免理由（新增豁免必须在此写清理由，否则守卫拒绝放行）
     const WHITELIST: Record<string, string> = {
       'MobileSheet.vue': '基座自身（scrim + 把手 + Teleport）—— 全屏遮罩的标准形态',
-      // ⚠️ 以下三个是**非选择型**的全屏形态，规格 §4.11.8「浮层统一基座」未含
-      //   这类豁免 ⇒ **待规格升版补明**（对账报告 §2.3 P0-2）：
-      'MobileNodeViewer.vue': '全屏**媒体查看器**（灯箱/逐帧/全屏阅读）—— 非选择型浮层，待规格补明',
-      'MobileNodeEditorSheet.vue': '全屏**表单**（长提示词需整屏输入面；MobileSheet 是 62vh 选择型）—— 待规格补明',
-      'ProfilePane.vue': '全屏**资料面板**（既有能力，非本轮范围）—— 待规格补明',
-      'DiscoverPane.vue': '全屏**发现面板**（既有能力，非本轮范围）—— 待规格补明',
-      'MobileCanvasShell.vue': '内含 `.mobile-account-pane` 全屏「我的」面板（**既有**能力，非本轮引入）—— 待规格补明',
+      // ⭐ 2026-10-27：§4.11.8 豁免类已显式化（全屏非选择型浮层），以下豁免**有据**：
+      //   ① 全屏媒体查看器 / ② 全屏文本阅读面 / ③ 全屏表单 / ④ 既有全屏面板。
+      //   豁免纪律 = P3（X + 手势可退）+ §4.11.5 内联 SVG + V-5 44px + reduce-motion。
+      'MobileNodeViewer.vue': '全屏**媒体查看器**（灯箱/逐帧/全屏阅读）—— §4.11.8 豁免类①',
+      'MobileReadingSurface.vue': '共享**全屏文本阅读面**（§4.8.1，全文审核层的壳）—— §4.11.8 豁免类②',
+      'MobileNodePromptReviewSheet.vue': '提示词**全文审核层**（§4.7.1，消费 MobileReadingSurface）—— §4.11.8 豁免类②',
+      'MobileNodeEditorSheet.vue': '全屏**表单**（长提示词需整屏输入面；MobileSheet 是 62vh 选择型）—— §4.11.8 豁免类③',
+      'ProfilePane.vue': '全屏**资料面板**（既有能力）—— §4.11.8 豁免类④',
+      'DiscoverPane.vue': '全屏**发现面板**（既有能力）—— §4.11.8 豁免类④',
+      'MobileCanvasShell.vue': '内含 `.mobile-account-pane` 全屏「我的」面板（既有能力）—— §4.11.8 豁免类④',
     }
     const files = readdirSync(MOBILE_DIR).filter((f) => f.endsWith('.vue'))
     const offenders: string[] = []

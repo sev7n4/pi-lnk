@@ -57,8 +57,17 @@ describe('R3-T3 瓦片状态轻态', () => {
       w.unmount()
     })
 
-    it('不渲染媒体内容（生成中不该显示旧图）', () => {
+    it('改词重生成（有旧产物）⇒ 旧图**淡化保留** + 「重新生成中」角标（G1，§4.7 表第 3 行——旧断言「生成中不渲染旧图」被 G1 推翻重写）', () => {
       const { w } = mountTile({ url: 'https://x/a.png', status: 'generating' })
+      // 旧媒体保留（不闪空）+ 角标在位
+      expect(w.find('img.mobile-node-media').exists()).toBe(true)
+      expect(w.find('[data-testid="mobile-node-regen-badge"]').exists()).toBe(true)
+      w.unmount()
+    })
+
+    it('首生成（无旧产物）⇒ 走骨架，不渲染媒体（旧断言语义收窄到此场景）', () => {
+      const { w } = mountTile({ url: '', status: 'generating' })
+      expect(w.find('.mobile-node-generating').exists()).toBe(true)
       expect(w.find('img.mobile-node-media').exists()).toBe(false)
       w.unmount()
     })

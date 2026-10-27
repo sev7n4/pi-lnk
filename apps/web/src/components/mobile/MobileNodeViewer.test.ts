@@ -546,3 +546,163 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
     })
   })
 })
+
+// ── W-5：图片双指缩放（拍板 I1 隐含底线，2026-10-27 S2 批次）──────────────────
+describe('图片双指缩放（W-5）', () => {
+  function mountImage() {
+    return mount(MobileNodeViewer, { props: { type: 'image', data: { url: 'x.png' } } })
+  }
+  const imgStyle = (w: ReturnType<typeof mount>) =>
+    w.find('img.viewer-media').attributes('style') ?? ''
+
+  it('双指捏合放大：距离 ×2 ⇒ scale(2)', async () => {
+    const w = mountImage()
+    const root = w.get('[data-testid="mobile-viewer"]')
+    await root.trigger('touchstart', {
+      touches: [
+        { clientX: 150, clientY: 300 },
+        { clientX: 250, clientY: 300 },
+      ],
+    })
+    await root.trigger('touchmove', {
+      touches: [
+        { clientX: 100, clientY: 300 },
+        { clientX: 300, clientY: 300 },
+      ],
+    })
+    expect(imgStyle(w)).toContain('scale(2)')
+    w.unmount()
+  })
+
+  it('上限 4x：距离拉大 10 倍 ⇒ scale 封顶 scale(4)', async () => {
+    const w = mountImage()
+    const root = w.get('[data-testid="mobile-viewer"]')
+    await root.trigger('touchstart', {
+      touches: [
+        { clientX: 150, clientY: 300 },
+        { clientX: 250, clientY: 300 },
+      ],
+    })
+    await root.trigger('touchmove', {
+      touches: [
+        { clientX: -350, clientY: 300 },
+        { clientX: 650, clientY: 300 },
+      ],
+    })
+    expect(imgStyle(w)).toContain('scale(4)')
+    expect(imgStyle(w)).not.toContain('scale(4.0')
+    w.unmount()
+  })
+
+  it('缩回 1x：位移复位（translate(0px, 0px)），不低于 1', async () => {
+    const w = mountImage()
+    const root = w.get('[data-testid="mobile-viewer"]')
+    await root.trigger('touchstart', {
+      touches: [
+        { clientX: 150, clientY: 300 },
+        { clientX: 250, clientY: 300 },
+      ],
+    })
+    await root.trigger('touchmove', {
+      touches: [
+        { clientX: 100, clientY: 300 },
+        { clientX: 300, clientY: 300 },
+      ],
+    })
+    // 缩回
+    await root.trigger('touchmove', {
+      touches: [
+        { clientX: 190, clientY: 300 },
+        { clientX: 210, clientY: 300 },
+      ],
+    })
+    expect(imgStyle(w)).toContain('scale(1)')
+    expect(imgStyle(w)).toContain('translate(0px, 0px)')
+    w.unmount()
+  })
+
+  it('放大态单指 = 平移（translate 变化），松手不关闭', async () => {
+    const w = mountImage()
+    const root = w.get('[data-testid="mobile-viewer"]')
+    // jsdom 无布局 ⇒ img.clientWidth 恒为 0（getter 返回 0 而非 undefined，`?? 320` 不兜底）
+    // ⇒ clampPan 把平移夹到 ±0 ⇒ translate 恒 (0px, 0px)。stub 出实例尺寸让 clampPan 生效。
+    const imgEl = w.find('img.viewer-media').element as HTMLImageElement
+    Object.defineProperty(imgEl, 'clientWidth', { value: 320, configurable: true })
+    Object.defineProperty(imgEl, 'clientHeight', { value: 480, configurable: true })
+    // 放大到 2x
+    await root.trigger('touchstart', {
+      touches: [
+        { clientX: 150, clientY: 300 },
+        { clientX: 250, clientY: 300 },
+      ],
+    })
+    await root.trigger('touchmove', {
+      touches: [
+        { clientX: 100, clientY: 300 },
+        { clientX: 300, clientY: 300 },
+      ],
+    })
+    // 单指平移
+    await root.trigger('touchstart', { touches: [{ clientX: 200, clientY: 400 }] })
+    await root.trigger('touchmove', { touches: [{ clientX: 120, clientY: 360 }] })
+    const style = imgStyle(w)
+    expect(style).toContain('translate(')
+    expect(style).not.toContain('translate(0px, 0px)')
+    await root.trigger('touchend')
+    expect(w.emitted('close')).toBeFalsy()
+    w.unmount()
+  })
+
+  it('放大态上滑不关闭（回归⑤不回退：缩放手势与关闭互斥）', async () => {
+    const w = mountImage()
+    const root = w.get('[data-testid="mobile-viewer"]')
+    await root.trigger('touchstart', {
+      touches: [
+        { clientX: 150, clientY: 300 },
+        { clientX: 250, clientY: 300 },
+      ],
+    })
+    await root.trigger('touchmove', {
+      touches: [
+        { clientX: 100, clientY: 300 },
+        { clientX: 300, clientY: 300 },
+      ],
+    })
+    // 上滑 200px（未缩放时任意位可关）
+    await root.trigger('touchstart', { touches: [{ clientX: 200, clientY: 400 }] })
+    await root.trigger('touchmove', { touches: [{ clientX: 200, clientY: 150 }] })
+    await root.trigger('touchend')
+    expect(w.emitted('close')).toBeFalsy()
+    w.unmount()
+  })
+
+  it('捏合后松手（touchend）不触发关闭', async () => {
+    const w = mountImage()
+    const root = w.get('[data-testid="mobile-viewer"]')
+    await root.trigger('touchstart', {
+      touches: [
+        { clientX: 150, clientY: 300 },
+        { clientX: 250, clientY: 300 },
+      ],
+    })
+    await root.trigger('touchmove', {
+      touches: [
+        { clientX: 100, clientY: 300 },
+        { clientX: 300, clientY: 300 },
+      ],
+    })
+    await root.trigger('touchend')
+    expect(w.emitted('close')).toBeFalsy()
+    w.unmount()
+  })
+
+  it('非图片类型不受影响：视频上滑仍可关（媒体关闭惯例）', async () => {
+    const w = mount(MobileNodeViewer, { props: { type: 'video', data: { url: 'v.mp4' } } })
+    const root = w.get('[data-testid="mobile-viewer"]')
+    await root.trigger('touchstart', { touches: [{ clientY: 300 }] })
+    await root.trigger('touchmove', { touches: [{ clientY: 100 }] })
+    await root.trigger('touchend')
+    expect(w.emitted('close')).toHaveLength(1)
+    w.unmount()
+  })
+})

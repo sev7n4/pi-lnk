@@ -70,6 +70,7 @@ import RefineCanvasBack from '@/components/canvas/RefineCanvasBack.vue'
 import MembershipModal from '@/components/membership/MembershipModal.vue'
 import type { MobileAppTab } from '@/components/mobile/MobileTabBar.vue'
 import MobileCanvasShell from '@/components/mobile/MobileCanvasShell.vue'
+import MobileUndoToast from '@/components/mobile/MobileUndoToast.vue'
 import type { MobileShellAgentActions, MobileShellBatchActions } from '@/components/mobile/MobileCanvasShell.vue'
 import CanvasBottomLeftControls from '@/components/canvas/CanvasBottomLeftControls.vue'
 import MobileCanvasTopControls from '@/components/canvas/MobileCanvasTopControls.vue'
@@ -5976,23 +5977,15 @@ onUnmounted(() => {
             aria-live="polite"
           >已引用 {{ refPickToast.count }} 个节点，可在对话中发送</div>
         </Teleport>
-        <!-- 删除撤销提示（D5 / §4.11.10）：底部浮层 + 单一「撤销」action（MD3 R5.16） -->
+        <!-- 删除撤销提示（D5 / §4.11.10）：底部浮层 + 单一「撤销」action（MD3 R5.16）。
+             ⭐ 2026-10-27 S2（V-7）：抽 `MobileUndoToast` 组件（行为断言可达）——
+             页面层只保留 showUndoToast 计时与 undoLastDelete 接线（单一真源不迁）。 -->
         <Teleport to="body">
-          <div
+          <MobileUndoToast
             v-if="undoToast"
-            class="mobile-undo-toast"
-            role="status"
-            aria-live="polite"
-            data-testid="mobile-undo-toast"
-          >
-            <span class="mobile-undo-toast-text">{{ undoToast.message }}</span>
-            <button
-              type="button"
-              class="mobile-undo-toast-action"
-              data-testid="mobile-undo-toast-action"
-              @click="undoLastDelete"
-            >撤销</button>
-          </div>
+            :message="undoToast.message"
+            @action="undoLastDelete"
+          />
         </Teleport>
         <CanvasFloatingChrome
           v-if="!canvasChromeHidden && !isMobileLayout"
@@ -6527,56 +6520,6 @@ onUnmounted(() => {
 
 /* 删除撤销提示（D5 / §4.11.10）：底部浮层 + 单一「撤销」action
    —— 结构参照 .ref-pick-toast，但**只用 --lnk-* 令牌**（禁 --neo-*，G-15） */
-.mobile-undo-toast {
-  position: fixed;
-  left: 50%;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 88px);
-  z-index: 4000;
-  display: flex;
-  align-items: center;
-  gap: var(--lnk-space-3);
-  transform: translateX(-50%);
-  max-width: min(420px, calc(100% - 24px));
-  padding: var(--lnk-space-2) var(--lnk-space-2) var(--lnk-space-2) var(--lnk-space-4);
-  border-radius: var(--lnk-radius-full);
-  background: var(--lnk-surface-raised);
-  box-shadow: var(--lnk-shadow-lg);
-  font-size: var(--lnk-text-sm);
-  font-weight: var(--lnk-weight-medium);
-  color: var(--lnk-text-primary);
-  white-space: nowrap;
-  animation: mobile-undo-toast-in 160ms ease-out;
-}
-
-.mobile-undo-toast-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* 单一 action（MD3 R5.16：限一个 action） */
-.mobile-undo-toast-action {
-  flex: none;
-  min-height: 32px;
-  padding: 0 var(--lnk-space-3);
-  border: none;
-  border-radius: var(--lnk-radius-full);
-  background: transparent;
-  color: var(--lnk-accent);
-  font-size: var(--lnk-text-sm);
-  font-weight: var(--lnk-weight-semibold);
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.mobile-undo-toast-action:active {
-  background: var(--lnk-pressed-overlay);
-}
-
-@keyframes mobile-undo-toast-in {
-  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
-  to { opacity: 1; transform: translateX(-50%) translateY(0); }
-}
 
 /* PR2 空态引导（V-3）：居中弱提示，pointer-events-none 不挡画布手势 */
 .mobile-canvas-empty {
