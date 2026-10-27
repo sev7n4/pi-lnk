@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectManager } from '@/composables/useProjectManager'
@@ -22,7 +22,9 @@ const router = useRouter()
 const auth = useAuthStore()
 const mgr = useProjectManager()
 // 2026-10-25 PR-2：创建通道收敛到 useProjectWorkspace（全仓唯一 create 通道）。
-const { create: createProject, list: listProjects } = useProjectWorkspace()
+// 2026-10-27 v2.2：补取 `error`（模块级单例，与 mgr.projects 同源），
+// 用于区分「加载失败」与「真无项目」两种空态（D12 / 修 bug④）。
+const { create: createProject, list: listProjects, loadIfStale, error: wsError } = useProjectWorkspace()
 
 /** 打开项目：封面节点存在时带 focusNode 深链（CanvasPage:1962 消费 query）。 */
 function openCanvas(p: { id: string; coverNodeId: string | null }) {
@@ -71,10 +73,23 @@ async function createCanvas() {
   }
 }
 
-onMounted(() => {
-  // 未登录不发请求（必然 401）：登录引导分支自己接住（回归契约：未登录零请求）
-  if (auth.isLoggedIn) void listProjects()   // 进首页强制新鲜：管理页要可管的真数据，不走 loadIfStale
-})
+// 2026-10-27 v2.3（真机复测实证）：auth 是异步恢复的——刷新 /canvases 时挂载瞬间
+// isLoggedIn 还是 false，若用 onMounted 静态快照判断，恢复完成后无人补发请求
+// ⇒ 「已登录视图 + 零数据 + 零请求」⇒ 误报「还没有项目」（生产 nginx 日志实证：
+// /canvases 刷新后零条 /api/agent/canvas/list，而 list 服务端 200 返回 22KB 全量数据）。
+// 改为响应式 watch：挂载时已登录立即拉；恢复完成 false→true 时补拉。
+// loadIfStale 的 fresh 判定 + single-flight 保证不会重复打接口。
+watch(
+  () => auth.isLoggedIn,
+  (loggedIn) => {
+    if (!loggedIn) return
+    // 2026-10-27 v2.2（bug③ 加固）：优先复用已在内存的清单（loadIfStale），
+    // 避免在「连接被画布 SSE 占满」的画布页返回时，再排队一次注定 15s 超时的请求
+    // ⇒ 返回秒开、不再闪空白；数据新鲜期内不重复打接口，过期才真拉。
+    void loadIfStale()
+  },
+  { immediate: true },
+)
 
 /** 行卡视图：预解析封面三态（模板内两次独立调用无法做类型窄化）。 */
 const rows = computed(() =>
@@ -256,23 +271,34 @@ const rows = computed(() =>
         没有匹配的项目
       </AppEmptyState>
 
+      <!-- 加载失败（v2.3：并入主链，与骨架/列表/空态互斥。此前独立 v-if 与主链并行，
+           loading 中空态 v-else 会同时渲染「还没有项目」（双链缺陷）。
+           单链走到这里时 filtered 空且非 search 态：wsError=true ⇒ 失败；否则真无项目。 -->
+      <AppEmptyState
+        v-else-if="wsError"
+        data-testid="canvases-load-error"
+        desc="网络异常，项目加载失败"
+      >
+        项目加载失败
+        <template #action>
+          <button
+            data-testid="canvases-retry"
+            type="button"
+            class="btn-primary text-sm"
+            @click="() => void listProjects()"
+          >
+            重试
+          </button>
+        </template>
+      </AppEmptyState>
+
+      <!-- 真无项目：仅此处提示，新建入口统一在顶栏（data-testid="canvases-create" 全局唯一） -->
       <AppEmptyState
         v-else
         data-testid="canvases-empty"
         desc="创建第一个项目，开始创作"
       >
         还没有项目
-        <template #action>
-          <button
-            v-if="auth.isLoggedIn"
-            data-testid="canvases-create"
-            type="button"
-            class="btn-primary text-sm"
-            @click="createCanvas"
-          >
-            新建项目
-          </button>
-        </template>
       </AppEmptyState>
     </template>
   </div>

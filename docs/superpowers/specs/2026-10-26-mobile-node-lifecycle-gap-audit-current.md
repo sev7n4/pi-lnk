@@ -268,5 +268,5 @@ ADR-0013 的 14 项拍板 **12 项完全落地、2 项部分**，跨端组件哲
 | 三轮①-A | 左上角缺「节点类型·节点名字」 | PC 节点有标题条（`neo-node-title`），移动端磁贴从未有头部；二轮修复把名称拼在**底部**属性行——落位错误 | 磁贴新增**左上角头部** `mobile-node-tile-header` = 类型 · 自定义名（PC 标题条对位；`label ?? title ??` 类型名同源兜底，同名去重）；底部属性行改为**纯媒体要素**（名称不再拼底部） |
 | 三轮①-B | 底部只见「媒体大小」一段，图片/视频三要素（尺寸·比例·大小 / 分辨率·比例·大小）不全 | `needsMediaInfoEnsure` 旧判据「有任意 payload 即跳过 probe」——创建管道只落 `bytes` ⇒ `hasSummaryPayload` 为 true ⇒ probe 被短路 ⇒ 尺寸/比例永不补 | 判据收紧为**展示要素集完整**：图片 `width+height` / 视频 `resolution+aspectRatio` / 音频 `durationSec+format`；残缺必补 probe（bytes 一并补齐） |
 
-规格同步：§6.2「磁贴信息构成」三轮拍板改写 + §9 #46 + W-28/W-37 修订 + W-42 新增。
+规格同步：§6.2「磁贴信息构成」三轮拍板改写 + §9 #51 + W-28/W-37 修订 + W-46 新增（原 W-42 让位 §17 系列）。
 测试：nodeMediaInfo 13/13、tile mediaInfo 19/19、footer+tile 12/12 全 GREEN（旧用例「bytes-only 跳过 probe」「名称拼属性行」按新裁决重写）；propose/placeholder 因本机负载 SIGTERM 未跑完（不触及改动路径，os.walk 扫描已证）→ CI 终判。

@@ -2,8 +2,9 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import CanvasesPage from './CanvasesPage.vue'
+import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
 
-const { sessionsList, sessionsCreate, sessionsRemoveMany, canvasList, canvasCreate, authState, pushMock, elMessage } =
+const { sessionsList, sessionsCreate, sessionsRemoveMany, canvasList, canvasCreate, authState, authBridge, pushMock, elMessage } =
   vi.hoisted(() => ({
     sessionsList: vi.fn(),
     sessionsCreate: vi.fn(),
@@ -12,6 +13,9 @@ const { sessionsList, sessionsCreate, sessionsRemoveMany, canvasList, canvasCrea
     canvasCreate: vi.fn(),
     pushMock: vi.fn(),
     authState: { isLoggedIn: true },
+    // 2026-10-27 v2.3：auth 竞态测试需要「运行中切换并触发 watch」——必须经 reactive
+    // proxy 的 set 通道（直接改原始对象绕过 trap，只改读值不触发依赖）。由 mock factory 注入。
+    authBridge: { setLoggedIn: null as null | ((v: boolean) => void) },
     elMessage: Object.assign(vi.fn(() => ({ close: vi.fn() })), {
       success: vi.fn(),
       error: vi.fn(),
@@ -45,9 +49,16 @@ vi.mock('element-plus', () => ({
 
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: pushMock }) }))
 
-vi.mock('@/stores/auth', () => ({
-  useAuthStore: () => ({ get isLoggedIn() { return authState.isLoggedIn }, openLogin: vi.fn() }),
-}))
+// 2026-10-27 v2.3：auth 竞态测试需要响应式——reactive 代理同一对象，
+// 运行中切换必须走 setLoggedIn（proxy set）；挂载前的静态改值仍可直改 authState。
+vi.mock('@/stores/auth', async () => {
+  const { reactive } = await import('vue')
+  const state = reactive(authState)
+  authBridge.setLoggedIn = (v: boolean) => { state.isLoggedIn = v }
+  return {
+    useAuthStore: () => ({ get isLoggedIn() { return state.isLoggedIn }, openLogin: vi.fn() }),
+  }
+})
 
 // 2026-10-26 规格收敛 v2：SessionCard 退役，页面直渲染微信式行卡（.session-card-menu-anchor）。
 const stubs = {}
@@ -61,6 +72,15 @@ async function mountPage() {
   const wrapper = mount(CanvasesPage, { global: { stubs } })
   await flushPromises()
   return wrapper
+}
+
+/** 清掉 useProjectWorkspace 模块级单例的新鲜缓存（projects/loadedAt 跨用例共享）。
+ *  拉一次空清单后 mockClear 只清调用计数——此后 projects=[]、fresh 判定必不命中。 */
+async function resetWorkspaceCache() {
+  canvasList.mockResolvedValueOnce({ data: { data: [] } })
+  await useProjectWorkspace().list()
+  await flushPromises()
+  canvasList.mockClear()
 }
 
 describe('CanvasesPage 项目管理器（P1；IA v4 画布+对话=项目）', () => {
@@ -134,5 +154,95 @@ describe('CanvasesPage 项目管理器（P1；IA v4 画布+对话=项目）', ()
     const wrapper = await mountPage()
     expect(wrapper.text()).toContain('创作首页')
     expect(wrapper.text()).not.toContain('我的项目')
+  })
+
+  it('auth 异步恢复竞态（v2.3 真机回归）：挂载时未登录不发请求，恢复为 true 后补发并渲染列表', async () => {
+    // 生产实证（nginx 日志 16:10:31 /canvases 刷新）：挂载瞬间 isLoggedIn=false 跳过请求，
+    // token 恢复完成后无人补发 ⇒ 「已登录视图 + 零数据」⇒ 误报「还没有项目」。
+    authState.isLoggedIn = false
+    await resetWorkspaceCache()
+    const wrapper = await mountPage()
+    expect(canvasList, '挂载时未登录：零请求').not.toHaveBeenCalled()
+
+    authBridge.setLoggedIn!(true) // 模拟 auth store 异步恢复完成（经 proxy set 触发 watch）
+    await flushPromises()
+    expect(canvasList, '恢复为已登录后必须补发 list').toHaveBeenCalledTimes(1)
+    await flushPromises()
+    expect(wrapper.find('[data-testid="canvases-empty"]').exists()).toBe(false)
+    expect(wrapper.findAll('.session-card-menu-anchor')).toHaveLength(6)
+  })
+
+  it('加载中不得同时显示空态（v2.3 双链缺陷回归）', async () => {
+    // 此前错误态用独立 v-if 与骨架/列表链并行 ⇒ loading 中「还没有项目」空态同时渲染。
+    // ⚠️ 用可控 resolve（不能永不 resolve：list 的 single-flight inflight 是模块级
+    //    单例，挂起不清理会毒化后续用例的 seedProjects）。
+    let resolveList!: (v: unknown) => void
+    await resetWorkspaceCache()
+    canvasList.mockImplementation(() => new Promise((r) => { resolveList = r }))
+    const wrapper = await mountPage()
+    expect(wrapper.find('[data-testid="canvases-empty"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('还没有项目')
+    // 收尾：放掉挂起请求，恢复单例干净（resolve 空数组后出现「还没有项目」是合法真无项目态，不断言）
+    resolveList({ data: { data: makeSessions(0) } })
+    await flushPromises()
+  })
+})
+
+/**
+ * 2026-10-27 v2.2（D12 / bug④）：空态三态 —— 加载失败-重试 / 真无项目-引导。
+ * ⚠️ `useProjectWorkspace` 是模块级单例（projects/error/loadedAt 跨用例共享），
+ *    故每个用例先用 `seedProjects` 把内存清单复位到已知值，避免上一用例的新鲜缓存泄漏。
+ */
+describe('CanvasesPage 空态三态（D12 / bug④）', () => {
+  const ws = useProjectWorkspace()
+
+  async function seedProjects(list: { id: string; title: string }[]) {
+    canvasList.mockResolvedValue({ data: { data: list } })
+    await ws.list()
+    await flushPromises()
+  }
+
+  beforeEach(() => {
+    canvasList.mockReset()
+    authState.isLoggedIn = true
+  })
+
+  it('加载失败（连接饥饿）：显示「项目加载失败 · 重试」，不误报「还没有项目」', async () => {
+    // 先把内存清单复位为空，确保 mount 的 loadIfStale 会真正发起（注定失败的）请求
+    await seedProjects([])
+    canvasList.mockRejectedValue(new Error('timeout'))
+    const wrapper = await mountPage()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="canvases-load-error"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="canvases-retry"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('项目加载失败')
+    expect(wrapper.text()).not.toContain('还没有项目')
+    // 失败态不渲染卡片（不留空白报错）
+    expect(wrapper.findAll('.session-card-menu-anchor')).toHaveLength(0)
+  })
+
+  it('真无项目：显示「还没有项目」，新建入口唯一（canvases-create 全仓仅顶栏一处）', async () => {
+    await seedProjects([])
+    canvasList.mockResolvedValue({ data: { data: [] } })
+    const wrapper = await mountPage()
+    await flushPromises()
+    expect(wrapper.text()).toContain('还没有项目')
+    expect(wrapper.find('[data-testid="canvases-empty"]').exists()).toBe(true)
+    // ⛔ 空态不再内联「新建项目」按钮 ⇒ 全仓唯一
+    expect(wrapper.findAll('[data-testid="canvases-create"]')).toHaveLength(1)
+    expect(wrapper.find('[data-testid="canvases-retry"]').exists()).toBe(false)
+  })
+
+  it('加载失败时点击重试会重新拉取列表并渲染', async () => {
+    await seedProjects([])
+    canvasList.mockRejectedValue(new Error('timeout'))
+    const wrapper = await mountPage()
+    await flushPromises()
+    expect(wrapper.find('[data-testid="canvases-retry"]').exists()).toBe(true)
+    // 重试：复位 mock 使本次成功
+    canvasList.mockResolvedValue({ data: { data: makeSessions(3) } })
+    await wrapper.find('[data-testid="canvases-retry"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.session-card-menu-anchor')).toHaveLength(3)
   })
 })
