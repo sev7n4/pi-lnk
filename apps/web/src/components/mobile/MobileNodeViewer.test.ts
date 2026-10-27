@@ -112,20 +112,21 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
     expect(w.emitted('close')).toBeFalsy()
   })
 
-  // ── 下滑关闭仲裁（2026-10-27 真机走查③ · 规格 §6.2 退出表）──────────────
-  // ⚠️ 旧实现把方向写反（startY − currentY > 100 = 上滑关闭），且上面两条旧测试
-  // 用「clientY 300→150」的上滑数据冒充「下滑」——本组按规格重写判据。
-  describe('下滑关闭仲裁（走查③：只认下拉 + 滚动守卫）', () => {
-    it('上滑（clientY 减小）超过阈值 ⇒ 不关闭（方向反转回归防护）', async () => {
+  // ── 退出手势仲裁（走查③ + 回归⑤ · 规格 §6.2 退出表）─────────────────────
+  // 走查③修了方向反转；回归⑤（真机二轮）实证：passive 监听挡不住浏览器下拉刷新
+  // ⇒ 下拉关闭体感不可用 ⇒ 改**双向关闭**：媒体上滑任意位置可关（用户习惯）；
+  // 长文/审核层仅滚到底后上滑才关（走查③「滚动途中永不关」不回退）。下拉保留。
+  describe('退出手势仲裁（双向关闭 + 滚动守卫）', () => {
+    it('媒体查看器上滑（clientY 减小）超阈值 ⇒ 关闭（回归⑤：无可滚动内容，任意位置可关）', async () => {
       const w = mount(MobileNodeViewer, { props: { type: 'image', data: { url: 'x.png' } } })
       const root = w.get('[data-testid="mobile-viewer"]')
       await root.trigger('touchstart', { touches: [{ clientY: 300 }] })
       await root.trigger('touchmove', { touches: [{ clientY: 150 }] })
       await root.trigger('touchend')
-      expect(w.emitted('close')).toBeFalsy()
+      expect(w.emitted('close')).toHaveLength(1)
     })
 
-    it('真下滑（clientY 增加）超过阈值 ⇒ emit close', async () => {
+    it('真下拉（clientY 增加）超过阈值 ⇒ emit close', async () => {
       const w = mount(MobileNodeViewer, { props: { type: 'image', data: { url: 'x.png' } } })
       const root = w.get('[data-testid="mobile-viewer"]')
       await root.trigger('touchstart', { touches: [{ clientY: 150 }] })
@@ -154,6 +155,73 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
       await root.trigger('touchend')
       expect(w.emitted('close')).toHaveLength(1)
     })
+
+    it('文本阅读器滚动途中（未到底）上滑 ⇒ 不关闭（走查③不回退）', async () => {
+      const w = mount(MobileNodeViewer, { props: { type: 'text', data: { content: '长文' } } })
+      const el = w.get('.viewer-reader').element as HTMLElement
+      // jsdom 无布局 ⇒ 显式 stub 可滚动几何：3000 高视口 600，scrollTop 停在中段
+      Object.defineProperty(el, 'scrollHeight', { value: 3000, configurable: true })
+      Object.defineProperty(el, 'clientHeight', { value: 600, configurable: true })
+      el.scrollTop = 500
+      const root = w.get('[data-testid="mobile-viewer"]')
+      await root.trigger('touchstart', { touches: [{ clientY: 300 }] })
+      await root.trigger('touchmove', { touches: [{ clientY: 150 }] })
+      await root.trigger('touchend')
+      expect(w.emitted('close')).toBeFalsy()
+    })
+
+    it('文本阅读器滚到底（scrollHeight−scrollTop−clientHeight≤2）上滑 ⇒ 关闭（到底守卫放行）', async () => {
+      const w = mount(MobileNodeViewer, { props: { type: 'text', data: { content: '长文' } } })
+      const el = w.get('.viewer-reader').element as HTMLElement
+      Object.defineProperty(el, 'scrollHeight', { value: 3000, configurable: true })
+      Object.defineProperty(el, 'clientHeight', { value: 600, configurable: true })
+      el.scrollTop = 2400
+      const root = w.get('[data-testid="mobile-viewer"]')
+      await root.trigger('touchstart', { touches: [{ clientY: 300 }] })
+      await root.trigger('touchmove', { touches: [{ clientY: 150 }] })
+      await root.trigger('touchend')
+      expect(w.emitted('close')).toHaveLength(1)
+    })
+
+    it('音频查看器 audio 带 preload=metadata（回归③：否则 duration=0 进度条 max=0 死区）', () => {
+      const w = mount(MobileNodeViewer, { props: { type: 'audio', data: { url: 'x.mp3' } } })
+      expect(w.find('audio').attributes('preload')).toBe('metadata')
+    })
+
+    it('媒体区收进 .viewer-body；圈选 / 倍速在 body 内（绝对锚点=媒体区底，不再被主栏盖）', () => {
+      const img = mount(MobileNodeViewer, { props: { type: 'image', data: { url: 'x.png' } } })
+      const body = img.find('.viewer-body')
+      expect(body.exists()).toBe(true)
+      expect(body.find('[data-testid="mobile-viewer-annotate"]').exists()).toBe(true)
+      img.unmount()
+      const vid = mount(MobileNodeViewer, { props: { type: 'video', data: { url: 'x.mp4' } } })
+      expect(vid.find('.viewer-body [data-testid="mobile-viewer-speed"]').exists()).toBe(true)
+      vid.unmount()
+    })
+
+    it('底部主栏是 .viewer-body 的**兄弟**（文档流，非覆盖式 absolute）', () => {
+      const w = mount(MobileNodeViewer, {
+        props: {
+          type: 'audio',
+          data: { url: 'x.mp3' },
+          bottomActions: [{ key: 'reword', label: '改词' }],
+        },
+      })
+      const body = w.get('.viewer-body')
+      const bar = w.get('.viewer-bottom-actions')
+      // 兄弟关系：bar 不在 body 内部
+      expect(body.find('.viewer-bottom-actions').exists()).toBe(false)
+      expect(bar.element.parentElement).toBe(body.element.parentElement)
+      // 音频控制条在 body 内 ⇒ 与主栏无重叠可能
+      expect(body.find('.viewer-audio-controls').exists()).toBe(true)
+    })
+
+    it('容器 overscroll-behavior:none（回归⑤：压浏览器下拉刷新抢手势）', () => {
+      const src = readFileSync(join(HERE, 'MobileNodeViewer.vue'), 'utf8')
+      const rootRule = /\.mobile-node-viewer\s*\{([^}]*)\}/.exec(src)?.[1] ?? ''
+      expect(rootRule).toMatch(/overscroll-behavior:\s*none/)
+    })
+  })
 
     it('标注态下手势不触发关闭（评审 C1：画圈 >100px 不得关掉查看器丢标注）', async () => {
       const w = mount(MobileNodeViewer, { props: { type: 'image', data: { url: 'x.png' } } })
@@ -212,6 +280,40 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
     it('静态契约：磁贴音频 preload=metadata（评审 I7，iOS 时长唯一来源）', () => {
       const tile = readFileSync(join(HERE, 'MobileNodeTile.vue'), 'utf-8')
       expect(tile).toMatch(/<audio[^>]*preload="metadata"/)
+    })
+
+  // ── 回归③④：底部互殴结构性修复 ─────────────────────────────────────────
+  describe('底部布局结构（回归③④：viewer-body + 文档流主栏）', () => {
+    it('媒体区收进 .viewer-body；圈选 / 倍速在 body 内（绝对锚点=媒体区底，不再被主栏盖）', () => {
+      const img = mount(MobileNodeViewer, { props: { type: 'image', data: { url: 'x.png' } } })
+      const body = img.find('.viewer-body')
+      expect(body.exists()).toBe(true)
+      expect(body.find('[data-testid="mobile-viewer-annotate"]').exists()).toBe(true)
+      img.unmount()
+      const vid = mount(MobileNodeViewer, { props: { type: 'video', data: { url: 'x.mp4' } } })
+      expect(vid.find('.viewer-body [data-testid="mobile-viewer-speed"]').exists()).toBe(true)
+      vid.unmount()
+    })
+
+    it('底部主栏是 .viewer-body 的**兄弟**（文档流，非覆盖式 absolute）', () => {
+      const w = mount(MobileNodeViewer, {
+        props: {
+          type: 'audio',
+          data: { url: 'x.mp3' },
+          bottomActions: [{ key: 'reword', label: '改词' }],
+        },
+      })
+      const body = w.get('.viewer-body')
+      const bar = w.get('.viewer-bottom-actions')
+      expect(body.find('.viewer-bottom-actions').exists()).toBe(false)
+      expect(bar.element.parentElement).toBe(body.element.parentElement)
+      expect(body.find('.viewer-audio-controls').exists()).toBe(true)
+    })
+
+    it('容器 overscroll-behavior:none（回归⑤：压浏览器下拉刷新抢手势）', () => {
+      const src = readFileSync(join(HERE, 'MobileNodeViewer.vue'), 'utf8')
+      const rootRule = /\.mobile-node-viewer\s*\{([^}]*)\}/.exec(src)?.[1] ?? ''
+      expect(rootRule).toMatch(/overscroll-behavior:\s*none/)
     })
   })
 
