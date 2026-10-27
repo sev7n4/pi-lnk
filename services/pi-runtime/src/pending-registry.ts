@@ -15,7 +15,7 @@
 export type PendingResolution =
 	| { status: "answered"; answers: Record<string, string[]> }
 	| { status: "timeout"; answers: Record<string, string[]> }
-	| { status: "aborted" };
+	| { status: "aborted"; note?: string };
 
 export interface PendingInfo {
 	callId: string;
@@ -126,11 +126,14 @@ export class PendingToolRegistry {
 	 * 工具侧靠「连续两次读到 draft」**推断**用户拒绝 —— 推断链上任何一次 stale 写入都会
 	 * 让模型收到错误的用户意图（修 bug 时只能给中性文案「不要断定用户已取消」，
 	 * 于是用户真按了取消，模型也不知道）。显式 decline 让「取消」成为确定性事实。
+	 *
+	 * `note`（§17.8，2026-10-27）：批注流锚带回时随 decline 透传批注意见，
+	 * 工具侧 tool_result 据此提示模型「反馈正从对话发来，勿盲目重提议」（防抢跑）。
 	 */
-	decline(sessionId: string, callId: string): { ok: true; deduped: boolean } {
+	decline(sessionId: string, callId: string, note?: string): { ok: true; deduped: boolean } {
 		const entry = this.entries.get(sessionId)?.get(callId);
 		if (!entry) return { ok: true, deduped: true };
-		entry.resolve({ status: "aborted" });
+		entry.resolve(note ? { status: "aborted", note } : { status: "aborted" });
 		return { ok: true, deduped: false };
 	}
 

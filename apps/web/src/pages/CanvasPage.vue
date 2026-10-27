@@ -2725,7 +2725,7 @@ function handleMobileNodeSendToAgent(payload: { prompt: string; opinion: string 
   mobileAppTab.value = 'chat'
 }
 
-/* ── 标注层（L1 / M1 · 规格 §4.3 + §4.5）──────────────────────────── */
+/* ── 批注锚带回（§17 v2 · 拍板③④）──────────────────────────── */
 
 /**
  * 每次标注的唯一序号 —— ⭐ `useSidebarAttachments.addFromPayload` 会按
@@ -2735,22 +2735,66 @@ function handleMobileNodeSendToAgent(payload: { prompt: string; opinion: string 
  */
 let mobileAnnotateSeq = 0
 
-/** 标注浮层的当前上下文（节点 id + 意见） */
-const mobileAnnotate = ref<{ nodeId: string; nodeTitle: string } | null>(null)
-/** 标注浮层是否上传中 */
-const mobileAnnotateUploading = ref(false)
-/** 标注浮层是否降级（无 CORS / 取不到帧 ⇒ 只带文字） */
-const mobileAnnotateDegraded = ref(false)
-/** 标注浮层错误文案 */
-const mobileAnnotateError = ref('')
-
-/** 打开标注浮层（由查看器的 `annotate` 事件触发） */
-function openMobileAnnotateSheet(payload: { imageBlob?: Blob; degraded: boolean }) {
+/**
+ * §17 v2（拍板④：⚓ 落下即标拒绝）：胶囊锚 = 批注带回 + decline 结算一体。
+ *
+ * 时序（§17.8）：
+ *  1. 先发 `/answers {decision:'decline', note?}` 结算 pending 门 —— note=批注意见
+ *     防抢跑（tool_result 提示模型「批注截图正从对话发来，勿盲目重提议」）；
+ *  2. 再上传合成图 → 写入 composer 引用（胶囊文字预填正文，拍板③）→ 切回对话页。
+ *
+ * ⭐ 契约要点（沿袭 M1）：
+ *  - 引用契约**拒 blob URL** ⇒ 合成图必须先 `fileToPersistedPayload` 上传；
+ *  - ⛔ 降级（无 CORS / 取不到帧）⇒ 只带文字，并**明说**「本条只带文字，未附截图」；
+ *  - `sourceNodeId` 每次唯一（见 `mobileAnnotateSeq`）⇒ 同节点连续两次标注都能进 composer。
+ */
+async function handleMobileAnnotateAnchor(payload: {
+  imageBlob?: Blob
+  degraded: boolean
+  text?: string
+}) {
   const node = mobileViewerNode.value
-  if (!node) return
-  mobileAnnotate.value = { nodeId: node.id ?? '', nodeTitle: nodeTitleOf(node) }
-  mobileAnnotateDegraded.value = payload.degraded
-  mobileAnnotateError.value = ''
+  if (!node?.id) return
+  const nodeId = node.id
+  const opinion = (payload.text ?? '').trim()
+  // ① 锚下即标拒绝：先结算阻塞门，批注意见随 decline 透传（幂等端点，失败不阻断带回）
+  try {
+    await agentRailRef.value?.cancelProposeForNode(
+      nodeId,
+      opinion ? { note: opinion } : undefined,
+    )
+  } catch {
+    // 画布侧轮询兜底会判 rejected；截图仍要带回（用户的批注成果不能丢）
+  }
+  // ② 截图带回 composer
+  let url: string | undefined
+  if (payload.imageBlob) {
+    try {
+      const file = new File([payload.imageBlob], 'annotate.png', { type: 'image/png' })
+      const uploaded = await fileToPersistedPayload(file)
+      if (uploaded.url.startsWith('blob:')) throw new Error('合成图未持久化')
+      url = uploaded.url
+    } catch (err) {
+      ElMessage.error(err instanceof Error ? err.message : '批注截图上传失败，请重试')
+      return
+    }
+  }
+  const sourceNodeId = `${nodeId}#annotate-${++mobileAnnotateSeq}`
+  addFromPayload({
+    id: `annotate-${Date.now()}-${mobileAnnotateSeq}`,
+    mediaType: url ? 'image' : 'text',
+    sourceKind: 'canvasNode',
+    label: nodeTitleOf(node) || '标注',
+    ...(url ? { url } : {}),
+    ...(opinion ? { text: opinion } : {}),
+    sourceNodeId,
+  })
+  closeMobileViewer()
+  // 看得见落地（§4.5 可见性铁律）：切回对话页签，用户在 composer 看到芯片
+  mobileAppTab.value = 'chat'
+  if (payload.degraded && !url) {
+    ElMessage.info('本条只带文字，未附截图')
+  }
 }
 
 /** 节点标题（引用标签用） */
@@ -2763,62 +2807,6 @@ function nodeTitleOf(node: { id?: string; type: string; data?: any }): string {
   const prompt = typeof data.prompt === 'string' ? data.prompt.trim() : ''
   if (prompt) return prompt.slice(0, 24)
   return '节点'
-}
-
-/**
- * 提交标注 ⇒ 上传合成图 ⇒ 写入 composer 引用 ⇒ 切回对话页（规格 §4.5 M1）。
- *
- * ⭐ 契约要点：
- *  - 引用契约**拒 blob URL** ⇒ 合成图必须先 `fileToPersistedPayload` 上传；
- *  - ⛔ 降级（无 CORS / 取不到帧）⇒ 只带文字，并**明说**「本条只带文字，未附截图」；
- *  - `sourceNodeId` 每次唯一（见 `mobileAnnotateSeq`）⇒ 同节点连续两次标注都能进 composer。
- */
-async function handleMobileAnnotateSend(payload: {
-  opinion: string
-  imageBlob?: Blob
-  degraded: boolean
-}) {
-  const ctx = mobileAnnotate.value
-  if (!ctx) return
-  const opinion = payload.opinion.trim()
-  mobileAnnotateUploading.value = true
-  mobileAnnotateError.value = ''
-  try {
-    let url: string | undefined
-    if (payload.imageBlob) {
-      const file = new File([payload.imageBlob], 'annotate.png', { type: 'image/png' })
-      const uploaded = await fileToPersistedPayload(file)
-      if (uploaded.url.startsWith('blob:')) throw new Error('合成图未持久化')
-      url = uploaded.url
-    }
-    // 唯一 sourceNodeId ⇒ 同节点连续两次标注都会被接收
-    const sourceNodeId = `${ctx.nodeId}#annotate-${++mobileAnnotateSeq}`
-    addFromPayload({
-      id: `annotate-${Date.now()}-${mobileAnnotateSeq}`,
-      mediaType: url ? 'image' : 'text',
-      sourceKind: 'canvasNode',
-      label: ctx.nodeTitle || '标注',
-      ...(url ? { url } : {}),
-      ...(opinion ? { text: opinion } : {}),
-      sourceNodeId,
-    })
-    mobileAnnotate.value = null
-    // 看得见落地（§4.5 可见性铁律）：切回对话页签，用户在 composer 看到芯片
-    mobileAppTab.value = 'chat'
-    if (!url) {
-      ElMessage.info('本条只带文字，未附截图')
-    }
-  } catch (err) {
-    mobileAnnotateError.value = err instanceof Error ? err.message : '上传失败，请重试'
-  } finally {
-    mobileAnnotateUploading.value = false
-  }
-}
-
-/** 关闭标注浮层 */
-function closeMobileAnnotateSheet() {
-  mobileAnnotate.value = null
-  mobileAnnotateError.value = ''
 }
 
 function closeMobileNodeEditor() {
@@ -2893,9 +2881,10 @@ function openMobileNodeMenuFromViewer() {
 
 /**
  * 查看器底部主栏动作（§4.11.6 高频下沉）。
- * - 'edit'：打开轻量编辑器（模式①：改词 + 意见 → 发给 agent）
- * - 'pending-confirm' / 'pending-cancel'：pending 节点在查看器内的决策层
- *   （§4.8：与壳层状态栏同源，确认 / 拒绝后关闭查看器回画布）
+ * §17 v2（2026-10-27）：pending 节点的 `annotate` / `edit` 在 viewer 内消化
+ * （批注态 / 编辑态沿用原 viewer，不跳新页）⇒ 页面层只剩非 pending 的
+ * `edit`（改词 sheet）——`pending-confirm` / `pending-cancel` 死分支退役
+ * （审核层决策 = 批注锚 decline 结算 / 编辑保存回画布再确认）。
  */
 function handleMobileViewerBottomAction(key: string) {
   const node = mobileViewerNode.value
@@ -2903,18 +2892,20 @@ function handleMobileViewerBottomAction(key: string) {
   if (key === 'edit') {
     closeMobileViewer()
     openMobileNodeEditor(node.id)
-    return
   }
-  if (key === 'pending-confirm') {
-    closeMobileViewer()
-    void handleAgentGenerateNode(node.id)
-    return
-  }
-  if (key === 'pending-cancel') {
-    closeMobileViewer()
-    void handleProposeConfirmCancel(node.id)
-    return
-  }
+}
+
+/**
+ * §17-④（拍板②）：查看器编辑态保存 ⇒ 覆盖磁贴提示词，不触发生成、不回 composer。
+ * 通道与 applyMobileEditorPatch 同源（patchNodeData + persistUserEdit）；
+ * 保存后关查看器回画布，用户经画布状态胶囊确认生成（§17.2）。
+ */
+function handleMobileViewerEditSave(nodeId: string, prompt: string) {
+  const text = prompt.trim()
+  if (!text) return
+  patchNodeData(nodeId, { prompt: text })
+  persistUserEdit()
+  closeMobileViewer()
 }
 
 function closeMobileViewer() {
@@ -4596,8 +4587,8 @@ async function handleAgentGenerateNode(nodeId: string) {
  * （POST /answers {decision:'decline'} + clearProposeGeneration → 节点回 draft），
  * 与侧栏琥珀卡取消同源同语义；无匹配等待时安全 no-op（不发错误信号）。
  */
-async function handleProposeConfirmCancel(nodeId: string) {
-  await agentRailRef.value?.cancelProposeForNode(nodeId)
+async function handleProposeConfirmCancel(nodeId: string, note?: string) {
+  await agentRailRef.value?.cancelProposeForNode(nodeId, note ? { note } : undefined)
 }
 
 /**
@@ -6401,15 +6392,10 @@ onUnmounted(() => {
       :on-node-editor-close="closeMobileNodeEditor"
       :on-node-editor-patch="applyMobileEditorPatch"
       :on-node-editor-send-to-agent="handleMobileNodeSendToAgent"
-      :on-viewer-annotate="openMobileAnnotateSheet"
+      :on-viewer-annotate="handleMobileAnnotateAnchor"
       :on-viewer-more="openMobileNodeMenuFromViewer"
       :on-viewer-bottom-action="handleMobileViewerBottomAction"
-      :mobile-annotate="mobileAnnotate"
-      :mobile-annotate-uploading="mobileAnnotateUploading"
-      :mobile-annotate-degraded="mobileAnnotateDegraded"
-      :mobile-annotate-error="mobileAnnotateError"
-      :on-mobile-annotate-send="handleMobileAnnotateSend"
-      :on-mobile-annotate-close="closeMobileAnnotateSheet"
+      :on-viewer-edit-save="handleMobileViewerEditSave"
       :on-node-editor-remove-ref="handleMobileNodeRemoveRef"
       :viewer-node="mobileViewerNode"
       :on-viewer-close="closeMobileViewer"

@@ -609,6 +609,39 @@ describe("propose_generation 阻塞确认（B-2）", () => {
 		assert.equal(reg.hasPending("s1"), false);
 	});
 
+	it("显式拒绝 + note（§17.8 批注流锚带回）→ confirmed=false，文案含批注意见与防抢跑提示", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient(["pending_confirm"]);
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const pending = run(propose, { node_id: "n1" });
+		await waitFor(() => reg.hasPending("s1"));
+		reg.decline("s1", "tc1", "圈选的配色太冷了");
+		const result = await pending;
+		assert.equal((result.details as { confirmed?: boolean }).confirmed, false);
+		const text = String((result.content as Array<{ text: string }>)[0].text);
+		assert.match(text, /批注模式/);
+		assert.match(text, /圈选的配色太冷了/);
+		assert.match(text, /正从对话发来/);
+		assert.match(text, /不要在收到用户消息前盲目重试/);
+	});
+
+	it("显式拒绝无 note → 文案逐字节保持「用户已中止。」（旧行为保留）", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient(["pending_confirm"]);
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const pending = run(propose, { node_id: "n1" });
+		await waitFor(() => reg.hasPending("s1"));
+		reg.decline("s1", "tc1");
+		const result = await pending;
+		const text = String((result.content as Array<{ text: string }>)[0].text);
+		assert.match(text, /用户已中止/);
+		assert.doesNotMatch(text, /批注模式/);
+	});
+
 	// ── 生成终态等待登记（2026-10-18 上游对齐）─────────────────────────────
 
 	it("终态等待期登记节点：onRegisterGenerationWait 确认后注册、等待收尾必解绑（异常收尾也解）", async () => {

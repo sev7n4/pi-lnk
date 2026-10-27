@@ -92,7 +92,8 @@ describe('移动端节点交互 · 行为级守卫（规格 §10.2）', () => {
   })
 
   it('G-11 标注回传后切回对话页 + 写入 composer 引用（看得见落地）', () => {
-    expect(page).toMatch(/handleMobileAnnotateSend[\s\S]{0,2000}addFromPayload/)
+    // §17 v2（2026-10-27）：回传处理器 = handleMobileAnnotateAnchor（锚带回 + decline 结算一体）
+    expect(page).toMatch(/handleMobileAnnotateAnchor[\s\S]{0,2000}addFromPayload/)
     expect(page).toMatch(/mobileAppTab\.value = 'chat'/)
   })
 

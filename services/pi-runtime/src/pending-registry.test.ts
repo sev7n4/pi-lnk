@@ -29,6 +29,14 @@ describe("PendingToolRegistry", () => {
 		assert.deepEqual(await p, { status: "aborted" });
 	});
 
+	it("decline 携带 note ⇒ resolve {status:'aborted', note}（§17.8 防抢跑：批注意见随门结算交还工具）", async () => {
+		const reg = new PendingToolRegistry();
+		const p = reg.waitForUser("s1", "c3", "propose_generation", 60_000);
+		assert.deepEqual(reg.decline("s1", "c3", "用户已圈选批注"), { ok: true, deduped: false });
+		assert.deepEqual(await p, { status: "aborted", note: "用户已圈选批注" });
+		reg.abortAll("s1");
+	});
+
 	it("timeout resolves with empty answers, never rejects（无部分作答语义）", async () => {
 		const reg = new PendingToolRegistry();
 		const p = reg.waitForUser("s1", "c1", "ask_user", 60_000);

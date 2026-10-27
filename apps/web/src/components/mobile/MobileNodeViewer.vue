@@ -2,10 +2,12 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { sameOriginApiMediaUrl } from '@/services/media-url'
 import { composeAnnotatedImage, type AnnotateMark } from './annotate/composeAnnotatedImage'
+import { renderReviewBaseImage } from './annotate/renderReviewBaseImage'
 import { useTextToSpeech } from '@/composables/useTextToSpeech'
 import { useNodeWaveform } from '@/composables/useNodeWaveform'
 import { formatMediaDuration } from '@/utils/mediaInfoFormat'
 import MobileNodeWaveform from './MobileNodeWaveform.vue'
+import MobileAnnotationCapsule from './MobileAnnotationCapsule.vue'
 
 /**
  * 全屏查看器（D2 · 2026-10-25 规格 §6.2 / §4.1 P3）
@@ -56,10 +58,13 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: 'close'): void
   /**
-   * 标注完成（规格 §4.3 L1）：产出「**一张带标记的整图**」+ 意见。
+   * 标注完成（规格 §4.3 L1 + §17-③ v2）：产出「**一张带标记的整图**」+ 意见。
    * ⭐ `imageBlob` 缺省 = **降级**（取不到帧 / 跨域无 CORS ⇒ 只带文字，不静默失败）。
+   * §17 v2：`text` = 胶囊意见框文字（拍板③：composer 正文预填；无字 = 纯图带回）。
    */
-  (e: 'annotate', payload: { imageBlob?: Blob; degraded: boolean }): void
+  (e: 'annotate', payload: { imageBlob?: Blob; degraded: boolean; text?: string }): void
+  /** §17-④：编辑态保存（就地改字）⇒ 壳层覆盖磁贴提示词（拍板②：回画布再确认） */
+  (e: 'edit-save', prompt: string): void
   /** 右上「⋯」= 操作全集（打开与长按同一个 Menu，§4.6 同源同容器） */
   (e: 'more'): void
   /** 底部主栏动作被点击（key 透传） */
@@ -132,6 +137,13 @@ const reviewParams = computed(() => {
 })
 
 const resolvedBottomActions = computed(() => {
+  // §17-④：编辑态下底栏 = 取消/保存（就地改字，保存回画布覆盖磁贴——拍板②）
+  if (editing.value) {
+    return [
+      { key: 'edit-cancel', label: '取消' },
+      { key: 'edit-save', label: '保存', variant: 'primary' as const },
+    ]
+  }
   const base = props.bottomActions ?? []
   const isText = props.type === 'text'
   const hasText = Boolean(String(nodeData.value.content ?? '').trim())
@@ -140,6 +152,37 @@ const resolvedBottomActions = computed(() => {
   }
   return base
 })
+
+/**
+ * 底部主栏动作分发（§17 v2）：`annotate` / pending 的 `edit` 在 viewer 内消化
+ * （批注态 / 编辑态都沿用原 viewer，⛔ 不跳新页），其余照旧上抛壳层。
+ */
+function onBottomAction(key: string) {
+  if (key === 'annotate') {
+    editing.value = false
+    if (annotating.value) exitAnnotate()
+    else enterAnnotate()
+    return
+  }
+  if (key === 'edit' && isPendingNode.value) {
+    // §17-④：pending 提议 ⇒ 编辑态就地改字（改词 sheet 在提议卡场景退役）
+    annotating.value = false
+    capsuleVisible.value = false
+    editText.value = reviewPrompt.value
+    editing.value = true
+    return
+  }
+  if (editing.value && key === 'edit-cancel') {
+    editing.value = false
+    return
+  }
+  if (editing.value && key === 'edit-save') {
+    editing.value = false
+    emit('edit-save', editText.value.trim())
+    return
+  }
+  emit('bottom-action', key)
+}
 
 /* ── 标注态（L1：只有一支笔 —— 手指自由圈选）──────────────────────── */
 const annotating = ref(false)
@@ -151,6 +194,11 @@ const inkCanvas = ref<HTMLCanvasElement | null>(null)
 const inkStart = ref<{ x: number; y: number } | null>(null)
 /** 当前这一笔 */
 const inkPoints = ref<Array<{ x: number; y: number }>>([])
+/** §17-③：胶囊意见框可见（**首笔落定即弹**，无「完成」步骤） */
+const capsuleVisible = ref(false)
+/** §17-④：编辑态（就地改字，沿用原 viewer，⛔ 不弹 sheet） */
+const editing = ref(false)
+const editText = ref('')
 
 function inkPoint(e: TouchEvent): { x: number; y: number } {
   const t = e.touches?.[0] ?? e.changedTouches?.[0]
@@ -184,73 +232,103 @@ function drawInk() {
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
   ctx.strokeStyle = 'rgba(255, 64, 64, 0.92)'
-  const pts = inkPoints.value
-  if (pts.length === 1) {
+  // ⭐ §17-③：批注可持续多笔（胶囊弹出后仍可补画）⇒ 已收笔的 marks 也要画，
+  // 否则每起新笔上一笔就从覆盖层消失（视觉断裂）。
+  const drawStroke = (pts: Array<{ x: number; y: number }>) => {
+    if (!pts.length) return
     ctx.beginPath()
-    ctx.arc(pts[0]!.x, pts[0]!.y, 6, 0, Math.PI * 2)
-    ctx.fillStyle = 'rgba(255, 64, 64, 0.18)'
-    ctx.fill()
-    return
+    ctx.moveTo(pts[0]!.x, pts[0]!.y)
+    for (const p of pts.slice(1)) ctx.lineTo(p.x, p.y)
+    if (pts.length === 1) {
+      ctx.arc(pts[0]!.x, pts[0]!.y, 6, 0, Math.PI * 2)
+      ctx.fillStyle = 'rgba(255, 64, 64, 0.18)'
+      ctx.fill()
+      return
+    }
+    ctx.stroke()
   }
-  if (pts.length < 2) return
-  ctx.beginPath()
-  ctx.moveTo(pts[0]!.x, pts[0]!.y)
-  for (const p of pts.slice(1)) ctx.lineTo(p.x, p.y)
-  ctx.stroke()
+  for (const mark of marks.value) drawStroke(mark.points)
+  drawStroke(inkPoints.value)
 }
 
-/** 进入标注态 */
+/** 进入标注态（§17-③：底栏【批注】1 步进入） */
 function enterAnnotate() {
   annotating.value = true
   marks.value = []
   inkPoints.value = []
+  capsuleVisible.value = false
 }
 
-/** 退出标注态（放弃） */
+/** 退出标注态（放弃：清标记收胶囊） */
 function exitAnnotate() {
   annotating.value = false
   marks.value = []
   inkPoints.value = []
+  capsuleVisible.value = false
 }
 
 /**
- * 松手 ⇒ 收笔 + 合成「带标记的整图」。
- * ⭐ 视频先 `pause()` 再取当前帧；⛔ 跨域无 CORS 头 ⇒ `toBlob` 抛 SecurityError
- *   ⇒ **catch 后走 degraded 分支**（只带文字，明说降级，不静默失败）。
+ * 松手 ⇒ 收笔。⭐ §17-③ v2：**不再立即合成跳浮层** —— 首笔落定即弹胶囊意见框
+ * （无「完成」步骤），用户可继续补画；点胶囊 ⚓ 才合成带回（onCapsuleAnchor）。
  */
-async function onInkEnd() {
+function onInkEnd() {
   if (!annotating.value) return
   if (inkPoints.value.length) {
     marks.value = [...marks.value, { points: inkPoints.value }]
   }
   inkPoints.value = []
+  if (marks.value.length) capsuleVisible.value = true
+}
+
+/**
+ * 胶囊 ⚓ ⇒ 合成「带标记的整图」+ 意见一并上抛。
+ * ⭐ 视频先 `pause()` 再取当前帧；⛔ 跨域无 CORS 头 / toBlob 失败 ⇒ **诚实降级**
+ *   （只带文字，不静默失败）。拍板③：意见作为 composer 正文预填（图不烧字）。
+ */
+async function onCapsuleAnchor(payload: { text: string }) {
+  capsuleVisible.value = false
   const allMarks = marks.value
   annotating.value = false
+  const text = payload.text.trim()
   if (!allMarks.length) {
-    emit('annotate', { degraded: true })
+    emit('annotate', { degraded: true, text })
     return
   }
   try {
     const base = await captureBaseImage()
     if (!base) {
-      emit('annotate', { degraded: true })
+      emit('annotate', { degraded: true, text })
       return
     }
     const composed = composeAnnotatedImage(base.image, base.width, base.height, allMarks)
     const blob = await new Promise<Blob | null>((resolve) => composed.toBlob(resolve, 'image/png'))
     if (!blob) {
-      emit('annotate', { degraded: true })
+      emit('annotate', { degraded: true, text })
       return
     }
-    emit('annotate', { imageBlob: blob, degraded: false })
+    emit('annotate', { imageBlob: blob, degraded: false, text })
   } catch {
     // 跨域污染 / toBlob 失败 ⇒ 诚实降级
-    emit('annotate', { degraded: true })
+    emit('annotate', { degraded: true, text })
   }
 }
 
-/** 取底图（图片 = 同源化后的图；视频 = 暂停后的当前帧） */
+/** 取底图（图片 = 同源化后的图；视频 = 暂停后的当前帧；⭐ pending 审核层 = 整屏重绘） */
 async function captureBaseImage(): Promise<{ image: CanvasImageSource; width: number; height: number } | null> {
+  // §17-③（§9 #49）：审核内容层的底图 =「屏幕」⇒ 分层重绘提示词 + 参数摘要，
+  // 不依赖产物（此刻本就无产物）——视频/音频提议同样成立，无 CORS / 取帧问题。
+  if (showReviewLayer.value) {
+    const el = reviewRef.value
+    const w = Math.max(320, el?.clientWidth || 390)
+    const h = Math.max(480, el?.clientHeight || 640)
+    const c = renderReviewBaseImage({
+      prompt: reviewPrompt.value,
+      paramsLine: reviewParams.value ? `参数：${reviewParams.value}` : '',
+      width: w,
+      height: h,
+    })
+    return { image: c, width: w, height: h }
+  }
   const type = props.type
   if (type === 'video') {
     const video = videoRef.value
@@ -510,8 +588,8 @@ defineExpose({ videoRef })
     <!--
       标注入口（L1 · §4.3）：**显式进入**标注态（⛔ 不做隐式双击手势 ——
       单指拖动已是媒体滚动/缩放，隐式手势在移动端极易误触）。
-      ⭐ pending 且无产物时**不提供**（§4.8 修订：propose 确认前无产物底图，
-      圈选无从谈起 ⇒ 意见走文字通道 = 底部「改词」进轻量编辑器）。
+      ⭐ §17 v2：pending 审核层的批注入口 = 底栏【批注】键（onBottomAction 内消化），
+      此浮动键在审核层隐藏（无产物底图时不重复给入口；底图 = renderReviewBaseImage）。
     -->
     <button
       v-if="type !== 'text' && !showReviewLayer"
@@ -536,10 +614,24 @@ defineExpose({ videoRef })
       @touchcancel="onInkEnd"
     />
 
-    <!-- pending 无产物 ⇒ 审核内容层（提示词全文 + 参数只读），⛔ 禁空黑媒体区 -->
-    <div v-if="showReviewLayer" ref="reviewRef" class="viewer-review" data-testid="mobile-viewer-review">
+    <!-- pending 无产物 ⇒ 审核内容层（提示词全文 + 参数只读），⛔ 禁空黑媒体区。
+         §17-④：编辑态就地把提示词换 textarea（原 viewer 内切换，不弹 sheet）；
+         §17-③：批注态锁滚动（touch-action:none，V-17a）。 -->
+    <div
+      v-if="showReviewLayer"
+      ref="reviewRef"
+      class="viewer-review"
+      :class="{ 'is-annotating': annotating }"
+      data-testid="mobile-viewer-review"
+    >
       <p class="viewer-review-title" data-testid="mobile-viewer-review-title">待确认 · 提议内容</p>
-      <p v-if="reviewPrompt" class="viewer-review-prompt" data-testid="mobile-viewer-review-prompt">{{ reviewPrompt }}</p>
+      <textarea
+        v-if="editing"
+        v-model="editText"
+        class="viewer-review-edit"
+        data-testid="mobile-viewer-review-edit"
+      />
+      <p v-else-if="reviewPrompt" class="viewer-review-prompt" data-testid="mobile-viewer-review-prompt">{{ reviewPrompt }}</p>
       <p v-if="reviewParams" class="viewer-review-params" data-testid="mobile-viewer-review-params">{{ reviewParams }}</p>
     </div>
     <img v-else-if="type === 'image' && data?.url" :src="data.url" class="viewer-media" alt="" />
@@ -600,6 +692,13 @@ defineExpose({ videoRef })
     </div>
     <div v-else-if="type === 'text'" ref="readerRef" class="viewer-reader">{{ data?.content }}</div>
 
+    <!-- §17-③ 胶囊意见框：首笔落定即弹（in-viewer 内联浮条，可继续补画） -->
+    <MobileAnnotationCapsule
+      :visible="capsuleVisible"
+      @anchor="onCapsuleAnchor"
+      @dismiss="capsuleVisible = false"
+    />
+
     <!-- 倍速循环（走查⑤ · W-32）：仅视频；进度条用原生 controls 不自制。
          ⭐ 回归④：原钉在容器 bottom 区被底部主栏盖住 ⇒ 收进 viewer-body（锚点=媒体区底部） -->
     <button
@@ -629,7 +728,7 @@ defineExpose({ videoRef })
         :class="{ 'is-primary': a.variant === 'primary' }"
         :data-action="a.key"
         :data-testid="`mobile-viewer-bottom-${a.key}`"
-        @click="a.key === 'tts' ? toggleReaderSpeak() : emit('bottom-action', a.key)"
+        @click="a.key === 'tts' ? toggleReaderSpeak() : onBottomAction(a.key)"
       >
         {{ a.label }}
       </button>
@@ -885,6 +984,28 @@ defineExpose({ videoRef })
   min-height: 0;
   overflow-y: auto;
   padding: var(--lnk-space-4) var(--lnk-space-4) calc(var(--lnk-space-5) + env(safe-area-inset-bottom));
+}
+
+/* §17-③（V-17a）：批注态下审核层锁滚动 —— 单指拖动 = 画笔，位移必须为 0 */
+.viewer-review.is-annotating {
+  touch-action: none;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* §17-④：编辑态就地改字（沿用原 viewer，不弹 sheet） */
+.viewer-review-edit {
+  width: 100%;
+  min-height: 40vh;
+  box-sizing: border-box;
+  padding: var(--lnk-space-3);
+  border: 1px solid var(--lnk-accent);
+  border-radius: var(--lnk-radius-md);
+  background: var(--lnk-surface-base);
+  color: var(--lnk-text-primary);
+  font-size: var(--lnk-text-base);
+  line-height: var(--lnk-lh-base);
+  resize: none;
 }
 
 .viewer-review-title {
