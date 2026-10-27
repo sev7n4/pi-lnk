@@ -34,12 +34,9 @@ describe('项目列表加载策略（2026-10-25 生产实证）', () => {
     )
   })
 
-  it('「重试」走 list() 强制拉一次（失败态下 loadIfStale 会让重试永远没反应）', () => {
-    const fn = rail.match(/async function retryLoadProjects\(\)\s*\{[^}]*\}/)?.[0] ?? ''
-    expect(fn, '必须能定位 retryLoadProjects').toContain('await list()')
-    // 面板的 retry 事件必须接到强制重试上
-    expect(rail).toContain('@retry="retryLoadProjects"')
-  })
+  // 2026-10-26 规格收敛 v2（D10）：ProjectPanel 退役 ⇒「面板 retry → retryLoadProjects」
+  // 接线随之消亡，强制拉取语义迁往唯一列表宿主（创作首页 /canvases onMounted 直发 list()，
+  // 见 CanvasesPage.vue）——该用例删除，非放宽。
 
   it('项目列表是**模块级单例**（多份实例 = 多份请求 = 抢同一条被占满的连接）', () => {
     // 状态必须定义在模块作用域（不在 useProjectWorkspace() 函数体内）

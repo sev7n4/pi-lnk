@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 660" font-family="-apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <!-- 浅色主题：浅底 + 深字；无渐变/阴影/发光。本图说明 v2 目标布局：创作首页（列表=作品带，加封面）+ 对话页（纯净）；PC/移动同构 -->
+  <rect x="0" y="0" width="680" height="660" fill="#ffffff"/>
+
+  <text x="16" y="20" font-size="13" font-weight="700" fill="#1c1c1e">① 创作首页（原 /canvases 升级，创作默认落点）</text>
+  <rect x="16" y="32" width="648" height="30" rx="7" fill="#eef0f4" stroke="#c9ccd3"/>
+  <text x="30" y="51" font-size="11" font-weight="600" fill="#1c1c1e">创作</text>
+  <text x="480" y="51" font-size="10.5" fill="#6b7078">🔍 搜索</text>
+  <text x="634" y="51" font-size="12" fill="#5b4be0" font-weight="700">⊕</text>
+
+  <rect x="16" y="70" width="648" height="52" rx="8" fill="#ffffff" stroke="#d5d8de"/>
+  <rect x="28" y="80" width="32" height="32" rx="6" fill="#eceaf9"/>
+  <text x="72" y="93" font-size="11" font-weight="600" fill="#1c1c1e">项目 A</text>
+  <text x="72" y="109" font-size="9.5" fill="#6b7078">最近一句预览…（后端后续包）</text>
+  <text x="632" y="93" font-size="9.5" fill="#8a8f98">21:47</text>
+  <text x="16" y="140" font-size="10.5" fill="#5b4be0">② 列表卡 = 封面 + 项目名 + 最近时间 ——「项目列表本身就是作品带」</text>
+
+  <rect x="16" y="150" width="648" height="52" rx="8" fill="#ffffff" stroke="#e2e4e9"/>
+  <rect x="28" y="160" width="32" height="32" rx="6" fill="#e7e9ee"/>
+  <text x="72" y="173" font-size="11" font-weight="600" fill="#1c1c1e">项目 B</text>
+  <text x="632" y="173" font-size="9.5" fill="#8a8f98">昨天</text>
+
+  <rect x="16" y="216" width="648" height="24" rx="6" fill="#f0f1f5" stroke="#d5d8de"/>
+  <text x="30" y="232" font-size="10.5" fill="#1c1c1e">零项目空态（D9）：「新建第一个项目」主按钮 · 搜索/多选/批删能力保留</text>
+
+  <text x="16" y="272" font-size="13" font-weight="700" fill="#1c1c1e">③ 对话页（进入任意项目后 · 100% 干净）</text>
+  <rect x="16" y="284" width="648" height="30" rx="7" fill="#eef0f4" stroke="#c9ccd3"/>
+  <text x="30" y="303" font-size="11" fill="#5b4be0" font-weight="600">‹ 返回创作首页</text>
+  <text x="316" y="303" font-size="11" font-weight="600" fill="#1c1c1e">项目 A（纯标题，无 ▾）</text>
+
+  <rect x="16" y="326" width="648" height="200" rx="7" fill="#fafbfc" stroke="#d5d8de"/>
+  <rect x="30" y="344" width="300" height="22" rx="10" fill="#e7e9ee"/>
+  <rect x="30" y="374" width="360" height="22" rx="10" fill="#e7e9ee"/>
+  <rect x="30" y="404" width="250" height="22" rx="10" fill="#e7e9ee"/>
+  <rect x="30" y="474" width="300" height="24" rx="11" fill="#5b4be0"/>
+  <text x="46" y="490" font-size="11" fill="#ffffff">说一句，开始创作…</text>
+  <text x="16" y="544" font-size="10.5" fill="#1c1c1e">无作品带 · 无列表块 · 无抽屉 · 无状态机（v1 P4 整体作废）</text>
+
+  <line x1="16" y1="628" x2="664" y2="628" stroke="#d5d8de"/>
+  <text x="16" y="646" font-size="10.5" fill="#1c1c1e">① ② 列表 = 唯一续作面（微信式首页）　③ 点项目进入 ⇄ ‹ 返回切换（D7 纯微信式）　PC/移动同构</text>
+</svg>

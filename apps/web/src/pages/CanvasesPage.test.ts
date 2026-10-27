@@ -3,11 +3,12 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import CanvasesPage from './CanvasesPage.vue'
 
-const { sessionsList, sessionsCreate, sessionsRemoveMany, canvasCreate, authState, pushMock, elMessage } =
+const { sessionsList, sessionsCreate, sessionsRemoveMany, canvasList, canvasCreate, authState, pushMock, elMessage } =
   vi.hoisted(() => ({
     sessionsList: vi.fn(),
     sessionsCreate: vi.fn(),
     sessionsRemoveMany: vi.fn(),
+    canvasList: vi.fn(),
     canvasCreate: vi.fn(),
     pushMock: vi.fn(),
     authState: { isLoggedIn: true },
@@ -31,7 +32,7 @@ vi.mock('@/services/sessions-api', () => ({
 // 2026-10-25 PR-2：新建项目改走 useProjectWorkspace（唯一 create 通道）⇒ 落到 canvasApi.create。
 vi.mock('@/services/canvas-api', () => ({
   canvasApi: {
-    list: vi.fn(),
+    list: canvasList,
     create: canvasCreate,
     update: vi.fn(),
   },
@@ -48,13 +49,8 @@ vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({ get isLoggedIn() { return authState.isLoggedIn }, openLogin: vi.fn() }),
 }))
 
-const stubs = {
-  SessionCard: {
-    template: '<div class="session-card-stub" />',
-    props: ['session', 'manageMode', 'selected', 'menuOpen'],
-  },
-  RouterLink: { template: '<a :href="to"><slot /></a>', props: ['to'] },
-}
+// 2026-10-26 规格收敛 v2：SessionCard 退役，页面直渲染微信式行卡（.session-card-menu-anchor）。
+const stubs = {}
 
 function makeSessions(n: number) {
   return Array.from({ length: n }, (_, i) => ({ id: `s${i}`, title: `画布${i}` }))
@@ -74,12 +70,14 @@ describe('CanvasesPage 项目管理器（P1；IA v4 画布+对话=项目）', ()
     sessionsRemoveMany.mockReset()
     pushMock.mockReset()
     authState.isLoggedIn = true
-    sessionsList.mockResolvedValue({ data: { data: makeSessions(6) } })
+    // 2026-10-26 规格收敛 v2（INV-10）：列表唯一真身 = useProjectWorkspace ⇒ canvasApi.list。
+    canvasList.mockReset()
+    canvasList.mockResolvedValue({ data: { data: makeSessions(6) } })
   })
 
   it('渲染全部画布（不截断到5个——管理器是完整列表）', async () => {
     const wrapper = await mountPage()
-    expect(wrapper.findAll('.session-card-stub')).toHaveLength(6)
+    expect(wrapper.findAll('.session-card-menu-anchor')).toHaveLength(6)
     expect(wrapper.text()).not.toContain('查看更多')
   })
 
@@ -94,7 +92,7 @@ describe('CanvasesPage 项目管理器（P1；IA v4 画布+对话=项目）', ()
     const wrapper = await mountPage()
     await wrapper.find('[data-testid="canvases-search"]').setValue('画布1')
     await flushPromises()
-    expect(wrapper.findAll('.session-card-stub')).toHaveLength(1)
+    expect(wrapper.findAll('.session-card-menu-anchor')).toHaveLength(1)
   })
 
   it('搜索无结果时给出空态文案', async () => {
@@ -126,14 +124,15 @@ describe('CanvasesPage 项目管理器（P1；IA v4 画布+对话=项目）', ()
   it('未登录时不请求列表，给出登录引导', async () => {
     authState.isLoggedIn = false
     const wrapper = await mountPage()
-    expect(sessionsList).not.toHaveBeenCalled()
-    expect(wrapper.findAll('.session-card-stub')).toHaveLength(0)
+    expect(canvasList).not.toHaveBeenCalled()
+    expect(sessionsList, '列表不得再走 sessionsApi（INV-10 单源）').not.toHaveBeenCalled()
+    expect(wrapper.findAll('.session-card-menu-anchor')).toHaveLength(0)
     expect(wrapper.find('[data-testid="canvases-login"]').exists()).toBe(true)
   })
 
-  it('页面标题为「我的项目」且有返回主页入口', async () => {
+  it('页面标题为「创作首页」（规格收敛 v2：本页即项目唯一列表，无需返回主页链接）', async () => {
     const wrapper = await mountPage()
-    expect(wrapper.text()).toContain('我的项目')
-    expect(wrapper.find('a[href="/workflow"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('创作首页')
+    expect(wrapper.text()).not.toContain('我的项目')
   })
 })
