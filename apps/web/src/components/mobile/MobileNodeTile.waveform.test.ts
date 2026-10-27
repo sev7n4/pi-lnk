@@ -26,11 +26,13 @@ describe('MobileNodeTile · 音频波形接线', () => {
   })
 
   it('同 id 两次挂载波形不跳变（滚动重组不会闪）', async () => {
+    // ⭐ 回归②后音频波形分支有 url 门控：两次挂载都必须有 url 才进波形分支。
     const a = mount(MobileNodeTile, { props: { id: 'n-audio-stable', type: 'audio', data: { url: 'c.mp3' } } })
-    const b = mount(MobileNodeTile, { props: { id: 'n-audio-stable', type: 'audio', data: {} } })
+    const b = mount(MobileNodeTile, { props: { id: 'n-audio-stable', type: 'audio', data: { url: 'c.mp3' } } })
     await flushPromises()
     const heightsOf = (w: ReturnType<typeof mount>) =>
       w.findAll('.mobile-node-waveform-bar').map((el) => el.attributes('style'))
     expect(heightsOf(a)).toEqual(heightsOf(b))
+    expect(heightsOf(a).length).toBe(64)
   })
 })
