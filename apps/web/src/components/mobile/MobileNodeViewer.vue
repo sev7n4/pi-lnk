@@ -9,7 +9,9 @@ import { useTextToSpeech } from '@/composables/useTextToSpeech'
  *
  * ⭐ **两条退出通道**（P3「全屏层必须可退」）：
  *   ① 右上角 **X**（内联 SVG，44px 触控目标）
- *   ② **下滑关闭**（位移 > 100px）
+ *   ② **下滑关闭**（下拉 > 100px；⭐ 2026-10-27 走查③加仲裁规则：
+ *      只认下拉（上滑永不关闭——旧实现方向写反成上滑关）+
+ *      滚动守卫（可滚动容器 scrollTop>0 时一律不触发））
  *   且**退出即停**——视频 `pause()`、朗读停止（后续任务扩展）。
  *
  * ⚠️ **D2 契约变更**：props `type` 收窄为 `'image' | 'video' | 'text'`，
@@ -242,9 +244,13 @@ async function captureBaseImage(): Promise<{ image: CanvasImageSource; width: nu
 /** 视频元素引用（退出即停用） */
 const videoRef = ref<HTMLVideoElement | null>(null)
 
-/** 下滑手势：起始 Y 与当前 Y */
+/** 可滚动内容容器（文本阅读器等）—— 滚动守卫的真源（§6.2 退出表仲裁规则） */
+const readerRef = ref<HTMLElement | null>(null)
+
+/** 下滑手势：起始 Y 与当前 Y；起始时滚动容器的 scrollTop（守卫用） */
 const touchStartY = ref(0)
 const touchCurrentY = ref(0)
+const touchStartScrollTop = ref(0)
 
 /** 下滑关闭阈值（px）—— 超过即视为"往下滑关闭" */
 const SWIPE_CLOSE_THRESHOLD = 100
@@ -261,6 +267,10 @@ function onTouchStart(e: TouchEvent) {
   const y = e.touches?.[0]?.clientY ?? 0
   touchStartY.value = y
   touchCurrentY.value = y
+  // ⭐ 滚动守卫（2026-10-27 走查③）：touchstart 时记下滚动位置，
+  // 只有从顶部（scrollTop ≤ 0）开始的手势才允许累计成「下滑关闭」；
+  // 阅读器滚动途中一律不触发（长文误关根因之二）。
+  touchStartScrollTop.value = readerRef.value?.scrollTop ?? 0
 }
 
 function onTouchMove(e: TouchEvent) {
@@ -268,11 +278,16 @@ function onTouchMove(e: TouchEvent) {
 }
 
 function onTouchEnd() {
-  if (touchStartY.value - touchCurrentY.value > SWIPE_CLOSE_THRESHOLD) {
+  // ⭐ 方向判据（2026-10-27 走查③修）：currentY − startY > 0 才是「下拉」。
+  // 旧实现 startY − currentY > 100 = **上滑**关闭（方向写反），长文上滑滚动
+  // 正中判据 ⇒ 读几行就回到画布。上滑永不关闭（iOS Photos 惯例：下滑关）。
+  const deltaY = touchCurrentY.value - touchStartY.value
+  if (deltaY > SWIPE_CLOSE_THRESHOLD && touchStartScrollTop.value <= 0) {
     requestClose()
   }
   touchStartY.value = 0
   touchCurrentY.value = 0
+  touchStartScrollTop.value = 0
 }
 
 defineExpose({ videoRef })
@@ -362,7 +377,7 @@ defineExpose({ videoRef })
       controls
       class="viewer-media"
     />
-    <div v-else-if="type === 'text'" class="viewer-reader">{{ data?.content }}</div>
+    <div v-else-if="type === 'text'" ref="readerRef" class="viewer-reader">{{ data?.content }}</div>
 
     <!--
       底部主栏（§4.11.6 可达性）：高频动作放**下方拇指区**，顶部只留低频退出类。

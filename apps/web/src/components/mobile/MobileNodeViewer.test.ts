@@ -45,22 +45,57 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
     expect(w.text()).toContain('正文')
   })
 
-  it('下滑超过阈值 ⇒ emit close（第二条退出通道）', async () => {
+  it('位移不足阈值 ⇒ 不 emit close', async () => {
     const w = mount(MobileNodeViewer, { props: { type: 'image', data: { url: 'x.png' } } })
     const root = w.get('[data-testid="mobile-viewer"]')
-    await root.trigger('touchstart', { touches: [{ clientY: 300 }] })
-    await root.trigger('touchmove', { touches: [{ clientY: 150 }] })
-    await root.trigger('touchend')
-    expect(w.emitted('close')).toHaveLength(1)
-  })
-
-  it('下滑不足阈值 ⇒ 不 emit close', async () => {
-    const w = mount(MobileNodeViewer, { props: { type: 'image', data: { url: 'x.png' } } })
-    const root = w.get('[data-testid="mobile-viewer"]')
-    await root.trigger('touchstart', { touches: [{ clientY: 300 }] })
-    await root.trigger('touchmove', { touches: [{ clientY: 280 }] })
+    await root.trigger('touchstart', { touches: [{ clientY: 150 }] })
+    await root.trigger('touchmove', { touches: [{ clientY: 200 }] })
     await root.trigger('touchend')
     expect(w.emitted('close')).toBeFalsy()
+  })
+
+  // ── 下滑关闭仲裁（2026-10-27 真机走查③ · 规格 §6.2 退出表）──────────────
+  // ⚠️ 旧实现把方向写反（startY − currentY > 100 = 上滑关闭），且上面两条旧测试
+  // 用「clientY 300→150」的上滑数据冒充「下滑」——本组按规格重写判据。
+  describe('下滑关闭仲裁（走查③：只认下拉 + 滚动守卫）', () => {
+    it('上滑（clientY 减小）超过阈值 ⇒ 不关闭（方向反转回归防护）', async () => {
+      const w = mount(MobileNodeViewer, { props: { type: 'image', data: { url: 'x.png' } } })
+      const root = w.get('[data-testid="mobile-viewer"]')
+      await root.trigger('touchstart', { touches: [{ clientY: 300 }] })
+      await root.trigger('touchmove', { touches: [{ clientY: 150 }] })
+      await root.trigger('touchend')
+      expect(w.emitted('close')).toBeFalsy()
+    })
+
+    it('真下滑（clientY 增加）超过阈值 ⇒ emit close', async () => {
+      const w = mount(MobileNodeViewer, { props: { type: 'image', data: { url: 'x.png' } } })
+      const root = w.get('[data-testid="mobile-viewer"]')
+      await root.trigger('touchstart', { touches: [{ clientY: 150 }] })
+      await root.trigger('touchmove', { touches: [{ clientY: 300 }] })
+      await root.trigger('touchend')
+      expect(w.emitted('close')).toHaveLength(1)
+    })
+
+    it('阅读器滚动途中（scrollTop>0）下拉不关闭（W-30 长文误关）', async () => {
+      const w = mount(MobileNodeViewer, { props: { type: 'text', data: { content: '长文' } } })
+      // 组件在 touchstart 时读 .viewer-reader 的 scrollTop —— 先把它置于滚动中段
+      const reader = w.get('.viewer-reader')
+      ;(reader.element as HTMLElement).scrollTop = 500
+      const root = w.get('[data-testid="mobile-viewer"]')
+      await root.trigger('touchstart', { touches: [{ clientY: 150 }] })
+      await root.trigger('touchmove', { touches: [{ clientY: 300 }] })
+      await root.trigger('touchend')
+      expect(w.emitted('close')).toBeFalsy()
+    })
+
+    it('阅读器在顶部（scrollTop=0）下拉超阈值 ⇒ 关闭（iOS 惯例）', async () => {
+      const w = mount(MobileNodeViewer, { props: { type: 'text', data: { content: '短文' } } })
+      const root = w.get('[data-testid="mobile-viewer"]')
+      await root.trigger('touchstart', { touches: [{ clientY: 150 }] })
+      await root.trigger('touchmove', { touches: [{ clientY: 300 }] })
+      await root.trigger('touchend')
+      expect(w.emitted('close')).toHaveLength(1)
+    })
   })
 
   it('视频退出即停：close 前调用 pause()（P3「退出即停」）', async () => {
