@@ -60,20 +60,20 @@ export const MOBILE_NODE_TOGGLE_SELECT_KEY: InjectionKey<MobileNodeToggleSelectF
 )
 
 /**
- * 移动端 tap 节点 → 请求打开全屏查看器（图灯箱/视频播放/文本阅读器，R1-T4）：
+ * 移动端 tap 节点 → 请求打开全屏查看器（图灯箱/视频播放/音频波形/文本阅读器）：
  * 与长按动作 sheet 解耦。
  *
- * ⚠️ **D2 契约变更（2026-10-25 规格 §9 第 4 项）**：`type` **收窄为不含 `audio`** ——
- *   音频**永不进查看器**（磁贴内联播放，规格 §6.2 音频例外）；留着 `audio` 就是
- *   一个死分支（未来有人按契约调它必得空白屏）。
- *   ⇒ 配套运行时守卫 `isViewableNodeType`（见下）—— 类型收窄后，
- *   `NodeRenderer` 传来的 `props.type: string` 必须**先守卫再传**，否则 TS 不通过。
+ * ⚠️ **D2 修订（2026-10-27 真机走查④）**：`type` 重新包含 `audio`——
+ *   音频波形查看器落地（全屏波形 + 播放控制 + 圈选标注）。原「audio 永不进
+ *   查看器」与 §4.3 音频标注承诺矛盾；死分支已删，此为正经分支。
+ *   ⇒ 运行时守卫 `isViewableNodeType`（见下）保留——`NodeRenderer` 传来的
+ *   `props.type: string` 必须**先守卫再传**（未知类型不开空白全屏）。
  */
-export type MobileNodeViewableType = 'image' | 'video' | 'text'
+export type MobileNodeViewableType = 'image' | 'video' | 'audio' | 'text'
 
-/** 运行时守卫：只有这三种类型可进查看器（audio 被显式排除）。 */
+/** 运行时守卫：四类媒体类型可进查看器（其余类型被拦，不开空白全屏）。 */
 export function isViewableNodeType(type: string): type is MobileNodeViewableType {
-  return type === 'image' || type === 'video' || type === 'text'
+  return type === 'image' || type === 'video' || type === 'audio' || type === 'text'
 }
 
 export type MobileNodeOpenViewerFn = (node: {

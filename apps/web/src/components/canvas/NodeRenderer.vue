@@ -59,7 +59,7 @@ function onTileOpen() {
   const node = { id: props.id, type: props.type, data: props.data }
   const intent = resolveMobileNodeTapIntent(node)
   if (intent === 'viewer') {
-    // D2：类型已收窄为不含 audio ⇒ 运行时再守一道（audio 永不进查看器）
+    // D2 修订（2026-10-27）：audio 回归可查看（波形查看器）⇒ 守卫只拦未知类型
     if (isViewableNodeType(node.type)) {
       openViewer({ id: node.id, type: node.type, data: node.data })
     }
@@ -69,7 +69,6 @@ function onTileOpen() {
     openEditor(node)
     return
   }
-  // 'inline'：磁贴自己内联处理（音频播放），不进本函数
   // 'none'：无 op + 轻提示（提示由 MobileNodeTile 给出）——不开 viewer / editor
 }
 

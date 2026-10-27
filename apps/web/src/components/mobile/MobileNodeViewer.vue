@@ -298,7 +298,7 @@ function onAudioTime() {
 
 function onAudioMeta() {
   const d = audioRef.value?.duration
-  if (Number.isFinite(d)) audioDuration.value = d
+  if (d != null && Number.isFinite(d)) audioDuration.value = d
 }
 
 function onAudioSeek(e: Event) {

@@ -222,7 +222,7 @@ const textAttrLine = computed(() => {
  * CanvasPage 树内 ⇒ CANVAS_NODE_PATCH_KEY 可注入；独立挂载（测试）安全 no-op）。
  */
 const { applyDurationSec } = useNodeMediaInfoFooter({
-  nodeId: () => props.id ?? '',
+  nodeId: props.id ?? '',
   url: () => props.data?.url,
   // text 无 url，ensureProbe 对空 url 直接短路；类型收窄仅为满足签名
   kind: () => props.type as 'image' | 'video' | 'audio',
