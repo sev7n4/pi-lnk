@@ -8,16 +8,33 @@ export function hasSummaryPayload(summary?: NodeMediaInfoSummary): boolean {
   return Object.values(rest).some((v) => v != null && v !== '')
 }
 
+/**
+ * ⭐ 2026-10-27 三轮走查修订：判据从「有任意 payload」收紧为「该 kind 的
+ * **展示要素集**完整」——节点创建管道只落 bytes ⇒ hasSummaryPayload 为 true
+ * ⇒ probe 被短路 ⇒ 磁贴底部永远只见「媒体大小」一段（真机现象）。
+ * 要素集与 `mediaInfoParts` 展示分段一一对应：
+ *   图片 = width+height · 视频 = resolution+aspectRatio · 音频 = durationSec+format
+ * （bytes 由 probe 一并补齐；已完整的 summary 不再打 probe。）
+ */
+function hasCompleteElementSet(
+  kind: 'image' | 'video' | 'audio',
+  summary: NodeMediaInfoSummary | undefined,
+): boolean {
+  if (!summary) return false
+  if (kind === 'image') return summary.width != null && summary.height != null
+  if (kind === 'video') {
+    return Boolean(summary.resolution?.trim() && summary.aspectRatio?.trim())
+  }
+  return summary.durationSec != null && Number.isFinite(summary.durationSec) && Boolean(summary.format?.trim())
+}
+
 export function needsMediaInfoEnsure(
   kind: 'image' | 'video' | 'audio',
   summary: NodeMediaInfoSummary | undefined,
   url: string | undefined,
 ): boolean {
   if (!url?.trim()) return false
-  if (!hasSummaryPayload(summary)) return true
-  if (kind === 'audio' && (summary?.durationSec == null || !Number.isFinite(summary.durationSec))) {
-    return true
-  }
+  if (!hasCompleteElementSet(kind, summary)) return true
   return false
 }
 
