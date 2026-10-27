@@ -63,12 +63,16 @@ describe('MobileNodeTile 空节点类型占位（辨识度）', () => {
     expect(w.find('video.mobile-node-media').exists()).toBe(true)
   })
 
-  it('音频与文本节点不受影响（已有波纹 / 「空文本」可辨识）', () => {
+  it('空音频与空图/空视频同型（回归②：占位分支，不再渲染波形/播放键）；文本照旧「空文本」', () => {
+    // ⭐ 2026-10-27 真机回归②：旧断言「空音频也有波纹」被推翻——用户实证空音频
+    // 的占位波形无法与有产物区分 ⇒ 空音频落类型占位分支（音频图标 + 「音频」）。
     const wa = mount(MobileNodeTile, {
       props: { id: 'n6', type: 'audio', data: { url: '' } as never },
     })
-    expect(wa.find('.mobile-audio-wave').exists()).toBe(true)
-    expect(wa.find('.mobile-node-placeholder').exists()).toBe(false)
+    expect(wa.find('.mobile-node-placeholder').exists()).toBe(true)
+    expect(wa.find('.mobile-node-placeholder-label').text()).toBe('音频')
+    expect(wa.find('.mobile-audio-wave').exists()).toBe(false)
+    expect(wa.find('.mobile-audio-play').exists()).toBe(false)
 
     const wt = mount(MobileNodeTile, {
       props: { id: 'n7', type: 'text', data: { content: '' } as never },
