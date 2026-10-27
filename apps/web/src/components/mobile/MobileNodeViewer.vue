@@ -311,6 +311,18 @@ const audioTimeLabel = computed(
   () => `${formatMediaDuration(audioCurrent.value) ?? '0:00'} / ${formatMediaDuration(audioDuration.value) ?? '--:--'}`,
 )
 
+/* ── 视频倍速循环（走查⑤ · W-32：进度条用原生 controls，倍速按钮补齐）── */
+const PLAYBACK_RATES = [1, 1.5, 2, 0.5] as const
+const rateIdx = ref(0)
+const videoRate = computed(() => PLAYBACK_RATES[rateIdx.value]!)
+const videoRateLabel = computed(() => `${videoRate.value}x`)
+
+function cycleVideoRate() {
+  rateIdx.value = (rateIdx.value + 1) % PLAYBACK_RATES.length
+  const el = videoRef.value
+  if (el) el.playbackRate = videoRate.value
+}
+
 /** 可滚动内容容器（文本阅读器等）—— 滚动守卫的真源（§6.2 退出表仲裁规则） */
 const readerRef = ref<HTMLElement | null>(null)
 
@@ -445,6 +457,17 @@ defineExpose({ videoRef })
       controls
       class="viewer-media"
     />
+    <!-- 倍速循环（走查⑤ · W-32）：仅视频；进度条用原生 controls 不自制 -->
+    <button
+      v-if="type === 'video'"
+      class="viewer-speed"
+      type="button"
+      :aria-label="`倍速 ${videoRateLabel}`"
+      data-testid="mobile-viewer-speed"
+      @click="cycleVideoRate"
+    >
+      {{ videoRateLabel }}
+    </button>
     <!-- 音频波形查看器（D2 修订 2026-10-27，走查④）：全屏波形 + 播放控制 + 可拖进度 -->
     <div v-else-if="type === 'audio'" class="viewer-audio" data-testid="mobile-viewer-audio">
       <audio
@@ -617,6 +640,29 @@ defineExpose({ videoRef })
   align-items: center;
   justify-content: center;
   padding: 0 var(--lnk-space-3);
+  border: none;
+  border-radius: var(--lnk-radius-full);
+  background: var(--lnk-surface-overlay);
+  color: var(--lnk-text-primary);
+  font-size: var(--lnk-text-sm);
+  font-weight: var(--lnk-weight-medium);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 倍速循环按钮（走查⑤）：左下角，与右下「圈选」对称（44px 触控目标） */
+.viewer-speed {
+  position: absolute;
+  left: var(--lnk-space-2);
+  bottom: calc(var(--lnk-space-3) + env(safe-area-inset-bottom, 0px));
+  z-index: 3;
+  display: inline-flex;
+  min-width: var(--lnk-touch-target);
+  height: var(--lnk-touch-target);
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--lnk-space-2);
   border: none;
   border-radius: var(--lnk-radius-full);
   background: var(--lnk-surface-overlay);

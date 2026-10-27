@@ -151,6 +151,36 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
     }
   })
 
+  // ── 视频倍速（走查⑤ · W-32：原生进度条已有，倍速循环按钮补齐）──────────
+  it('video: 倍速按钮存在，循环 1→1.5→2→0.5→1 且作用到 video.playbackRate', async () => {
+    const w = mount(MobileNodeViewer, { props: { type: 'video', data: { url: 'x.mp4' } } })
+    const btn = w.find('[data-testid="mobile-viewer-speed"]')
+    expect(btn.exists()).toBe(true)
+    const video = w.find('video').element as HTMLVideoElement
+    expect(btn.text()).toBe('1x')
+    await btn.trigger('click')
+    expect(video.playbackRate).toBe(1.5)
+    expect(btn.text()).toBe('1.5x')
+    await btn.trigger('click')
+    expect(video.playbackRate).toBe(2)
+    expect(btn.text()).toBe('2x')
+    await btn.trigger('click')
+    expect(video.playbackRate).toBe(0.5)
+    expect(btn.text()).toBe('0.5x')
+    await btn.trigger('click')
+    expect(video.playbackRate).toBe(1)
+    expect(btn.text()).toBe('1x')
+  })
+
+  it('video: 倍速按钮只出现在视频上（音频有自己的进度条，图片无播放）', () => {
+    const img = mount(MobileNodeViewer, { props: { type: 'image', data: { url: 'x.png' } } })
+    expect(img.find('[data-testid="mobile-viewer-speed"]').exists()).toBe(false)
+    img.unmount()
+    const aud = mount(MobileNodeViewer, { props: { type: 'audio', data: { url: 'x.mp3' } } })
+    expect(aud.find('[data-testid="mobile-viewer-speed"]').exists()).toBe(false)
+    aud.unmount()
+  })
+
   // ── 标注态（L1 · §4.3：只有一支笔）──────────────────────────────────
   describe('标注态（显式进入 + 轻点即画）', () => {
     it('有「圈选」入口（显式进入，⛔ 不做隐式双击手势）', () => {
