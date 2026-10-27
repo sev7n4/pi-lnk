@@ -165,6 +165,7 @@ import {
   MOBILE_NODE_ACTION_REQUEST_KEY,
   MOBILE_NODE_OPEN_VIEWER_KEY,
   MOBILE_NODE_OPEN_EDITOR_KEY,
+  MOBILE_NODE_OPEN_PROMPT_REVIEW_KEY,
   type CanvasGroupResizeFn,
   type CanvasNodeRetryOverrides,
 } from '@/composables/canvasNodeActions'
@@ -2748,12 +2749,17 @@ let mobileAnnotateSeq = 0
  *  - ⛔ 降级（无 CORS / 取不到帧）⇒ 只带文字，并**明说**「本条只带文字，未附截图」；
  *  - `sourceNodeId` 每次唯一（见 `mobileAnnotateSeq`）⇒ 同节点连续两次标注都能进 composer。
  */
-async function handleMobileAnnotateAnchor(payload: {
-  imageBlob?: Blob
-  degraded: boolean
-  text?: string
-}) {
-  const node = mobileViewerNode.value
+async function handleMobileAnnotateAnchor(
+  payload: {
+    imageBlob?: Blob
+    degraded: boolean
+    text?: string
+  },
+  /** ⭐ S1（§4.7.1）：来源参数化——缺省 = 查看器节点（M5 原路径）；全文层传自身节点 */
+  source?: { node?: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any } | null; close?: () => void },
+) {
+  const node = source?.node ?? mobileViewerNode.value
+  const closeLayer = source?.close ?? closeMobileViewer
   if (!node?.id) return
   const nodeId = node.id
   const opinion = (payload.text ?? '').trim()
@@ -2789,7 +2795,7 @@ async function handleMobileAnnotateAnchor(payload: {
     ...(opinion ? { text: opinion } : {}),
     sourceNodeId,
   })
-  closeMobileViewer()
+  closeLayer()
   // 看得见落地（§4.5 可见性铁律）：切回对话页签，用户在 composer 看到芯片
   mobileAppTab.value = 'chat'
   if (payload.degraded && !url) {
@@ -2859,6 +2865,36 @@ provide(MOBILE_NODE_OPEN_VIEWER_KEY, (node: { id?: string; type: 'image' | 'vide
 })
 
 /**
+ * G1/S1（§4.7.1，2026-10-27）：磁贴提示词 chips / 查看器摘要条 → 打开
+ * **提示词全文审核层**（独立载体 `MobileNodePromptReviewSheet`，§4.8.1）。
+ * ⭐ 守卫：prompt 为空不开（无内容可审）；同时关查看器（两层不叠）。
+ */
+const mobilePromptReviewNode = ref<{
+  id?: string
+  type: 'image' | 'video' | 'audio' | 'text'
+  data?: any
+} | null>(null)
+
+provide(MOBILE_NODE_OPEN_PROMPT_REVIEW_KEY, (node: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any }) => {
+  if (!String(node?.data?.prompt ?? '').trim()) return
+  mobileViewerNode.value = null
+  mobilePromptReviewNode.value = node
+})
+
+/** 查看器提示词摘要条（§4.7.1 入口②）⇒ 以当前查看节点打开全文层并收起查看器 */
+function openPromptReviewFromViewer() {
+  const node = mobileViewerNode.value
+  if (!node) return
+  if (!String((node.data as Record<string, unknown> | undefined)?.prompt ?? '').trim()) return
+  mobileViewerNode.value = null
+  mobilePromptReviewNode.value = node
+}
+
+function closePromptReview() {
+  mobilePromptReviewNode.value = null
+}
+
+/**
  * 移动端 tap **空节点** → 打开编辑 sheet（R2-T2，2026-10-23 真机走查）。
  *
  * ⭐ 真机走查反馈「点空白节点会进入空白全屏」——`NodeRenderer` 原先无条件开 viewer，
@@ -2899,13 +2935,33 @@ function handleMobileViewerBottomAction(key: string) {
  * §17-④（拍板②）：查看器编辑态保存 ⇒ 覆盖磁贴提示词，不触发生成、不回 composer。
  * 通道与 applyMobileEditorPatch 同源（patchNodeData + persistUserEdit）；
  * 保存后关查看器回画布，用户经画布状态胶囊确认生成（§17.2）。
+ * ⭐ S1（§4.7.1）：close 参数化——全文层保存走 closePromptReview（其余同通道）。
  */
-function handleMobileViewerEditSave(nodeId: string, prompt: string) {
+function handleMobileViewerEditSave(nodeId: string, prompt: string, close: () => void = closeMobileViewer) {
   const text = prompt.trim()
   if (!text) return
   patchNodeData(nodeId, { prompt: text })
   persistUserEdit()
-  closeMobileViewer()
+  close()
+}
+
+/* ── G1/S1（§4.7.1，2026-10-27）：提示词全文审核层页面级处理器 ────────────── */
+
+/** 满屏截图 + 意见经 §5.3 锚管线回传（与 viewer annotate 同管线，来源=全文层节点） */
+function handlePromptReviewAnnotate(payload: {
+  imageBlob?: Blob
+  degraded: boolean
+  text?: string
+}) {
+  void handleMobileAnnotateAnchor(payload, {
+    node: mobilePromptReviewNode.value,
+    close: closePromptReview,
+  })
+}
+
+/** 就地改字保存（§17-④ 同通道）：覆盖磁贴提示词 + 关全文层 */
+function handlePromptReviewEditSave(nodeId: string, prompt: string) {
+  handleMobileViewerEditSave(nodeId, prompt, closePromptReview)
 }
 
 function closeMobileViewer() {
@@ -6396,6 +6452,11 @@ onUnmounted(() => {
       :on-viewer-more="openMobileNodeMenuFromViewer"
       :on-viewer-bottom-action="handleMobileViewerBottomAction"
       :on-viewer-edit-save="handleMobileViewerEditSave"
+      :on-viewer-prompt-review="openPromptReviewFromViewer"
+      :prompt-review-node="mobilePromptReviewNode"
+      :on-prompt-review-close="closePromptReview"
+      :on-prompt-review-annotate="handlePromptReviewAnnotate"
+      :on-prompt-review-edit-save="handlePromptReviewEditSave"
       :on-node-editor-remove-ref="handleMobileNodeRemoveRef"
       :viewer-node="mobileViewerNode"
       :on-viewer-close="closeMobileViewer"

@@ -86,6 +86,24 @@ export const MOBILE_NODE_OPEN_VIEWER_KEY: InjectionKey<MobileNodeOpenViewerFn> =
 )
 
 /**
+ * 移动端磁贴提示词 chips / 查看器提示词摘要条 → 打开**提示词全文审核层**
+ * （规格 §4.7.1，2026-10-27 S1 批次）。
+ *
+ * ⭐ 为什么是独立注入键而不是复用 `MOBILE_NODE_OPEN_VIEWER_KEY`：
+ *   §4.7.1 / §4.8.1 双拍板 —— 全文层是**独立于媒体查看器的文本阅读面**
+ *   （`MobileNodePromptReviewSheet`），⛔ 禁做成 viewer 的一个 `type`
+ *   （D2 audio 死分支教训：契约位留死分支 = 未来按契约调用必得空白屏）。
+ *   载体不同 ⇒ 入口契约也必须分开，防「顺手塞回 viewer」。
+ */
+export type MobileNodeOpenPromptReviewFn = (node: {
+  id?: string
+  type: MobileNodeViewableType
+  data?: any
+}) => void
+export const MOBILE_NODE_OPEN_PROMPT_REVIEW_KEY: InjectionKey<MobileNodeOpenPromptReviewFn> =
+  Symbol('mobileNodeOpenPromptReview')
+
+/**
  * 移动端 tap **空节点** → 请求打开编辑 sheet（R2-T2，2026-10-23 真机走查）。
  *
  * ⭐ 为什么需要它：真机走查发现「点空白节点会进入空白全屏」——

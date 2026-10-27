@@ -73,4 +73,28 @@ describe('renderReviewBaseImage（§9 #49 审阅层整屏底图）', () => {
     const bodyTexts = fillTexts.filter((t) => t.text !== '提示词（agent 提议）').map((t) => t.text)
     expect(bodyTexts).toEqual(['甲乙丙'])
   })
+
+  it('skipLines：跳过前 N 行（S1 全文层 R-17 滚动感知——滚动到哪圈哪）', () => {
+    const { fillTexts, createCanvas } = makeStub()
+    const prompt = '一二三四五六七八九十甲乙丙丁' // 3 行（6+6+2）
+    renderReviewBaseImage({ prompt, paramsLine: '', width: 100, height: 400, skipLines: 1 }, createCanvas)
+    const bodyTexts = fillTexts.filter((t) => t.text !== '提示词（agent 提议）').map((t) => t.text)
+    expect(bodyTexts).toEqual(['七八九十甲乙', '丙丁'])
+  })
+
+  it('skipLines 缺省 0 = 从头渲染（M5 pending 审核层不受影响）', () => {
+    const { fillTexts, createCanvas } = makeStub()
+    const prompt = '一二三四五六七八九十甲乙丙丁'
+    renderReviewBaseImage({ prompt, paramsLine: '', width: 100, height: 400 }, createCanvas)
+    const bodyTexts = fillTexts.filter((t) => t.text !== '提示词（agent 提议）').map((t) => t.text)
+    expect(bodyTexts).toEqual(['一二三四五六', '七八九十甲乙', '丙丁'])
+  })
+
+  it('skipLines 负数/非整数按 0 与 floor 处理（防御）', () => {
+    const { fillTexts, createCanvas } = makeStub()
+    const prompt = '一二三四五六七八九十甲乙丙丁'
+    renderReviewBaseImage({ prompt, paramsLine: '', width: 100, height: 400, skipLines: -3 }, createCanvas)
+    const bodyTexts = fillTexts.filter((t) => t.text !== '提示词（agent 提议）').map((t) => t.text)
+    expect(bodyTexts).toEqual(['一二三四五六', '七八九十甲乙', '丙丁'])
+  })
 })

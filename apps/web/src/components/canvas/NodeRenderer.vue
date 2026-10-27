@@ -7,9 +7,11 @@ import {
   type MobileNodeToggleSelectFn,
   isViewableNodeType,
   MOBILE_NODE_OPEN_EDITOR_KEY,
+  MOBILE_NODE_OPEN_PROMPT_REVIEW_KEY,
   CANVAS_NODE_RETRY_KEY,
   type MobileNodeOpenViewerFn,
   type MobileNodeOpenEditorFn,
+  type MobileNodeOpenPromptReviewFn,
   type CanvasNodeRetryFn,
 } from '@/composables/canvasNodeActions'
 import { resolveMobileNodeTapIntent } from '@/composables/mobileNodeOpenPolicy'
@@ -44,6 +46,11 @@ const Target = computed(() =>
 const openViewer = inject<MobileNodeOpenViewerFn>(MOBILE_NODE_OPEN_VIEWER_KEY, () => {})
 // R2-T2：空节点 tap → 编辑 sheet（不再开空白全屏）。
 const openEditor = inject<MobileNodeOpenEditorFn>(MOBILE_NODE_OPEN_EDITOR_KEY, () => {})
+// G1（§4.7.1，2026-10-27 S1）：磁贴提示词 chips → 提示词全文审核层（独立载体，§4.8.1）。
+const openPromptReview = inject<MobileNodeOpenPromptReviewFn>(
+  MOBILE_NODE_OPEN_PROMPT_REVIEW_KEY,
+  () => {},
+)
 
 /**
  * tap 意图由纯函数单一判定（审阅焦点 #2：策略不在三处各写一遍）。
@@ -92,6 +99,15 @@ const toggleSelectNode = inject<MobileNodeToggleSelectFn>(MOBILE_NODE_TOGGLE_SEL
 function onTileToggleSelect() {
   toggleSelectNode(props.id)
 }
+
+/**
+ * G1（§4.7 / §4.7.1，2026-10-27 S1 批次）：磁贴提示词 chips 单击 ⇒ 打开
+ * **提示词全文审核层**。与 tap 同款分层（注入键由 CanvasPage 承接），
+ * ⛔ 不复用 openViewer——全文层是独立载体（§4.8.1 禁塞回 viewer）。
+ */
+function onTileOpenPromptReview() {
+  openPromptReview({ id: props.id, type: props.type, data: props.data })
+}
 </script>
 
 <template>
@@ -103,6 +119,7 @@ function onTileToggleSelect() {
     :data="data"
     @tap="onTileOpen"
     @open-reader="onTileOpen"
+    @open-prompt-review="onTileOpenPromptReview"
     @retry="onTileRetry"
     @toggle-select="onTileToggleSelect"
   />
