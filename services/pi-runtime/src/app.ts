@@ -472,7 +472,10 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 		// 是 CI 的 `pnpm build` 抓出来的）。
 		if (isDecline) {
 			const canvasId = manager.getCanvasSessionId(toSessionKey(request.params.sessionId));
-			return reply.send(registry.decline(canvasId, callId));
+			// §17.8（2026-10-27）：批注流锚带回随 decline 透传批注意见（防抢跑提示给模型）。
+			const rawNote = (request.body as { note?: unknown } | undefined)?.note;
+			const note = typeof rawNote === "string" && rawNote.trim() ? rawNote.trim().slice(0, 500) : undefined;
+			return reply.send(registry.decline(canvasId, callId, note));
 		}
 		if (typeof answers !== "object" || answers === null) {
 			return reply.code(400).send({ error: "callId and answers are required" });

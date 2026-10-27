@@ -40,7 +40,6 @@ import MobileMultiSelectBar from './MobileMultiSelectBar.vue'
 import MobileNodeActionSheet, { type MobileNodeActionNode } from './MobileNodeActionSheet.vue'
 import MobileNodeEditorSheet from './MobileNodeEditorSheet.vue'
 import MobileNodeViewer from './MobileNodeViewer.vue'
-import MobileNodeAnnotateSheet from './MobileNodeAnnotateSheet.vue'
 import MobileNodeCoachMark from './MobileNodeCoachMark.vue'
 import type { EditableFlowNode } from '@/composables/useSelectedNodeEditor'
 import type { UpstreamNodeContext } from '@/composables/useUpstreamNodeContext'
@@ -159,15 +158,10 @@ const props = defineProps<{
   onViewerMore: () => void
   /** 查看器底部主栏动作（如「改词」，§4.11.6 高频下沉） */
   onViewerBottomAction: (key: string) => void
-  /** D8/L1/M1：查看器标注完成（带标记整图 blob 或降级） */
-  onViewerAnnotate: (payload: { imageBlob?: Blob; degraded: boolean }) => void
-  /** L1/M1：标注浮层打开（由页面层持上下文） */
-  mobileAnnotate: { nodeId: string; nodeTitle: string } | null
-  mobileAnnotateUploading: boolean
-  mobileAnnotateDegraded: boolean
-  mobileAnnotateError: string
-  onMobileAnnotateSend: (payload: { opinion: string; imageBlob?: Blob; degraded: boolean }) => void
-  onMobileAnnotateClose: () => void
+  /** D8/L1/M1 + §17 v2：查看器标注锚带回（带标记整图 blob 或降级 + 胶囊意见） */
+  onViewerAnnotate: (payload: { imageBlob?: Blob; degraded: boolean; text?: string }) => void
+  /** §17-④（拍板②）：编辑态保存 ⇒ 页面层覆盖磁贴提示词（不触发生成、不带回 composer） */
+  onViewerEditSave: (nodeId: string, prompt: string) => void
   /** ── R3-T4 壳层聚合状态栏（D-C 状态机的壳层聚合）── */
   /** 正在生成的节点数（0 = 无） */
   nodeGeneratingCount: number
@@ -183,13 +177,11 @@ const props = defineProps<{
 
 /**
  * 查看器底部主栏动作（§4.11.6 可达性：高频操作放下方拇指区）。
- * ⭐ pending 节点：决策层（拒绝 / 确认）+ 操作层（改词，**有产物或有提示词即给**）——
- *   与壳层状态栏同源同语义（§4.8：确认/取消同时出现在状态栏与查看器底部）。
- *   ⚠️ 2026-10-26 修订（§4.8 审核内容层）：propose 产物要确认后才生成 ⇒
- *   pending 改词门控不能再挂「有产物」（否则待确认的图/视频节点无改词入口）；
- *   改为「有产物 **或** data.prompt 非空」——改词 = 放弃 propose 回传 agent，
- *   恰是无产物态的核心修改路径。
- * confirmed / 其它有产物节点：仅「改词」。
+ * §17 v2（拍板①，2026-10-27）：pending 审核层 =【批注】【编辑】两键 ——
+ *   「拒绝/改词/确认」三键退役：无条件确认=编辑→保存→回画布再确认；
+ *   无条件拒绝=批注→⚓（锚下即标拒绝，经 /answers decline 结算 §17.8）。
+ *   画布状态胶囊的确认/拒绝入口不受影响（§17.2，MobileNodeStatusBar 原样）。
+ * confirmed / 其它有产物节点：仅「改词」（改词 sheet 原路径）。
  */
 const viewerBottomActions = computed(() => {
   const node = props.viewerNode
@@ -202,11 +194,13 @@ const viewerBottomActions = computed(() => {
       ? Boolean(String(data.content ?? '').trim())
       : Boolean(String(data.url ?? '').trim())
   const actions: Array<{ key: string; label: string; variant?: 'primary' | 'danger' }> = []
-  const hasPrompt = Boolean(String(data.prompt ?? '').trim())
   if (isPending) {
-    actions.push({ key: 'pending-cancel', label: '拒绝' })
-    if (hasContent || hasPrompt) actions.push({ key: 'edit', label: '改词' })
-    actions.push({ key: 'pending-confirm', label: '确认', variant: 'primary' })
+    // §17 v2（拍板①，2026-10-27）：审核层底栏收敛为【批注】【编辑】两键 ——
+    // 「拒绝/改词/确认」三键退役：无条件确认=编辑→保存→确认生成；无条件拒绝=
+    // 批注→⚓（锚下即标拒绝，经 /answers decline 结算 §17.8）。画布状态胶囊
+    // 的确认/拒绝入口不受影响（§17.2，MobileNodeStatusBar 原样）。
+    actions.push({ key: 'annotate', label: '批注', variant: 'primary' })
+    actions.push({ key: 'edit', label: '编辑' })
     return actions
   }
   if (hasContent) {
@@ -512,7 +506,9 @@ onUnmounted(() => stopMobileTaskPolling())
     @patch="props.onNodeEditorPatch"
     @send-to-agent="props.onNodeEditorSendToAgent"
   />
-  <!-- R1-T4/T6：移动端全屏查看器（tap 图/视频/短文文本经注入键在此承接） -->
+  <!-- R1-T4/T6：移动端全屏查看器（tap 图/视频/短文文本经注入键在此承接）。
+       §17 v2：批注/编辑都在 viewer 内完成（胶囊意见框 + 就地改字）——
+       ⚓ 直接经 onViewerAnnotate 带回（标注浮层 sheet 退役，§16-⑦ 修订）。 -->
   <MobileNodeViewer
     v-if="viewerNode"
     :type="viewerNode.type"
@@ -520,18 +516,14 @@ onUnmounted(() => stopMobileTaskPolling())
     :bottom-actions="viewerBottomActions"
     @close="props.onViewerClose"
     @annotate="props.onViewerAnnotate"
+    @edit-save="
+      (prompt: string) => {
+        if (!viewerNode) return
+        props.onViewerEditSave(viewerNode.id ?? '', prompt)
+      }
+    "
     @more="props.onViewerMore"
     @bottom-action="props.onViewerBottomAction"
-  />
-  <!-- 标注浮层（L1/M1）：⛔ 走 MobileSheet 基座（无第二套 sheet 皮肤，G-15） -->
-  <MobileNodeAnnotateSheet
-    v-if="props.mobileAnnotate"
-    :node-title="props.mobileAnnotate.nodeTitle"
-    :uploading="props.mobileAnnotateUploading"
-    :degraded="props.mobileAnnotateDegraded"
-    :error="props.mobileAnnotateError"
-    @send="props.onMobileAnnotateSend"
-    @close="props.onMobileAnnotateClose"
   />
   <!-- R1-T7：节点交互范式反转一次性引导（点按播放 · 长按编辑），仅画布页签首进一次 -->
   <MobileNodeCoachMark v-if="mobileAppTab === 'canvas'" />

@@ -198,10 +198,13 @@ const rows = computed(() =>
           >
             ✓
           </button>
-          <!-- 封面 40px：coverUrl 三态（image / CanvasCoverFallback 兜底） -->
+          <!-- 封面 40px：coverUrl 三态（image / CanvasCoverFallback 兜底）。
+               ⛔ `relative` 不是装饰：CanvasCoverFallback 根元素是 `absolute inset-0`，
+               缺它时兜底层会锚定到 App 壳的 main.relative ⇒ 被拉成全屏墨点纸，
+               把整个创作首页盖成黑屏（2026-10-27 生产取证实证，v2.4 修复）。 -->
           <button
             type="button"
-            class="flex h-10 w-10 shrink-0 items-center overflow-hidden rounded-lg bg-surface-sunken"
+            class="relative flex h-10 w-10 shrink-0 items-center overflow-hidden rounded-lg bg-surface-sunken"
             @click="mgr.manageMode.value ? mgr.toggleSelect(p.id) : openCanvas(p)"
           >
             <img

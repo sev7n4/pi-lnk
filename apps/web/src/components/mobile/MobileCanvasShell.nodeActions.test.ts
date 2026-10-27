@@ -79,16 +79,12 @@ function baseProps(overrides: Record<string, unknown> = {}) {
     onNodeRename: vi.fn(),
     // D8/J1/K1（2026-10-25）：编辑器改为「发给 agent 修改」，本地提交与删引用 emit 已移除
     onNodeEditorSendToAgent: vi.fn(),
-    // D8/L1/M1（2026-10-25）：查看器标注 → 标注浮层 的接线
+    // D8/L1/M1 + §17 v2（2026-10-27）：查看器批注锚带回（合成图 blob 或降级 + 胶囊意见）
     onViewerAnnotate: vi.fn(),
     onViewerMore: vi.fn(),
     onViewerBottomAction: vi.fn(),
-    mobileAnnotate: null,
-    mobileAnnotateUploading: false,
-    mobileAnnotateDegraded: false,
-    mobileAnnotateError: '',
-    onMobileAnnotateSend: vi.fn(),
-    onMobileAnnotateClose: vi.fn(),
+    // §17-④（拍板②）：查看器编辑态保存 ⇒ 页面层覆盖磁贴提示词
+    onViewerEditSave: vi.fn(),
     onNodeEditorClose: vi.fn(),
     onNodeEditorPatch: vi.fn(),
     viewerNode: null,
@@ -210,20 +206,20 @@ describe('MobileCanvasShell 全屏查看器集成（R1-T4/T6）', () => {
   })
 })
 
-describe('MobileCanvasShell 查看器底部主栏（pending 决策层，§4.8）', () => {
-  it('pending_confirm + 有产物 → 拒绝 / 改词 / 确认 三按钮（决策层可见，修复「看得见确认不了」）', () => {
+describe('MobileCanvasShell 审核层底栏两键（§17 v2 · 拍板①）', () => {
+  it('pending + 有产物 → 批注 / 编辑 两键（⛔ 拒绝/改词/确认 三键退役）', () => {
     const w = mount(MobileCanvasShell, {
       props: baseProps({
-        viewerNode: { id: 'n1', type: 'text', data: { content: '长文内容', status: 'pending_confirm' } },
+        viewerNode: { id: 'n1', type: 'image', data: { url: 'x.png', status: 'pending_confirm' } },
       }),
       attachTo: document.body,
     })
     const labels = w.findAll('.viewer-bottom-action').map((b) => b.text())
-    expect(labels).toEqual(expect.arrayContaining(['拒绝', '改词', '确认']))
+    expect(labels).toEqual(['批注', '编辑'])
     w.unmount()
   })
 
-  it('pending_confirm + 无产物 + 有提示词 → 拒绝 / 改词 / 确认（§4.8 审核内容层：改词不依赖产物）', () => {
+  it('pending + 无产物 + 有提示词 → 批注 / 编辑（审核内容层为载体，两键不受产物门控）', () => {
     const w = mount(MobileCanvasShell, {
       props: baseProps({
         viewerNode: {
@@ -235,23 +231,23 @@ describe('MobileCanvasShell 查看器底部主栏（pending 决策层，§4.8）
       attachTo: document.body,
     })
     const labels = w.findAll('.viewer-bottom-action').map((b) => b.text())
-    expect(labels).toEqual(['拒绝', '改词', '确认'])
+    expect(labels).toEqual(['批注', '编辑'])
     w.unmount()
   })
 
-  it('pending_confirm + 无产物且无提示词 → 拒绝 / 确认（无可改内容，不给改词）', () => {
+  it('pending + 无产物且无提示词 → 仍给批注 / 编辑（批注意见可在 composer 自补）', () => {
     const w = mount(MobileCanvasShell, {
       props: baseProps({
-        viewerNode: { id: 'n1', type: 'text', data: { status: 'pending_confirm' } },
+        viewerNode: { id: 'n1', type: 'image', data: { status: 'pending_confirm' } },
       }),
       attachTo: document.body,
     })
     const labels = w.findAll('.viewer-bottom-action').map((b) => b.text())
-    expect(labels).toEqual(['拒绝', '确认'])
+    expect(labels).toEqual(['批注', '编辑'])
     w.unmount()
   })
 
-  it('confirmed + 有产物 → 仅改词，决策层不泄漏到非 pending 节点', () => {
+  it('confirmed + 有产物 → 仅改词，审核层两键不泄漏到非 pending 节点', () => {
     const w = mount(MobileCanvasShell, {
       props: baseProps({
         viewerNode: { id: 'n1', type: 'text', data: { content: '正文', status: 'confirmed' } },
@@ -259,9 +255,46 @@ describe('MobileCanvasShell 查看器底部主栏（pending 决策层，§4.8）
       attachTo: document.body,
     })
     const labels = w.findAll('.viewer-bottom-action').map((b) => b.text())
-    expect(labels).not.toContain('拒绝')
-    expect(labels).not.toContain('确认')
+    // text 节点合法追加「朗读」（viewer 内消化），审核层两键不得泄漏
     expect(labels).toContain('改词')
+    expect(labels).not.toContain('批注')
+    expect(labels).not.toContain('编辑')
+    w.unmount()
+  })
+
+  it('编辑保存事件透传：viewer edit-save → onViewerEditSave(nodeId, prompt)', async () => {
+    const onViewerEditSave = vi.fn()
+    const w = mount(MobileCanvasShell, {
+      props: baseProps({
+        viewerNode: { id: 'n1', type: 'image', data: { prompt: '原词', status: 'pending_confirm' } },
+        onViewerEditSave,
+      }),
+      attachTo: document.body,
+    })
+    await w.find('[data-testid="mobile-viewer-bottom-edit"]').trigger('click')
+    await w.find('[data-testid="mobile-viewer-review-edit"]').setValue('新词')
+    await w.find('[data-testid="mobile-viewer-bottom-edit-save"]').trigger('click')
+    expect(onViewerEditSave).toHaveBeenCalledWith('n1', '新词')
+    w.unmount()
+  })
+
+  it('批注锚事件透传：胶囊 ⚓ → onViewerAnnotate（payload 带文字；jsdom 诚实降级路径）', async () => {
+    const onViewerAnnotate = vi.fn()
+    const w = mount(MobileCanvasShell, {
+      props: baseProps({
+        viewerNode: { id: 'n1', type: 'image', data: { prompt: '原词', status: 'pending_confirm' } },
+        onViewerAnnotate,
+      }),
+      attachTo: document.body,
+    })
+    await w.find('[data-testid="mobile-viewer-bottom-annotate"]').trigger('click')
+    const ink = w.find('[data-testid="mobile-viewer-ink"]')
+    await ink.trigger('touchstart', { touches: [{ clientX: 10, clientY: 10 }] })
+    await ink.trigger('touchend')
+    await w.find('[data-testid="mobile-annotation-capsule-input"]').setValue('构图太挤')
+    await w.find('[data-testid="mobile-annotation-capsule-anchor"]').trigger('click')
+    await vi.waitFor(() => expect(onViewerAnnotate).toHaveBeenCalled())
+    expect(onViewerAnnotate.mock.calls[0]![0]).toMatchObject({ text: '构图太挤' })
     w.unmount()
   })
 })

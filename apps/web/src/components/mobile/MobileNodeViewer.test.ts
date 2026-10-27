@@ -444,4 +444,105 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
       w.unmount()
     })
   })
+
+  // ── §17 v2（M5 · 2026-10-27）：pending 审核层批注态 / 编辑态 ─────────────
+  // 壳层 pending 底栏两键（批注/编辑）经 bottomActions 注入；viewer 内消化：
+  // 批注=圈选→首笔即弹胶囊→⚓ 合成带回；编辑=就地 textarea 改字→保存上抛。
+  describe('§17 v2 审核层：批注态（首笔即弹胶囊 → ⚓ 带回）', () => {
+    const SHELL_TWO_KEYS = [
+      { key: 'annotate', label: '批注', variant: 'primary' as const },
+      { key: 'edit', label: '编辑' },
+    ]
+    const pendingProps = {
+      type: 'image' as const,
+      data: { status: 'pending_confirm', prompt: '赛博朋克城市夜景，霓虹雨后反射' },
+      bottomActions: SHELL_TWO_KEYS,
+    }
+
+    it('底栏【批注】⇒ 进入批注态（review 层 is-annotating + 画笔层可见），不上抛 bottom-action', async () => {
+      const w = mount(MobileNodeViewer, { props: pendingProps })
+      await w.get('[data-testid="mobile-viewer-bottom-annotate"]').trigger('click')
+      expect(w.find('.viewer-review.is-annotating').exists()).toBe(true)
+      expect(w.find('[data-testid="mobile-viewer-ink"]').isVisible()).toBe(true)
+      expect(w.emitted('bottom-action')).toBeFalsy()
+      w.unmount()
+    })
+
+    it('首笔落定 ⇒ 胶囊弹出（无「完成」步骤）；再点【批注】⇒ 退出并收胶囊（可放弃）', async () => {
+      const w = mount(MobileNodeViewer, { props: pendingProps })
+      await w.get('[data-testid="mobile-viewer-bottom-annotate"]').trigger('click')
+      const ink = w.get('[data-testid="mobile-viewer-ink"]')
+      await ink.trigger('touchstart', { touches: [{ clientX: 10, clientY: 10 }] })
+      await ink.trigger('touchmove', { touches: [{ clientX: 40, clientY: 30 }] })
+      await ink.trigger('touchend')
+      expect(w.find('[data-testid="mobile-annotation-capsule"]').exists()).toBe(true)
+      await w.get('[data-testid="mobile-viewer-bottom-annotate"]').trigger('click')
+      expect(w.find('[data-testid="mobile-annotation-capsule"]').exists()).toBe(false)
+      expect(w.find('.viewer-review.is-annotating').exists()).toBe(false)
+      w.unmount()
+    })
+
+    it('胶囊填意见 + 点 ⚓ ⇒ emit annotate（payload 带文字；jsdom 无 2d ⇒ 诚实降级路径）', async () => {
+      const w = mount(MobileNodeViewer, { props: pendingProps })
+      await w.get('[data-testid="mobile-viewer-bottom-annotate"]').trigger('click')
+      const ink = w.get('[data-testid="mobile-viewer-ink"]')
+      await ink.trigger('touchstart', { touches: [{ clientX: 10, clientY: 10 }] })
+      await ink.trigger('touchend')
+      await w.get('[data-testid="mobile-annotation-capsule-input"]').setValue('配色太冷')
+      await w.get('[data-testid="mobile-annotation-capsule-anchor"]').trigger('click')
+      await vi.waitFor(() => expect(w.emitted('annotate')).toBeTruthy())
+      const payload = w.emitted('annotate')![0]![0] as { text: string; degraded: boolean }
+      expect(payload.text).toBe('配色太冷')
+      expect(w.emitted('bottom-action')).toBeFalsy()
+      w.unmount()
+    })
+
+    it('批注态锁滚动：.viewer-review.is-annotating ⇒ touch-action:none（V-17a）', () => {
+      const src = readFileSync(join(HERE, 'MobileNodeViewer.vue'), 'utf-8')
+      const rule = /\.viewer-review\.is-annotating\s*\{([^}]*)\}/.exec(src)?.[1] ?? ''
+      expect(rule).toMatch(/touch-action:\s*none/)
+    })
+  })
+
+  describe('§17 v2 审核层：编辑态（就地改字，拍板②）', () => {
+    const pendingProps = {
+      type: 'image' as const,
+      data: { status: 'pending_confirm', prompt: '赛博朋克城市夜景' },
+      bottomActions: [
+        { key: 'annotate', label: '批注', variant: 'primary' as const },
+        { key: 'edit', label: '编辑' },
+      ],
+    }
+
+    it('底栏【编辑】⇒ 提示词就地换 textarea 且预填 prompt，不上抛 bottom-action', async () => {
+      const w = mount(MobileNodeViewer, { props: pendingProps })
+      await w.get('[data-testid="mobile-viewer-bottom-edit"]').trigger('click')
+      const ta = w.get('[data-testid="mobile-viewer-review-edit"]')
+      expect((ta.element as HTMLTextAreaElement).value).toBe('赛博朋克城市夜景')
+      expect(w.find('[data-testid="mobile-viewer-review-prompt"]').exists()).toBe(false)
+      expect(w.emitted('bottom-action')).toBeFalsy()
+      w.unmount()
+    })
+
+    it('编辑态底栏 = 取消/保存；保存 ⇒ emit edit-save（新文本），不上抛 bottom-action', async () => {
+      const w = mount(MobileNodeViewer, { props: pendingProps })
+      await w.get('[data-testid="mobile-viewer-bottom-edit"]').trigger('click')
+      expect(w.find('[data-testid="mobile-viewer-bottom-edit-cancel"]').exists()).toBe(true)
+      expect(w.find('[data-testid="mobile-viewer-bottom-edit-save"]').exists()).toBe(true)
+      await w.get('[data-testid="mobile-viewer-review-edit"]').setValue('改后的词')
+      await w.get('[data-testid="mobile-viewer-bottom-edit-save"]').trigger('click')
+      expect(w.emitted('edit-save')).toEqual([['改后的词']])
+      expect(w.emitted('bottom-action')).toBeFalsy()
+      w.unmount()
+    })
+
+    it('编辑态取消 ⇒ 退出编辑态，不 emit edit-save', async () => {
+      const w = mount(MobileNodeViewer, { props: pendingProps })
+      await w.get('[data-testid="mobile-viewer-bottom-edit"]').trigger('click')
+      await w.get('[data-testid="mobile-viewer-bottom-edit-cancel"]').trigger('click')
+      expect(w.emitted('edit-save')).toBeFalsy()
+      expect(w.find('[data-testid="mobile-viewer-review-edit"]').exists()).toBe(false)
+      w.unmount()
+    })
+  })
 })

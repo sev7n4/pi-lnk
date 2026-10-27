@@ -1219,7 +1219,7 @@ function locateProposeNode() {
  * 传入 nodeId = 画布节点语义，与当前等待的 nodeId 不一致时**安全 no-op**
  * （浮层竞态残留防护：宁可不发，也不把 decline 发到别的节点上）。
  */
-async function cancelProposeForNode(nodeId?: string) {
+async function cancelProposeForNode(nodeId?: string, opts?: { note?: string }) {
   const wait = agent.blockingWait
   if (!wait || wait.toolName !== 'propose_generation') return
   const waitNodeId = resolveProposeCancelNodeId(wait)
@@ -1235,6 +1235,8 @@ async function cancelProposeForNode(nodeId?: string) {
           callId,
           answers: {},
           decision: 'decline',
+          // §17.8：批注锚带回随 decline 透传批注意见（trim 后非空才发）
+          ...(opts?.note?.trim() ? { note: opts.note.trim() } : {}),
         },
         answersPost,
       )

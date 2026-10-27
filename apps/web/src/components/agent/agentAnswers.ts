@@ -25,6 +25,12 @@ export interface SubmitAnswersInput {
    * 缺省（undefined）不发送该键 = 作答语义，老调用方零改动。
    */
   decision?: 'answer' | 'decline'
+  /**
+   * §17.8（2026-10-27）：批注流锚带回随 decline 透传批注意见 —— runtime 塞进
+   * tool_result，提示模型「截图反馈正从对话发来，勿盲目重提议」（防抢跑）。
+   * 无 note 不发送该键（老调用方零改动）。
+   */
+  note?: string
 }
 
 export interface SubmitAnswersResult {
@@ -59,6 +65,7 @@ export async function submitAnswers(
       callId: input.callId,
       answers: input.answers,
       ...(input.decision ? { decision: input.decision } : {}),
+      ...(input.note ? { note: input.note } : {}),
     }),
   })
   // status 进错误信息：出问题时能一眼区分 401（未登录）/ 409（会话忙）/ 5xx，省掉抓包
