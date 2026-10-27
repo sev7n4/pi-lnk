@@ -17,25 +17,27 @@
 import { resolveMobileNodeState } from '@/composables/mobileNodeState'
 
 /**
- * viewer = 全屏查看器；editor = 编辑 sheet；inline = 磁贴内联处理（音频播放）；
+ * viewer = 全屏查看器；editor = 编辑 sheet；
  * none = 无 op + 轻提示（引导长按）。
  *
  * ⭐ 状态门控（2026-10-25 规格 §5.1，缺陷 D1/D3）：本函数此前只看 type+data，
  * 把「空节点」路由到 editor ⇒ 用户单击就进编辑器，违背 P1「单击 = 查看」。
  * 判据顺序（**不可交换**）：
- *   1) 音频 → inline（永远不进查看器/编辑器）
- *   2) 状态优先：generating → none；error 且无旧产物 → none
- *   3) 有产物（pending / confirmed / error+旧产物）→ viewer
- *   4) 其余（empty）→ none
+ *   1) 状态优先：generating → none；error 且无旧产物 → none
+ *   2) 有产物（pending / confirmed / error+旧产物）→ viewer
+ *   3) 其余（empty）→ none
+ *
+ * ⚠️ 2026-10-27（D2 修订，真机走查④）：音频不再早退 'inline'——音频与其他
+ *    类型走同一状态门控（有产物 → 波形查看器）。原「音频永不进查看器」与
+ *    §4.3 音频标注承诺矛盾；磁贴内联播放保留（走播放按钮，非 tap）。
  */
-export type MobileNodeTapIntent = 'viewer' | 'editor' | 'inline' | 'none'
+export type MobileNodeTapIntent = 'viewer' | 'editor' | 'none'
 
 export function resolveMobileNodeTapIntent(node: {
   type: string
   data?: Record<string, unknown> | null
 }): MobileNodeTapIntent {
   const data = node.data ?? {}
-  if (node.type === 'audio') return 'inline'
 
   const state = resolveMobileNodeState({ type: node.type, data })
 

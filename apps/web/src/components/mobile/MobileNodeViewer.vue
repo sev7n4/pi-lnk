@@ -3,18 +3,24 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import { sameOriginApiMediaUrl } from '@/services/media-url'
 import { composeAnnotatedImage, type AnnotateMark } from './annotate/composeAnnotatedImage'
 import { useTextToSpeech } from '@/composables/useTextToSpeech'
+import { useNodeWaveform } from '@/composables/useNodeWaveform'
+import { formatMediaDuration } from '@/utils/mediaInfoFormat'
+import MobileNodeWaveform from './MobileNodeWaveform.vue'
 
 /**
  * 全屏查看器（D2 · 2026-10-25 规格 §6.2 / §4.1 P3）
  *
  * ⭐ **两条退出通道**（P3「全屏层必须可退」）：
  *   ① 右上角 **X**（内联 SVG，44px 触控目标）
- *   ② **下滑关闭**（位移 > 100px）
- *   且**退出即停**——视频 `pause()`、朗读停止（后续任务扩展）。
+ *   ② **下滑关闭**（下拉 > 100px；⭐ 2026-10-27 走查③加仲裁规则：
+ *      只认下拉（上滑永不关闭——旧实现方向写反成上滑关）+
+ *      滚动守卫（可滚动容器 scrollTop>0 时一律不触发））
+ *   且**退出即停**——视频 `pause()`、音频 `pause()`、朗读停止。
  *
- * ⚠️ **D2 契约变更**：props `type` 收窄为 `'image' | 'video' | 'text'`，
- *   **删掉 `audio`** —— 音频永不进查看器（磁贴内联播放，§6.2 音频例外），
- *   留着就是个死分支（未来有人按契约调它必得空白屏）。
+ * ⚠️ **D2 修订（2026-10-27 真机走查④）**：恢复 **audio** 分支——
+ *   不是恢复死分支，而是**正经的音频波形查看器**（全屏波形 + 播放控制 +
+ *   可拖进度 + 圈选标注，§4.3 音频底图 = 波形图）。原「音频永不进查看器」
+ *   使 §4.3 的音频标注承诺没有全屏载体，真机实证后修订（§14 拍板 D）。
  *
  * ⚠️ **§4.11.5 图标纪律**：原左上 `‹` 是 U+2039 **文本字符**（细笔画、
  *   形态随字重不稳 ⇒ 识别失败）⇒ 改为内联 SVG（照抄 `MobileSheet.vue`
@@ -22,10 +28,11 @@ import { useTextToSpeech } from '@/composables/useTextToSpeech'
  */
 const props = withDefaults(
   defineProps<{
-    type: 'image' | 'video' | 'text'
+    type: 'image' | 'video' | 'audio' | 'text'
     /**
      * 节点数据全量透传（§4.8 审核内容层：pending 时读 status / prompt /
-     * imageModel / imageAspect / imageResolution 渲染提议内容层）。
+     * imageModel / imageAspect / imageResolution 渲染提议内容层；
+     * D2 修订：audio 分支读 url）。
      */
     data?: {
       url?: string
@@ -260,6 +267,30 @@ async function captureBaseImage(): Promise<{ image: CanvasImageSource; width: nu
     ctx.drawImage(video, 0, 0, w, h)
     return { image: c, width: w, height: h }
   }
+  if (type === 'audio') {
+    // 底图 = 波形图（§4.3）：显示组件是 SVG 不可 drawImage ⇒ 用同一 peaks
+    // 真源画一份 canvas。⭐ 评审 I1：**只认真实 peaks**（waveSource==='real'）——
+    // 占位波形是确定性假数据（nodeId 种子），跨域无 CORS / 文件过大时把它合成进
+    // 标注图 = 给 agent 一张与音频无关的假波形，违反「诚实降级，不静默失败」。
+    if (waveSource.value !== 'real') return null
+    const p = wavePeaks.value
+    if (!p.length || !p.some((v) => v > 0)) return null
+    const barW = 4
+    const gap = 2
+    const h = 160
+    const w = Math.max(320, p.length * (barW + gap))
+    const c = document.createElement('canvas')
+    c.width = w
+    c.height = h
+    const ctx = c.getContext('2d')
+    if (!ctx) return null
+    ctx.fillStyle = 'rgba(110, 110, 110, 0.9)'
+    p.forEach((peak, i) => {
+      const bh = Math.max(2, peak * (h - 8))
+      ctx.fillRect(i * (barW + gap), (h - bh) / 2, barW, bh)
+    })
+    return { image: c, width: w, height: h }
+  }
   // 图片：⛔ 必须**同源化**后再 drawImage（否则 canvas 被污染 ⇒ toBlob 抛错）
   const url = String((props.data as Record<string, unknown> | undefined)?.url ?? '')
   if (!url) return null
@@ -279,9 +310,68 @@ async function captureBaseImage(): Promise<{ image: CanvasImageSource; width: nu
 /** 视频元素引用（退出即停用） */
 const videoRef = ref<HTMLVideoElement | null>(null)
 
-/** 下滑手势：起始 Y 与当前 Y */
+/* ── 音频波形查看器（D2 修订 2026-10-27，走查④）────────────────────── */
+const audioRef = ref<HTMLAudioElement | null>(null)
+const audioPlaying = ref(false)
+const audioCurrent = ref(0)
+const audioDuration = ref(0)
+/** 波形真源与磁贴同一 composable（peaks 占位/真实 + 模块级 url 去重）。
+ *  ⭐ 评审 I2：仅音频提供 url——图片/视频打开时不发起任何波形解码请求。 */
+const { peaks: wavePeaks, source: waveSource, loading: waveLoading } = useNodeWaveform({
+  nodeId: () => (props.type === 'audio' ? props.data?.url : undefined),
+  url: () => (props.type === 'audio' ? props.data?.url : undefined),
+})
+
+function toggleAudioPlay() {
+  const el = audioRef.value
+  if (!el) return
+  if (audioPlaying.value) {
+    el.pause()
+    return
+  }
+  void el.play().catch(() => {
+    /* 自动播放策略拦截：用户再点一次即可，不静默失败 */
+  })
+}
+
+function onAudioTime() {
+  audioCurrent.value = audioRef.value?.currentTime ?? 0
+}
+
+function onAudioMeta() {
+  const d = audioRef.value?.duration
+  if (d != null && Number.isFinite(d)) audioDuration.value = d
+}
+
+function onAudioSeek(e: Event) {
+  const el = audioRef.value
+  const v = Number((e.target as HTMLInputElement).value)
+  if (el && Number.isFinite(v)) el.currentTime = v
+}
+
+const audioTimeLabel = computed(
+  () => `${formatMediaDuration(audioCurrent.value) ?? '0:00'} / ${formatMediaDuration(audioDuration.value) ?? '--:--'}`,
+)
+
+/* ── 视频倍速循环（走查⑤ · W-32：进度条用原生 controls，倍速按钮补齐）── */
+const PLAYBACK_RATES = [1, 1.5, 2, 0.5] as const
+const rateIdx = ref(0)
+const videoRate = computed(() => PLAYBACK_RATES[rateIdx.value]!)
+const videoRateLabel = computed(() => `${videoRate.value}x`)
+
+function cycleVideoRate() {
+  rateIdx.value = (rateIdx.value + 1) % PLAYBACK_RATES.length
+  const el = videoRef.value
+  if (el) el.playbackRate = videoRate.value
+}
+
+/** 可滚动内容容器（文本阅读器等）—— 滚动守卫的真源（§6.2 退出表仲裁规则） */
+const readerRef = ref<HTMLElement | null>(null)
+
+/** 下滑手势：起始 Y 与当前 Y；起始时滚动容器的 scrollTop（守卫用） */
 const touchStartY = ref(0)
 const touchCurrentY = ref(0)
+const touchStartScrollTop = ref(0)
 
 /** 下滑关闭阈值（px）—— 超过即视为"往下滑关闭" */
 const SWIPE_CLOSE_THRESHOLD = 100
@@ -289,27 +379,55 @@ const SWIPE_CLOSE_THRESHOLD = 100
 /** 统一退出入口：先停播放，再 emit close */
 function requestClose() {
   videoRef.value?.pause()
+  audioRef.value?.pause()
   tts.stop()
   ttsSpeaking.value = false
   emit('close')
 }
 
 function onTouchStart(e: TouchEvent) {
+  // ⭐ 评审 C1：标注态画笔手势不参与关闭判定——任何 >100px 的圈选笔画
+  // 都不得关掉查看器（否则 onInkEnd 的异步合成还没 emit，节点已被清空，标注静默丢失）。
+  if (annotating.value) return
   const y = e.touches?.[0]?.clientY ?? 0
   touchStartY.value = y
   touchCurrentY.value = y
+  // ⭐ 滚动守卫（2026-10-27 走查③）：touchstart 时记下滚动位置，
+  // 只有从顶部（scrollTop ≤ 0）开始的手势才允许累计成「下滑关闭」；
+  // 阅读器滚动途中一律不触发（长文误关根因之二）。
+  touchStartScrollTop.value = readerRef.value?.scrollTop ?? 0
 }
 
 function onTouchMove(e: TouchEvent) {
+  // ⭐ 评审 I5：多点触控（捏合/换指）时 touches[0] 身份会跳变 ⇒ 位移不可信，
+  // 冻结本次手势（当前点回拨到起点），second finger 抬起后重新开始累计。
+  if (e.touches.length > 1) {
+    touchCurrentY.value = touchStartY.value
+    return
+  }
   touchCurrentY.value = e.touches?.[0]?.clientY ?? touchCurrentY.value
 }
 
+/** 系统接管手势（来电/通知）⇒ 只复位，不触发关闭（评审 M6） */
+function onTouchCancel() {
+  touchStartY.value = 0
+  touchCurrentY.value = 0
+  touchStartScrollTop.value = 0
+}
+
 function onTouchEnd() {
-  if (touchStartY.value - touchCurrentY.value > SWIPE_CLOSE_THRESHOLD) {
+  // ⭐ 评审 C1：标注态（含 onInkEnd 异步合成期间）不触发关闭
+  if (annotating.value) return
+  // ⭐ 方向判据（2026-10-27 走查③修）：currentY − startY > 0 才是「下拉」。
+  // 旧实现 startY − currentY > 100 = **上滑**关闭（方向写反），长文上滑滚动
+  // 正中判据 ⇒ 读几行就回到画布。上滑永不关闭（iOS Photos 惯例：下滑关）。
+  const deltaY = touchCurrentY.value - touchStartY.value
+  if (deltaY > SWIPE_CLOSE_THRESHOLD && touchStartScrollTop.value <= 0) {
     requestClose()
   }
   touchStartY.value = 0
   touchCurrentY.value = 0
+  touchStartScrollTop.value = 0
 }
 
 defineExpose({ videoRef })
@@ -324,6 +442,7 @@ defineExpose({ videoRef })
     @touchstart.passive="onTouchStart"
     @touchmove.passive="onTouchMove"
     @touchend="onTouchEnd"
+    @touchcancel="onTouchCancel"
   >
     <!-- 右上角 X（内联 SVG；⛔ 禁文本字符当图标，§4.11.5） -->
     <button
@@ -407,7 +526,65 @@ defineExpose({ videoRef })
       controls
       class="viewer-media"
     />
-    <div v-else-if="type === 'text'" class="viewer-reader">{{ data?.content }}</div>
+    <!-- 倍速循环（走查⑤ · W-32）：仅视频；进度条用原生 controls 不自制 -->
+    <button
+      v-if="type === 'video'"
+      class="viewer-speed"
+      type="button"
+      :aria-label="`倍速 ${videoRateLabel}`"
+      data-testid="mobile-viewer-speed"
+      @click="cycleVideoRate"
+    >
+      {{ videoRateLabel }}
+    </button>
+    <!-- 音频波形查看器（D2 修订 2026-10-27，走查④）：全屏波形 + 播放控制 + 可拖进度 -->
+    <div v-else-if="type === 'audio'" class="viewer-audio" data-testid="mobile-viewer-audio">
+      <audio
+        ref="audioRef"
+        :src="data?.url"
+        @play="audioPlaying = true"
+        @pause="audioPlaying = false"
+        @timeupdate="onAudioTime"
+        @loadedmetadata="onAudioMeta"
+      />
+      <div class="viewer-audio-wave">
+        <MobileNodeWaveform :peaks="wavePeaks" :source="waveSource" :loading="waveLoading" />
+      </div>
+      <div
+        class="viewer-audio-controls"
+        @touchstart.stop
+        @touchmove.stop
+        @touchend.stop
+        @touchcancel.stop
+      >
+        <button
+          class="viewer-audio-play"
+          type="button"
+          :aria-label="audioPlaying ? '暂停' : '播放'"
+          data-testid="mobile-viewer-audio-play"
+          @click="toggleAudioPlay"
+        >
+          <svg v-if="!audioPlaying" viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+          <svg v-else viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true">
+            <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
+          </svg>
+        </button>
+        <input
+          class="viewer-audio-seek"
+          type="range"
+          min="0"
+          :max="audioDuration || 0"
+          step="0.1"
+          :value="audioCurrent"
+          aria-label="播放进度"
+          @input="onAudioSeek"
+        />
+        <span class="viewer-audio-time">{{ audioTimeLabel }}</span>
+      </div>
+    </div>
+    <div v-else-if="type === 'text'" ref="readerRef" class="viewer-reader">{{ data?.content }}</div>
 
     <!--
       底部主栏（§4.11.6 可达性）：高频动作放**下方拇指区**，顶部只留低频退出类。
@@ -549,6 +726,29 @@ defineExpose({ videoRef })
   -webkit-tap-highlight-color: transparent;
 }
 
+/* 倍速循环按钮（走查⑤）：左下角，与右下「圈选」对称（44px 触控目标） */
+.viewer-speed {
+  position: absolute;
+  left: var(--lnk-space-2);
+  bottom: calc(var(--lnk-space-3) + env(safe-area-inset-bottom, 0px));
+  z-index: 3;
+  display: inline-flex;
+  min-width: var(--lnk-touch-target);
+  height: var(--lnk-touch-target);
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--lnk-space-2);
+  border: none;
+  border-radius: var(--lnk-radius-full);
+  background: var(--lnk-surface-overlay);
+  color: var(--lnk-text-primary);
+  font-size: var(--lnk-text-sm);
+  font-weight: var(--lnk-weight-medium);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
 .viewer-annotate:active {
   background: var(--lnk-pressed-overlay);
 }
@@ -582,6 +782,60 @@ defineExpose({ videoRef })
   color: var(--lnk-text-primary);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* 音频波形查看器（D2 修订 2026-10-27）：波形居中 + 底部控制条 */
+.viewer-audio {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--lnk-space-4);
+  padding: var(--lnk-space-4) var(--lnk-space-4) calc(var(--lnk-space-8) + env(safe-area-inset-bottom));
+}
+
+.viewer-audio-wave {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+}
+
+.viewer-audio-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--lnk-space-3);
+}
+
+.viewer-audio-play {
+  display: inline-flex;
+  width: var(--lnk-touch-target);
+  height: var(--lnk-touch-target);
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border: none;
+  border-radius: var(--lnk-radius-full);
+  background: var(--lnk-accent);
+  color: var(--lnk-accent-on-signature);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.viewer-audio-seek {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--lnk-touch-target);
+  accent-color: var(--lnk-accent);
+}
+
+.viewer-audio-time {
+  flex: none;
+  font-size: var(--lnk-text-sm);
+  color: var(--lnk-text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 /* pending 审核内容层（§4.8 修订）：提示词全文 + 参数只读摘要，可滚动 */

@@ -29,10 +29,13 @@ describe('resolveMobileNodeTapIntent（空态路由）', () => {
     expect(resolveMobileNodeTapIntent({ type: 'text' })).toBe('none')
   })
 
-  it('音频：永远 inline（有 url → 磁贴内联播放；空 url → 也不进编辑器）', () => {
-    expect(resolveMobileNodeTapIntent({ type: 'audio', data: { url: 'https://x/a.mp3' } })).toBe('inline')
-    expect(resolveMobileNodeTapIntent({ type: 'audio', data: {} })).toBe('inline')
-    expect(resolveMobileNodeTapIntent({ type: 'audio' })).toBe('inline')
+  it('音频有 url → viewer（D2 修订 2026-10-27：音频波形查看器，真机走查④）', () => {
+    expect(resolveMobileNodeTapIntent({ type: 'audio', data: { url: 'https://x/a.mp3' } })).toBe('viewer')
+  })
+
+  it('音频空 url → none（empty 状态门控，与其他类型一致）', () => {
+    expect(resolveMobileNodeTapIntent({ type: 'audio', data: {} })).toBe('none')
+    expect(resolveMobileNodeTapIntent({ type: 'audio' })).toBe('none')
   })
 
   it('未知类型 → none（无产物 ⇒ 无 op + 轻提示，不开空白 viewer）', () => {
@@ -69,8 +72,8 @@ describe('resolveMobileNodeTapIntent（状态门控 · D1/D3）', () => {
     ).toBe('viewer')
   })
 
-  it('音频永远 inline（不进查看器、不进编辑器）', () => {
-    expect(resolveMobileNodeTapIntent({ type: 'audio', data: { url: 'https://x/a.mp3' } })).toBe('inline')
-    expect(resolveMobileNodeTapIntent({ type: 'audio', data: { status: 'pending_confirm' } })).toBe('inline')
+  it('音频状态门控与其他类型一致（D2 修订 2026-10-27）：pending → viewer；generating → none', () => {
+    expect(resolveMobileNodeTapIntent({ type: 'audio', data: { status: 'pending_confirm' } })).toBe('viewer')
+    expect(resolveMobileNodeTapIntent({ type: 'audio', data: { status: 'generating' } })).toBe('none')
   })
 })

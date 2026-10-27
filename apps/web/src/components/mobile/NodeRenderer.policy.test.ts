@@ -137,9 +137,12 @@ describe('移动端 tap 路由（状态门控 · D1/D3）', () => {
       expect(openEditor).not.toHaveBeenCalled()
     })
 
-    it('有 url 的音频节点 → 磁贴内联播放，不触发 viewer/editor', async () => {
+    it('有 url 的音频节点 → 走 viewer（2026-10-27 D2 修订：波形查看器；原「内联不进 viewer」拍板已被真机走查推翻）', async () => {
       const { openViewer, openEditor } = await tapNode('audio', { url: 'https://x/a.mp3' })
-      expect(openViewer).not.toHaveBeenCalled()
+      expect(openViewer).toHaveBeenCalledTimes(1)
+      expect(openViewer).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'audio', data: { url: 'https://x/a.mp3' } }),
+      )
       expect(openEditor).not.toHaveBeenCalled()
     })
 
