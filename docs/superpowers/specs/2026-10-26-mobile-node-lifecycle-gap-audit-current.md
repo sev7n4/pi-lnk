@@ -270,3 +270,43 @@ ADR-0013 的 14 项拍板 **12 项完全落地、2 项部分**，跨端组件哲
 
 规格同步：§6.2「磁贴信息构成」三轮拍板改写 + §9 #51 + W-28/W-37 修订 + W-46 新增（原 W-42 让位 §17 系列）。
 测试：nodeMediaInfo 13/13、tile mediaInfo 19/19、footer+tile 12/12 全 GREEN（旧用例「bytes-only 跳过 probe」「名称拼属性行」按新裁决重写）；propose/placeholder 因本机负载 SIGTERM 未跑完（不触及改动路径，os.walk 扫描已证）→ CI 终判。
+
+## §2-L S1 批次（2026-10-27 深夜）——场景1 全文审核层 + G1 磁贴分级，已实现
+
+**范围**：§2-G S1-1~S1-7 中未被 M5（#621）提前覆盖的部分 + §2-A G1 三件。实现前先摸清 master 现状：
+
+| S1 任务 | master 现状（实现前核查） | 本批动作 |
+|---|---|---|
+| S1-3 文本→canvas 渲染器 | ✅ **已被 M5 提前实现**（`annotate/renderReviewBaseImage.ts` + 测试，§9 #49） | 扩展 `skipLines`（R-17 滚动感知：全文层长文滚动到哪圈哪，按 scrollTop/行高折算）+ 3 用例 |
+| S1-4 全文层组件 | ❌ 不存在（M5 只做了 pending 查看器内审核层） | 新增 `MobileNodePromptReviewSheet.vue`（消费 S1-2 共享壳）+ 9 用例（含 V-11 断言：无确认/拒绝、无参数控件、不读 `data.content`） |
+| S1-2 共享阅读面 | ❌ 不存在（§4.8.1「后续 PR」） | 新增 `MobileReadingSurface.vue`（滚动/X/双向关闭同判据/TTS 参数化 `speechText`/gestureLocked）+ 9 用例；**viewer reader/review 分支迁入留账**随下次 viewer 改动上收（本仓「随改动上收」惯例，§4.8.1 迁移不强行并入本批） |
+| S1-1 磁贴 chips（G1） | ❌ 无 chips；generating 短路掉旧媒体（闪空） | `MobileNodeTile.vue`：有产物态 chips ×4 分支 + 改词重生成 = 淡化（opacity .4 + 灰度）+ 「重新生成中」角标（含计时）+ chips；首生成骨架不变；+10 用例 |
+| S1-5 接线 | ❌ | 磁贴 chips → 新注入键 `MOBILE_NODE_OPEN_PROMPT_REVIEW_KEY`（`canvasNodeActions.ts`）→ NodeRenderer 转发 → CanvasPage `mobilePromptReviewNode` → 壳层渲染全文层；查看器**提示词摘要条**（§4.7.1 入口②，confirmed/error 一行截断）|
+| S1-6 标注接线 | 底图渲染器在（S1-3） | 全文层内批注复用 M5 同款 ink/capsule/合成管线；⚓ 经 `handleMobileAnnotateAnchor`（**参数化** node 来源 + close 回调，M5 原路径零破坏）走 §5.3 管线 |
+| S1-7 守卫 | — | V-11 组件断言（sheet 测试）+ 壳层集成 4 用例 + NodeRenderer 注入转发 1 用例；vue-tsc 绿；令牌守卫四件套 124/124 |
+
+**Rulings（本批）**：
+1. **pending 不渲染 chips、不走独立全文层**——pending 全文入口 = §16-④ 点按查看全文 → 查看器审核内容层（M5 批注/编辑/拒绝语义）；独立全文层若收 pending 会造**第二个 decline 结算面**（ADR-0011 单一确认面）。规格 §4.7/§4.7.1 已补实施记录。
+2. **「含 N 处局部反馈」挂账 M3**——全仓无局部反馈计数字段，引入需新数据契约；W-16 可见部分（淡化+角标+chips）已落地。规格 §4.7 实施记录④。
+3. **W-12 P2 裁决**：规格侧修订 W-12 为「意见预填输入框（不进引用芯片）」——与 §17 v2 拍板③（胶囊意见=正文预填）同语义统一，实现现状保留。W-12 闭环。
+4. **§4.11.8 豁免类显式化**（P0-2）：全屏媒体查看器/文本阅读面/全屏表单/既有全屏面板三类豁免 + 豁免纪律（P3/V-5/V-6/reduce-motion）。V-3 白名单转有据豁免。W-2 措辞与 §4.11.3 已在早前批次闭环，无残留。
+
+**测试**：磁贴 11 文件 102/102 · viewer/policy/壳层 89/89 · 共享面+全文层 18/18 · 渲染器+渲染转发 10/10 · 令牌守卫 124/124；vue-tsc -b 绿。
+**⏳ 待真机复测**：W-26/W-27（全文层圈选带回）、W-16 可见部分（重生成淡化+角标）、chips 入口四类可达。
+
+## §2-M S2 批次（2026-10-27 深夜）——W-5 双指缩放 + V-7 撤销 toast 组件化 + S1 CI 修复，已实现
+
+| 任务 | 内容 | 落点 |
+|---|---|---|
+| W-5 双指缩放（§10.3 / §9 #31 剩余部分） | 图片双指捏合缩放 1~4x + 放大态单指平移（`clampPan` = ±(scale−1)·半尺寸，不拖出白边）+ 缩回复位 translate(0,0)；消费的手势（缩放/平移）不触发下滑关闭；换 url 复位 | `MobileNodeViewer.vue`（imgScale/imgTx/imgTy/pinchState + `imgTransformStyle`）+ 7 用例 |
+| V-7 撤销 toast 组件化（§10.3 / §9 #34） | toast 抽独立展示组件 `MobileUndoToast`（props message + emit action，含 reduce-motion 分支）；计时与快照恢复逻辑留页面层；端到端断言「删除 → 点撤销 ⇒ 节点真的恢复」 | `MobileUndoToast.vue` + `.test.ts`（新）+ `CanvasPage.vue` 接线 + 5 用例 |
+| S1 CI 红 5 处修复 | ①lightState 旧断言按 G1 重写（改词重生成=淡化+角标 / 首生成骨架）；②V-3 守卫白名单补 2 新组件（§4.11.8 有据豁免）；③sheet 批注断言**环境无关**（CI 装 canvas 包 ⇒ 合成走 marks 路径 `degraded:false`，纯 jsdom 才降级——勿假设必降级）；④`CanvasPage.mobileAnnotateRef.test.ts` 锚改参数化后函数体（`close = closeMobileViewer` 默认参数 + `close()` 收尾） | 见各测试文件 |
+
+**本批新坑（记死）**：
+- jsdom `img.clientWidth` 恒 0（getter 返 0 非 undefined，`?? 320` 不兜底）⇒ `clampPan` 归零 ⇒ 测试用 `Object.defineProperty(img, 'clientWidth', { value, configurable: true })` stub 实例尺寸。
+- REST push v4 多提交链：父校验改**链式**（每提交 parent = 前一提交）；S1 重建对象与上次推送 sha 逐字节一致（Git 内容寻址复现 894b7332）= 强零夹带证明。
+
+**测试**：批 1（annotateRef 11 + sheet 9 + viewer 53）73/73；批 2（guards + lightState 12 + promptChip 10）32/32；vue-tsc -b 绿。
+**交付**：commit 07a5fbe2 → REST push v4（FINAL tree MATCH，分支 head 6a859e4e）→ PR #624 更新。
+**规格回写**：§9 #31/#34 已实现注 + 新增 #57/#58；§10.3 W-5 行注（代码已实现，待真机复测）。
+**⏳ 待真机复测**：W-5（缩放/平移手感）、W-20/V-7 链、W-26/W-27、W-16 可见部分、chips 四类可达。

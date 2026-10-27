@@ -77,6 +77,12 @@ const emit = defineEmits<{
    * —— 不开查看器、不弹 Menu。⛔ 只在选择模式下发；常态轻点仍走 `tap`。
    */
   (e: 'toggle-select'): void
+  /**
+   * G1（§4.7 / §4.7.1，2026-10-27 S1 批次）：提示词 chips 单击 ⇒ 打开
+   * **提示词全文审核层**（`MobileNodePromptReviewSheet`，独立于媒体查看器）。
+   * ⛔ 不复用 `tap`（那会开查看器/编辑器）—— 全文层是独立契约位。
+   */
+  (e: 'open-prompt-review'): void
 }>()
 const cfg = computed(() => nodeTypeConfigs[props.type])
 
@@ -175,6 +181,38 @@ const proposeParams = computed(() => {
 const showPropose = computed(() => {
   if (state.value !== 'pending') return false
   return String(props.data?.prompt ?? '').trim().length > 0
+})
+
+/**
+ * 有产物判据（G1，§4.7 表「有旧产物」列的单一真源）：媒体看 url、文本看 content。
+ * generating 淡化与提示词 chips 共用，不各写一遍。
+ */
+const hasProduct = computed(() =>
+  props.type === 'text'
+    ? Boolean(String(props.data?.content ?? '').trim())
+    : Boolean(String(props.data?.url ?? '').trim()),
+)
+
+/**
+ * G1（§4.7 表第 3 行，2026-10-27）：**改词 / 反馈重生成**（generating 且有旧产物）
+ * ⇒ 旧产物**淡化保留** + 「重新生成中」角标 + 提示词 chips —— 保留视觉锚点不闪空
+ * （旧实现直接短路掉所有媒体分支 = 规格明文要避免的「闪空」）。首生成（无旧产物）
+ * 仍走骨架轻态。
+ */
+const isRegenerating = computed(() => state.value === 'generating' && hasProduct.value)
+
+/**
+ * G1（§4.7 原则行）：有产物态（confirmed / error / 改词重生成）提示词降级为
+ * **一行可点 chips**，单击打开全文层（§4.7.1）。
+ *
+ * ⭐ Ruling（2026-10-27）：**pending 不渲染 chips** —— pending 的全文入口已由
+ * §16-④ 拍板（磁贴「点按查看全文」引导 → 查看器审核内容层，M5 批注/编辑语义），
+ * chips 会制造第二条全文入口与「单一确认面」纪律打架；empty 无产物无 chips。
+ */
+const showPromptChip = computed(() => {
+  if (!String(props.data?.prompt ?? '').trim()) return false
+  if (!hasProduct.value) return false
+  return state.value === 'confirmed' || state.value === 'error' || isRegenerating.value
 })
 
 /**
@@ -485,9 +523,11 @@ function handleTextTap() {
     <!--
       R3-T3 生成中轻态：骨架 + 不确定态进度环 + 计时。
       ⛔ 不显示任何百分比（全仓无生成进度字段，假造比不做更糟）。
-      生成中不渲染旧媒体（用户看到的是「正在重做」而非旧图）。
+      ⭐ G1（§4.7 表第 3 行，2026-10-27）：仅**首生成**（无旧产物）走骨架；
+      改词/反馈重生成有旧产物 ⇒ isRegenerating（旧产物淡化 + 「重新生成中」角标
+      + chips），落到下方媒体/文本分支渲染——不再「生成中不渲染旧媒体」闪空。
     -->
-    <div v-if="state === 'generating'" class="mobile-node-generating">
+    <div v-if="state === 'generating' && !isRegenerating" class="mobile-node-generating">
       <span class="mobile-node-spinner" aria-hidden="true" />
       <span class="mobile-node-generating-label">生成中</span>
       <span class="mobile-node-elapsed">{{ elapsedText }}</span>
@@ -528,6 +568,19 @@ function handleTextTap() {
       <p v-if="attributeLine" class="mobile-node-media-info" data-testid="mobile-node-media-info">
         {{ attributeLine }}
       </p>
+      <!-- G1（§4.7）：提示词 chips —— 单击打开全文审核层（§4.7.1） -->
+      <button
+        v-if="showPromptChip"
+        class="mobile-node-prompt-chip"
+        type="button"
+        data-testid="mobile-node-prompt-chip"
+        @click.stop="emit('open-prompt-review')"
+      >
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M4 5h16M4 5v14M20 5v14M4 19h16" stroke-linecap="round" />
+        </svg>
+        提示词
+      </button>
     </div>
     <div v-else-if="type === 'video' && data?.url" class="mobile-node-media-box">
       <!-- 三轮走查①：左上角头部 = 类型 · 名字（PC 标题条移动端对位） -->
@@ -554,6 +607,19 @@ function handleTextTap() {
       <p v-if="attributeLine" class="mobile-node-media-info" data-testid="mobile-node-media-info">
         {{ attributeLine }}
       </p>
+      <!-- G1（§4.7）：提示词 chips —— 单击打开全文审核层（§4.7.1） -->
+      <button
+        v-if="showPromptChip"
+        class="mobile-node-prompt-chip"
+        type="button"
+        data-testid="mobile-node-prompt-chip"
+        @click.stop="emit('open-prompt-review')"
+      >
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M4 5h16M4 5v14M20 5v14M4 19h16" stroke-linecap="round" />
+        </svg>
+        提示词
+      </button>
     </div>
     <!--
       ⭐ 2026-10-27 真机回归②修复：音频分支加 `data?.url` 门控（图片/视频同款）——
@@ -577,6 +643,19 @@ function handleTextTap() {
       <p v-if="attributeLine" class="mobile-node-media-info" data-testid="mobile-node-media-info">
         {{ attributeLine }}
       </p>
+      <!-- G1（§4.7）：音频同样可达（§4.7.1 入口①「四类节点统一可达」） -->
+      <button
+        v-if="showPromptChip"
+        class="mobile-node-prompt-chip"
+        type="button"
+        data-testid="mobile-node-prompt-chip"
+        @click.stop="emit('open-prompt-review')"
+      >
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M4 5h16M4 5v14M20 5v14M4 19h16" stroke-linecap="round" />
+        </svg>
+        提示词
+      </button>
     </div>
     <div v-else-if="type === 'text'" class="mobile-node-text-wrap">
       <!-- 三轮走查①：左上角头部 = 类型 · 名字（PC 标题条移动端对位） -->
@@ -590,6 +669,19 @@ function handleTextTap() {
       <p v-if="textAttrLine" class="mobile-node-media-info" data-testid="mobile-node-text-info">
         {{ textAttrLine }}
       </p>
+      <!-- G1（§4.7）：文本节点有提示词时同样可达全文层 -->
+      <button
+        v-if="showPromptChip"
+        class="mobile-node-prompt-chip"
+        type="button"
+        data-testid="mobile-node-prompt-chip"
+        @click.stop="emit('open-prompt-review')"
+      >
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M4 5h16M4 5v14M20 5v14M4 19h16" stroke-linecap="round" />
+        </svg>
+        提示词
+      </button>
     </div>
     <!--
       空图 / 空视频的类型占位（2026-10-23 真机走查）：
@@ -646,6 +738,20 @@ function handleTextTap() {
     -->
     <span v-if="hint" class="mobile-node-hint" data-testid="mobile-node-hint" role="status">
       {{ hint }}
+    </span>
+
+    <!--
+      G1：「重新生成中」角标（改词重生成有旧产物时叠加在产物上方，保留视觉锚点）。
+      ⭐ 独立 v-if 放在主渲染链**之后**——插进 v-if/v-else-if 链中间会断链
+      （后续 v-else-if 会挂到本节点上，媒体分支被吞——本轮实测教训）。
+    -->
+    <span
+      v-if="isRegenerating"
+      class="mobile-node-regen-badge"
+      data-testid="mobile-node-regen-badge"
+    >
+      <span class="mobile-node-spinner mobile-node-spinner--sm" aria-hidden="true" />
+      重新生成中{{ elapsedText ? ` · ${elapsedText}` : '' }}
     </span>
 
     <!--
@@ -860,6 +966,65 @@ function handleTextTap() {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ── G1（§4.7 / §4.7.1，2026-10-27 S1 批次）────────────────────────────── */
+
+/* 提示词 chips：有产物态的一行可点回看入口 —— 与 header/media-info 同视觉语言
+   （surface-base 承载条 + 次级色），accent 只做点睛（墨流纪律：品牌色不铺面）。
+   ⛔ 令牌纪律：只用 L2 成对令牌，不引 hex / 不用 accent-text（签名面专用）。 */
+.mobile-node-prompt-chip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin: 0;
+  padding: 3px 6px 4px;
+  border: none;
+  background: var(--lnk-surface-base);
+  color: var(--lnk-text-secondary);
+  font-size: var(--lnk-text-2xs);
+  line-height: var(--lnk-lh-2xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.mobile-node-prompt-chip:active {
+  color: var(--lnk-text-primary);
+  background: var(--lnk-surface-overlay);
+}
+
+/* 「重新生成中」角标：叠加在旧产物上方（右上），保留视觉锚点不闪空（§4.7 表第 3 行） */
+.mobile-node-regen-badge {
+  position: absolute;
+  top: var(--lnk-space-2);
+  right: var(--lnk-space-2);
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: var(--lnk-radius-full);
+  background: var(--lnk-surface-raised);
+  color: var(--lnk-text-secondary);
+  font-size: var(--lnk-text-2xs);
+  line-height: var(--lnk-lh-2xs);
+  box-shadow: 0 0 0 1px var(--lnk-border-subtle);
+  pointer-events: none;
+}
+
+.mobile-node-spinner--sm {
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
+}
+
+/* 旧产物淡化（§4.7「旧产物淡化保留」）：首生成无媒体渲染，本组规则自然不命中 */
+.mobile-node-tile[data-state='generating'] .mobile-node-media,
+.mobile-node-tile[data-state='generating'] .mobile-audio-wave,
+.mobile-node-tile[data-state='generating'] .mobile-node-text {
+  opacity: 0.4;
+  filter: grayscale(0.5);
 }
 
 /* 轻提示（P1「单击 = 查看」）：tap 无 op 时的就地引导（1.5s 自动消失）

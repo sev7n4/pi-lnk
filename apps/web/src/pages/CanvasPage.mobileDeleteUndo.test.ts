@@ -3,6 +3,9 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const SRC = readFileSync(join(__dirname, 'CanvasPage.vue'), 'utf-8')
+// ⭐ 2026-10-27 S2（V-7）：toast 抽为 `MobileUndoToast` 组件——样式/标记迁到组件源，
+// 页面源守**接线**（组件引用 + action 绑定 + undo 调用），组件源守**呈现判据**。
+const TOAST_SRC = readFileSync(join(__dirname, '../components/mobile/MobileUndoToast.vue'), 'utf-8')
 
 /**
  * D5（2026-10-25 规格 §4.11.10）：删除走**撤销优先**。
@@ -29,13 +32,17 @@ describe('删除走撤销优先（D5 / §4.11.10）', () => {
     expect(SRC).toMatch(/canvasUndo\.undo\(/)
   })
 
-  it('可撤销提示：存在带「撤销」action 的提示层（单一 action，MD3 R5.16）', () => {
-    expect(SRC).toMatch(/mobile-undo-toast/)
-    expect(SRC).toMatch(/撤销/)
+  it('可撤销提示：页面接线 MobileUndoToast（@action=undoLastDelete），组件层含「撤销」单一 action', () => {
+    // 页面：组件被引用且 action 绑到 undoLastDelete（接线契约）
+    expect(SRC).toMatch(/<MobileUndoToast/)
+    expect(SRC).toMatch(/@action="undoLastDelete"/)
+    // 组件：标记 + 单一「撤销」action（MD3 R5.16）
+    expect(TOAST_SRC).toMatch(/mobile-undo-toast/)
+    expect(TOAST_SRC).toMatch(/撤销/)
   })
 
   it('⛔ 撤销提示不得用 --neo-* 旧令牌（G-15：只消费 --lnk-*）', () => {
-    const m = /\.mobile-undo-toast\s*\{[\s\S]*?\n\}/.exec(SRC)
+    const m = /\.mobile-undo-toast\s*\{[\s\S]*?\n\}/.exec(TOAST_SRC)
     expect(m).not.toBeNull()
     expect(m![0]).not.toContain('--neo-')
   })

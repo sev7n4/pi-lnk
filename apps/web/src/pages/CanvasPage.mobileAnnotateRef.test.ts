@@ -17,9 +17,11 @@ const FN_BODY =
 
 /**
  * 取 `handleMobileViewerEditSave` 的函数体（§17-④ 编辑保存）。
+ * ⭐ S1（§4.7.1）：关闭动作已参数化（`close = closeMobileViewer` 缺省；全文层传
+ *   `closePromptReview`）⇒ 函数体以 `close()\n}` 收尾，锚到该确定行。
  */
 const EDIT_SAVE_BODY =
-  /function handleMobileViewerEditSave\([\s\S]*?closeMobileViewer\(\)\s*\n\s*\}/.exec(SRC)?.[0] ?? ''
+  /function handleMobileViewerEditSave\([\s\S]*?close\(\)\s*\n\s*\}/.exec(SRC)?.[0] ?? ''
 
 /**
  * 批注锚带回 → decline 结算 + composer 引用（§17 v2 / §17.8 · 2026-10-27）。
@@ -85,8 +87,9 @@ describe('查看器编辑保存 → 覆盖磁贴（§17-④）', () => {
     expect(EDIT_SAVE_BODY).not.toContain('confirmProposeWait')
   })
 
-  it('保存后关查看器回画布（回画布再确认）', () => {
-    expect(EDIT_SAVE_BODY).toContain('closeMobileViewer')
+  it('保存后关来源层回画布（缺省 = 查看器；S1 全文层传 closePromptReview）', () => {
+    expect(EDIT_SAVE_BODY).toContain('close: () => void = closeMobileViewer')
+    expect(EDIT_SAVE_BODY).toContain('close()')
   })
 })
 

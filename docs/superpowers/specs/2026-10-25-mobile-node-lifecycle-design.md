@@ -277,6 +277,8 @@ flowchart LR
 
 ⇒ 磁贴内容**确实会更新**，并完整贯穿 `confirmed → generating → (pending) → confirmed` 状态链。
 
+> ⭐ **实施记录（2026-10-27 S1 批次，PR 待链）**：① 有产物态（confirmed / error / 改词重生成）提示词 chips 已落地（`mobile-node-prompt-chip`，四类节点统一，单击 → §4.7.1 全文层）；② 改词重生成（generating 且有旧产物）= 旧产物**淡化保留**（opacity .4 + 灰度）+ 「重新生成中」角标（含计时）+ chips——旧「生成中不渲染旧媒体」闪空路径已删；③ **pending 不渲染 chips**（Ruling：pending 全文入口 = §16-④「点按查看全文」→ 查看器审核内容层，单一入口，避免与 §16 拍板双引导）。④ 「含 N 处局部反馈」标记**挂账 M3**：全仓无局部反馈计数字段（W-16 的可见部分 = 淡化 + 角标已落地），引入 N 需新数据契约，按「提示词迭代历史属 M3」同级处理。
+
 **提示词迭代历史**（v1 / v2 … 与产物版本对比回滚）属 M3 可选，仅记录，不进 M1 / M2。
 
 #### 4.7.1 提示词全文审核层（场景1 补齐，2026-10-26 三轮审视新增）
@@ -315,6 +317,8 @@ flowchart LR
 - **实现判据**：抽「全屏文本阅读面」为共享结构（`MobileNodeViewer` text 分支与 `MobileNodePromptReviewSheet` 共用），**交互层零分叉、数据层显式注入**；禁止把提示词层做成 `MobileNodeViewer` 的一个 `type`（那会把「产物查看器」和「提示词审核层」两个语义位焊死在一个组件上，重演 D2 的 audio 死分支教训）。
 
 > ⚠️ **2026-10-27 用户评审修订（§17 v2）**：本小节「三个动作」表与「返回原决策语境再表态」被 §17 v2 **部分取代**——① 三动作收敛为底栏【批注】【编辑】两键（单一确认面结论强化：全文层彻底无确认/拒绝，且**批注本身 = 拒绝语义**）；② **批注（圈选 → 胶囊意见框 → ⚓）= 拒绝生成流程**，⚓ 落下即标拒绝（不再「返回决策语境再表态」）；③ **编辑 = 编辑态就地改字**（不再弹轻量编辑器 sheet），保存覆盖磁贴提示词、走确认生成流程。载体（共享全屏文本阅读面 / `MobileNodePromptReviewSheet`）、数据层分离、「文本 → canvas 渲染器」需求全部保留并升格为 §17 的实施基础。
+
+> ⭐ **实施记录（2026-10-27 S1 批次）**：全文层已落地 = `MobileNodePromptReviewSheet.vue`，消费共享壳 `MobileReadingSurface.vue`（§4.8.1）。**入口现状**：① 磁贴 chips（confirmed / error / 改词重生成，§4.7 实施记录③）；② confirmed/error 查看器内**提示词摘要条**（一行截断，单击打开全文层）。**pending 不走本层**（Ruling）：pending 全文审核 = 磁贴 tap → 查看器审核内容层（§16-④ + M5 批注/编辑/拒绝语义），本层若再收 pending 会造出**第二个 decline 结算面**，违反 ADR-0011 单一确认面。批注底图 = `renderReviewBaseImage`（R-17 滚动感知：`skipLines` 按 scrollTop 折算，滚动到哪圈哪）。V-11 组件层断言 = `MobileNodePromptReviewSheet.test.ts`（无确认/拒绝按钮 + 无参数控件 + 不读 `data.content`）；真机走查 W-26 / W-27 待复测勾。
 
 ### 4.8 决定七：pending（待确认）态专项
 
@@ -586,6 +590,8 @@ flowchart TD
 | **圆角刻度** | 用 `--lnk-radius-*`，禁魔法值 | ⚠️ `MobileSheet` 硬编码 `20px`（应 `--lnk-radius-2xl`=24px 或新增 sheet 令牌）；`ProfilePane` 硬编码 `14px` ⇒ 属既有债，本规格只约束**新增/改动面** |
 
 ⇒ **本节产出一条硬判据**：**移动端浮层一律走 `MobileSheet` 基座；不得新写第二套 sheet 皮肤。**
+
+> ⭐ **豁免类显式化（2026-10-27 P0 收尾，关闭 V-3「临时白名单挂账」张力）**：以下三类**全屏非选择型浮层**显式豁免于「走 MobileSheet 基座」（基座的价值在 scrim + 把手 + 拖拽关，全屏沉浸形态没有 scrim 可撕、没有把手可拖，套基座是纯开销）：① **全屏媒体查看器**（`MobileNodeViewer`）及其衍生的**全屏文本阅读面**（`MobileReadingSurface` / `MobileNodePromptReviewSheet`）；② **全屏表单输入面**（`MobileNodeEditorSheet`）；③ 既有全屏面板（`ProfilePane` / `DiscoverPane` / `MobileCanvasShell` 内嵌 pane）。豁免类的纪律 = 仍须满足 P3（X + 手势可退）、§4.11.5（内联 SVG 图标）、V-5（44px 触控目标）、reduce-motion（无过渡动画即天然合规，加过渡必须补 `prefers-reduced-motion` 分支）。V-3 守卫白名单由「临时挂账」转为**有据豁免**。
 
 #### 4.11.9 Android / Material 3 对等表（双端一致）
 
@@ -959,10 +965,10 @@ flowchart TD
 | 28 | `apps/web/src/components/mobile/MobileNodeTile.vue` | **改（§4.7 G1）** | **G1** | 提示词**分级显示**：empty/撰写 = 提示词填满磁贴（主内容）；有产物态 = 降级为**一行可点的「提示词」chips**，单击在**查看器内展开全文**。⭐ 本行系 2026-10-26 对账**补列**（原 §9 漏列 ⇒ PR #600 未实现） |
 | 29 | `apps/web/src/components/mobile/MobileNodeTile.vue` | **改（§4.7 G1）** | **G1** | generating（改词重生成）态：**旧产物淡化保留**（不闪空）+「**重新生成中**」角标 + chips 可见；局部反馈时附加「含 N 处局部反馈」标记。⭐ 本行系 2026-10-26 对账**补列**（原 §9 漏列 ⇒ PR #600 未实现） |
 | 30 | `apps/web/src/components/mobile/MobileNodeViewer.vue` | **改（§4.8 决策层）** | **§4.8** | **pending 态查看器底部主栏 = 「确认 / 取消」**（决策层），与壳层状态栏**两处一致**；confirmed 态底部主栏 = 「改词」（无确认栏）。⭐ 本行系 2026-10-26 对账**补列**（原 §9 漏列 ⇒ PR #600 未实现；走查项 W-10 因此不可能通过） |
-| 31 | `apps/web/src/components/mobile/MobileNodeViewer.vue` | **改** | **§4.6 / I1** | 灯箱**支持双指缩放**（W-5；类型原生查看器的隐含底线 —— 拍板项 I1 选它正是因为「文本节点承载不了缩放/逐帧/波形」）+ 查看器内展示**提示词全文**（承接 #28 的 chips 展开）。⭐ 本行系 2026-10-26 对账**补列** |
+| 31 | `apps/web/src/components/mobile/MobileNodeViewer.vue` | **改** | **§4.6 / I1** | 灯箱**支持双指缩放**（W-5；类型原生查看器的隐含底线 —— 拍板项 I1 选它正是因为「文本节点承载不了缩放/逐帧/波形」）+ 查看器内展示**提示词全文**（承接 #28 的 chips 展开）。⭐ 本行系 2026-10-26 对账**补列**。✅ 缩放部分已实现（2026-10-27 S2 批，#57）；全文承接改走独立全文层（#54，S1 Ruling） |
 | 32 | `apps/web/src/components/mobile/mobileVisualLanguage.guards.test.ts` | **改（V-3 守卫收紧）** | **V-3** | 静态守卫改为**扫 `components/mobile/*.vue` 全目录**禁裸 `position:fixed`；白名单**逐个显式列出并写明豁免理由**（⛔ 禁「只点名个别文件」—— 那会让缺口逃过守卫） |
 | 33 | `apps/web/src/components/mobile/mobileVisualLanguage.guards.test.ts` | **改（V-5 补齐）** | **V-5** | 新增「图标按钮 `min-width`/`min-height` ≥ `--lnk-touch-target`」断言（V-5 明写"新增"） |
-| 34 | `apps/web/src/pages/CanvasPage.mobileDeleteUndo.test.ts` | **改（V-7 补齐）** | **V-7** | 新增**端到端**行为级断言：删除 → 点「撤销」⇒ **节点真的恢复**（现有仅 composable 层 `undo restores previous snapshot`） |
+| 34 | `apps/web/src/pages/CanvasPage.mobileDeleteUndo.test.ts` | **改（V-7 补齐）** | **V-7** | 新增**端到端**行为级断言：删除 → 点「撤销」⇒ **节点真的恢复**（现有仅 composable 层 `undo restores previous snapshot`）。✅ 已实现（2026-10-27 S2 批，#58） |
 | 35 | `apps/web/src/components/mobile/mobileVisualLanguage.guards.test.ts` | **新增守卫（§15.10 / 令牌纪律）** | V-9 / A5 | 新增移动端表面样式**零新增 hex / rgba / 魔法值**（一律消费 design-tokens L2/L3，防硬编码回潮）；图标按钮含 `aria-label`；撤销 toast 含 live region |
 | 36 | `apps/web/src/components/mobile/MobileNodePromptReviewSheet.vue` | **新增（场景1 补齐，2026-10-26 三轮审视）** | **§4.7.1** | 提示词全文层：全文 + 参数只读摘要 + 「圈选」进标注态（底图=全文渲染页，§4.3 第五行）+ ⚓ 带回；⛔ 无确认/拒绝按钮、无参数控件 |
 | 37 | `apps/web/src/components/mobile/MobileNodePromptReviewSheet.test.ts` | **新增** | **V-11** | 断言：四类节点（含音频）可达；无确认/拒绝按钮；标注入口存在；回传走 §5.3 契约（image=满屏截图 + text + sourceNodeId） |
@@ -980,6 +986,13 @@ flowchart TD
 | 49 | `apps/web/src/components/mobile/`（审阅层截图合成，跟随 #46 落位） | **新增（§17-⑤）** | **§17** | **审阅层整屏截图合成**（DOM→canvas 或分层重绘）：即 §4.7.1 预见的「文本 → canvas 渲染器」——底图 =「屏幕」而非媒体帧 ⇒ 不依赖产物 CORS / 视频取帧，视频/音频提议同样成立；§5.3 增此旁路（`composeAnnotatedImage` 媒体帧合成保留给产物专项） |。✅ 已实施（PR #621，落地为 `annotate/renderReviewBaseImage.ts` 分层重绘 + 既有 `composeAnnotatedImage` 合成） |
 | 50 | `services/pi-runtime/src/app.ts`（/answers decline 分支）+ `canvas-write.ts`（tool_result 文案）+ 壳层锚接线（#48） | **改（§17-⑧，2026-10-27 三问落判）** | **§17** | **锚 = decline 结算**：壳层锚按下 → 调 `/answers {decision:"decline", note?}`（≈虚拟点拒绝，拍板④的实现机制）；decline 增可选 `note` → tool_result 附「批注反馈将从对话到达，等待用户消息，勿盲目重提议」（防抢跑）；胶囊随状态机撤下（⛔ 禁本地置态，2026-10-13 虚假确认教训）；锚后导航 = 对话 composer（壳层职责） |。✅ 已实施（PR #621） |
 | 51 | `MobileNodeTile.vue` + `nodeMediaInfo.ts` + `useNodeMediaInfoFooter.test.ts` 等 | **改（三轮走查①，2026-10-27）** | §6.2 磁贴信息构成 / W-46 | ① 左上角**头部** = 类型 · 自定义名（PC 标题条对位，label ?? title ?? 类型名同源）；底部属性行 = **纯媒体要素**（名称不拼底部）；⭐ `needsMediaInfoEnsure` 判据收紧为**展示要素集完整**（图片 width+height / 视频 resolution+aspectRatio / 音频 durationSec+format）——旧「有任意 payload 即跳过」被真机推翻（创建管道只落 bytes ⇒ 永远只见大小一段）。⭐ 编号原 #46，让位 §17 系列 |
+| 52 | `MobileNodeTile.vue` + `MobileNodeTile.promptChip.test.ts`（新） | **改（G1 磁贴分级，2026-10-27 S1）** | §4.7 / W-16 | 有产物态**提示词 chips**（四类统一）+ 改词重生成 = 旧产物**淡化**（opacity .4）+ 「重新生成中」角标 + chips；pending 不渲染 chips（Ruling 见 §4.7 实施记录③）；「含 N 处局部反馈」挂账 M3（无数据契约） |
+| 53 | `MobileReadingSurface.vue` + `.test.ts`（新） | **新增（共享阅读面，2026-10-27 S1）** | §4.8.1 | 全屏文本阅读共享壳：滚动容器 + X + 双向关闭手势（§6.2 同判据）+ TTS 文本源**参数化**（`speechText` prop，⛔ 共享面不摸 `data.content`）+ 安全区 + gestureLocked（评审 C1 同款）。`MobileNodeViewer` reader/review 分支迁入**留账随下次 viewer 改动上收** |
+| 54 | `MobileNodePromptReviewSheet.vue` + `.test.ts`（新） | **新增（全文审核层，2026-10-27 S1）** | §4.7.1 / V-11 / W-26 / W-27 | 独立全屏文本阅读面（消费 #53）：全文 + 参数只读摘要 + 批注（底图 `renderReviewBaseImage` 滚动感知 `skipLines`）/ 编辑（就地改字）/ 朗读；⛔ 无确认/拒绝、无参数控件（V-11 组件断言）；pending 不走本层（单一确认面 Ruling） |
+| 55 | `MobileNodeViewer.vue` + `NodeRenderer.vue` + `NodeRenderer.test.ts` | **改（入口② + 转发，2026-10-27 S1）** | §4.7.1 | 查看器**提示词摘要条**（confirmed/error 一行截断，单击 → 全文层）；NodeRenderer 转发磁贴 `open-prompt-review`（新注入键 `MOBILE_NODE_OPEN_PROMPT_REVIEW_KEY`） |
+| 56 | `MobileCanvasShell.vue` + `CanvasPage.vue` + `canvasNodeActions.ts` + `.nodeActions.test.ts` | **改（壳层/页面接线，2026-10-27 S1）** | §4.7.1 / §4.8.1 | 壳层渲染全文层 + 摘要条转发；页面层 `mobilePromptReviewNode` 状态 + 注入键承接 + 锚回传/编辑保存处理器（`handleMobileAnnotateAnchor` / `handleMobileViewerEditSave` 参数化来源与关闭回调，M5 原路径零破坏） |
+| 57 | `MobileNodeViewer.vue` + `.test.ts` | **改（W-5 缩放，2026-10-27 S2）** | §4.6 / I1 / W-5 | 图片双指捏合缩放（1~4x）+ 放大态单指平移（`clampPan` = ±(scale−1)·半尺寸）+ 缩回复位（translate(0,0)）；消费的手势不触发关闭；换 url 复位（7 用例 + jsdom clientWidth stub） |
+| 58 | `MobileUndoToast.vue` + `.test.ts`（新）+ `CanvasPage.vue` + `.mobileDeleteUndo.test.ts` | **改（V-7 组件化，2026-10-27 S2）** | V-7 / §4.11.10 | 撤销 toast 抽独立展示组件（props `message` + emit `action`，**含 reduce-motion 分支**）；计时与快照恢复逻辑留页面层；端到端断言「点撤销 ⇒ 节点真的恢复」 |
 
 > ⭐ **2026-10-26 对账补列说明**：上列 #28–#34 系规格 ↔ 实现逐条对账后**补列**的条目 —— 它们在 §12（M2 路线图）、§10.3（走查 W-5 / W-10 / W-16）里都被列为本轮必做，但**原 §9 文件级清单漏列**、实施计划的 9 个 Task 也无对应项 ⇒ **PR #600 未实现**。
 > **根因教训**：§9 是「文件级改动清单」，是实施排期的**唯一输入**；§9 漏列 ⇒ 计划无 Task ⇒ 实现漏做 ⇒ **三处一致地漏**才没被发现。
@@ -1038,7 +1051,7 @@ flowchart TD
 | W-2b | Menu 内点「更多」 | 二级浮层含「副本含上游 / 存入资产库 / 保存到本地」 | ☐ |
 | W-3 | pending 节点 tap | 进查看器看 propose 产出 | ☐ |
 | W-4 | pending 节点长按 | 全集（含三项新操作） | ☐ |
-| W-5 | confirmed 图片节点 tap | 灯箱，可双指缩放 | ☐ |
+| W-5 | confirmed 图片节点 tap | 灯箱，可双指缩放 | ☐ ✅ 代码已实现（2026-10-27 S2 批，#57），待真机复测 |
 | W-6 | confirmed 音频节点 tap | **进波形查看器**（2026-10-27 D2 修订）；磁贴内联播放保留（轻听不改页） | ☐ |
 | W-7 | 查看器右上 X | 关闭回画布，视频已暂停 | ☐ |
 | W-8 | 查看器下滑 | 关闭回画布 | ☐ |
@@ -1046,7 +1059,7 @@ flowchart TD
 | W-9b | 查看器右上角 | **仅 X + ⋯ 两枚图标**；「改词」在**底部**主栏 | ☐ |
 | W-10 | pending 查看器底部「确认」 | 节点落 confirmed | ☐ |
 | W-11 | 查看器**底部**点「改词」 | 进轻量编辑器（**无参数控件、无生成钮**） | ☐ |
-| W-12 | 轻量编辑器写意见 →「发给 agent 修改」 | 切回对话页，composer 出现引用芯片 | ☐ |
+| W-12 | 轻量编辑器写意见 →「发给 agent 修改」 | 切回对话页，composer 输入框**预填意见**（⛔ 不进引用芯片——§17 v2 拍板③同语义：意见是用户意图表达，走正文；引用芯片仅承载素材附件。2026-10-27 P2 裁决修订，原「引用芯片」措辞作废） | ☐ |
 | W-13 | 查看器点「圈选」 | 显式进入标注态，单指可画 | ☐ |
 | W-14 | 圈完写意见 →「⚓ 带回对话」 | 上传中 → 切回对话页 + 芯片缩略图=带标记整图 | ☐ |
 | W-15 | 视频节点标注（源站无 CORS） | **只带文字** + 明确 toast（不带图） | ☐ |

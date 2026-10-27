@@ -26,6 +26,12 @@ export interface ReviewBaseInput {
   paramsLine: string
   width: number
   height: number
+  /**
+   * 跳过的行数（R-17 当前视口语义，2026-10-27 S1）：全文层长文滚动到中部时，
+   * 底图应反映**当前视口**内容——调用方按 scrollTop / LINE_HEIGHT 折算传入。
+   * 缺省 0 = 从头渲染（M5 pending 审核层短文场景不受影响）。
+   */
+  skipLines?: number
 }
 
 const FONT_PROMPT = '14px -apple-system, "PingFang SC", sans-serif'
@@ -62,10 +68,14 @@ export function renderReviewBaseImage(
   ctx.font = FONT_PROMPT
   const maxWidth = input.width - PADDING * 2
   const bottomLimit = input.height - 44
+  const skip = Math.max(0, Math.floor(input.skipLines ?? 0))
   let y = 56
+  let lineNo = 0
   for (const paragraph of input.prompt.split('\n')) {
     if (!paragraph) continue // 空行跳过
     for (const line of wrapCjk(paragraph, ctx, maxWidth)) {
+      lineNo += 1
+      if (lineNo <= skip) continue // R-17：滚动位之前的行不入底图（所见即所得）
       if (y > bottomLimit) return canvas
       ctx.fillText(line, PADDING, y)
       y += LINE_HEIGHT

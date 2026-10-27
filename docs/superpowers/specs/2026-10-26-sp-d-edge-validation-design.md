@@ -283,8 +283,8 @@ export function wouldCreateCycle(existingEdges: RawEdge[], source: string, targe
 
 前端行为级语义（`isValidConnection` 拦截、乐观 add 失败回滚、ElMessage 反馈）由 bundle 字面量 + `CanvasPage.edgeValidation.wiring.test.ts` 静态契约 + CI 全量测试三方覆盖；真机手工拖拽走查归入日常移动端走查清单，不阻塞本规格收口。
 
-### 13.3 遗留欠账（不阻塞收口，已记账）
+### 13.3 遗留欠账（不阻塞收口，已记账）——✅ 2026-10-27 全部闭环
 
-- `wouldCreateCycle` 变异验证：本机环境（delete 类 syscall 被安全策略拦截）恢复后，改坏判定条件 ⇒ `graph.test.ts` 须转红；
-- 本地补跑 `agent-canvas-tools.service.test.ts` / `graph.test.ts` / `edgeValidation.wiring.test.ts` / `vue-tsc -b`（本轮由 CI 全量替代）；
+- ✅ `wouldCreateCycle` 变异验证（2026-10-27 补做）：两个变异均使 `graph.test.ts` 转红且指名报错——①自环判定翻转（`source===target` 返 false）⇒ 「自环」用例红；②环 DFS 命中判定破坏（`cur === "\0"+source`）⇒ 2-环/长环/validate 成环/批内成环 4 用例红；还原后 12/12 绿、`git diff` 零残留 ⇒ 守卫非恒绿；
+- ✅ 本地补跑（2026-10-27，nvm node 24 + 单 worker）：`graph.test.ts` 12/12 · `CanvasPage.edgeValidation.wiring.test.ts` 4/4 · `agent-canvas-tools.service.test.ts` 126/126（⭐ 新 worktree 须先 `prisma generate`，否则 `.prisma/client/default` 缺模块）· `vue-tsc -b` 绿；
 - 存量环诊断脚本（§9-R1）：一次性工具，属 SP-E 前置，随下一程实施。
