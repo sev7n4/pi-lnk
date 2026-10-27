@@ -91,8 +91,8 @@ export const MOBILE_NODE_OPEN_VIEWER_KEY: InjectionKey<MobileNodeOpenViewerFn> =
  * ⭐ 为什么需要它：真机走查发现「点空白节点会进入空白全屏」——
  *   `NodeRenderer.onTileOpen` 无条件开 viewer，而 viewer 的 img/video 均 `v-if="url"`
  *   ⇒ 空节点 tap 得到一片空白。
- *   修法：tap 意图由纯函数 `resolveMobileNodeTapIntent` 单一判定（viewer / editor / inline），
- *   空节点 → editor（编辑 sheet = 「点击生成/撰写」主动作，D-C 状态机的 empty 行）。
+ *   修法：tap 意图由纯函数 `resolveMobileNodeTapIntent` 单一判定（viewer / editor / none），
+ *   空节点 → none（无 op + 轻提示；编辑只走长按，D1/D3 2026-10-25）。
  */
 export type MobileNodeOpenEditorFn = (node: {
   id?: string

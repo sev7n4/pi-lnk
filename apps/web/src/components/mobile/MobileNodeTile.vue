@@ -519,7 +519,7 @@ function handleTextTap() {
           :loading="waveformLoading"
         />
       </div>
-      <audio ref="audioEl" :src="data?.url" @loadedmetadata="onAudioMeta" />
+      <audio ref="audioEl" :src="data?.url" preload="metadata" @loadedmetadata="onAudioMeta" />
       <p v-if="attributeLine" class="mobile-node-media-info" data-testid="mobile-node-media-info">
         {{ attributeLine }}
       </p>

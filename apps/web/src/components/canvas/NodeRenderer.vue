@@ -47,10 +47,11 @@ const openEditor = inject<MobileNodeOpenEditorFn>(MOBILE_NODE_OPEN_EDITOR_KEY, (
 
 /**
  * tap 意图由纯函数单一判定（审阅焦点 #2：策略不在三处各写一遍）。
- * - viewer：有产物的图/视/文（pending / confirmed / 失败但有旧产物）→ 全屏查看器
+ * - viewer：有产物节点（pending / confirmed / 失败但有旧产物）→ 全屏查看器
+ *   （D2 修订 2026-10-27：含 audio 波形查看器）
  * - editor：编辑 sheet（编辑器入口改走长按 Menu；单击不进编辑器）
- * - inline：音频 → 磁贴内联播放（不进本函数）
  * - none：空 / 生成中 / 失败且无旧产物 → 无 op（轻提示由磁贴给出，不开任何全屏层）
+ *   （'inline' 已随 D2 修订退役——音频与其他类型同一状态门控）
  *
  * ⭐ D1/D3（2026-10-25 规格 §5.1 · 铁律 P1「单击 = 查看」）：'none' 必须
  *   **既不开 viewer 也不开 editor**——否则空节点又回到 R2 的「空白全屏」症状。

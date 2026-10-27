@@ -231,7 +231,10 @@ async function captureBaseImage(): Promise<{ image: CanvasImageSource; width: nu
   }
   if (type === 'audio') {
     // 底图 = 波形图（§4.3）：显示组件是 SVG 不可 drawImage ⇒ 用同一 peaks
-    // 真源画一份 canvas。峰值全零（占位且静音）时诚实降级。
+    // 真源画一份 canvas。⭐ 评审 I1：**只认真实 peaks**（waveSource==='real'）——
+    // 占位波形是确定性假数据（nodeId 种子），跨域无 CORS / 文件过大时把它合成进
+    // 标注图 = 给 agent 一张与音频无关的假波形，违反「诚实降级，不静默失败」。
+    if (waveSource.value !== 'real') return null
     const p = wavePeaks.value
     if (!p.length || !p.some((v) => v > 0)) return null
     const barW = 4
@@ -274,10 +277,11 @@ const audioRef = ref<HTMLAudioElement | null>(null)
 const audioPlaying = ref(false)
 const audioCurrent = ref(0)
 const audioDuration = ref(0)
-/** 波形真源与磁贴同一 composable（peaks 占位/真实 + 模块级 url 去重） */
+/** 波形真源与磁贴同一 composable（peaks 占位/真实 + 模块级 url 去重）。
+ *  ⭐ 评审 I2：仅音频提供 url——图片/视频打开时不发起任何波形解码请求。 */
 const { peaks: wavePeaks, source: waveSource, loading: waveLoading } = useNodeWaveform({
-  nodeId: () => props.data?.url,
-  url: () => props.data?.url,
+  nodeId: () => (props.type === 'audio' ? props.data?.url : undefined),
+  url: () => (props.type === 'audio' ? props.data?.url : undefined),
 })
 
 function toggleAudioPlay() {
@@ -344,6 +348,9 @@ function requestClose() {
 }
 
 function onTouchStart(e: TouchEvent) {
+  // ⭐ 评审 C1：标注态画笔手势不参与关闭判定——任何 >100px 的圈选笔画
+  // 都不得关掉查看器（否则 onInkEnd 的异步合成还没 emit，节点已被清空，标注静默丢失）。
+  if (annotating.value) return
   const y = e.touches?.[0]?.clientY ?? 0
   touchStartY.value = y
   touchCurrentY.value = y
@@ -354,10 +361,25 @@ function onTouchStart(e: TouchEvent) {
 }
 
 function onTouchMove(e: TouchEvent) {
+  // ⭐ 评审 I5：多点触控（捏合/换指）时 touches[0] 身份会跳变 ⇒ 位移不可信，
+  // 冻结本次手势（当前点回拨到起点），second finger 抬起后重新开始累计。
+  if (e.touches.length > 1) {
+    touchCurrentY.value = touchStartY.value
+    return
+  }
   touchCurrentY.value = e.touches?.[0]?.clientY ?? touchCurrentY.value
 }
 
+/** 系统接管手势（来电/通知）⇒ 只复位，不触发关闭（评审 M6） */
+function onTouchCancel() {
+  touchStartY.value = 0
+  touchCurrentY.value = 0
+  touchStartScrollTop.value = 0
+}
+
 function onTouchEnd() {
+  // ⭐ 评审 C1：标注态（含 onInkEnd 异步合成期间）不触发关闭
+  if (annotating.value) return
   // ⭐ 方向判据（2026-10-27 走查③修）：currentY − startY > 0 才是「下拉」。
   // 旧实现 startY − currentY > 100 = **上滑**关闭（方向写反），长文上滑滚动
   // 正中判据 ⇒ 读几行就回到画布。上滑永不关闭（iOS Photos 惯例：下滑关）。
@@ -382,6 +404,7 @@ defineExpose({ videoRef })
     @touchstart.passive="onTouchStart"
     @touchmove.passive="onTouchMove"
     @touchend="onTouchEnd"
+    @touchcancel="onTouchCancel"
   >
     <!-- 右上角 X（内联 SVG；⛔ 禁文本字符当图标，§4.11.5） -->
     <button
@@ -481,7 +504,13 @@ defineExpose({ videoRef })
       <div class="viewer-audio-wave">
         <MobileNodeWaveform :peaks="wavePeaks" :source="waveSource" :loading="waveLoading" />
       </div>
-      <div class="viewer-audio-controls">
+      <div
+        class="viewer-audio-controls"
+        @touchstart.stop
+        @touchmove.stop
+        @touchend.stop
+        @touchcancel.stop
+      >
         <button
           class="viewer-audio-play"
           type="button"

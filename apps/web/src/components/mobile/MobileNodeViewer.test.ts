@@ -8,6 +8,20 @@ import { fileURLToPath } from 'node:url'
 // ⚠️ vitest 是 ESM ⇒ `__dirname` 不可用（仓库既有约定：fileURLToPath(import.meta.url)）
 const HERE = dirname(fileURLToPath(import.meta.url))
 
+// 评审 I2：包装真实 useNodeWaveform，捕获每次调用的 opts —— 断言非音频类型的
+// url getter 返回 undefined（不发起解码）。（jsdom 无 fetch，用 fetch spy 判据恒绿，弃用）
+const wfState = vi.hoisted(() => ({ lastOpts: null as { url: () => string | undefined } | null }))
+vi.mock('@/composables/useNodeWaveform', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/useNodeWaveform')>()
+  return {
+    ...actual,
+    useNodeWaveform: (opts: { url: () => string | undefined }) => {
+      wfState.lastOpts = opts
+      return actual.useNodeWaveform(opts)
+    },
+  }
+})
+
 /**
  * D2（2026-10-25 规格 §6.2 / §4.1 P3）：全屏查看器必须有**两条**退出通道
  * ——「右上 X」与「下滑关闭」，且**退出即停**（视频 pause）。
@@ -27,11 +41,12 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
     expect(wrapper.emitted('close')).toBeTruthy()
   })
 
-  it('无 audio 类型分支（音频永不进查看器）', () => {
-    const wrapper = mount(MobileNodeViewer, {
-      props: { type: 'image', data: { url: 'https://x/a.png' } },
-    })
-    expect(wrapper.find('video').exists()).toBe(false)
+  it('audio 分支存在（D2 修订 2026-10-27）：波形查看器而非死分支', () => {
+    const w = mount(MobileNodeViewer, { props: { type: 'image', data: { url: 'x.png' } } })
+    // 回归面：image 视图不得渲染 video/audio 元素
+    expect(w.find('video').exists()).toBe(false)
+    expect(w.find('audio').exists()).toBe(false)
+    w.unmount()
   })
 
   it('audio: 渲染波形查看器（D2 修订 2026-10-27，走查④）——audio 元素 + 波形 + 播放 + 可拖进度', () => {
@@ -135,6 +150,65 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
       await root.trigger('touchmove', { touches: [{ clientY: 300 }] })
       await root.trigger('touchend')
       expect(w.emitted('close')).toHaveLength(1)
+    })
+
+    it('标注态下手势不触发关闭（评审 C1：画圈 >100px 不得关掉查看器丢标注）', async () => {
+      const w = mount(MobileNodeViewer, { props: { type: 'image', data: { url: 'x.png' } } })
+      await w.get('[data-testid="mobile-viewer-annotate"]').trigger('click')
+      const root = w.get('[data-testid="mobile-viewer"]')
+      await root.trigger('touchstart', { touches: [{ clientY: 150 }] })
+      await root.trigger('touchmove', { touches: [{ clientY: 400 }] })
+      await root.trigger('touchend')
+      expect(w.emitted('close')).toBeFalsy()
+      w.unmount()
+    })
+
+    it('多点触控不误关（评审 I5：第二指落下/换指后 touches[0] 跳变不累计位移）', async () => {
+      const w = mount(MobileNodeViewer, { props: { type: 'image', data: { url: 'x.png' } } })
+      const root = w.get('[data-testid="mobile-viewer"]')
+      await root.trigger('touchstart', { touches: [{ clientY: 150 }] })
+      // 双指捏合：touches.length=2 且 touches[0] 已换指（Y 跳到 400）
+      await root.trigger('touchmove', { touches: [{ clientY: 400 }, { clientY: 200 }] })
+      await root.trigger('touchend')
+      expect(w.emitted('close')).toBeFalsy()
+      w.unmount()
+    })
+
+    it('音频控制条上的手势不触发关闭（评审 I6：拖进度条纵向漂移不误关）', async () => {
+      const w = mount(MobileNodeViewer, { props: { type: 'audio', data: { url: 'x.mp3' } } })
+      const controls = w.find('.viewer-audio-controls')
+      expect(controls.exists()).toBe(true)
+      await controls.trigger('touchstart', { touches: [{ clientY: 150 }] })
+      await controls.trigger('touchmove', { touches: [{ clientY: 400 }] })
+      await controls.trigger('touchend')
+      expect(w.emitted('close')).toBeFalsy()
+      w.unmount()
+    })
+
+    it('非音频类型不发起波形解码（评审 I2：url getter 对图片/视频返回 undefined）', async () => {
+      const img = mount(MobileNodeViewer, { props: { type: 'image', data: { url: 'https://x/img.png' } } })
+      expect(wfState.lastOpts, '查看器必须调用 useNodeWaveform').toBeTruthy()
+      expect(wfState.lastOpts!.url()).toBeUndefined()
+      img.unmount()
+      const vid = mount(MobileNodeViewer, { props: { type: 'video', data: { url: 'https://x/v.mp4' } } })
+      expect(wfState.lastOpts!.url()).toBeUndefined()
+      vid.unmount()
+      const aud = mount(MobileNodeViewer, { props: { type: 'audio', data: { url: 'https://x/a.mp3' } } })
+      expect(wfState.lastOpts!.url()).toBe('https://x/a.mp3')
+      aud.unmount()
+    })
+
+    it('静态契约：音频标注底图只认真实 peaks（评审 I1，占位波形必须降级）', () => {
+      const src = readFileSync(join(HERE, 'MobileNodeViewer.vue'), 'utf-8')
+      const scriptStart = src.indexOf("if (type === 'audio')")
+      const scriptEnd = src.indexOf('// 图片：', scriptStart)
+      const audioBranch = src.slice(scriptStart, scriptEnd)
+      expect(audioBranch).toContain("waveSource.value !== 'real'")
+    })
+
+    it('静态契约：磁贴音频 preload=metadata（评审 I7，iOS 时长唯一来源）', () => {
+      const tile = readFileSync(join(HERE, 'MobileNodeTile.vue'), 'utf-8')
+      expect(tile).toMatch(/<audio[^>]*preload="metadata"/)
     })
   })
 
