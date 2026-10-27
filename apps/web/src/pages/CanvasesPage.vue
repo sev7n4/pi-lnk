@@ -8,7 +8,6 @@ import CanvasCoverFallback from '@/components/workflow/CanvasCoverFallback.vue'
 import { projectCoverFallback } from '@/utils/projectCoverFallback'
 import { displayCanvasTitle } from '@/utils/displayCanvasTitle'
 import AppEmptyState from '@/components/common/AppEmptyState.vue'
-import { ElMessage } from 'element-plus'
 
 /**
  * 创作首页（2026-10-21 P1 从 WorkflowPage 迁出；2026-10-23 IA v4：
@@ -24,7 +23,7 @@ const mgr = useProjectManager()
 // 2026-10-25 PR-2：创建通道收敛到 useProjectWorkspace（全仓唯一 create 通道）。
 // 2026-10-27 v2.2：补取 `error`（模块级单例，与 mgr.projects 同源），
 // 用于区分「加载失败」与「真无项目」两种空态（D12 / 修 bug④）。
-const { create: createProject, list: listProjects, loadIfStale, error: wsError } = useProjectWorkspace()
+const { list: listProjects, loadIfStale, error: wsError, gallerySearchOpen } = useProjectWorkspace()
 
 /** 打开项目：封面节点存在时带 focusNode 深链（CanvasPage:1962 消费 query）。 */
 function openCanvas(p: { id: string; coverNodeId: string | null }) {
@@ -50,26 +49,21 @@ function relativeTime(iso: string): string {
   return `${d.getMonth() + 1} 月 ${d.getDate()} 日`
 }
 
-async function createCanvas() {
-  if (!auth.isLoggedIn) {
-    auth.openLogin()
-    return
-  }
-  // 2026-10-24 修复（fix/createcanvas-guard）：失败不再静默回主页（用户只看到无反应），
-  // 改为明确报错 + 20s 客户端超时（默认 120s）避免上百秒零反馈。
-  // ⚠️ 2026-10-25 PR-2：通道换成 useProjectWorkspace.create（唯一 create 通道），
-  //    但**20s 超时必须显式带过去**——收敛时最容易丢的就是它。
-  const loading = ElMessage({ type: 'info', message: '正在创建画布…', duration: 0 })
-  try {
-    const created = await createProject({ timeoutMs: 20_000 })
-    loading.close()
-    router.push({
-      path: `/workflow/${created.id}`,
-      query: { openAgent: '1' },
-    })
-  } catch {
-    loading.close()
-    ElMessage.error('创建画布失败，请检查网络后重试')
+/** 长按项目卡进入多选态（规格 §7：原「管理」常驻按钮退役，改为长按进入）。
+ * 仅在已有项目时；短按（<450ms）不触发，不干扰点击开画布。 */
+let longPressTimer: ReturnType<typeof setTimeout> | null = null
+function startCardLongPress(id: string) {
+  if (!mgr.projects.value.length) return
+  cancelCardLongPress()
+  longPressTimer = setTimeout(() => {
+    if (!mgr.manageMode.value) mgr.toggleManage()
+    if (!mgr.selectedIds.value.includes(id)) mgr.toggleSelect(id)
+  }, 450)
+}
+function cancelCardLongPress() {
+  if (longPressTimer) {
+    clearTimeout(longPressTimer)
+    longPressTimer = null
   }
 }
 
@@ -99,21 +93,36 @@ const rows = computed(() =>
 
 <template>
   <div class="mx-auto max-w-7xl px-6 pb-20 pt-8">
-    <div class="mb-6 flex flex-wrap items-center gap-3">
-      <div class="mr-auto">
-        <h1 class="font-display text-2xl font-semibold text-fg">创作首页</h1>
-        <p class="mt-1 text-sm text-fg-3">继续你的创作</p>
-      </div>
+    <!-- 标题行：创作空间 · N 个（顶栏职责已移交 AppHeader 裸栏；规格 §6.1） -->
+    <div class="mb-4 flex items-center gap-3">
+      <h2 class="text-base font-medium text-fg-2">
+        创作空间<span v-if="mgr.projects.value.length" class="ml-1 text-sm font-normal text-fg-3">· {{ mgr.projects.value.length }} 个</span>
+      </h2>
+      <span class="flex-1" />
       <button
-        v-if="auth.isLoggedIn"
-        data-testid="canvases-create"
+        v-if="gallerySearchOpen"
         type="button"
-        class="btn-primary text-sm"
-        @click="createCanvas"
+        class="flex h-8 w-8 items-center justify-center rounded-lg text-fg-3 transition hover:bg-hover hover:text-fg"
+        data-testid="canvases-search-close"
+        aria-label="关闭搜索"
+        @click="gallerySearchOpen = false"
       >
-        新建项目
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path stroke-linecap="round" d="M6 6l12 12M18 6 6 18" />
+        </svg>
       </button>
     </div>
+
+    <!-- 搜索输入：仅在 AppHeader 🔍 展开时出现（共享 gallerySearchOpen，规格 §7） -->
+    <input
+      v-if="gallerySearchOpen"
+      data-testid="canvases-search"
+      :value="mgr.search.value"
+      type="search"
+      class="input-field mb-4 w-full text-xs"
+      placeholder="搜索项目..."
+      @input="mgr.search.value = ($event.target as HTMLInputElement).value"
+    />
 
     <div v-if="!auth.isLoggedIn" class="py-20 text-center">
       <p class="mb-4 text-sm text-fg-3">登录后查看你的项目</p>
@@ -123,42 +132,27 @@ const rows = computed(() =>
     </div>
 
     <template v-else>
-      <div class="mb-4 flex flex-wrap items-center gap-3">
-        <span v-if="mgr.projects.value.length" class="text-xs text-fg-3">
-          {{ mgr.filtered.value.length }} 个
-        </span>
+      <!-- 多选态动作条：仅 manageMode 时出现（替代原常驻「管理」按钮；规格 §7） -->
+      <div v-if="mgr.manageMode.value" class="mb-3 flex items-center gap-3">
+        <span class="text-xs text-fg-3">已选 {{ mgr.selectedIds.value.length }} 项</span>
         <span class="flex-1" />
-        <input
-          v-if="mgr.projects.value.length"
-          data-testid="canvases-search"
-          :value="mgr.search.value"
-          type="search"
-          class="input-field w-48 text-xs"
-          placeholder="搜索项目..."
-          @input="mgr.search.value = ($event.target as HTMLInputElement).value"
-        />
         <button
-          v-if="mgr.projects.value.length"
-          data-testid="canvases-manage"
-          type="button"
-          class="rounded-lg px-2.5 py-1.5 text-xs transition"
-          :class="
-            mgr.manageMode.value
-              ? 'bg-accent-subtle text-fg-accent'
-              : 'text-fg-3 hover:bg-hover'
-          "
-          @click="mgr.toggleManage()"
-        >
-          {{ mgr.manageMode.value ? '完成' : '管理' }}
-        </button>
-        <button
-          v-if="mgr.manageMode.value && mgr.selectedIds.value.length"
+          v-if="mgr.selectedIds.value.length"
           data-testid="canvases-batch-delete"
           type="button"
           class="rounded-lg bg-danger-bg px-2.5 py-1.5 text-xs text-danger transition hover:bg-danger-bg-hover"
           @click="mgr.batchDelete()"
         >
           删除选中 ({{ mgr.selectedIds.value.length }})
+        </button>
+        <button
+          data-testid="canvases-manage-done"
+          type="button"
+          class="rounded-lg px-2.5 py-1.5 text-xs transition"
+          :class="mgr.manageMode.value ? 'bg-accent-subtle text-fg-accent' : 'text-fg-3 hover:bg-hover'"
+          @click="mgr.toggleManage()"
+        >
+          完成
         </button>
       </div>
 
@@ -181,6 +175,10 @@ const rows = computed(() =>
           v-for="p in rows"
           :key="p.id"
           class="session-card-menu-anchor flex items-center gap-3 rounded-xl border border-line bg-surface-base px-3 py-2 transition hover:bg-hover"
+          @pointerdown="startCardLongPress(p.id)"
+          @pointerup="cancelCardLongPress"
+          @pointerleave="cancelCardLongPress"
+          @pointercancel="cancelCardLongPress"
         >
           <!-- 管理模式：选择框占据行首 -->
           <button
@@ -295,7 +293,7 @@ const rows = computed(() =>
         </template>
       </AppEmptyState>
 
-      <!-- 真无项目：仅此处提示，新建入口统一在顶栏（data-testid="canvases-create" 全局唯一） -->
+      <!-- 真无项目：仅此处提示，新建入口统一在 AppHeader 裸栏（data-testid="gallery-create" 全局唯一） -->
       <AppEmptyState
         v-else
         data-testid="canvases-empty"

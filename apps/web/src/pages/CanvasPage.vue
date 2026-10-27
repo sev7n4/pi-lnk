@@ -63,9 +63,7 @@ import NodeRenderer from '@/components/canvas/NodeRenderer.vue'
 import NodePanelDock from '@/components/canvas/NodePanelDock.vue'
 import DockStudioToolbar from '@/components/canvas/DockStudioToolbar.vue'
 import DockNoticeLayer from '@/components/notice/DockNoticeLayer.vue'
-import CanvasFloatingChrome from '@/components/canvas/CanvasFloatingChrome.vue'
-import CanvasAccountChrome from '@/components/canvas/CanvasAccountChrome.vue'
-import ThemeToggle from '@/components/layout/ThemeToggle.vue'
+import WorkspaceTopBar from '@/components/canvas/WorkspaceTopBar.vue'
 import RefineCanvasBack from '@/components/canvas/RefineCanvasBack.vue'
 import MembershipModal from '@/components/membership/MembershipModal.vue'
 import type { MobileAppTab } from '@/components/mobile/MobileTabBar.vue'
@@ -73,7 +71,6 @@ import MobileCanvasShell from '@/components/mobile/MobileCanvasShell.vue'
 import MobileUndoToast from '@/components/mobile/MobileUndoToast.vue'
 import type { MobileShellAgentActions, MobileShellBatchActions } from '@/components/mobile/MobileCanvasShell.vue'
 import CanvasBottomLeftControls from '@/components/canvas/CanvasBottomLeftControls.vue'
-import MobileCanvasTopControls from '@/components/canvas/MobileCanvasTopControls.vue'
 import ProviderConfigDialog from '@/components/canvas/ProviderConfigDialog.vue'
 import ByokFallbackConfirmDialog from '@/components/canvas/ByokFallbackConfirmDialog.vue'
 import { useProviderBootstrap } from '@/composables/useProviderBootstrap'
@@ -5710,14 +5707,13 @@ function onMobileTabChange(tab: MobileAppTab) {
  * AgentSideRail、mobileStudioDockOpen、focusNodeById、pickMode watch 共用）。
  */
 const agentRailActions: MobileShellAgentActions = {
-  // 2026-10-26 规格收敛 v2（D7/D10）：≡ 原「项目抽屉」退场，语义升级为返回创作首页
-  // （项目列表唯一真身 = /canvases 行卡；切换/新建项目都在列表页完成）。
-  backToCreationHome: () => void router.push('/canvases'),
-  newChat: () => agentRailRef.value?.newAgentSession(),
-  openHistory: () => agentRailRef.value?.openThreadHistory(),
-  // IA v4（2026-10-23）：顶栏品牌字标 → 回工作台 hero。移动端全链路的前门，
-  // 壳层长在本页内 ⇒ 这是项目页回 hero 唯一常驻路（登录/登出重登也过 hero）。
-  goHome: () => void router.push('/workflow'),
+  // 2026-10-27 三页顶栏统一重构（规格 §6.3）：‹ 返回创作空间 + ⤢ 适应画布（桥接 VueFlow）。
+  // 移动端对话/画布顶栏同构；新对话/历史/品牌字标退役（ADR-0015 单对话 + 门面收敛）。
+  goGallery: () => void router.push('/canvases'),
+  /* ⤢ 手动桥（N3 例外）：用户显式点顶栏 ⤢ 才触发的全览 fitView——
+     非回合末自动劫持（SP-C N1-N6 的语义是禁止**自动**全览，手动动作合法）。 */
+  fitView: () =>
+    void vueFlowRef.value?.fitView({ padding: 0.2, duration: 200 }),
 }
 const mobileBatchActions: MobileShellBatchActions = {
   done: exitMultiSelectMode,
@@ -5987,16 +5983,14 @@ onUnmounted(() => {
             @action="undoLastDelete"
           />
         </Teleport>
-        <CanvasFloatingChrome
+        <WorkspaceTopBar
           v-if="!canvasChromeHidden && !isMobileLayout"
-          :title="sessionTitle"
-          :saving="saving"
-          @update:title="sessionTitle = $event"
+          :project-name="sessionTitle"
+          @go-gallery="backToCreationHome"
           @save="saveCanvas"
           @publish="openPublish"
           @import-workflow="openWorkflowImportPicker"
           @export-workflow="handleExportPack([], 'full_package')"
-          @back="backToCreationHome"
         />
 
         <!-- 2026-10-26 规格收敛 v2（D7）：PC 项目面板已退场（切换项目 = 返回创作首页）。 -->
@@ -6210,15 +6204,9 @@ onUnmounted(() => {
             />
           </Panel>
 
-          <!-- 2026-10-21 用户裁决：移动端视口控件瘦身为单枚 ⤢ 适应画布——
-     双指捏合已覆盖缩放、小地图低频（PC CanvasBottomLeftControls 保留全量）。 -->
-          <Panel
-            v-if="isMobileLayout && mobileAppTab === 'canvas'"
-            position="top-right"
-            class="canvas-panel-mobile-top"
-          >
-            <MobileCanvasTopControls />
-          </Panel>
+          <!-- 规格 §6.3（2026-10-27 三页顶栏统一重构）：移动端视口控件 = 顶栏右侧单枚 ⤢
+               适应画布（自浮动胶囊上提）；双指捏合已覆盖缩放、小地图低频
+               （PC CanvasBottomLeftControls 保留全量）。 -->
         </VueFlow>
 
         <!-- PR2 空态引导（V-3）：空画布首进画布页签的指引文案；pointer-events-none
@@ -6308,17 +6296,8 @@ onUnmounted(() => {
           @history-retry="handleHistoryRetry"
         />
 
-        <!-- IA v3：移动端由 MobileTopBar/MobileTabBar 接管全局导航，
-             画布内右上角主题/账号簇只属桌面态（低频入口归「我的」页）。 -->
-        <div v-if="!canvasChromeHidden && !isMobileLayout" class="pointer-events-none absolute right-3 top-3 z-[50] flex items-center gap-2">
-          <!-- 沉浸画布没有 AppHeader，主题入口必须保留在这里；
-               实现与 header 共用 `ThemeToggle`，不再内联一份 svg。
-               `canvas-theme-toggle` 类名保留：既有样式/选择器依赖它。 -->
-          <ThemeToggle
-            class="canvas-theme-toggle neo-chrome pointer-events-auto h-9 w-9 rounded-xl text-fg-2 hover:text-fg"
-          />
-          <CanvasAccountChrome />
-        </div>
+        <!-- 规格 §6.8（2026-10-27 三页顶栏统一重构）：桌面态主题/账号入口与 发现/我的/⋯
+             统一收进 WorkspaceTopBar（顶部单栏），右上漂浮簇退役。 -->
 
         <input
           ref="workflowImportInputRef"
@@ -6425,6 +6404,7 @@ onUnmounted(() => {
       :on-import-workflow="openWorkflowImportPicker"
       :on-export-pack="handleExportPack"
       :agent-actions="agentRailActions"
+      :project-name="sessionTitle"
       :dock-add="handleDockAdd"
       :asset-apply="handleAssetApply"
       :asset-add-to-agent="handleAssetAddToAgent"
@@ -6616,13 +6596,7 @@ onUnmounted(() => {
   max-width: none !important;
 }
 
-/* 移动端顶部视口胶囊：顶栏（z-85 悬浮全屏）正下方让位 */
-:deep(.canvas-panel-mobile-top) {
-  margin: calc(var(--lnk-topbar-h, 44px) + 10px) 10px 0 0;
-  width: auto !important;
-  max-width: none !important;
-  z-index: 60;
-}
+/* （2026-10-27）.canvas-panel-mobile-top 已随 MobileCanvasTopControls 上提 ⤢ 至顶栏退役 */
 
 :deep(.vue-flow__selection),
 :deep(.vue-flow__nodesselection-rect) {

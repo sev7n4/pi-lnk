@@ -1615,13 +1615,6 @@ async function fetchThreads(): Promise<AgentThreadRow[]> {
   }
 }
 
-async function toggleHistoryOpen() {
-  historyOpen.value = !historyOpen.value
-  if (historyOpen.value) {
-    await fetchThreads()
-  }
-}
-
 async function selectThread(threadId: string) {
   // 多端共享对话（2026-10-26）：只允许切到确定式共享 threadId（= sessionId）。
   // 历史面板可能列出旧的随机 thread，切到它们会让本端与该画布其它设备发散，
@@ -4102,50 +4095,9 @@ defineExpose({
               <p v-if="!isMobileLayout" class="agent-subtitle truncate text-[11px]">lnk·π agent</p>
             </div>
             <div class="flex items-center gap-0.5">
-              <!-- 新建 agent 会话（IA v4：与移动端顶栏同名「新对话」——同一动作两端同名词） -->
-              <button type="button" class="agent-head-btn" title="新对话" @click="newAgentSession">
-                <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75">
-                  <path stroke-linecap="round" d="M12 5v14M5 12h14" />
-                </svg>
-              </button>
-
-              <!-- 历史记录 -->
-              <div ref="historyRef" class="relative">
-                <button
-                  type="button"
-                  class="agent-head-btn"
-                  :class="historyOpen ? 'is-active' : ''"
-                  title="对话历史"
-                  @click="toggleHistoryOpen"
-                >
-                  <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75">
-                    <circle cx="12" cy="12" r="9" />
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 7v5l3 2" />
-                  </svg>
-                </button>
-                <div
-                  v-if="historyOpen"
-                  class="neo-popover absolute right-0 top-full z-20 mt-1.5 max-h-[280px] w-[240px] overflow-y-auto rounded-xl py-1"
-                  @click.stop
-                >
-                  <p class="px-3 py-1.5 text-[10px] uppercase tracking-wider text-[var(--lnk-text-muted)]">对话历史</p>
-                  <button
-                    v-for="thread in threads"
-                    :key="thread.id"
-                    type="button"
-                    class="neo-popover-item block w-full px-3 py-2 text-left text-xs"
-                    :class="thread.id === agentThreadId ? '!bg-[var(--lnk-hi-bg)] !text-[var(--lnk-hi-text)] shadow-[var(--lnk-hi-shadow)]' : ''"
-                    :title="thread.title"
-                    @click="selectThread(thread.id)"
-                  >
-                    <span class="block truncate font-medium">{{ thread.title }}</span>
-                    <span class="block text-[10px] opacity-60">{{ formatSessionTime(thread.updatedAt) }}</span>
-                  </button>
-                  <p v-if="!threads.length" class="px-3 py-4 text-center text-[11px] text-[var(--lnk-text-muted)]">
-                    暂无对话记录
-                  </p>
-                </div>
-              </div>
+              <!-- 规格 §6.8 / ADR-0015：桌面侧栏头部不再放「新对话 / 历史」入口
+                   （统一单对话模型，新建/切换对话收口到创作空间列表与移动端顶栏）；
+                   仅保留浮动窗口切换与「收起助手」。 -->
 
               <!-- 浮动窗口切换：面板脱离/停靠侧栏 -->
               <button
@@ -5427,15 +5379,6 @@ defineExpose({
   display: none;
 }
 
-/* P1-5 fix-2：历史 popover 在贴底容器内改为向上展开——顶栏贴视口底，向下开
-   会随容器高度（会话短时更矮）超出视口底、历史不可达；桌面 popover 行为不变
-   （本规则仅在 .agent-panel-mobile-dock 作用域内生效，压过模板 top-full/mt-1.5） */
-.agent-panel-mobile-dock .agent-panel-header .neo-popover {
-  top: auto;
-  bottom: calc(100% + var(--lnk-space-1));
-  margin-top: 0;
-}
-
 /* P1-5 fix-1：移动端对话流限高滚动——画布始终露出上半（P1-5.1），不遮罩不加 sheet */
 .agent-panel-mobile-dock .agent-chat-wrap {
   flex: 0 0 auto;
@@ -5468,11 +5411,8 @@ defineExpose({
   max-height: none;
 }
 
-/* 对话视图里顶栏在页面顶部 → 历史 popover 恢复向下展开（覆盖贴底态的向上展开规则） */
-.agent-panel-mobile-dock.is-conversation-view .agent-panel-header .neo-popover {
-  top: calc(100% + var(--lnk-space-1));
-  bottom: auto;
-}
+/* （2026-10-27 三页顶栏重构）is-conversation-view 历史 popover 向下恢复规则已随
+   header 历史 popover 退役（ADR-0015 单对话）删除 */
 
 /* ---- 画布视图 · 对话 chrome 一律不同屏（2026-10-18 二次裁决）----
  * 语义收口：顶栏（新建/历史头像）与 SSE 对话流只属于「对话模式」。画布视图两态——

@@ -14,13 +14,9 @@ function noop() {
 
 function baseProps(overrides: Record<string, unknown> = {}) {
   const agentActions = {
-    // 2026-10-26（D7/D10）：原 openDrawer（项目抽屉）退场，≡ 改为返回创作首页
-    backToCreationHome: noop(),
-    newChat: noop(),
-    openHistory: noop(),
-    // IA v4（#558）：契约新增 goHome（顶栏品牌字标 → 回工作台 hero）；
-    // openPanel / openAssetLibrary 随发现页社区化退役（资产库改由 composer 附件卡直达）
-    goHome: noop(),
+    // 2026-10-27 三页顶栏统一重构（规格 §6.3）：‹ 返回创作空间 + ⤢ 适应画布
+    goGallery: noop(),
+    fitView: noop(),
   }
   const batchActions = {
     done: noop(),
@@ -44,6 +40,8 @@ function baseProps(overrides: Record<string, unknown> = {}) {
   }
   return {
     mobileAppTab: 'canvas' as const,
+    // 规格 §6.4：顶栏项目名（chat + canvas 同构常驻渲染）
+    projectName: '测试项目',
     saving: false,
     saveFailed: false,
     hasNodes: true,
@@ -426,17 +424,19 @@ describe('MobileCanvasShell §16 真机走查二轮（2026-10-27）', () => {
     w.unmount()
   })
 
-  it('§16-① 画布页签不渲染顶栏卡片（⋯ 项目管理菜单退役）', () => {
+  it('§6.3 画布页签常驻渲染顶栏（‹ 返回创作空间 + 项目名 + ⤢；取代生命周期 §16-①）', () => {
     const w = mount(MobileCanvasShell, {
       props: baseProps({ mobileAppTab: 'canvas' }),
       attachTo: document.body,
       global: { stubs: { teleport: true } },
     })
-    expect(w.findComponent({ name: 'MobileTopBar' }).exists()).toBe(false)
+    const bar = w.findComponent({ name: 'MobileTopBar' })
+    expect(bar.exists()).toBe(true)
+    expect(bar.props('projectName')).toBe('测试项目')
     w.unmount()
   })
 
-  it('§16-① 对话页签仍渲染顶栏（≡ 抽屉 / 新对话 / 历史）', () => {
+  it('§6.2 对话页签仍渲染顶栏（‹ 返回创作空间 + 项目名）', () => {
     const w = mount(MobileCanvasShell, {
       props: baseProps({ mobileAppTab: 'chat', canvasViewVisible: false }),
       attachTo: document.body,

@@ -7,10 +7,14 @@
 // 本文件保留【创作】【发现】断言，把工作室下拉相关用例改写为「入口整体下线」。
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import AppHeader from './AppHeader.vue'
 
 const routePath = vi.hoisted(() => ({ value: '/workflow' }))
 const pushMock = vi.hoisted(() => ({ value: vi.fn() }))
+// 2026-10-27 三页顶栏重构：AppHeader setup 新增 useAuthStore（＋ 建项目登录守卫）与
+// useProjectWorkspace（create 通道 + gallerySearchOpen）⇒ 测试需提供 pinia 与 mock。
+const wsMock = vi.hoisted(() => ({ searchOpen: { value: false } }))
 
 vi.mock('vue-router', () => ({
   useRoute: () => ({ get path() { return routePath.value } }),
@@ -21,6 +25,13 @@ vi.mock('vue-router', () => ({
   },
 }))
 
+vi.mock('@/composables/useProjectWorkspace', () => ({
+  useProjectWorkspace: () => ({
+    create: vi.fn(),
+    gallerySearchOpen: wsMock.searchOpen,
+  }),
+}))
+
 const stubs = {
   BrandLogo: { template: '<span class="brand-logo-stub" />' },
   AccountChrome: { template: '<span class="account-chrome-stub" />' },
@@ -29,7 +40,8 @@ const stubs = {
 }
 
 function mountHeader() {
-  return mount(AppHeader, { attachTo: document.body, global: { stubs } })
+  setActivePinia(createPinia())
+  return mount(AppHeader, { attachTo: document.body, global: { plugins: [createPinia()], stubs } })
 }
 
 /** 导航项文案（只取 header 主导航区的按钮/链接，不含下拉面板） */

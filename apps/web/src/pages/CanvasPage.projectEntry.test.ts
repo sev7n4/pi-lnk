@@ -1,11 +1,12 @@
-// PR-2 Task 8 接线契约（2026-10-25）：PC 画布页补项目入口 + 创建通道收敛。
+// PR-2 Task 8 接线契约（2026-10-25）+ 2026-10-27 三页顶栏统一重构修订。
 //
 // 本仓 CanvasPage 的既有测试全部是**静态源码契约**（无 mount：页面体量过大，
 // 挂载代价与回归面都不划算）——本文件沿用同一形态。
 //
 // 覆盖三组契约：
-//   ① CanvasFloatingChrome 渲染「‹ 返回创作首页」入口（emit back，D7 纯微信式，▾ 已退役）；
-//   ② CanvasPage 接上 back 返回创作首页；PC 项目面板已退场；挂载时写入「最近项目」记忆；
+//   ① WorkspaceTopBar 渲染「‹ 返回创作空间」入口（emit go-gallery，D7 纯微信式，▾ 已退役；
+//     2026-10-27 取代 CanvasFloatingChrome——顶栏统一收进顶部单栏）；
+//   ② CanvasPage 接上 go-gallery 返回创作空间；PC 项目面板已退场；挂载时写入「最近项目」记忆；
 //   ③ 全仓**唯一 create 通道**：canvasApi.create / sessionsApi.create 只允许出现在
 //      useProjectWorkspace.ts 里（收敛前散落 5 处、两条 service 混用）。
 import { readFileSync, readdirSync, statSync } from 'node:fs'
@@ -22,20 +23,20 @@ function stripComments(s: string): string {
   return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/<!--[\s\S]*?-->/g, '').replace(/\/\/[^\n]*/g, '')
 }
 
-describe('PC 画布页项目入口（PR-2 Task 8）', () => {
-  const chrome = read('../components/canvas/CanvasFloatingChrome.vue')
+describe('PC 画布页项目入口（PR-2 Task 8 + 顶栏重构修订）', () => {
+  const chrome = read('../components/canvas/WorkspaceTopBar.vue')
   const page = read('./CanvasPage.vue')
 
-  it('① CanvasFloatingChrome 渲染返回创作首页入口并 emit back（纯微信式，规格 v2 D7）', () => {
-    expect(stripComments(chrome)).toContain('back: []')
-    // 返回按钮：‹ 图标 + 「返回创作首页」语义（导航决定权在 CanvasPage）
-    const btn = chrome.match(/<button[\s\S]*?title="返回创作首页"[\s\S]*?>[\s\S]*?<\/button>/)?.[0] ?? ''
-    expect(btn, '必须能定位「返回创作首页」按钮').toContain("emit('back')")
-    // ⛔ 纯微信式：「项目名 ▾」下拉已退役（切换项目 = 返回创作首页再点另一个）
+  it('① WorkspaceTopBar 渲染返回创作空间入口并 emit go-gallery（纯微信式，规格 v2 D7）', () => {
+    expect(stripComments(chrome)).toContain("emit('go-gallery')")
+    // 返回按钮：‹ 图标 + 「返回创作空间」语义（导航决定权在 CanvasPage）
+    const btn = chrome.match(/<button[\s\S]*?aria-label="返回创作空间"[\s\S]*?>[\s\S]*?<\/button>/)?.[0] ?? ''
+    expect(btn, '必须能定位「返回创作空间」按钮').toContain("emit('go-gallery')")
+    // ⛔ 纯微信式：「项目名 ▾」下拉已退役（切换项目 = 返回创作空间再点另一个）
     expect(stripComments(chrome), 'project-click 旧语义必须移除').not.toContain("'project-click'")
     expect(stripComments(chrome), '▾ 箭头必须移除').not.toContain('M7 10l5 5 5-5z')
-    // 项目名由既有 title 输入框承载（纯标题，可改名）
-    expect(stripComments(chrome)).toContain('chrome-title-input')
+    // 项目名 §6.4：次级静默文本（非交互、截断），不再可改名输入框
+    expect(stripComments(chrome)).toContain('workspace-project-name')
   })
 
   it('① 样式不新增 hex：走令牌（旧 --neo-* 体系只减不增）', () => {
@@ -43,11 +44,11 @@ describe('PC 画布页项目入口（PR-2 Task 8）', () => {
     expect(style).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
   })
 
-  it('② CanvasPage 接上 back 返回创作首页；PC 项目面板已退场（D7 纯微信式）', () => {
-    const tag = page.match(/<CanvasFloatingChrome[\s\S]*?\/>/)?.[0] ?? ''
-    expect(tag, '必须能定位 CanvasFloatingChrome 开标签').toContain('@back="backToCreationHome"')
+  it('② CanvasPage 接上 go-gallery 返回创作空间；PC 项目面板已退场（D7 纯微信式）', () => {
+    const tag = page.match(/<WorkspaceTopBar[\s\S]*?\/>/)?.[0] ?? ''
+    expect(tag, '必须能定位 WorkspaceTopBar 开标签').toContain('@go-gallery="backToCreationHome"')
     expect(tag, '旧 project-click 接线必须移除').not.toContain('@project-click')
-    // ⛔ 面板退场：PC 端不再挂载 ProjectPanel（重命名/删除/复制由创作首页行卡承载）
+    // ⛔ 面板退场：PC 端不再挂载 ProjectPanel（重命名/删除/复制由创作空间行卡承载）
     expect(stripComments(page), 'ProjectPanel 必须从 CanvasPage 退场').not.toContain('<ProjectPanel')
   })
 
@@ -65,9 +66,9 @@ describe('PC 画布页项目入口（PR-2 Task 8）', () => {
   })
 
   it('② 返回语义替代面板入口：openProjectPanel 不再由 chrome 触发（D7 纯微信式）', () => {
-    // chrome 的唯一项目入口已改为 back；openProjectPanel（若暂存）不得再被模板引用
+    // chrome 的唯一项目入口已改为 go-gallery；openProjectPanel（若暂存）不得再被模板引用
     expect(stripComments(page)).not.toContain('@project-click="openProjectPanel"')
-    expect(stripComments(page)).toContain('@back="backToCreationHome"')
+    expect(stripComments(page)).toContain('@go-gallery="backToCreationHome"')
   })
 
   // ⏱ timeout 60s：本用例同步遍历全 src 读文件，4 核/8GB 换页压力下 >5s（默认限时）
@@ -99,8 +100,10 @@ describe('PC 画布页项目入口（PR-2 Task 8）', () => {
   })
 
   it('③ 新建项目保留 20s 客户端超时（收敛通道时最易丢的就是它）', () => {
-    const canvases = read('./CanvasesPage.vue')
-    expect(canvases).toContain('createProject({ timeoutMs: 20_000 })')
+    // 2026-10-27 顶栏重构：create 入口自 CanvasesPage 页内按钮迁至 AppHeader 裸栏 ＋ 盘
+    // （规格 §6.1），20s 超时必须随迁（收敛时最易丢的就是它）。
+    const header = read('../components/layout/AppHeader.vue')
+    expect(header).toContain('create({ timeoutMs: 20_000 })')
     // workspace 必须把超时透传给 canvasApi.create
     const ws = read('../composables/useProjectWorkspace.ts')
     expect(ws).toContain('{ timeout: opts.timeoutMs }')

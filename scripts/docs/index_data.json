@@ -1,13 +1,13 @@
 {
- "total": 405,
+ "total": 409,
  "by_status": {
   "living": 139,
-  "frozen": 258,
+  "frozen": 262,
   "superseded": 8
  },
  "by_topic": {
-  "other": 77,
-  "canvas-tool": 68,
+  "other": 82,
+  "canvas-tool": 67,
   "generation-pipeline": 40,
   "canvas-product": 34,
   "agent-ux": 31,
@@ -27,7 +27,7 @@
   "2026-07": 41,
   "2026-08": 79,
   "2026-09": 155,
-  "2026-10": 130
+  "2026-10": 134
  },
  "items": [
   {
@@ -1773,7 +1773,7 @@
    "month": "2026-10",
    "kind": "spec",
    "status": "living",
-   "reason": "文内标注待实现/待评审/进行中",
+   "reason": "2026-10 活跃主题（canvas-tool）",
    "topic": "canvas-tool"
   },
   {
@@ -1792,15 +1792,6 @@
    "kind": "spec",
    "status": "frozen",
    "reason": "文内标注已实现/已交付",
-   "topic": "canvas-tool"
-  },
-  {
-   "path": "docs/superpowers/specs/2026-10-26-mobile-node-lifecycle-pm-arch-review.md",
-   "name": "2026-10-26-mobile-node-lifecycle-pm-arch-review.md",
-   "month": "2026-10",
-   "kind": "spec",
-   "status": "living",
-   "reason": "2026-10 活跃主题（canvas-tool）",
    "topic": "canvas-tool"
   },
   {
@@ -1833,6 +1824,15 @@
   {
    "path": "docs/superpowers/specs/2026-10-26-unified-single-conversation-design.md",
    "name": "2026-10-26-unified-single-conversation-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-27-mobile-web-three-page-topbar-redesign.md",
+   "name": "2026-10-27-mobile-web-three-page-topbar-redesign.md",
    "month": "2026-10",
    "kind": "spec",
    "status": "living",
@@ -3669,6 +3669,42 @@
   {
    "path": "docs/superpowers/plans/2026-10-26-shared-agent-subscription.md",
    "name": "2026-10-26-shared-agent-subscription.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-26-sp-d-edge-validation.md",
+   "name": "2026-10-26-sp-d-edge-validation.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-27-mobile-proposal-annotation-flow.md",
+   "name": "2026-10-27-mobile-proposal-annotation-flow.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-27-mobile-web-three-page-topbar-redesign.md",
+   "name": "2026-10-27-mobile-web-three-page-topbar-redesign.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-27-project-gallery-consolidation-hotfix.md",
+   "name": "2026-10-27-project-gallery-consolidation-hotfix.md",
    "month": "2026-10",
    "kind": "plan",
    "status": "frozen",

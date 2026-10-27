@@ -20,6 +20,8 @@ import { useClickOutside } from '@/composables/useClickOutside'
 
 const props = defineProps<{
   tab: 'chat' | 'canvas' | 'discover' | 'mine'
+  /** 当前项目名（规格 §6.4：次级灰、15px、超长截断、非交互） */
+  projectName: string
   /** 画布页签：运行中/排队中的任务数（顶栏 ⋯ 动态项徽标） */
   taskActiveCount?: number
   /** 画布页签：是否存在任何任务记录（无任务时动态项不出现） */
@@ -27,12 +29,10 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  'back-to-creation-home': []
-  'new-chat': []
-  'open-history': []
-  /** IA v4（2026-10-23）：顶栏品牌字标可点 = 回工作台 hero（品牌回家）。
-   *  壳层（四页签）长在项目页内，hero 是独立页 ⇒ 没有这条路就回不去前门。 */
-  'go-home': []
+  /** 规格 §6.2/§6.3：‹ 返回创作空间（chat + canvas 共用） */
+  'go-gallery': []
+  /** 规格 §6.3：⤢ 适应画布（canvas 分支，经壳层桥接到 VueFlow fitView） */
+  'fit-view': []
   publish: []
   'import-workflow': []
   'export-workflow': []
@@ -93,117 +93,95 @@ onUnmounted(() => {
        面板不透明背景盖住 ≡、点击穿透到面板，抽屉打不开。与抽屉/面板同走 body 层保证
        z 序：抽屉(95) > 顶栏(85) > 面板(70)。 -->
   <Teleport to="body">
-    <header class="mobile-top-bar" :class="{ 'is-ghost': isGhost, 'is-chat': props.tab === 'chat' }">
-    <!-- 对话页签：左上 ≡ 返回创作首页（2026-10-26 D7/D10：原项目抽屉退场，
-         项目列表唯一真身 = /canvases 行卡；≡ 图标不变，语义 = 回列表） -->
-    <button
-      v-if="props.tab === 'chat'"
-      type="button"
-      class="bar-btn"
-      aria-label="返回创作首页"
-      @click="emit('back-to-creation-home')"
-    >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
-        <path stroke-linecap="round" d="M5 9h14M8 15h11" />
-      </svg>
-    </button>
+    <header class="mobile-top-bar" :class="{ 'is-ghost': isGhost }">
+      <!-- 返回创作空间（chat + canvas 共用；规格 §6.2/§6.3）：chevron(<) + 文案「创作空间」 -->
+      <button
+        v-if="props.tab === 'chat' || props.tab === 'canvas'"
+        type="button"
+        class="bar-back"
+        data-testid="mobile-topbar-back"
+        aria-label="返回创作空间"
+        @click="emit('go-gallery')"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M15 18l-6-6 6-6" />
+        </svg>
+        <span class="bar-back__label">创作空间</span>
+      </button>
 
-    <!-- IA v4（2026-10-23）：品牌字标 = 回工作台 hero 的入口（待拍②拍板）。
-         移动端全链路 = 登录 → hero（品牌满屏）→ 对话页；壳层在项目页内，
-         字标是项目页回前门唯一常驻路。不放墨鱼图标（作品带首卡同款克制：
-         品牌字标足够，别再堆形象）。 -->
-    <button
-      v-if="props.tab === 'chat'"
-      type="button"
-      class="bar-brand"
-      data-testid="mobile-topbar-brand"
-      aria-label="返回工作台"
-      @click="emit('go-home')"
-    >
-      墨鱼<span class="bar-brand__pi">π</span>
-    </button>
+      <!-- 项目名（规格 §6.4：次级灰、15px、超长截断、非交互） -->
+      <span
+        v-if="props.tab === 'chat' || props.tab === 'canvas'"
+        class="topbar-project-name"
+        data-testid="mobile-topbar-project-name"
+      >{{ projectName }}</span>
 
-    <!-- 右侧工具簇：对话页 +/🕘 ｜ 画布页 ⋯ 菜单（积分已撤出，见头部裁决注释） -->
-    <div class="bar-actions">
-      <template v-if="props.tab === 'chat'">
-        <!-- 「新对话」卡（IA v3.3 顶栏紧凑变体；IA v4 2026-10-23 改名：
-             与抽屉「新建项目」拉开级差——新对话=线程级（当前项目内重置对话），
-             新建项目=项目级（新画布+首对话），两个名字都准确但会混。 -->
+      <!-- 右侧工具簇 -->
+      <div class="bar-actions">
+        <!-- 画布：⤢ 适应画布（位于 ⋯ 前；规格 §6.3，经壳层桥接 VueFlow fitView） -->
         <button
-          type="button"
-          class="create-card create-card--bar"
-          title="新对话"
-          @click="emit('new-chat')"
-        >
-          <span class="create-card__label">新对话</span>
-          <span class="create-card__disc" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <path stroke-linecap="round" d="M12 5v14M5 12h14" />
-            </svg>
-          </span>
-        </button>
-        <button
+          v-if="props.tab === 'canvas'"
           type="button"
           class="bar-btn"
-          aria-label="对话历史"
-          @click="emit('open-history')"
+          data-testid="mobile-topbar-fit"
+          aria-label="适应画布"
+          @click="emit('fit-view')"
         >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
-            <circle cx="12" cy="12" r="9" />
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 7v5l3 2" />
+          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
           </svg>
         </button>
-      </template>
 
-      <!-- 画布页签：⋯ 画布管理菜单 -->
-      <div v-if="props.tab === 'canvas'" ref="menuRef" class="menu-anchor">
-        <button
-          type="button"
-          class="bar-btn"
-          aria-label="项目管理菜单"
-          @click.stop="toggleMenu"
-        >
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <circle cx="6" cy="12" r="1.8" />
-            <circle cx="12" cy="12" r="1.8" />
-            <circle cx="18" cy="12" r="1.8" />
-          </svg>
-        </button>
-        <div v-if="menuOpen" class="bar-menu" @click.stop>
-          <!-- 任务（D-2）：从竖轨移入的动态项，有任务才出现 -->
-          <button
-            v-if="showTaskItem"
-            type="button"
-            class="bar-menu-item"
-            data-testid="bar-menu-task"
-            @click="onMenuItem('task')"
-          >
-            {{ taskItemLabel }}
-          </button>
-          <!-- PR4（设计 §4.1）：按移动频次重排 ——发布 / 分镜 / 导出（默认完整包，
-               轻量与媒体清单进二级）/ 导入；「保存画布」移除（移动端本就是自动保存，
-               状态行 MobileSaveStatus 如实告知，点按仍可手动存）。 -->
-          <button type="button" class="bar-menu-item" @click="onMenuItem('publish')">发布作品</button>
+        <!-- ⋯ 项目菜单（chat + canvas 共用；原仅 canvas，规格 §6.2/§6.3） -->
+        <div v-if="props.tab === 'chat' || props.tab === 'canvas'" ref="menuRef" class="menu-anchor">
           <button
             type="button"
-            class="bar-menu-item bar-menu-item--parent"
-            data-testid="bar-menu-export"
-            :aria-expanded="exportOpen"
-            @click.stop="exportOpen = !exportOpen"
+            class="bar-btn"
+            data-testid="mobile-topbar-menu"
+            aria-label="项目菜单"
+            @click.stop="toggleMenu"
           >
-            <span>导出工作流</span>
-            <svg class="bar-menu-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <circle cx="6" cy="12" r="1.8" />
+              <circle cx="12" cy="12" r="1.8" />
+              <circle cx="18" cy="12" r="1.8" />
             </svg>
           </button>
-          <div v-if="exportOpen" class="bar-menu-sub" data-testid="bar-menu-export-sub">
-            <button type="button" class="bar-menu-item" @click="onMenuItem('export')">完整工作流包</button>
-            <button type="button" class="bar-menu-item" @click="onMenuItem('export-light')">轻量包（不含媒体）</button>
+          <div v-if="menuOpen" class="bar-menu" @click.stop>
+            <!-- 任务（D-2）：从竖轨移入的动态项，有任务才出现 -->
+            <button
+              v-if="showTaskItem"
+              type="button"
+              class="bar-menu-item"
+              data-testid="bar-menu-task"
+              @click="onMenuItem('task')"
+            >
+              {{ taskItemLabel }}
+            </button>
+            <!-- PR4（设计 §4.1）：按移动频次重排 ——发布 / 分镜 / 导出（默认完整包，
+                 轻量与媒体清单进二级）/ 导入；「保存画布」移除（移动端本就是自动保存，
+                 状态行 MobileSaveStatus 如实告知，点按仍可手动存）。 -->
+            <button type="button" class="bar-menu-item" @click="onMenuItem('publish')">发布作品</button>
+            <button
+              type="button"
+              class="bar-menu-item bar-menu-item--parent"
+              data-testid="bar-menu-export"
+              :aria-expanded="exportOpen"
+              @click.stop="exportOpen = !exportOpen"
+            >
+              <span>导出工作流</span>
+              <svg class="bar-menu-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+            <div v-if="exportOpen" class="bar-menu-sub" data-testid="bar-menu-export-sub">
+              <button type="button" class="bar-menu-item" @click="onMenuItem('export')">完整工作流包</button>
+              <button type="button" class="bar-menu-item" @click="onMenuItem('export-light')">轻量包（不含媒体）</button>
+            </div>
+            <button type="button" class="bar-menu-item" @click="onMenuItem('import')">导入工作流</button>
           </div>
-          <button type="button" class="bar-menu-item" @click="onMenuItem('import')">导入工作流</button>
         </div>
       </div>
-    </div>
     </header>
   </Teleport>
 </template>
@@ -217,7 +195,7 @@ onUnmounted(() => {
   z-index: 85;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 4px;
   height: calc(44px + env(safe-area-inset-top, 0px));
   padding: env(safe-area-inset-top, 0px) 10px 0;
@@ -235,12 +213,6 @@ onUnmounted(() => {
   -webkit-backdrop-filter: none;
   border-bottom-color: transparent;
   pointer-events: none;
-}
-
-/* 对话页：≡ 贴左上角（2026-10-19 用户裁决——抽屉自左滑出，触发器同侧）；
- * 画布页 ⋯ 菜单保持贴右。 */
-.mobile-top-bar.is-chat {
-  justify-content: flex-start;
 }
 
 .bar-btn {
@@ -272,6 +244,52 @@ onUnmounted(() => {
   align-items: center;
   gap: 4px;
   margin-left: auto;
+}
+
+/* 返回创作空间簇（chevron + 文案「创作空间」）：栏内主操作，主色（规格 §6.2/§6.3） */
+.bar-back {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  height: 34px;
+  padding: 0 4px 0 2px;
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--lnk-text-primary);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.bar-back::after {
+  content: '';
+  position: absolute;
+  inset: -5px;
+}
+.bar-back svg {
+  width: 20px;
+  height: 20px;
+}
+.bar-back__label {
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* 项目名（规格 §6.4：次级灰、15px、超长截断、非交互、视觉权重低于返回簇） */
+.topbar-project-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: calc(100% - 150px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--lnk-text-secondary);
+  line-height: 1;
 }
 
 /* 品牌字标（IA v4 2026-10-23）：回工作台 hero 的常驻路。用字标不用墨鱼图标——
