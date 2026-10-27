@@ -51,7 +51,7 @@ describe('MobileNodeTile 媒体属性行（走查②）', () => {
     })
     const info = w.find('[data-testid="mobile-node-media-info"]')
     expect(info.exists()).toBe(true)
-    expect(info.text()).toBe('图片 · 1024×768 · 4:3 · 2.0KB')
+    expect(info.text()).toBe('1024×768 · 4:3 · 2.0KB')
     // 属性行是媒体盒的沉底一行，媒体元素仍在
     expect(w.find('img.mobile-node-media').exists()).toBe(true)
     w.unmount()
@@ -68,7 +68,7 @@ describe('MobileNodeTile 媒体属性行（走查②）', () => {
         } as never,
       },
     })
-    expect(w.find('[data-testid="mobile-node-media-info"]').text()).toBe('视频 · 720p · 16:9 · 3.0MB')
+    expect(w.find('[data-testid="mobile-node-media-info"]').text()).toBe('720p · 16:9 · 3.0MB')
     w.unmount()
   })
 
@@ -83,13 +83,13 @@ describe('MobileNodeTile 媒体属性行（走查②）', () => {
         } as never,
       },
     })
-    expect(w.find('[data-testid="mobile-node-media-info"]').text()).toBe('音频 · 1:05 · MP3 · 1.0MB')
+    expect(w.find('[data-testid="mobile-node-media-info"]').text()).toBe('1:05 · MP3 · 1.0MB')
     // 波纹播放器仍在（属性行不挤占播放区）
     expect(w.find('.mobile-audio-wave').exists()).toBe(true)
     w.unmount()
   })
 
-  it('无 mediaInfo ⇒ 行 = 类型名兜底（回归①：PC resolveNeoNodeTitle 同源，恒有名称）', () => {
+  it('无 mediaInfo ⇒ 底部行不渲染（三轮走查修订：类型·名字归左上角头部，底部只放媒体要素）', () => {
     const w = mount(MobileNodeTile, {
       props: {
         id: 'n4',
@@ -97,11 +97,11 @@ describe('MobileNodeTile 媒体属性行（走查②）', () => {
         data: { url: 'https://example.com/a.png' } as never,
       },
     })
-    expect(w.find('[data-testid="mobile-node-media-info"]').text()).toBe('图片')
+    expect(w.find('[data-testid="mobile-node-media-info"]').exists()).toBe(false)
     w.unmount()
   })
 
-  it('mediaInfo 全字段缺失 ⇒ 行 = 类型名兜底（回归①）', () => {
+  it('mediaInfo 全字段缺失 ⇒ 底部行不渲染（三轮走查修订）', () => {
     const w = mount(MobileNodeTile, {
       props: {
         id: 'n5',
@@ -109,7 +109,7 @@ describe('MobileNodeTile 媒体属性行（走查②）', () => {
         data: { url: 'https://example.com/a.png', mediaInfo: { kind: 'image' } } as never,
       },
     })
-    expect(w.find('[data-testid="mobile-node-media-info"]').text()).toBe('图片')
+    expect(w.find('[data-testid="mobile-node-media-info"]').exists()).toBe(false)
     w.unmount()
   })
 
@@ -148,11 +148,12 @@ describe('MobileNodeTile 属性行样式契约（令牌纪律）', () => {  it('
   })
 })
 
-// ── 走查①②（2026-10-27）：名称 + 类型属性行 ──────────────────────────────
-// 规格 §6.2「磁贴属性行构成」：属性行 = 节点名称（居首）+ 类型属性；
+// ── 三轮走查修订（2026-10-27）：头部=类型·名字（左上角），底部=纯媒体要素 ──
+// 规格 §6.2「磁贴信息构成」（三轮走查拍板）：左上角头部 = 类型 · 自定义名
+// （PC 标题条对位）；底部属性行只放媒体要素（图片 尺寸·比例·大小 等）；
 // 音/视频移动端自己 ensure mediaInfo（此前只有 PC 组件跑 probe ⇒ 移动端恒缺）。
-describe('MobileNodeTile 名称 + 属性行（走查①②，2026-10-27）', () => {
-  it('有名称 ⇒ 属性行名称居首（规格：名称 · 类型属性）', () => {
+describe('MobileNodeTile 头部 + 底部属性行（三轮走查修订，2026-10-27）', () => {
+  it('有名称 ⇒ 底部行 = 纯媒体要素，名称归头部（三轮走查修订）', () => {
     const w = mount(MobileNodeTile, {
       props: {
         id: 'nm1',
@@ -166,11 +167,12 @@ describe('MobileNodeTile 名称 + 属性行（走查①②，2026-10-27）', () 
     })
     const info = w.find('[data-testid="mobile-node-media-info"]')
     expect(info.exists()).toBe(true)
-    expect(info.text()).toBe('封面图 · 1024×768 · 4:3 · 2.0KB')
+    expect(info.text()).toBe('1024×768 · 4:3 · 2.0KB')
+    expect(w.find('[data-testid="mobile-node-tile-header"]').text()).toBe('图片 · 封面图')
     w.unmount()
   })
 
-  it('无名称（label/title 均缺）⇒ 类型名兜底居首（回归①，PC resolveNeoNodeTitle 同源）', () => {
+  it('无名称（label/title 均缺）⇒ 头部 = 类型名兜底（PC resolveNeoNodeTitle 同源）', () => {
     const w = mount(MobileNodeTile, {
       props: {
         id: 'nm2',
@@ -181,11 +183,11 @@ describe('MobileNodeTile 名称 + 属性行（走查①②，2026-10-27）', () 
         } as never,
       },
     })
-    expect(w.find('[data-testid="mobile-node-media-info"]').text()).toBe('图片 · 1024×768 · 4:3 · 2.0KB')
+    expect(w.find('[data-testid="mobile-node-tile-header"]').text()).toBe('图片')
     w.unmount()
   })
 
-  it('title 兜底：label 缺失但 title 有值 ⇒ 取 title（PC label ?? title 同链）', () => {
+  it('title 兜底：label 缺失但 title 有值 ⇒ 头部 = 「文本 · 来自 title 的名字」', () => {
     const w = mount(MobileNodeTile, {
       props: {
         id: 'nm2b',
@@ -193,11 +195,45 @@ describe('MobileNodeTile 名称 + 属性行（走查①②，2026-10-27）', () 
         data: { title: '来自 title 的名字', content: '一二三' } as never,
       },
     })
-    expect(w.find('[data-testid="mobile-node-text-info"]').text()).toBe('来自 title 的名字 · 3 字')
+    expect(w.find('[data-testid="mobile-node-tile-header"]').text()).toBe('文本 · 来自 title 的名字')
     w.unmount()
   })
 
-  it('文本节点属性行 = 名称 · 字数（独立 testid，正文不重复）', () => {
+  it('有产物图片磁贴头部 = 「图片 · 自定义名」（左上角，三轮走查①）', () => {
+    const w = mount(MobileNodeTile, {
+      props: {
+        id: 'nh1',
+        type: 'image',
+        data: { url: 'https://example.com/a.png', label: '封面图' } as never,
+      },
+    })
+    const h = w.find('[data-testid="mobile-node-tile-header"]')
+    expect(h.exists()).toBe(true)
+    expect(h.text()).toBe('图片 · 封面图')
+    w.unmount()
+  })
+
+  it('自定义名与类型名相同 ⇒ 头部去重只显示一段', () => {
+    const w = mount(MobileNodeTile, {
+      props: {
+        id: 'nh2',
+        type: 'video',
+        data: { url: 'https://example.com/a.mp4', label: '视频' } as never,
+      },
+    })
+    expect(w.find('[data-testid="mobile-node-tile-header"]').text()).toBe('视频')
+    w.unmount()
+  })
+
+  it('空态磁贴不渲染头部（占位分支已有类型名自解释，不重复）', () => {
+    const w = mount(MobileNodeTile, {
+      props: { id: 'nh3', type: 'image', data: { url: '' } as never },
+    })
+    expect(w.find('[data-testid="mobile-node-tile-header"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('文本节点底部属性行 = 字数；名称归头部（三轮走查修订）', () => {
     const w = mount(MobileNodeTile, {
       props: {
         id: 'nm3',
@@ -207,7 +243,8 @@ describe('MobileNodeTile 名称 + 属性行（走查①②，2026-10-27）', () 
     })
     const info = w.find('[data-testid="mobile-node-text-info"]')
     expect(info.exists()).toBe(true)
-    expect(info.text()).toBe('分镜笔记 · 5 字')
+    expect(info.text()).toBe('5 字')
+    expect(w.find('[data-testid="mobile-node-tile-header"]').text()).toBe('文本 · 分镜笔记')
     w.unmount()
   })
 
@@ -215,7 +252,7 @@ describe('MobileNodeTile 名称 + 属性行（走查①②，2026-10-27）', () 
     const w = mount(MobileNodeTile, {
       props: { id: 'nm4', type: 'text', data: { content: 'abcdef' } as never },
     })
-    expect(w.find('[data-testid="mobile-node-text-info"]').text()).toBe('文本 · 6 字')
+    expect(w.find('[data-testid="mobile-node-text-info"]').text()).toBe('6 字')
     w.unmount()
     const empty = mount(MobileNodeTile, {
       props: { id: 'nm5', type: 'text', data: { label: '空', content: '' } as never },

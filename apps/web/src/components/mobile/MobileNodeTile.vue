@@ -216,28 +216,33 @@ const mediaInfoText = computed(() => {
  * mediaInfo（此前 probe 只在 PC 组件跑 ⇒ 移动端会话恒缺属性行）。
  */
 /**
- * 节点名称——⭐ 2026-10-27 真机回归①修复：与 PC `resolveNeoNodeTitle` 完全同源
- * （`label ?? title`，都没有则**类型名兜底**）。此前只读 `data.label`，用户节点
- * 绝大多数没有自定义名 ⇒ 属性行整条不渲染（真机四类磁贴全部无名称的根因）。
- * 截断交给 CSS ellipsis（PC 的 20 字截断是标题条语义，磁贴属性行是单行省略）。
+ * 左上角头部（⭐ 2026-10-27 三轮走查拍板）：**类型 · 自定义名**——PC 标题条
+ * （`neo-node-title`）的移动端对位；名称兜底链与 PC `resolveNeoNodeTitle`
+ * 同源（`label ?? title`，都没有则类型名）。无自定义名时只显示类型名；
+ * 自定义名与类型名相同则去重。仅渲染在有产物媒体分支与文本分支
+ * （空态占位分支已自解释类型，不重复）。
  */
-const nodeName = computed(() => {
+const tileHeaderText = computed(() => {
   const d = props.data as Record<string, unknown> | undefined
   const custom = [d?.label, d?.title].find((v) => typeof v === 'string' && v.trim()) as string | undefined
-  if (custom) return custom.trim()
-  return getNeoNodeMeta(props.type).label
+  const metaLabel = getNeoNodeMeta(props.type).label
+  const name = custom?.trim()
+  if (name && name !== metaLabel) return `${metaLabel} · ${name}`
+  return metaLabel
 })
 
-/** 媒体三类属性行：名称（有才拼） · 媒体属性（无则缺省该段，不渲染空行） */
-const attributeLine = computed(() =>
-  [nodeName.value, mediaInfoText.value].filter(Boolean).join(' · '),
-)
+/**
+ * 媒体三类底部属性行（三轮走查修订：名称归头部，底部只放**媒体要素**）：
+ * 图片 尺寸·比例·大小 / 视频 分辨率·比例·大小 / 音频 时长·格式·大小——
+ * 判据单一真源 `mediaInfoLine`（PC MediaInfoSummary 同源），缺段不猜。
+ */
+const attributeLine = computed(() => mediaInfoText.value)
 
-/** 文本节点属性行：名称 · 字数（空文本不渲染） */
+/** 文本节点底部属性行：字数（名称归头部；空文本不渲染） */
 const textAttrLine = computed(() => {
   const content = props.data?.content ?? ''
   if (!content) return ''
-  return [nodeName.value, `${content.length} 字`].filter(Boolean).join(' · ')
+  return `${content.length} 字`
 })
 
 /**
@@ -514,6 +519,10 @@ function handleTextTap() {
       </p>
     </div>
     <div v-else-if="type === 'image' && data?.url" class="mobile-node-media-box">
+      <!-- 三轮走查①：左上角头部 = 类型 · 名字（PC 标题条移动端对位） -->
+      <p v-if="tileHeaderText" class="mobile-node-tile-header" data-testid="mobile-node-tile-header">
+        {{ tileHeaderText }}
+      </p>
       <img :src="data.url" class="mobile-node-media" alt="" />
       <!-- 走查②：PC MediaInfoSummary 的移动端对等物 + 名称居首（走查①，§6.2 属性行构成） -->
       <p v-if="attributeLine" class="mobile-node-media-info" data-testid="mobile-node-media-info">
@@ -521,6 +530,10 @@ function handleTextTap() {
       </p>
     </div>
     <div v-else-if="type === 'video' && data?.url" class="mobile-node-media-box">
+      <!-- 三轮走查①：左上角头部 = 类型 · 名字（PC 标题条移动端对位） -->
+      <p v-if="tileHeaderText" class="mobile-node-tile-header" data-testid="mobile-node-tile-header">
+        {{ tileHeaderText }}
+      </p>
       <video
         ref="videoTileRef"
         :src="data?.url"
@@ -548,6 +561,10 @@ function handleTextTap() {
       空音频落到下方类型占位分支（音频图标 + 类型名），与空图 / 空视频同型。
     -->
     <div v-else-if="type === 'audio' && data?.url" class="mobile-node-media-box">
+      <!-- 三轮走查①：左上角头部 = 类型 · 名字（PC 标题条移动端对位） -->
+      <p v-if="tileHeaderText" class="mobile-node-tile-header" data-testid="mobile-node-tile-header">
+        {{ tileHeaderText }}
+      </p>
       <div class="mobile-audio-wave">
         <button class="mobile-audio-play" type="button" :aria-label="playing ? '暂停' : '播放'" @click.stop="toggleAudio">▶</button>
         <MobileNodeWaveform
@@ -562,6 +579,10 @@ function handleTextTap() {
       </p>
     </div>
     <div v-else-if="type === 'text'" class="mobile-node-text-wrap">
+      <!-- 三轮走查①：左上角头部 = 类型 · 名字（PC 标题条移动端对位） -->
+      <p v-if="tileHeaderText" class="mobile-node-tile-header" data-testid="mobile-node-tile-header">
+        {{ tileHeaderText }}
+      </p>
       <p class="mobile-node-text">{{ data?.content || '空文本' }}</p>
       <!-- 走查③：空文本也要有点按入口（tap ⇒ 编辑 sheet） -->
       <span v-if="!data?.content" class="mobile-node-text-cta">{{ emptyCtaLabel }}</span>
@@ -819,6 +840,21 @@ function handleTextTap() {
   padding: 2px 6px 3px;
   background: var(--lnk-surface-base);
   color: var(--lnk-text-muted);
+  font-size: var(--lnk-text-2xs);
+  line-height: var(--lnk-lh-2xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 三轮走查①：左上角头部 = 类型 · 名字（PC 标题条移动端对位）。
+   与底部 media-info 同视觉语言（surface-base 承载条），文字用次级色以区分主内容。 */
+.mobile-node-tile-header {
+  flex: none;
+  margin: 0;
+  padding: 2px 6px 3px;
+  background: var(--lnk-surface-base);
+  color: var(--lnk-text-secondary);
   font-size: var(--lnk-text-2xs);
   line-height: var(--lnk-lh-2xs);
   white-space: nowrap;
