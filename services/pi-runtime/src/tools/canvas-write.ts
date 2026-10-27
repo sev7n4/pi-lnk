@@ -660,6 +660,12 @@ export function createCanvasWriteTools(
 					outcome.confirmed ? { status: "answered", answers: {} } : { status: "aborted" },
 				);
 				if (!outcome.confirmed) {
+					// ⚠️ race 联合里 confirmResult 臂的 reason 是宽 string，字面比较判别不出
+					// aborted 臂 ⇒ 用 `in` 窄化（note 仅声明在 aborted 映射臂上）。
+					const declineNote =
+						outcome.reason === "aborted" && "note" in outcome
+							? (outcome as { note?: string }).note
+							: undefined;
 					return {
 						content: [{
 							type: "text",
@@ -670,12 +676,12 @@ export function createCanvasWriteTools(
 								message:
 									outcome.reason === "timeout"
 										? "用户未在时限内确认，请等待用户后续指示，不要自行执行 run_*。"
-										: outcome.reason === "aborted"
-											? // §17.8（2026-10-27）：批注流锚带回 ⇒ decline 携带批注意见，
-												// 明说「反馈正从对话发来」，防模型抢在截图到达前凭空重提议。
-												outcome.note
-												? `用户已拒绝本次提议（批注模式）。批注意见：${outcome.note}。带标记的批注截图正从对话发来，请等待用户消息后再修改提示词并重新提议，不要在收到用户消息前盲目重试。`
-												: "用户已中止。"
+									: outcome.reason === "aborted"
+										? // §17.8（2026-10-27）：批注流锚带回 ⇒ decline 携带批注意见，
+											// 明说「反馈正从对话发来」，防模型抢在截图到达前凭空重提议。
+											declineNote
+											? `用户已拒绝本次提议（批注模式）。批注意见：${declineNote}。带标记的批注截图正从对话发来，请等待用户消息后再修改提示词并重新提议，不要在收到用户消息前盲目重试。`
+											: "用户已中止。"
 											: outcome.reason?.startsWith("stale_status:")
 												// 2026-10-12 事故形态：状态被 stale 覆盖回旧终态，零生成。
 												// 必须明说「未启动」，禁止模型复述「正在出图」。
