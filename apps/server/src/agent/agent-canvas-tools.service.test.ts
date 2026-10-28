@@ -383,6 +383,84 @@ describe('AgentCanvasToolsService', () => {
     expect(result.actions).toHaveLength(0)
   })
 
+  // SP-F P1c（缩范围，见 spec V-3 修订）：成功回执带 applied/duplicates 计数，模型可感知幂等跳过
+  it('connectNodes 回执带 applied/duplicates 计数', async () => {
+    canvas = {
+      nodes: [
+        { id: 'a', type: 'image', position: { x: 0, y: 0 }, data: {} },
+        { id: 'b', type: 'image', position: { x: 280, y: 0 }, data: {} },
+        { id: 'c', type: 'image', position: { x: 560, y: 0 }, data: {} },
+      ],
+      edges: [{ id: 'e-a-b', source: 'a', target: 'b' }],
+    }
+    const result = await svc.connectNodes({
+      sessionId: 's1',
+      edges: [
+        { source: 'a', target: 'b' }, // duplicate（既存）
+        { source: 'a', target: 'b' }, // duplicate（批内撞既有 key，仍幂等）
+        { source: 'b', target: 'c' }, // 新边
+      ],
+    })
+    expect(result.applied).toBe(1)
+    expect(result.duplicates).toBe(2)
+    expect(result.actions).toHaveLength(1)
+    expect(canvas.edges).toHaveLength(2)
+  })
+
+  it('connectNodes adds edges 回执计数（全新边 applied=1 duplicates=0）', async () => {
+    canvas = {
+      nodes: [
+        { id: 'a', type: 'image', position: { x: 0, y: 0 }, data: {} },
+        { id: 'b', type: 'image', position: { x: 280, y: 0 }, data: {} },
+      ],
+      edges: [],
+    }
+    const result = await svc.connectNodes({
+      sessionId: 's1',
+      edges: [{ source: 'a', target: 'b' }],
+    })
+    expect(result.applied).toBe(1)
+    expect(result.duplicates).toBe(0)
+  })
+
+  // SP-F O2（spec V-6）：过期暂存清空必须留痕（此前静默 delete，动作无痕蒸发）
+  it('expireStaleStage 过期清空时记 warn 并清库', async () => {
+    const logger = (svc as unknown as { logger: { warn: (m: string) => void } }).logger
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    sessionFindUnique.mockResolvedValueOnce({
+      id: 's1',
+      stagedActions: JSON.stringify([
+        { type: 'add_node', payload: { id: 'n1' } },
+        { type: 'add_node', payload: { id: 'n2' } },
+      ]),
+      stagedAt: new Date(Date.now() - 31 * 60 * 1000),
+    })
+    // harness 全局 sessionUpdate 假定 data.canvasData 存在；本用例清的是 stagedActions
+    sessionUpdate.mockImplementationOnce(async () => ({ id: 's1' }))
+    await (svc as unknown as { expireStaleStage(s: string): Promise<void> }).expireStaleStage('s1')
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(String(warn.mock.calls[0][0])).toContain('expired')
+    expect(String(warn.mock.calls[0][0])).toContain('2')
+    expect(sessionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { stagedActions: null, stagedAt: null } }),
+    )
+    warn.mockRestore()
+  })
+
+  it('expireStaleStage 未过期不动不记', async () => {
+    const logger = (svc as unknown as { logger: { warn: (m: string) => void } }).logger
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    sessionFindUnique.mockResolvedValueOnce({
+      id: 's1',
+      stagedActions: JSON.stringify([{ type: 'add_node', payload: { id: 'n1' } }]),
+      stagedAt: new Date(),
+    })
+    await (svc as unknown as { expireStaleStage(s: string): Promise<void> }).expireStaleStage('s1')
+    expect(warn).not.toHaveBeenCalled()
+    expect(sessionUpdate).not.toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
   it('addNodesBatch edges 批内互相成环 ⇒ 整批 400（cycle）', async () => {
     canvas = {
       nodes: [

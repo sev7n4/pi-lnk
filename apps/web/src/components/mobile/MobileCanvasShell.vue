@@ -25,6 +25,8 @@ import type { GenerationRecord } from '@/services/studio-api'
 import type { MobileAppTab } from './MobileTabBar.vue'
 import type { DockNodeType } from '@/components/canvas/NodePanelDock.vue'
 import type { CanvasAssetItem } from '@/components/canvas/CanvasAssetPanel.vue'
+// SP-F Q1：移动端连线可见性兜底（仅 ≤767px media query 内生效，桌面零影响）
+import './MobileCanvasEdge.css'
 
 import MobileTopBar from './MobileTopBar.vue'
 import MobileTabBar from './MobileTabBar.vue'

@@ -8,8 +8,14 @@
  * 验证所需的最小映射，未映射事件原样透传（type 加 `pi_` 前缀避免歧义）。
  */
 
+import { Logger } from "@nestjs/common";
 import { CanvasActionSchema, NODE_TYPES, type CanvasAction } from "@lnkpi/shared";
 import { z } from "zod";
+
+/** SP-F O1（spec 2026-10-28-canvas-edge-remedy-loop-design.md §3.3）：
+ *  派发通道三类静默丢弃的可观测出口。健康链路零频（丢弃本应是异常）；
+ *  指标化随 SP-E §8.1 落 Nest 指标基建时一并收敛。导出仅为测试可 spy。 */
+export const piEventsLogger = new Logger("PiEvents.canvas_action");
 
 /** pi-runtime SSE 归一事件（与 services/pi-runtime/src/session-manager.ts 对齐） */
 export interface PiRuntimeEvent<T = unknown> {
@@ -487,17 +493,38 @@ export function extractCanvasActions(event: PiRuntimeEvent): CanvasAction[] {
 	if (event.type !== "tool_execution_end") return [];
 	const d = event.data as {
 		isError?: boolean;
+		toolName?: string;
 		result?: { details?: { actions?: unknown } };
 	};
-	if (d.isError) return [];
+	if (d.isError) {
+		// F2（架构审视 2026-10-28 §4.1）：部分成功的工具连已发生的动作都不下发——
+		// 只在这种情况留痕；纯 isError（无 actions）是正常失败路径，不记。
+		const pending = d.result?.details?.actions;
+		if (Array.isArray(pending) && pending.length > 0) {
+			piEventsLogger.warn(
+				`canvas_action partial_skip isError=true tool=${d.toolName ?? "?"} dropped=${pending.length}`,
+			);
+		}
+		return [];
+	}
 	const actions = d.result?.details?.actions;
 	if (!Array.isArray(actions)) return [];
 	const out: CanvasAction[] = [];
 	for (const a of actions) {
 		const parsed = CanvasActionSchema.safeParse(a);
-		if (!parsed.success) continue;
+		if (!parsed.success) {
+			piEventsLogger.warn(
+				`canvas_action zod_drop tool=${d.toolName ?? "?"} issues=${parsed.error.issues.length} first=${parsed.error.issues[0]?.path.join(".")}`,
+			);
+			continue;
+		}
 		const nodeType = parsed.data.payload.nodeType;
-		if (nodeType !== undefined && !NODE_TYPE_SET.has(nodeType)) continue;
+		if (nodeType !== undefined && !NODE_TYPE_SET.has(nodeType)) {
+			piEventsLogger.warn(
+				`canvas_action whitelist_drop tool=${d.toolName ?? "?"} nodeType=${nodeType}`,
+			);
+			continue;
+		}
 		out.push(parsed.data);
 	}
 	return out;

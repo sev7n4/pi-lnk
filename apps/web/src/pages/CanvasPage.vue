@@ -122,7 +122,7 @@ import SelectionBatchProgressCard from '@/components/canvas/SelectionBatchProgre
 import MultiSelectConnectOverlay from '@/components/canvas/MultiSelectConnectOverlay.vue'
 import BatchConnectPickerLine from '@/components/canvas/BatchConnectPickerLine.vue'
 import EdgeScissorsOverlay from '@/components/canvas/EdgeScissorsOverlay.vue'
-import { useCanvasViewportSettings, type CanvasViewportSettings } from '@/composables/useCanvasViewportSettings'
+import { useCanvasViewportSettings, DEFAULT_EDGE_WIDTH, type CanvasViewportSettings } from '@/composables/useCanvasViewportSettings'
 import { useCanvasTheme } from '@/composables/useCanvasTheme'
 import { useCanvasKeyboard } from '@/composables/useCanvasKeyboard'
 import {
@@ -568,9 +568,9 @@ const canvasInteractionEnabled = computed(() => !viewportSettings.value.viewLock
 
 const canvasEdgeStyle = computed(() => {
   const s = viewportSettings.value
-  const vars: Record<string, string> = {
-    '--canvas-edge-width': `${s.edgeWidth}px`,
-  }
+  const vars: Record<string, string> = {}
+  // SP-F Q1（评审 Important#1）：仅用户改过默认宽度才注入，移动端兜底 2px 才能生效
+  if (s.edgeWidth !== DEFAULT_EDGE_WIDTH) vars['--canvas-edge-width'] = `${s.edgeWidth}px`
   if (s.edgeColor.trim()) vars['--canvas-edge-color'] = s.edgeColor.trim()
   vars['--canvas-edge-glow'] = s.edgeGlow
     ? 'drop-shadow(0 0 5px color-mix(in srgb, var(--canvas-edge-color, var(--neo-edge)) 55%, transparent))'
