@@ -1,6 +1,7 @@
 import { Body, Controller, Inject, Post, UseGuards } from '@nestjs/common'
 import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Min, ValidateNested } from 'class-validator'
 import { Type } from 'class-transformer'
+import { TEXT_NODE_FORMATS } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
 import { AgentCanvasToolsService, BATCH_NODES_MAX } from './agent-canvas-tools.service'
 import { AgentInternalGuard } from './agent-internal.guard'
@@ -147,6 +148,11 @@ class BatchNodeItemDto {
   @IsOptional()
   @IsString()
   guideEditIntentId?: string
+
+  // 文本节点内容格式白名单（规格 §4.4）：仅 text 节点合法；service 层复检兜底绕 HTTP 的内部调用。
+  @IsOptional()
+  @IsIn([...TEXT_NODE_FORMATS])
+  format?: string
 }
 
 class AddNodesBatchDto {
@@ -320,6 +326,11 @@ class SetNodeContentDto {
   @IsOptional()
   @IsBoolean()
   stage?: boolean
+
+  // 文本节点内容格式白名单（规格 §4.4）：仅 text 节点合法；service 层复检兜底绕 HTTP 的内部调用。
+  @IsOptional()
+  @IsIn([...TEXT_NODE_FORMATS])
+  format?: string
 }
 
 export class UpdateNodeDto {

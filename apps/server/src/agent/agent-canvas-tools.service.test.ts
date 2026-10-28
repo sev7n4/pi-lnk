@@ -3249,4 +3249,49 @@ describe('AgentCanvasToolsService', () => {
       expect(position).toEqual({ x: 80, y: 80 })
     })
   })
+
+  // 规格 §5.3：addNodesBatch 的 format 透传——格式即属性（§4.4）。
+  // 缺省不写键（存量语义不变）；仅 text 节点可携带；白名单复检 fail-closed。
+  describe('addNodesBatch —— format 透传（规格 §5.3）', () => {
+    it('text 节点带 format:"html" ⇒ nodeData.format 写入', async () => {
+      const out = await svc.addNodesBatch({
+        sessionId: 's1',
+        userId: 'u1',
+        items: [{ key: 'doc', title: '文档', targetType: 'text', format: 'html' }],
+      } as never)
+      const add = out.actions.find((a) => a.type === 'add_node')!
+      expect((add.payload as { data: { format?: string } }).data.format).toBe('html')
+    })
+
+    it('format 缺省 ⇒ nodeData 无 format 键', async () => {
+      const out = await svc.addNodesBatch({
+        sessionId: 's1',
+        userId: 'u1',
+        items: [{ key: 'doc', title: '文档', targetType: 'text' }],
+      } as never)
+      const add = out.actions.find((a) => a.type === 'add_node')!
+      expect('format' in (add.payload as { data: Record<string, unknown> }).data).toBe(false)
+    })
+
+    it('image 节点带 format ⇒ BadRequestException（§4.5 仅 text）', async () => {
+      await expect(() =>
+        svc.addNodesBatch({
+          sessionId: 's1',
+          userId: 'u1',
+          items: [{ key: 'img', title: '图', targetType: 'image', format: 'html' }],
+        } as never),
+      ).rejects.toThrow(/仅 text 节点可携带 format/)
+      expect(sessionUpdate).not.toHaveBeenCalled()
+    })
+
+    it('非法值 ⇒ 抛错且信息列合法值', async () => {
+      await expect(() =>
+        svc.addNodesBatch({
+          sessionId: 's1',
+          userId: 'u1',
+          items: [{ key: 'doc', title: '文档', targetType: 'text', format: 'jsx' }],
+        } as never),
+      ).rejects.toThrow(/plain, markdown, html/)
+    })
+  })
 })
