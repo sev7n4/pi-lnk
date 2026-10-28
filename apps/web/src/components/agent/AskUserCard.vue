@@ -1,14 +1,18 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 /**
- * ask_user 选项卡组件（spec 2026-10-28-askuser-mobile-multi-question-redesign）：
- * - 单问题卡（length===1）：点 chip 即 emit submit（低摩擦主路径，B-6 不变）。
- * - 多问题卡（length>1）：**分页单题推进**（吸上游 questionnaire.ts 范式，T1）——一次只显示一题，
- *   顶部进度（第 X/N 题 · 已答 A/N），底部导航（上一题 / 下一题 / 提交）。答案按 qid 跨页保留。
- * - T0：卡片自身 max-height + overflow-y:auto（有界可滚），导航钮 sticky 常驻，杜绝高度溢出到 tab 栏。
- * - T2：多题卡提供「提交已答部分」逃生钮，已答 A<N 时显式交还已答部分（其余隐式 skipped）。
- * - 多题自动提交保留（答满即 emit），与显式提交双路径（S3）。
- * 样式走 --lnk-* 令牌（暗/亮主题自适应；旧 --neo-* 已迁出，neoUsageRatchet 禁增）。
+ * ask_user 选项卡组件（spec 2026-10-28-askuser-card-visual-refinement，承接 2026-10-28-askuser-mobile-multi-question-redesign T0-T2）：
+ * - 交互契约不变：单题卡点选即提交（B-6）/ 多题卡分页单题推进（T1）/ 答满自动提交（S3）/
+ *   「提交已答部分」逃生（T2）/ cancel 通道（S5）。wire 契约不变：只 POST answers，未答隐式 skipped。
+ * - 视觉重制（Apple 式收敛 × 墨流令牌）：选项 chip → 全宽触控行（44px），选中=翻面 + accent 对勾；
+ *   「跳过」上收题头右上；「其他」收进选项列表末位（点选原地展开输入，回车即提交）；
+ *   「提交已答部分 / 改用文字描述」降级为底部静默链接区。多题卡进度改分段条。
+ * - 行为增强：单选答后自动推进到下一未答题（修改已答题不推进，防误跳）；
+ *   multiSelect 的「其他」文本进已选集合（修复旧实现写入单选暂存位被静默丢弃的缺陷）。
+ * - 样式只消费 --lnk-* L2/L3 令牌（暗/亮主题自适应；design-token.test.ts 成对性守卫）。
+ *   6 态契约齐备：hover/active/focus-visible(2px border-focus 外环)/disabled（显式 text-disabled，不用 opacity）。
+ *   动效只动 transform/opacity，prefers-reduced-motion 强制静止。
+ *   零第三方图标：对勾为内联 SVG（24 网格）。
  * AskUserQuestion 结构与 pi-events.ts 同构（内联避免跨包 import server 类型）。
  */
 interface AskUserQuestion {
@@ -29,6 +33,9 @@ const emit = defineEmits<{
 }>()
 
 const otherText = ref<Record<string, string>>({})
+/** 「其他」行的展开态：点「其他…」行原地展开输入（chip 化，与选项同视觉同通道） */
+const otherEditing = ref<Record<string, boolean>>({})
+const otherInputEl = ref<HTMLInputElement | null>(null)
 const multiSelected = ref<Record<string, string[]>>({})
 /** 单选暂存：多题卡点选不即发；单题卡点选即发（B-6 主路径低摩擦） */
 const singleSelected = ref<Record<string, string>>({})
@@ -48,6 +55,15 @@ const answeredCount = computed(() =>
 	).length,
 )
 
+/** 当前题是否已答（驱动「下一题 ✓」反馈） */
+const currentAnswered = computed(() => isAnswered(current.value))
+
+function isAnswered(q: AskUserQuestion) {
+	if (skipped.value.has(q.id)) return false
+	if (q.multiSelect) return (multiSelected.value[q.id]?.length ?? 0) > 0
+	return !!singleSelected.value[q.id]
+}
+
 /** T1 收集当前所有已作答（跳过的题不进 answers，未答隐式 skipped，wire 契约不变） */
 function collectAnswers(): Record<string, string[]> {
 	const answers: Record<string, string[]> = {}
@@ -64,12 +80,6 @@ function doSubmit() {
 	emit('submit', { answers, ...(skipped.value.size ? { skipped: [...skipped.value] } : {}) })
 }
 
-/** T1 多题：答满自动提交（保留既有契约 S3）；单题卡由点击直接提交，不走此路径 */
-function tryAutoSubmit() {
-	if (props.questions.length <= 1) return
-	if (answeredCount.value === props.questions.length) doSubmit()
-}
-
 /** T2 逃生：已答 A<N 时显式交还已答部分，其余隐式 skipped。不依赖 30min 超时 */
 function submitPartial() {
 	if (answeredCount.value === 0) return
@@ -83,6 +93,19 @@ function goNext() {
 	if (currentIndex.value < props.questions.length - 1) currentIndex.value += 1
 }
 
+/** 答后自动推进：前进到下一个未答且未跳过的题（环绕查找）；全部已答/已跳过则留原地 */
+function advanceToNextUnanswered() {
+	const n = props.questions.length
+	for (let step = 1; step < n; step++) {
+		const i = (currentIndex.value + step) % n
+		const q = props.questions[i]
+		if (!skipped.value.has(q.id) && !isAnswered(q)) {
+			currentIndex.value = i
+			return
+		}
+	}
+}
+
 function isSelected(qid: string, value: string) {
 	return multiSelected.value[qid]?.includes(value) ?? false
 }
@@ -93,12 +116,16 @@ function toggleMulti(q: AskUserQuestion, value: string) {
 		: [...prev, value]
 }
 function confirmMulti() {
-	// 多题卡内 multiSelect 确认后也走 tryAutoSubmit（可能补齐最后一题触发自动提交）
+	// 多题卡 multiSelect 确认后：答满自动提交（S3），否则推进到下一未答题
 	if (props.questions.length === 1) {
 		doSubmit()
 		return
 	}
-	tryAutoSubmit()
+	if (answeredCount.value === props.questions.length) {
+		doSubmit()
+		return
+	}
+	advanceToNextUnanswered()
 }
 function pick(q: AskUserQuestion, value: string) {
 	if (q.multiSelect) {
@@ -109,8 +136,14 @@ function pick(q: AskUserQuestion, value: string) {
 		emit('submit', { answers: { [q.id]: [value] } })
 		return
 	}
+	// 修改已答题 = 原地改选，不自动推进（防误跳）；首答才推进
+	const wasAnswered = !!singleSelected.value[q.id]
 	singleSelected.value[q.id] = value
-	tryAutoSubmit()
+	if (answeredCount.value === props.questions.length) {
+		doSubmit()
+		return
+	}
+	if (!wasAnswered) advanceToNextUnanswered()
 }
 function skip(q: AskUserQuestion) {
 	skipped.value.add(q.id)
@@ -120,31 +153,77 @@ function skip(q: AskUserQuestion) {
 		doSubmit()
 		return
 	}
-	tryAutoSubmit()
+	if (answeredCount.value === props.questions.length) {
+		doSubmit()
+		return
+	}
+	advanceToNextUnanswered()
+}
+function unskip(q: AskUserQuestion) {
+	skipped.value.delete(q.id)
+}
+function startOther(q: AskUserQuestion) {
+	otherEditing.value[q.id] = true
+	nextTick(() => otherInputEl.value?.focus())
+}
+function cancelOther(q: AskUserQuestion) {
+	otherEditing.value[q.id] = false
+	otherText.value[q.id] = ''
 }
 function submitOther(q: AskUserQuestion) {
 	const text = otherText.value[q.id]?.trim()
 	if (!text) return
-	if (props.questions.length === 1) {
+	otherEditing.value[q.id] = false
+	otherText.value[q.id] = ''
+	if (q.multiSelect) {
+		// fix：multiSelect 的「其他」进已选集合（旧实现写单选暂存位，提交时被静默丢弃）
+		const prev = multiSelected.value[q.id] ?? []
+		if (!prev.includes(text)) multiSelected.value[q.id] = [...prev, text]
+	} else if (props.questions.length === 1) {
 		emit('submit', { answers: { [q.id]: [text] } })
 		return
+	} else {
+		singleSelected.value[q.id] = text
 	}
-	singleSelected.value[q.id] = text
-	tryAutoSubmit()
+	if (props.questions.length > 1) {
+		if (answeredCount.value === props.questions.length) {
+			doSubmit()
+			return
+		}
+		advanceToNextUnanswered()
+	}
 }
 </script>
 
 <template>
 	<div class="ask-user-card">
-		<!-- 多题：进度（T1） -->
+		<!-- 多题：分段进度条 + 元信息（T1，sticky 顶部，T0 有界滚动时常驻） -->
 		<div v-if="isMulti" class="ask-progress">
-			<span>第 {{ currentIndex + 1 }} / {{ props.questions.length }} 题</span>
-			<span class="ask-progress-count">已答 {{ answeredCount }} / {{ props.questions.length }}</span>
+			<div class="ask-progress-track" aria-hidden="true">
+				<i
+					v-for="(q, i) in props.questions"
+					:key="q.id"
+					:class="{ 'is-past': i < currentIndex, 'is-cur': i === currentIndex }"
+				/>
+			</div>
+			<div class="ask-progress-meta">
+				<span>第 {{ currentIndex + 1 }} / {{ props.questions.length }} 题</span>
+				<span class="ask-progress-count">已答 {{ answeredCount }} / {{ props.questions.length }}</span>
+			</div>
 		</div>
 
 		<!-- 当前题（单题卡即唯一题；多题卡即 current） -->
 		<div class="ask-question" :key="current.id">
-			<div class="ask-question-text">{{ current.question }}</div>
+			<div class="ask-question-head">
+				<div class="ask-question-text">{{ current.question }}</div>
+				<button
+					type="button"
+					class="ask-skip"
+					:disabled="skipped.has(current.id)"
+					:aria-label="skipped.has(current.id) ? '已跳过此题' : '跳过此题，稍后可返回'"
+					@click="skip(current)"
+				>{{ skipped.has(current.id) ? '已跳过' : '跳过' }}</button>
+			</div>
 			<div class="ask-options">
 				<button
 					v-for="opt in current.options"
@@ -152,9 +231,39 @@ function submitOther(q: AskUserQuestion) {
 					type="button"
 					class="ask-chip"
 					:class="{ 'is-selected': current.multiSelect ? isSelected(current.id, opt.value) : singleSelected[current.id] === opt.value }"
+					:aria-pressed="current.multiSelect ? isSelected(current.id, opt.value) : singleSelected[current.id] === opt.value"
 					:disabled="skipped.has(current.id)"
 					@click="pick(current, opt.value)"
-				>{{ opt.label }}</button>
+				>
+					<span class="ask-chip-label">{{ opt.label }}</span>
+					<span class="ask-chip-check" aria-hidden="true">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7" /></svg>
+					</span>
+				</button>
+				<!-- 「其他」收进选项列表末位：点选原地展开输入，回车/完成即提交（与选项同通道） -->
+				<template v-if="current.allowOther !== false">
+					<div v-if="otherEditing[current.id]" class="ask-other-editor">
+						<input
+							ref="otherInputEl"
+							v-model="otherText[current.id]"
+							type="text"
+							class="ask-other-input"
+							placeholder="直接写下你的想法"
+							@keyup.enter="submitOther(current)"
+							@keyup.escape="cancelOther(current)"
+						/>
+						<button type="button" class="ask-other-done" @click="submitOther(current)">完成</button>
+					</div>
+					<button
+						v-else
+						type="button"
+						class="ask-chip ask-chip-other"
+						aria-label="其他：输入自定义答案"
+						@click="startOther(current)"
+					>
+						<span class="ask-chip-label">其他…</span>
+					</button>
+				</template>
 			</div>
 			<button
 				v-if="current.multiSelect && (multiSelected[current.id]?.length ?? 0) > 0"
@@ -162,22 +271,24 @@ function submitOther(q: AskUserQuestion) {
 				class="ask-multi-confirm"
 				@click="confirmMulti()"
 			>确认（已选 {{ (multiSelected[current.id] ?? []).length }} 项）</button>
-			<div v-if="current.allowOther !== false" class="ask-other">
-				<input
-					v-model="otherText[current.id]"
-					type="text"
-					class="ask-other-input"
-					placeholder="其他（请说明）"
-					@keyup.enter="submitOther(current)"
-				/>
-				<button type="button" class="ask-other-submit" @click="submitOther(current)">提交</button>
+			<div v-if="skipped.has(current.id)" class="ask-skipped-note">
+				<span>此题已跳过</span>
+				<button type="button" class="ask-unskip" @click="unskip(current)">重新作答</button>
 			</div>
-			<button type="button" class="ask-skip" :class="{ 'is-skipped': skipped.has(current.id) }" @click="skip(current)">
-				{{ skipped.has(current.id) ? '已跳过' : '跳过此题' }}
-			</button>
 		</div>
 
-		<!-- 多题：底部固定导航（T1）+ 逃生钮（T2） -->
+		<!-- 静默链接区（T2 逃生 + 文字描述通道）：次级呈现，不与主路径争夺注意力 -->
+		<div class="ask-footnote">
+			<button
+				v-if="answeredCount > 0 && answeredCount < props.questions.length"
+				type="button"
+				class="ask-partial"
+				@click="submitPartial()"
+			>提交已答部分（{{ answeredCount }}）</button>
+			<button type="button" class="ask-cancel" @click="emit('cancel')">都不合适？改用文字描述</button>
+		</div>
+
+		<!-- 多题：底部固定导航（T1），sticky 常驻 -->
 		<div v-if="isMulti" class="ask-nav">
 			<button
 				type="button"
@@ -190,217 +301,414 @@ function submitOther(q: AskUserQuestion) {
 				type="button"
 				class="ask-nav-next"
 				@click="goNext()"
-			>下一题</button>
+			>下一题<svg v-if="currentAnswered" class="ask-next-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 13 4 4L19 7" /></svg></button>
 			<button
 				v-else
 				type="button"
 				class="ask-nav-submit"
 				@click="doSubmit()"
 			>提交</button>
-			<button
-				v-if="answeredCount > 0 && answeredCount < props.questions.length"
-				type="button"
-				class="ask-partial"
-				@click="submitPartial()"
-			>提交已答部分（{{ answeredCount }}）</button>
 		</div>
-
-		<button type="button" class="ask-cancel" @click="emit('cancel')">取消选项，自行描述</button>
 	</div>
 </template>
 
 <style scoped>
+/* ── 卡片：raised 面 + xl 圆角 + 轻阴影；T0 有界自滚，绝不依赖宿主滚动容器 ── */
 .ask-user-card {
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
-	padding: 12px;
-	border: 1px solid var(--lnk-border-strong);
-	border-radius: 10px;
+	gap: var(--lnk-space-3);
+	padding: var(--lnk-pad-card);
+	border: 1px solid var(--lnk-border-subtle);
+	border-radius: var(--lnk-radius-xl);
 	background: var(--lnk-surface-raised);
 	color: var(--lnk-text-primary);
-	/* T0：有界可滚兜底——卡片自身高度受限、内部滚动，绝不依赖宿主滚动容器，
-	   杜绝多题/长题干溢出到 tab 栏之下（根因 1 修复，spec §5.1）。 */
+	box-shadow: var(--lnk-shadow-sm);
+	font-size: var(--lnk-text-base);
 	max-height: min(60vh, 520px);
 	min-height: 0;
 	overflow-y: auto;
 }
+
+/* ── 分段进度条 + 元信息（sticky 顶部；负 margin 盖住卡片内边距，滚动时不漏底） ── */
 .ask-progress {
 	position: sticky;
 	top: 0;
+	z-index: 1;
+	display: flex;
+	flex-direction: column;
+	gap: var(--lnk-space-2);
+	margin: calc(-1 * var(--lnk-pad-card)) calc(-1 * var(--lnk-pad-card)) 0;
+	padding: var(--lnk-pad-card) var(--lnk-pad-card) var(--lnk-space-1);
+	background: var(--lnk-surface-raised);
+}
+.ask-progress-track {
+	display: flex;
+	gap: var(--lnk-space-1);
+}
+.ask-progress-track i {
+	height: 4px;
+	flex: 1;
+	border-radius: var(--lnk-radius-full);
+	background: var(--lnk-surface-sunken);
+	transition: background var(--lnk-duration-base) var(--lnk-ease-standard), opacity var(--lnk-duration-base) var(--lnk-ease-standard);
+}
+.ask-progress-track i.is-past {
+	background: var(--lnk-accent);
+}
+.ask-progress-track i.is-cur {
+	background: var(--lnk-accent);
+	opacity: 0.45;
+}
+.ask-progress-meta {
 	display: flex;
 	justify-content: space-between;
-	align-items: center;
-	padding-bottom: 8px;
-	font-size: 12px;
+	align-items: baseline;
+	font-size: var(--lnk-text-xs);
 	color: var(--lnk-text-muted);
-	background: var(--lnk-surface-raised);
 }
 .ask-progress-count {
 	font-variant-numeric: tabular-nums;
 }
+
+/* ── 题干 + 跳过（右上 ghost 位） ── */
 .ask-question {
 	display: flex;
 	flex-direction: column;
-	gap: 6px;
+	gap: var(--lnk-space-3);
+}
+.ask-question-head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--lnk-space-3);
 }
 .ask-question-text {
-	font-size: 13px;
-	font-weight: 500;
+	font-size: var(--lnk-text-md);
+	font-weight: var(--lnk-weight-semibold);
+	line-height: var(--lnk-lh-md);
 	color: var(--lnk-text-primary);
 }
+.ask-skip {
+	flex: none;
+	padding: var(--lnk-space-1) var(--lnk-space-2);
+	border: none;
+	border-radius: var(--lnk-radius-sm);
+	background: none;
+	color: var(--lnk-text-muted);
+	font-family: inherit;
+	font-size: var(--lnk-text-sm);
+	cursor: pointer;
+	transition: color var(--lnk-duration-instant) var(--lnk-ease-standard);
+}
+.ask-skip:hover:not(:disabled) {
+	color: var(--lnk-text-primary);
+}
+.ask-skip:focus-visible {
+	outline: 2px solid var(--lnk-border-focus);
+	outline-offset: 2px;
+}
+.ask-skip:disabled {
+	color: var(--lnk-text-disabled);
+	cursor: not-allowed;
+}
+
+/* ── 选项：全宽触控行（≥44px）；默认 sunken 井，选中翻面 + accent 对勾 ── */
 .ask-options {
 	display: flex;
-	flex-wrap: wrap;
-	gap: 6px;
+	flex-direction: column;
+	gap: var(--lnk-space-2);
 }
 .ask-chip {
-	padding: 4px 12px;
-	border: 1px solid var(--lnk-border-strong);
-	border-radius: 999px;
-	background: var(--lnk-surface-raised);
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--lnk-gap-inline);
+	width: 100%;
+	min-height: var(--lnk-touch-target);
+	padding: var(--lnk-space-2) var(--lnk-space-3);
+	border: 1px solid transparent;
+	border-radius: var(--lnk-radius-lg);
+	background: var(--lnk-surface-sunken);
 	color: var(--lnk-text-primary);
-	font-size: 12px;
+	font-family: inherit;
+	font-size: var(--lnk-text-base);
+	font-weight: var(--lnk-weight-medium);
+	text-align: left;
 	cursor: pointer;
-	transition: background 0.15s, border-color 0.15s, color 0.15s;
+	transition: transform var(--lnk-duration-instant) var(--lnk-ease-standard), border-color var(--lnk-duration-fast) var(--lnk-ease-standard), background var(--lnk-duration-fast) var(--lnk-ease-standard);
 }
-.ask-chip:hover {
-	border-color: var(--lnk-accent-border);
-	background: var(--lnk-accent-subtle);
+@media (hover: hover) {
+	.ask-chip:hover:not(:disabled) {
+		border-color: var(--lnk-border-default);
+	}
+}
+.ask-chip:active:not(:disabled) {
+	transform: scale(0.98);
+}
+.ask-chip:focus-visible {
+	outline: 2px solid var(--lnk-border-focus);
+	outline-offset: 2px;
 }
 .ask-chip.is-selected {
 	border-color: var(--lnk-accent-border);
-	background: var(--lnk-accent-subtle);
-	color: var(--lnk-accent-text);
+	background: var(--lnk-surface-raised);
+	box-shadow: 0 0 0 2px var(--lnk-accent-subtle);
 }
 .ask-chip:disabled {
-	opacity: 0.5;
+	color: var(--lnk-text-disabled);
 	cursor: not-allowed;
 }
-.ask-multi-confirm {
-	align-self: flex-start;
-	padding: 4px 12px;
-	border: none;
-	border-radius: 6px;
+.ask-chip-check {
+	flex: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--lnk-space-5);
+	height: var(--lnk-space-5);
+	border-radius: var(--lnk-radius-full);
 	background: var(--lnk-accent);
 	color: var(--lnk-text-on-accent);
-	font-size: 12px;
-	cursor: pointer;
-	transition: background 0.15s;
+	opacity: 0;
+	transform: scale(0.5);
+	transition: opacity var(--lnk-duration-fast) var(--lnk-ease-standard), transform var(--lnk-duration-base) var(--lnk-ease-spring);
 }
-.ask-multi-confirm:hover {
-	background: var(--lnk-accent-hover);
+.ask-chip.is-selected .ask-chip-check {
+	opacity: 1;
+	transform: scale(1);
 }
-.ask-other {
+.ask-chip-check svg {
+	width: var(--lnk-space-3);
+	height: var(--lnk-space-3);
+}
+.ask-chip-other .ask-chip-label {
+	color: var(--lnk-text-secondary);
+}
+
+/* ── 「其他」展开的输入编辑器：sunken 井 + focus 2px border-focus 外环（Input 规范） ── */
+.ask-other-editor {
 	display: flex;
-	gap: 6px;
+	align-items: center;
+	gap: var(--lnk-space-2);
+	padding: var(--lnk-space-1) var(--lnk-space-1) var(--lnk-space-1) var(--lnk-space-3);
+	border: 1px solid var(--lnk-border-default);
+	border-radius: var(--lnk-radius-lg);
+	background: var(--lnk-surface-sunken);
+	transition: border-color var(--lnk-duration-fast) var(--lnk-ease-standard), box-shadow var(--lnk-duration-fast) var(--lnk-ease-standard);
+}
+.ask-other-editor:focus-within {
+	border-color: var(--lnk-border-focus);
+	box-shadow: 0 0 0 2px var(--lnk-border-focus);
 }
 .ask-other-input {
 	flex: 1;
 	min-width: 0;
-	padding: 5px 8px;
-	border: 1px solid var(--lnk-border-strong);
-	border-radius: 6px;
-	background: var(--lnk-surface-raised);
+	min-height: calc(var(--lnk-touch-target) - 2 * var(--lnk-space-1));
+	border: none;
+	background: none;
 	color: var(--lnk-text-primary);
-	font-size: 12px;
+	font-family: inherit;
+	font-size: var(--lnk-text-base);
 }
 .ask-other-input::placeholder {
 	color: var(--lnk-text-muted);
 }
-.ask-other-submit,
-.ask-cancel {
-	padding: 4px 10px;
-	border: 1px solid var(--lnk-border-strong);
-	border-radius: 6px;
-	background: var(--lnk-surface-raised);
-	color: var(--lnk-text-secondary);
-	font-size: 12px;
+.ask-other-input:focus {
+	outline: none;
+}
+.ask-other-done {
+	flex: none;
+	padding: var(--lnk-space-2) var(--lnk-space-3);
+	border: none;
+	border-radius: var(--lnk-radius-full);
+	background: var(--lnk-accent);
+	color: var(--lnk-text-on-accent);
+	font-family: inherit;
+	font-size: var(--lnk-text-sm);
+	font-weight: var(--lnk-weight-medium);
 	cursor: pointer;
-	transition: color 0.15s, border-color 0.15s;
+	transition: background var(--lnk-duration-fast) var(--lnk-ease-standard), transform var(--lnk-duration-instant) var(--lnk-ease-standard);
 }
-.ask-other-submit:hover,
-.ask-cancel:hover {
-	color: var(--lnk-text-primary);
-	border-color: var(--lnk-accent-border);
+.ask-other-done:hover {
+	background: var(--lnk-accent-hover);
 }
-.ask-cancel {
+.ask-other-done:active {
+	transform: scale(0.98);
+}
+.ask-other-done:focus-visible {
+	outline: 2px solid var(--lnk-border-focus);
+	outline-offset: 2px;
+}
+
+/* ── multiSelect 确认：primary pill（每屏唯一主操作） ── */
+.ask-multi-confirm {
 	align-self: flex-start;
-	margin-top: 2px;
+	min-height: var(--lnk-control-sm);
+	padding: 0 var(--lnk-space-4);
+	border: none;
+	border-radius: var(--lnk-radius-full);
+	background: var(--lnk-accent);
+	color: var(--lnk-text-on-accent);
+	font-family: inherit;
+	font-size: var(--lnk-text-sm);
+	font-weight: var(--lnk-weight-medium);
+	cursor: pointer;
+	transition: background var(--lnk-duration-fast) var(--lnk-ease-standard), transform var(--lnk-duration-instant) var(--lnk-ease-standard);
 }
-.ask-skip {
-	align-self: flex-start;
-	padding: 2px 0;
+.ask-multi-confirm:hover {
+	background: var(--lnk-accent-hover);
+}
+.ask-multi-confirm:active {
+	transform: scale(0.98);
+}
+.ask-multi-confirm:focus-visible {
+	outline: 2px solid var(--lnk-border-focus);
+	outline-offset: 2px;
+}
+
+/* ── 跳过提示（可返回） ── */
+.ask-skipped-note {
+	display: flex;
+	align-items: center;
+	gap: var(--lnk-space-2);
+	font-size: var(--lnk-text-sm);
+	color: var(--lnk-text-muted);
+}
+.ask-unskip {
+	padding: 0;
 	border: none;
 	background: none;
-	color: var(--lnk-text-muted);
-	font-size: 12px;
+	color: var(--lnk-accent-text);
+	font-family: inherit;
+	font-size: var(--lnk-text-sm);
 	cursor: pointer;
-	transition: color 0.15s;
 }
-.ask-skip:hover {
-	color: var(--lnk-text-primary);
+.ask-unskip:hover {
+	text-decoration: underline;
+	text-underline-offset: 2px;
 }
-.ask-skip.is-skipped {
+.ask-unskip:focus-visible {
+	outline: 2px solid var(--lnk-border-focus);
+	outline-offset: 2px;
+}
+
+/* ── 静默链接区：逃生口存在但不争夺注意力 ── */
+.ask-footnote {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: var(--lnk-space-1) var(--lnk-space-4);
+	padding-top: var(--lnk-space-1);
+}
+.ask-partial,
+.ask-cancel {
+	padding: var(--lnk-space-1) var(--lnk-space-2);
+	border: none;
+	border-radius: var(--lnk-radius-sm);
+	background: none;
+	font-family: inherit;
+	font-size: var(--lnk-text-sm);
+	cursor: pointer;
+	transition: color var(--lnk-duration-instant) var(--lnk-ease-standard);
+}
+.ask-partial {
+	color: var(--lnk-accent-text);
+	font-weight: var(--lnk-weight-medium);
+}
+.ask-cancel {
 	color: var(--lnk-text-muted);
-	cursor: default;
-	text-decoration: line-through;
 }
-/* T1 底部导航：sticky 常驻可见，长内容滚动时提交/翻页钮不丢失 */
+.ask-partial:hover,
+.ask-cancel:hover {
+	text-decoration: underline;
+	text-underline-offset: 2px;
+}
+.ask-partial:focus-visible,
+.ask-cancel:focus-visible {
+	outline: 2px solid var(--lnk-border-focus);
+	outline-offset: 2px;
+}
+
+/* ── 底部导航（sticky 底部；负 margin 盖住卡片内边距） ── */
 .ask-nav {
 	position: sticky;
 	bottom: 0;
+	z-index: 1;
 	display: flex;
-	flex-wrap: wrap;
-	gap: 8px;
 	align-items: center;
-	padding-top: 10px;
-	margin-top: 2px;
-	border-top: 1px solid var(--lnk-border-strong);
+	justify-content: space-between;
+	gap: var(--lnk-space-3);
+	margin: 0 calc(-1 * var(--lnk-pad-card)) calc(-1 * var(--lnk-pad-card));
+	padding: var(--lnk-space-3) var(--lnk-pad-card) var(--lnk-pad-card);
+	border-top: 1px solid var(--lnk-border-subtle);
 	background: var(--lnk-surface-raised);
 }
-.ask-nav-prev,
-.ask-nav-next,
-.ask-nav-submit {
-	min-height: 38px;
-	padding: 6px 16px;
-	border: 1px solid var(--lnk-border-strong);
-	border-radius: 8px;
-	background: var(--lnk-surface-raised);
-	color: var(--lnk-text-primary);
-	font-size: 13px;
-	font-weight: 500;
+.ask-nav-prev {
+	min-height: var(--lnk-control-sm);
+	padding: 0 var(--lnk-space-2);
+	border: none;
+	border-radius: var(--lnk-radius-sm);
+	background: none;
+	color: var(--lnk-text-secondary);
+	font-family: inherit;
+	font-size: var(--lnk-text-base);
 	cursor: pointer;
-	transition: background 0.15s, border-color 0.15s, color 0.15s;
+	transition: color var(--lnk-duration-instant) var(--lnk-ease-standard);
+}
+.ask-nav-prev:hover:not(:disabled) {
+	color: var(--lnk-text-primary);
 }
 .ask-nav-prev:disabled {
-	opacity: 0.4;
+	color: var(--lnk-text-disabled);
 	cursor: not-allowed;
+}
+.ask-nav-prev:focus-visible {
+	outline: 2px solid var(--lnk-border-focus);
+	outline-offset: 2px;
 }
 .ask-nav-next,
 .ask-nav-submit {
-	border-color: var(--lnk-accent-border);
+	display: inline-flex;
+	align-items: center;
+	gap: var(--lnk-space-1);
+	min-height: var(--lnk-control-md);
+	padding: 0 var(--lnk-space-5);
+	border: none;
+	border-radius: var(--lnk-radius-full);
 	background: var(--lnk-accent);
 	color: var(--lnk-text-on-accent);
+	font-family: inherit;
+	font-size: var(--lnk-text-base);
+	font-weight: var(--lnk-weight-medium);
+	cursor: pointer;
+	transition: background var(--lnk-duration-fast) var(--lnk-ease-standard), transform var(--lnk-duration-instant) var(--lnk-ease-standard);
 }
-.ask-nav-next:hover:not(:disabled),
+.ask-nav-next:hover,
 .ask-nav-submit:hover {
 	background: var(--lnk-accent-hover);
 }
-/* T2 逃生钮：已答部分提交，次级样式（accent 描边 + 软底） */
-.ask-partial {
-	min-height: 38px;
-	padding: 6px 14px;
-	border: 1px solid var(--lnk-accent-border);
-	border-radius: 8px;
-	background: var(--lnk-accent-subtle);
-	color: var(--lnk-accent-text);
-	font-size: 12px;
-	font-weight: 500;
-	cursor: pointer;
-	transition: background 0.15s;
+.ask-nav-next:active,
+.ask-nav-submit:active {
+	transform: scale(0.98);
 }
-.ask-partial:hover {
-	background: var(--lnk-accent-subtle);
+.ask-nav-next:focus-visible,
+.ask-nav-submit:focus-visible {
+	outline: 2px solid var(--lnk-border-focus);
+	outline-offset: 2px;
+}
+.ask-next-check {
+	width: var(--lnk-space-3);
+	height: var(--lnk-space-3);
+}
+
+/* ── 动效降级（Design_system §2.9） ── */
+@media (prefers-reduced-motion: reduce) {
+	.ask-user-card *,
+	.ask-user-card *::before,
+	.ask-user-card *::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+	}
 }
 </style>
