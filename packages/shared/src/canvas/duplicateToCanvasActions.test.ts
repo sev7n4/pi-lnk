@@ -48,4 +48,28 @@ describe('duplicateResultToCanvasActions', () => {
       },
     })
   })
+
+  it('passes node data through intact so textNode format survives duplication (spec §4.11)', () => {
+    const result: DuplicateSubgraphResult = {
+      nodes: [
+        {
+          id: 't-dup-1',
+          type: 'text',
+          position: { x: 48, y: 48 },
+          data: { content: '<p>x</p>', format: 'html' },
+        },
+      ],
+      edges: [],
+      idMap: new Map([['t1', 't-dup-1']]),
+      newRootIds: ['t-dup-1'],
+    }
+
+    const actions = duplicateResultToCanvasActions(result)
+
+    expect(actions[0].type).toBe('add_node')
+    expect((actions[0].payload as { data: Record<string, unknown> }).data).toEqual({
+      content: '<p>x</p>',
+      format: 'html',
+    })
+  })
 })
