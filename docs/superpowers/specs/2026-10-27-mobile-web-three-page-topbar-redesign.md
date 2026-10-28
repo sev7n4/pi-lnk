@@ -209,7 +209,7 @@ flowchart LR
 - **批量管理（创作空间）**：原「管理」按钮 + 「删除选中」移除。改为**长按项目卡**进入多选态（与画布节点长按同范式），多选态显示删除/重命名操作条。顶栏不再有「管理」常驻入口。
 - **＋ 建项目（创作空间）**：复用既有 `useProjectWorkspace().create`（含登录守卫 + 20s 超时 + 失败 toast），路由到 `/workflow/:id?openAgent=1`。
 - **⤢ 适应画布**：逻辑上提，`CanvasPage` 经 `useVueFlow().fitView` 提供 `fit-view` 处理，壳层透传至 `MobileTopBar` canvas 分支（移动端）。WEB 无此需求（画布内已有缩放控件）。
-- **WEB 工作台导航**：`WorkspaceTopBar` 右簇 `发现/我的` 为显式常驻导航，补 WEB 上「发现/我的」的可达性（移动端由底部页签承载），二者 IA 对等、无功能退化。
+- **WEB 工作台导航**：`WorkspaceTopBar` 右簇 `发现/我的` 为显式常驻导航，补 WEB 上「发现/我的」的可达性（移动端由底部页签承载），二者 IA 对等、无功能退化。（**v3 修订**：「我的」与头像下拉重复，已撤——见 §13.4/D1；「发现」保留。）
 
 ## 8. 验收判据
 
@@ -226,7 +226,7 @@ flowchart LR
 | V9 | 底部四页签仅在工作区内（移动）；创作空间无底部栏/无全局导航词 | 视觉/结构确认 |
 | V10 | 跨规格一致：gallery §6.5 已标注被本规格取代 | gallery 规格 §6.5 行加修订注 |
 | V11 | WEB `/canvases`：AppHeader 仅 logo+🔍+＋（创作/发现/主题/账号 零命中）；`CanvasesPage` 无自写标题栏（h1/新建/管理 零命中） | grep + 结构：单栏裸栏、标题仅「创作空间 · N 个」一行 |
-| V12 | WEB 工作台顶栏含 ‹ 返回创作空间 + 项目名(§6.4) + 发现/我的/主题/账号/⋯；画布页无漂浮 ThemeToggle/AccountChrome 簇 | 结构：`WorkspaceTopBar` 存在且渲染；漂浮簇 DOM 移除 |
+| V12 | WEB 工作台顶栏含 ‹ 返回创作空间 + 项目名(§6.4) + 发现/主题/账号/⋯（**v3 修订**：「我的」撤除，§13.4）；画布页无漂浮 ThemeToggle/AccountChrome 簇 | 结构：`WorkspaceTopBar` 存在且渲染；漂浮簇 DOM 移除 |
 | V13 | WEB 聊天栏头部无 新对话/历史 按钮；收起(×) 保留 | grep：`AgentSideRail` 头部 `new-chat`/`open-history` 零命中；`collapse` 保留 |
 
 ## 9. 文件级改动清单（实施照此，避免偏差）
@@ -266,7 +266,7 @@ flowchart LR
    - 移动端不再渲染其浮动 ⤢；组件标记待清理（无桌面用途则删除）。
 
 7. **`apps/web/src/components/canvas/WorkspaceTopBar.vue`**（P6 · **新增**）
-   - WEB 工作台整页顶栏：左 `‹ 返回创作空间` + `projectName`(§6.4)；右簇 `发现`/`我的`/`ThemeToggle`/`AccountChrome`/`⋯`。
+   - WEB 工作台整页顶栏：左 `‹ 返回创作空间` + `projectName`(§6.4)；右簇 `发现`/`我的`/`ThemeToggle`/`AccountChrome`/`⋯`。（**v3 修订**：`我的` 撤除入头像下拉，§13.4/D1。）
    - props：`projectName: string`；emits：`go-gallery`。
    - `发现`→`/community`、`我的`→账户页、`⋯`→项目菜单（发布/导出/导入/任务）。
    - 视觉与 `AppHeader` 同族（高度、毛玻璃、边线）。
@@ -322,3 +322,83 @@ flowchart LR
 | S10 | 测试落点 | 既有测试是否覆盖减法断言 | §9-10 列出需新增/修改的测试文件与断言方向 |
 
 **自审结论**：v2 规格内部一致、与代码现实对齐，无遗留内部矛盾；唯一实施强约束为「`AppHeader` 单栏裸栏 + `CanvasesPage` 去自写栏」（S1）与「项目名样式双端复用 §6.4」（S4），已在 §9/§11 落为可验证条目。可进入实施计划阶段。
+
+## 13. 追加迭代（2026-10-28 · v3：上线观感回访四项收口）
+
+> 背景：#626 部署后用户实测回访（2026-10-28），提出四项观感/层级问题。本节是对 v2 的**追加迭代**，
+> 与 v2 条目冲突处以本节为准（冲突点逐条标注取代关系）。范围仍限于三页顶栏与其直接受害者。
+
+### 13.1 顶栏「封条感」：发丝线全撤 + 创作空间滚动材质化
+
+**问题**：三顶栏均为「常驻材质」（不透明底 + 0.5px 发丝线 + blur），视觉上像在页面上贴了封条。
+iOS 范式（scroll-edge appearance）：导航栏默认融入内容，仅当内容滚动越过栏下方时材质才淡入。
+
+**代码现实核对**（决定各栏能否 ghost）：
+- `AppHeader.vue:79`：`border-b border-line-subtle bg-surface backdrop-blur-xl`（sticky，创作空间列表滚动时会穿栏 ⇒ 材质必须有，但应**滚动驱动**而非常驻）。
+- `WorkspaceTopBar.vue:160`：实色底 + `0.5px` 发丝线 + blur（PC 画布节点平移会穿栏 ⇒ 材质保留）。
+- `MobileTopBar.vue:202-205`：实色底 + 发丝线；移动**对话/画布内容穿栏实证**：`MobileCanvasShell.vue:569` 对话流 `padding-top: calc(var(--lnk-space-4) + safe-area)` = 16px < 栏高 44px ⇒ 消息滚动会穿到栏下 ⇒ 材质不可撤。
+
+**裁定**：
+- A1 **发丝线全撤**：三顶栏删除 `border-bottom`（0.5px 发丝线是封条感主源；深色主题下栏与页面的色差本就小于浅色，发丝线反而强化了「贴条」轮廓）。
+- A2 **AppHeader 滚动材质化**（移动+WEB 同机制）：默认 ghost（透明、无 blur），`window.scrollY > 8` 时淡入材质（bg + blur + 顶部分隔阴影）。创作空间列表滚动后栏浮出，正是 iOS scroll-edge 范式。
+- A3 **WorkspaceTopBar / MobileTopBar（对话/画布）**：材质保留（内容穿栏实证），仅做 A1 去发丝线；不引入滚动逻辑（画布不滚动、对话流穿栏需要常驻材质）。
+- A4 MobileTopBar 既有 `is-ghost`（发现/我的透明占位）机制不变。
+
+### 13.2 z-index 语义令牌阶梯（修 viewer 被顶栏遮挡）
+
+**问题**：移动端图片/视频 viewer（`MobileNodeViewer`）的全屏操作按钮被画布页顶栏挡住。
+
+**根因取证**：
+- z-index 裸数字散落 55 处，关键竞争：`MobileTopBar` z=85（Teleport 到 body）、`MobileNodeViewer` z=90（**未 Teleport**，渲染在 shell 内部）。viewer 数值虽大 5，但其祖先链上存在创建 stacking context 的属性（blur/transform），fixed 层被困在局部 context 内参与比较 ⇒ 被 body 层 z=85 的顶栏盖住。
+- `MobileSheet` z=120、`AgentSideRail` 96/70/60、画布内 refine 面板 50-56 等，彼此无契约。
+
+**裁定**：
+- B1 `design-tokens.css` L3 新增语义阶梯（本期只收编「跨组件全屏竞争层」，页内局部层级渐进收敛不在本期）：
+  ```css
+  --lnk-z-chrome: 85;   /* 全屏常驻 chrome：三顶栏（含 WorkspaceTopBar 从 60 收编） */
+  --lnk-z-viewer: 110;  /* 全屏媒体 viewer（高于一切 chrome/浮层，低于 modal） */
+  --lnk-z-modal: 120;   /* MobileSheet 对话浮层基座（保持现值，语义化） */
+  ```
+- B2 替换落点：`MobileTopBar` 85→`var(--lnk-z-chrome)`；`WorkspaceTopBar` 60→`var(--lnk-z-chrome)`；`MobileNodeViewer` 90→`var(--lnk-z-viewer)`；`MobileSheet` 120→`var(--lnk-z-modal)`。
+- B3 **`MobileNodeViewer` 根元素包 `Teleport to="body"`**——结构上脱离 shell 祖先 stacking context，z 值比较回归 body 平面（治本，不改这条则调多大 z 都可能再被新 context 困住）。
+- B4 `design-token.test.ts` 增守卫：上述四文件必须消费 z 令牌、不得再写裸数字；viewer 的 z 令牌值必须 > chrome。
+
+### 13.3 PC 创作空间网格卡墙（单代码库 · 布局层分叉）
+
+**问题**：`CanvasesPage` 移动+PC 一套模板，行卡是单列全宽长条（`v-for` 行 `flex items-center` 全宽），窄屏天然适配故移动好看；PC 上 1000px+ 长条信息密度极低、视觉丑。
+
+**裁定**（回应「在哪一层分开」：**只分展示子组件，不分页面；数据/交互/通道保持一份**）：
+- C1 新增 `components/canvases/ProjectGrid.vue`（PC ≥768px）：`grid-template-columns: repeat(auto-fill, minmax(220px, 1fr))` 竖版卡墙——大封面（上）+ 标题/时间（下），参考 macOS Finder 图库视图；长按多选、`session-card-menu-anchor`、封面三态等交互契约与行卡完全一致。
+- C2 现行卡结构抽为 `components/canvases/ProjectList.vue`（移动 <768px 保留现状视觉，零回归）。
+- C3 `CanvasesPage.vue` 用 `useAgentMobileLayout()` 既有断点判定切二者（不新增 767px media query 补丁，守 AGENTS.md 移动端呈现规则）；`CanvasesPage.test.ts` 断言两个视图共享同一数据源与交互接线。
+
+### 13.4 WEB 工作台顶栏减法：撤「我的」（与头像重复）
+
+**问题**：`WorkspaceTopBar` 右簇 `发现/我的/主题/账号/⋯` 中，「我的」与头像（AccountChrome→AccountUserMenu，已含「我的主页」→ `/profile`）语义重复，违反「头像即个人枢纽」的 iOS 惯例。
+
+**裁定**：
+- D1 撤 `workspace-mine`（RouterLink→/profile）：「我的」语义由头像下拉全权承载（既有能力，零新增）。
+- D2 **「发现」保留**：2026-10-27 用户已拍板「不在画廊页加发现入口」，顶栏右簇是 PC 端「发现」当前唯一可达点；撤除即功能丢失。若后续拍板发现入口下沉画廊页，随其撤除（登记 §10 呼应）。
+- D3 修订注：本条部分取代 v2 §6.8 右簇描述、§7 末条「发现/我的 显式常驻导航」、§9-7 与 V12 中「我的」部分（V12 判据同步改述）。
+
+### 13.5 验收判据（追加）
+
+| # | 判据 | 验证方式 |
+|---|---|---|
+| V14 | 三顶栏 `border-bottom` 零命中（grep `border-bottom` 于 AppHeader/WorkspaceTopBar/MobileTopBar 样式段） | grep 守卫 |
+| V15 | AppHeader 未滚动（scrollY≤8）时无 bg/blur；>8px 后材质类出现 | 组件测试：scroll 事件驱动 class 断言 |
+| V16 | `MobileNodeViewer` 根元素为 `<Teleport to="body">` 包裹，z 消费 `--lnk-z-viewer`；四文件 z 全部消费令牌 | grep 守卫（B4）+ design-token.test.ts |
+| V17 | PC（≥768px）创作空间渲染网格卡墙（auto-fill minmax(220px,1fr)），移动渲染行卡；两视图共享数据源/长按多选/`session-card-menu-anchor` | 组件测试 + 断点切换断言 |
+| V18 | `WorkspaceTopBar` 无 `workspace-mine`（grep 零命中）；头像下拉含「我的主页」可达 /profile | grep + 既有 AccountUserMenu 测试 |
+| V19 | z 令牌成对性/引用完整性通过 `design-token.test.ts`；`theme-usage`/`dead-styles` 全绿 | 守卫四件套 |
+
+### 13.6 文件级改动清单（v3 追加）
+
+1. `styles/design-tokens.css`：L3 加 `--lnk-z-chrome/viewer/modal`（B1）。
+2. `components/layout/AppHeader.vue`：去 border-b；默认 ghost + window scroll 材质化（A1/A2）。
+3. `components/canvas/WorkspaceTopBar.vue`：去 border-bottom；z→chrome 令牌；撤 `workspace-mine`（A1/B2/D1）。
+4. `components/mobile/MobileTopBar.vue`：去 border-bottom（is-ghost 内 border-bottom-color 行同步清理）；z→chrome 令牌（A1/B2）。
+5. `components/mobile/MobileNodeViewer.vue`：Teleport to body + z→viewer 令牌（B2/B3）。
+6. `components/mobile/MobileSheet.vue`：z→modal 令牌（B2）。
+7. `components/canvases/ProjectGrid.vue`（新增）/ `ProjectList.vue`（自 CanvasesPage 抽出）；`pages/CanvasesPage.vue` 断点切换（C1-C3）。
+8. 测试：`AppHeader.test.ts`/`galleryBareBar.test.ts`（V14/V15）、`WorkspaceTopBar.test.ts`（V18）、`design-token.test.ts`（B4/V16/V19）、`CanvasesPage.test.ts`（V17）、新增 `ProjectGrid.test.ts`（卡墙契约）。

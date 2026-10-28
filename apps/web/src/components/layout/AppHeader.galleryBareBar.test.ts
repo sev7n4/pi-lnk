@@ -104,3 +104,30 @@ describe('AppHeader 画廊裸栏：＋ 建项目行为（唯一 create 通道迁
     expect(canvasCreate).not.toHaveBeenCalled()
   })
 })
+
+// ─── §13.1/A1+A2（v3 追加）：scroll-edge 材质化 ───
+describe('AppHeader scroll-edge 材质化（§13.1）', () => {
+  it('常驻材质退役：静态 class 无 border-b/bg-surface/backdrop（封条感主源）', () => {
+    // 剥注释后断言：迁移记录写在注释里是规范
+    const s = appHeader
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/\/\/[^\n]*/g, '')
+    expect(s).not.toContain('border-b border-line-subtle')
+    expect(s).not.toContain('bg-surface backdrop-blur-xl')
+    // 材质态由 is-material 承载（滚动驱动）
+    expect(s).toMatch(/'is-material': scrolled/)
+  })
+
+  it('材质态：bg + blur + inset 发丝线阴影（ghost 态零轮廓）', () => {
+    expect(appHeader).toMatch(/\.app-header\.is-material\s*\{[^}]*var\(--lnk-surface\)/)
+    expect(appHeader).toMatch(/\.app-header\.is-material\s*\{[^}]*backdrop-filter/)
+    expect(appHeader).toMatch(/\.app-header\.is-material\s*\{[^}]*inset 0 -0\.5px 0 var\(--lnk-border-subtle\)/)
+  })
+
+  it('滚动驱动：阈值 8px、passive 监听、卸载清理', () => {
+    expect(appHeader).toContain('SCROLL_THRESHOLD = 8')
+    expect(appHeader).toContain("window.addEventListener('scroll', onScroll, { passive: true })")
+    expect(appHeader).toContain("window.removeEventListener('scroll', onScroll)")
+  })
+})

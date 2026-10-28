@@ -2,7 +2,8 @@
 /**
  * WEB 工作台统一顶栏（规格 §6.8）：画布路由顶部整页栏，替代原 CanvasFloatingChrome
  * （可编辑 title + 返回 + 保存/发布/导入/导出）与右上漂浮簇（ThemeToggle + AccountChrome）。
- * 职责：左 ‹ 返回创作空间 + 项目名（§6.4 次级灰、15px、截断）；右簇 发现/我的/主题/账号/⋯。
+ * 职责：左 ‹ 返回创作空间 + 项目名（§6.4 次级灰、15px、截断）；右簇 发现/主题/账号/⋯
+ * （v3 §13.4：「我的」撤除，头像下拉全权承载个人枢纽）。
  * 项目名是上下文而非操作（次级静默、非交互），与移动端 MobileTopBar 共用 §6.4 语义。
  */
 import { ref } from 'vue'
@@ -76,7 +77,7 @@ function onMenuItem(
       >{{ projectName }}</span>
     </div>
 
-    <!-- 右簇：发现/我的/主题/账号/⋯ -->
+    <!-- 右簇：发现/主题/账号/⋯（§13.4/D1：「我的」撤除——与头像下拉（我的主页）重复） -->
     <div class="wkb-right">
       <RouterLink
         to="/community"
@@ -84,13 +85,6 @@ function onMenuItem(
         data-testid="workspace-discover"
       >
         发现
-      </RouterLink>
-      <RouterLink
-        to="/profile"
-        class="wkb-nav"
-        data-testid="workspace-mine"
-      >
-        我的
       </RouterLink>
       <ThemeToggle class="wkb-icon" />
       <AccountChrome />
@@ -150,14 +144,14 @@ function onMenuItem(
   top: 0;
   left: 0;
   right: 0;
-  z-index: 60;
+  z-index: var(--lnk-z-chrome);
   display: flex;
   align-items: center;
   justify-content: space-between;
   height: 52px;
   padding: 0 12px;
   background: var(--lnk-surface);
-  border-bottom: 0.5px solid var(--lnk-border-subtle);
+  /* §13.1/A1：发丝线退役（封条感主源）；画布节点平移穿栏 ⇒ 材质底+blur 保留 */
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
 }

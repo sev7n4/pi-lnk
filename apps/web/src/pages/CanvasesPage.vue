@@ -4,22 +4,27 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectManager } from '@/composables/useProjectManager'
 import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
-import CanvasCoverFallback from '@/components/workflow/CanvasCoverFallback.vue'
+import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import { projectCoverFallback } from '@/utils/projectCoverFallback'
-import { displayCanvasTitle } from '@/utils/displayCanvasTitle'
 import AppEmptyState from '@/components/common/AppEmptyState.vue'
+import ProjectList from '@/components/canvases/ProjectList.vue'
+import ProjectGrid from '@/components/canvases/ProjectGrid.vue'
 
 /**
- * 创作首页（2026-10-21 P1 从 WorkflowPage 迁出；2026-10-23 IA v4：
+ * 创作空间（2026-10-21 P1 从 WorkflowPage 迁出；2026-10-23 IA v4：
  * 画布+对话=项目，本页即「我的项目」全量管理；2026-10-26 规格收敛 v2：
- * 数据面切 useProjectWorkspace 单源（INV-10），管理状态机由 useProjectManager 承载；
- * 列表形态 = 微信式单行卡（Task 5）：[封面 40px][名称][相对时间]，行内菜单管理。
+ * 数据面切 useProjectWorkspace 单源（INV-10），管理状态机由 useProjectManager 承载。
+ *
+ * 2026-10-28 v3（规格 §13.3）：**只分展示子组件，不分页面**——
+ * 移动（<768px）= ProjectList 微信式单行卡；PC（≥768px）= ProjectGrid 网格卡墙。
+ * 数据源 / 搜索 / 长按多选 / 菜单 / 新建通道全部留在本页单源，两视图零行为分叉。
  *
  * 本页承接完整能力：全量列表 / 搜索 / 多选批删 / 重命名 / 复制 / 删除 / 新建。
  */
 const router = useRouter()
 const auth = useAuthStore()
 const mgr = useProjectManager()
+const { isMobileLayout } = useAgentMobileLayout()
 // 2026-10-25 PR-2：创建通道收敛到 useProjectWorkspace（全仓唯一 create 通道）。
 // 2026-10-27 v2.2：补取 `error`（模块级单例，与 mgr.projects 同源），
 // 用于区分「加载失败」与「真无项目」两种空态（D12 / 修 bug④）。
@@ -31,22 +36,6 @@ function openCanvas(p: { id: string; coverNodeId: string | null }) {
     path: `/workflow/${p.id}`,
     query: p.coverNodeId ? { focusNode: p.coverNodeId } : {},
   })
-}
-
-/** 相对时间：刚刚 / N 分钟前 / N 小时前 / N 天前 / M 月 N 日（承作品带口径）。 */
-function relativeTime(iso: string): string {
-  const t = Date.parse(iso)
-  if (Number.isNaN(t)) return ''
-  const diff = Math.max(0, Date.now() - t)
-  const min = Math.floor(diff / 60_000)
-  if (min < 1) return '刚刚'
-  if (min < 60) return `${min} 分钟前`
-  const hour = Math.floor(min / 60)
-  if (hour < 24) return `${hour} 小时前`
-  const day = Math.floor(hour / 24)
-  if (day < 30) return `${day} 天前`
-  const d = new Date(t)
-  return `${d.getMonth() + 1} 月 ${d.getDate()} 日`
 }
 
 /** 长按项目卡进入多选态（规格 §7：原「管理」常驻按钮退役，改为长按进入）。
@@ -85,7 +74,7 @@ watch(
   { immediate: true },
 )
 
-/** 行卡视图：预解析封面三态（模板内两次独立调用无法做类型窄化）。 */
+/** 行视图模型：预解析封面三态（模板内两次独立调用无法做类型窄化）。 */
 const rows = computed(() =>
   mgr.filtered.value.map((p) => ({ ...p, cover: projectCoverFallback(p) })),
 )
@@ -167,102 +156,23 @@ const rows = computed(() =>
         />
       </div>
 
-      <div
+      <!-- §13.3/C3：断点切视图——只分展示子组件，数据源与交互接线全在本页单源 -->
+      <ProjectList
+        v-else-if="mgr.filtered.value.length && isMobileLayout"
+        :rows="rows"
+        :mgr="mgr"
+        @open="openCanvas"
+        @press-start="startCardLongPress"
+        @press-cancel="cancelCardLongPress"
+      />
+      <ProjectGrid
         v-else-if="mgr.filtered.value.length"
-        class="flex flex-col gap-2"
-      >
-        <div
-          v-for="p in rows"
-          :key="p.id"
-          class="session-card-menu-anchor flex items-center gap-3 rounded-xl border border-line bg-surface-base px-3 py-2 transition hover:bg-hover"
-          @pointerdown="startCardLongPress(p.id)"
-          @pointerup="cancelCardLongPress"
-          @pointerleave="cancelCardLongPress"
-          @pointercancel="cancelCardLongPress"
-        >
-          <!-- 管理模式：选择框占据行首 -->
-          <button
-            v-if="mgr.manageMode.value"
-            data-testid="canvases-row-select"
-            type="button"
-            class="flex h-5 w-5 shrink-0 items-center justify-center rounded border text-xs transition"
-            :class="
-              mgr.selectedIds.value.includes(p.id)
-                ? 'border-transparent bg-accent-subtle text-fg-accent'
-                : 'border-line text-transparent hover:bg-hover'
-            "
-            :aria-pressed="mgr.selectedIds.value.includes(p.id)"
-            @click="mgr.toggleSelect(p.id)"
-          >
-            ✓
-          </button>
-          <!-- 封面 40px：coverUrl 三态（image / CanvasCoverFallback 兜底）。
-               ⛔ `relative` 不是装饰：CanvasCoverFallback 根元素是 `absolute inset-0`，
-               缺它时兜底层会锚定到 App 壳的 main.relative ⇒ 被拉成全屏墨点纸，
-               把整个创作首页盖成黑屏（2026-10-27 生产取证实证，v2.4 修复）。 -->
-          <button
-            type="button"
-            class="relative flex h-10 w-10 shrink-0 items-center overflow-hidden rounded-lg bg-surface-sunken"
-            @click="mgr.manageMode.value ? mgr.toggleSelect(p.id) : openCanvas(p)"
-          >
-            <img
-              v-if="p.cover.type === 'image'"
-              :src="p.cover.value"
-              class="h-full w-full object-cover"
-              alt=""
-            />
-            <CanvasCoverFallback v-else :seed="p.id" />
-          </button>
-          <!-- 名称 -->
-          <button
-            type="button"
-            class="min-w-0 flex-1 truncate text-left text-sm text-fg"
-            @click="mgr.manageMode.value ? mgr.toggleSelect(p.id) : openCanvas(p)"
-          >
-            {{ displayCanvasTitle(p.title) }}
-          </button>
-          <!-- 相对时间 -->
-          <span class="shrink-0 text-xs text-fg-3">{{ relativeTime(p.updatedAt) }}</span>
-          <!-- 行内菜单（管理模式下隐藏，选择语义优先） -->
-          <div v-if="!mgr.manageMode.value" class="relative">
-            <button
-              data-testid="canvases-row-menu"
-              type="button"
-              class="flex h-7 w-7 items-center justify-center rounded-lg text-fg-3 transition hover:bg-hover hover:text-fg"
-              aria-label="项目操作"
-              @click.stop="mgr.toggleMenu(p.id)"
-            >
-              ⋯
-            </button>
-            <div
-              v-if="mgr.openMenuId.value === p.id"
-              class="absolute right-0 top-8 z-10 w-28 overflow-hidden rounded-xl border border-line bg-surface-base py-1 shadow-lg"
-            >
-              <button
-                type="button"
-                class="block w-full px-3 py-1.5 text-left text-xs text-fg transition hover:bg-hover"
-                @click="mgr.renameProject(p)"
-              >
-                重命名
-              </button>
-              <button
-                type="button"
-                class="block w-full px-3 py-1.5 text-left text-xs text-fg transition hover:bg-hover"
-                @click="mgr.duplicateProject(p.id)"
-              >
-                创建副本
-              </button>
-              <button
-                type="button"
-                class="block w-full px-3 py-1.5 text-left text-xs text-danger transition hover:bg-hover"
-                @click="mgr.removeProject(p)"
-              >
-                删除
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
+        :rows="rows"
+        :mgr="mgr"
+        @open="openCanvas"
+        @press-start="startCardLongPress"
+        @press-cancel="cancelCardLongPress"
+      />
 
       <AppEmptyState
         v-else-if="mgr.search.value"

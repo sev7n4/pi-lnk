@@ -663,6 +663,10 @@ defineExpose({ videoRef })
 </script>
 
 <template>
+  <!-- ⛔ 必须 Teleport 到 body（规格 §13.2/B3）：viewer 渲染在 shell 内部时，
+       祖先链上的 blur/transform 创建的 stacking context 会把 fixed 层困在局部
+       context 内，被 body 层 z=--lnk-z-chrome 的顶栏盖住（viewer 按钮被挡事故）。 -->
+  <Teleport to="body">
   <div
     class="mobile-node-viewer"
     role="dialog"
@@ -887,6 +891,7 @@ defineExpose({ videoRef })
       </button>
     </div>
   </div>
+  </Teleport>
 </template>
 
 <style scoped>
@@ -920,7 +925,7 @@ defineExpose({ videoRef })
 .mobile-node-viewer {
   position: fixed;
   inset: 0;
-  z-index: 90;
+  z-index: var(--lnk-z-overlay);
   display: flex;
   flex-direction: column;
   padding-top: env(safe-area-inset-top);

@@ -163,7 +163,7 @@ describe('MobileCanvasShell 长按动作集成', () => {
   })
 
   it('mobileEditor 设置 → 渲染编辑 sheet（轻量编辑器，不挂 PC dock）', () => {
-    const w = mount(MobileCanvasShell, { props: baseProps({ mobileEditor: editorContext }), attachTo: document.body })
+    const w = mount(MobileCanvasShell, { global: { stubs: { teleport: true } }, props: baseProps({ mobileEditor: editorContext }), attachTo: document.body })
     expect(w.findComponent({ name: 'MobileNodeEditorSheet' }).exists()).toBe(true)
     expect(w.findComponent({ name: 'MobileNodeEditorSheet' }).exists()).toBe(true)
     // ⛔ D8/J1/K1（2026-10-25）：移动端编辑器**不再挂 PC studio dock**（参数所有权归 agent）
@@ -174,6 +174,7 @@ describe('MobileCanvasShell 长按动作集成', () => {
   it('编辑 sheet 关闭把手 → onNodeEditorClose', async () => {
     const onNodeEditorClose = vi.fn()
     const w = mount(MobileCanvasShell, {
+      global: { stubs: { teleport: true } }, // §13.2：viewer Teleport 后 jsdom 断言需内联渲染
       props: baseProps({ mobileEditor: editorContext, onNodeEditorClose }),
       attachTo: document.body,
     })
@@ -186,6 +187,7 @@ describe('MobileCanvasShell 长按动作集成', () => {
 describe('MobileCanvasShell 全屏查看器集成（R1-T4/T6）', () => {
   it('viewerNode 设置 → 渲染全屏查看器（图灯箱）', () => {
     const w = mount(MobileCanvasShell, {
+      global: { stubs: { teleport: true } }, // §13.2：viewer Teleport 后 jsdom 断言需内联渲染
       props: baseProps({ viewerNode: { id: 'n1', type: 'image', data: { url: 'x.png' } } }),
       attachTo: document.body,
     })
@@ -196,6 +198,7 @@ describe('MobileCanvasShell 全屏查看器集成（R1-T4/T6）', () => {
   it('查看器返回 → onViewerClose', async () => {
     const onViewerClose = vi.fn()
     const w = mount(MobileCanvasShell, {
+      global: { stubs: { teleport: true } }, // §13.2：viewer Teleport 后 jsdom 断言需内联渲染
       props: baseProps({
         viewerNode: { id: 'n1', type: 'text', data: { content: '短文' } },
         onViewerClose,
@@ -214,6 +217,7 @@ describe('MobileCanvasShell 提示词全文审核层（G1/S1 · §4.7.1）', () 
   it('confirmed 查看器 + 有提示词 → 摘要条可见，单击 → onViewerPromptReview', async () => {
     const onViewerPromptReview = vi.fn()
     const w = mount(MobileCanvasShell, {
+      global: { stubs: { teleport: true } }, // §13.2：viewer Teleport 后 jsdom 断言需内联渲染
       props: baseProps({
         viewerNode: {
           id: 'n1',
@@ -234,6 +238,7 @@ describe('MobileCanvasShell 提示词全文审核层（G1/S1 · §4.7.1）', () 
 
   it('confirmed 查看器 + 无提示词 → 摘要条不渲染（缺省不占位）', () => {
     const w = mount(MobileCanvasShell, {
+      global: { stubs: { teleport: true } }, // §13.2：viewer Teleport 后 jsdom 断言需内联渲染
       props: baseProps({
         viewerNode: { id: 'n1', type: 'image', data: { url: 'x.png', status: 'confirmed' } },
       }),
@@ -245,6 +250,7 @@ describe('MobileCanvasShell 提示词全文审核层（G1/S1 · §4.7.1）', () 
 
   it('promptReviewNode 设置 → 渲染全文审核层（含全文 + 参数摘要），无确认/拒绝按钮（V-11）', () => {
     const w = mount(MobileCanvasShell, {
+      global: { stubs: { teleport: true } }, // §13.2：viewer Teleport 后 jsdom 断言需内联渲染
       props: baseProps({
         promptReviewNode: {
           id: 'n1',
@@ -275,6 +281,7 @@ describe('MobileCanvasShell 提示词全文审核层（G1/S1 · §4.7.1）', () 
     const onPromptReviewAnnotate = vi.fn()
     const onPromptReviewEditSave = vi.fn()
     const w = mount(MobileCanvasShell, {
+      global: { stubs: { teleport: true } }, // §13.2：viewer Teleport 后 jsdom 断言需内联渲染
       props: baseProps({
         promptReviewNode: { id: 'n1', type: 'image', data: { prompt: '原词' } },
         onPromptReviewClose,
@@ -297,6 +304,7 @@ describe('MobileCanvasShell 提示词全文审核层（G1/S1 · §4.7.1）', () 
 describe('MobileCanvasShell 审核层底栏两键（§17 v2 · 拍板①）', () => {
   it('pending + 有产物 → 批注 / 编辑 两键（⛔ 拒绝/改词/确认 三键退役）', () => {
     const w = mount(MobileCanvasShell, {
+      global: { stubs: { teleport: true } }, // §13.2：viewer Teleport 后 jsdom 断言需内联渲染
       props: baseProps({
         viewerNode: { id: 'n1', type: 'image', data: { url: 'x.png', status: 'pending_confirm' } },
       }),
@@ -309,6 +317,7 @@ describe('MobileCanvasShell 审核层底栏两键（§17 v2 · 拍板①）', ()
 
   it('pending + 无产物 + 有提示词 → 批注 / 编辑（审核内容层为载体，两键不受产物门控）', () => {
     const w = mount(MobileCanvasShell, {
+      global: { stubs: { teleport: true } }, // §13.2：viewer Teleport 后 jsdom 断言需内联渲染
       props: baseProps({
         viewerNode: {
           id: 'n1',
@@ -325,6 +334,7 @@ describe('MobileCanvasShell 审核层底栏两键（§17 v2 · 拍板①）', ()
 
   it('pending + 无产物且无提示词 → 仍给批注 / 编辑（批注意见可在 composer 自补）', () => {
     const w = mount(MobileCanvasShell, {
+      global: { stubs: { teleport: true } }, // §13.2：viewer Teleport 后 jsdom 断言需内联渲染
       props: baseProps({
         viewerNode: { id: 'n1', type: 'image', data: { status: 'pending_confirm' } },
       }),
@@ -337,6 +347,7 @@ describe('MobileCanvasShell 审核层底栏两键（§17 v2 · 拍板①）', ()
 
   it('confirmed + 有产物 → 仅改词，审核层两键不泄漏到非 pending 节点', () => {
     const w = mount(MobileCanvasShell, {
+      global: { stubs: { teleport: true } }, // §13.2：viewer Teleport 后 jsdom 断言需内联渲染
       props: baseProps({
         viewerNode: { id: 'n1', type: 'text', data: { content: '正文', status: 'confirmed' } },
       }),
@@ -353,6 +364,7 @@ describe('MobileCanvasShell 审核层底栏两键（§17 v2 · 拍板①）', ()
   it('编辑保存事件透传：viewer edit-save → onViewerEditSave(nodeId, prompt)', async () => {
     const onViewerEditSave = vi.fn()
     const w = mount(MobileCanvasShell, {
+      global: { stubs: { teleport: true } }, // §13.2：viewer Teleport 后 jsdom 断言需内联渲染
       props: baseProps({
         viewerNode: { id: 'n1', type: 'image', data: { prompt: '原词', status: 'pending_confirm' } },
         onViewerEditSave,
@@ -369,6 +381,7 @@ describe('MobileCanvasShell 审核层底栏两键（§17 v2 · 拍板①）', ()
   it('批注锚事件透传：胶囊 ⚓ → onViewerAnnotate（payload 带文字；jsdom 诚实降级路径）', async () => {
     const onViewerAnnotate = vi.fn()
     const w = mount(MobileCanvasShell, {
+      global: { stubs: { teleport: true } }, // §13.2：viewer Teleport 后 jsdom 断言需内联渲染
       props: baseProps({
         viewerNode: { id: 'n1', type: 'image', data: { prompt: '原词', status: 'pending_confirm' } },
         onViewerAnnotate,

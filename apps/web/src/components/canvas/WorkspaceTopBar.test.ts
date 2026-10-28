@@ -1,5 +1,6 @@
 // 规格 §6.8（mobile-web-three-page-topbar-redesign）：WEB 工作台统一顶栏。
-// ① WorkspaceTopBar 结构：‹ 返回创作空间 + 项目名(§6.4) + 发现/我的/主题/账号/⋯；
+// ① WorkspaceTopBar 结构：‹ 返回创作空间 + 项目名(§6.4) + 发现/主题/账号/⋯
+//    （v3 §13.4：「我的」撤除——与头像下拉「我的主页」重复，头像即个人枢纽）；
 // ② AgentSideRail 头部已退役「新对话 / 历史」入口（ADR-0015 统一单对话模型），
 //    仅保留浮动窗口切换与「收起助手」。
 // 静态契约（jsdom 不计算样式；同 CanvasPage.mobileChromeHygiene.test.ts 模式）。
@@ -19,17 +20,25 @@ function stripComments(s: string): string {
 }
 
 describe('WorkspaceTopBar（WEB 工作台顶栏）', () => {
-  it('结构：‹ 返回创作空间 + 项目名 + 发现/我的/主题/账号/⋯', () => {
+  it('结构：‹ 返回创作空间 + 项目名 + 发现/主题/账号/⋯（v3：无「我的」）', () => {
     expect(topBar).toContain('data-testid="workspace-back"')
     expect(topBar).toContain('data-testid="workspace-project-name"')
-    expect(topBar).toContain('data-testid="workspace-discover"') // 发现 → /community
-    expect(topBar).toContain('data-testid="workspace-mine"') // 我的 → /profile
+    expect(topBar).toContain('data-testid="workspace-discover"') // 发现 → /community（画廊不加发现的拍板下，顶栏是 PC 唯一可达点）
     expect(topBar).toContain('data-testid="workspace-menu"') // ⋯ 项目菜单
+    // v3 §13.4/D1：「我的」撤除（语义由 AccountChrome→AccountUserMenu「我的主页」承载）
+    expect(topBar).not.toContain('data-testid="workspace-mine"')
+    expect(stripComments(topBar)).not.toContain("to=\"/profile\"")
     // 主题/账号入口收进顶栏（替代原画布右上漂浮簇）
     expect(topBar).toContain('<ThemeToggle')
     expect(topBar).toContain('<AccountChrome')
     // 返回簇文案 = 创作空间
     expect(topBar).toContain('创作空间')
+  })
+
+  it('v3 §13.1/A1：发丝线退役（封条感主源），材质底+blur 保留（画布节点穿栏）', () => {
+    const block = stripComments(topBar)
+    expect(block).not.toContain('border-bottom')
+    expect(block).toContain('backdrop-filter')
   })
 
   it('项目名样式（§6.4）：次级灰、超长截断、非交互', () => {
