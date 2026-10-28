@@ -139,13 +139,13 @@ import { classifyGesture } from './composer/holdGesture'
 import UniversalModelSelector from '@/components/canvas/UniversalModelSelector.vue'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
 import { formatDuration as formatTraceDuration } from '@/components/agent/executionStepLabels'
-import { hasFailedTraceStep, turnSettledText, turnSummaryLine } from '@/components/agent/executionTraceReducer'
+import { turnSettledText, turnSummaryLine } from '@/components/agent/executionTraceReducer'
 import { formatSessionTime, lastThreadStorageKey } from '@/utils/formatSessionTime'
 import { randomId } from '@/utils/randomId'
 import { submitAnswers } from '@/components/agent/agentAnswers'
-import { failureReason, resolveWaiting, turnStatusLine } from '@/components/agent/turnStatusBar'
+import { failureReason, resolveWaitingFromTimeline, turnStatusLine } from '@/components/agent/turnStatusBar'
 import { hasBubbleContent, hasBubbleText } from '@/components/agent/bubbleVisibility'
-import { describeActivity } from '@/components/agent/activityLine'
+import { describeActivityFromTimeline } from '@/components/agent/activityLine'
 import { buildStatusLine } from '@/components/agent/composer/statusLine'
 import { ElMessage } from 'element-plus'
 
@@ -959,6 +959,15 @@ function onLiveTimelineRetry(nodeId: string) {
   if (nodeId) emit('generateNode', nodeId)
 }
 
+/** 根治规格（2026-10-28）：对话流内联 proposal 卡的确认 / 取消——复用既有确认面语义，
+ *  不再走对话流外浮卡。confirmProposeWait / cancelProposeForNode 已 defineExpose 给画布节点。 */
+function onInlineConfirmProposal(nodeId: string) {
+  void confirmProposeWait(nodeId)
+}
+function onInlineCancelProposal(nodeId: string) {
+  void cancelProposeForNode(nodeId)
+}
+
 const assistantOutputsById = computed(() => {
   const map = new Map<string, ReturnType<typeof canvasOutputsForMessage>>()
   for (const msg of agent.messages) {
@@ -1091,17 +1100,31 @@ onUnmounted(() => {
 })
 
 const turnStatus = computed(() => {
-  const waiting = resolveWaiting({
-    isStreaming: agent.isStreaming,
-    proposePendingConfirm: agent.proposePendingConfirm,
-    // 阻塞等待一票通过：等待开始的信号由后端 waiting_user 事件下发
-    // （tool_result 要等等待结束才到，靠它反推「等待中」在本语义下恒不成立）
-    blockingWait: agent.blockingWait,
-  })
+  // 根治规格（2026-10-28）：等待态 + 执行态的「单一真相」= 时间线 parts。
+  // 状态行与对话流内联卡读同一份——结构性消除「状态行抢跑、对话卡滞后/缺失」。
+  const parts = liveTimeline.value?.parts
+  const waiting = resolveWaitingFromTimeline(parts)
   const lastFailed = agent.turnError != null ? failureReason(agent.turnError) : undefined
-  // 「正在做什么」：唯一数据源 = executionTrace 最新一步人话（浮层与对话流同源，见边界设计）；
-  // 拿不到时 turnStatusLine 内部降级为「处理中」，绝不把内部工具名吐给用户（决策 3 / 5）。
-  const traceActivity = describeActivity(lastAssistantMessage.value?.executionTrace?.steps)
+  // 「正在做什么」：从时间线 parts 派生（与对话流内联卡同源），不再直连 executionTrace.steps。
+  const traceActivity = describeActivityFromTimeline(parts)
+  // 等待文案来源：proposal part（propose）/ question part（ask），与内联卡同一 part。
+  const proposalPart = parts?.find(
+    (p): p is Extract<typeof p, { kind: 'proposal' }> =>
+      p.kind === 'proposal' && p.status === 'pending_confirm',
+  )
+  const questionPart = parts?.find(
+    (p): p is Extract<typeof p, { kind: 'question' }> =>
+      p.kind === 'question' && p.status === 'pending_answer',
+  )
+  const waitingTool = proposalPart ? 'propose_generation' : null
+  const waitingQuestion = questionPart
+    ? questionPart.questions[0]?.question ?? questionPart.title
+    : null
+  const waitingDeadline = proposalPart
+    ? proposalPart.startedAt + (proposalPart.timeoutMs ?? 300_000)
+    : questionPart
+      ? questionPart.startedAt + 300_000
+      : null
   return turnStatusLine({
     isStreaming: agent.isStreaming,
     turnStartedAt: lastAssistantMessage.value?.executionTrace?.turnStartedAt,
@@ -1109,9 +1132,9 @@ const turnStatus = computed(() => {
     waiting,
     // P2：恢复中显示「会话恢复中」而非「上游响应超时」（waiting 优先级更高，见 turnStatusBar）
     recovering: agent.recovering,
-    waitingTool: agent.blockingWait?.toolName ?? null,
-    waitingQuestion: agent.blockingWait?.question ?? null,
-    waitingDeadline: agent.blockingWait?.deadlineAt ?? null,
+    waitingTool,
+    waitingQuestion,
+    waitingDeadline,
     activity: traceActivity,
     // Q2：本回合实时预估积分（usage_delta 逐段覆盖；null 时状态行不拼预估尾巴）
     estimatedCredits: agent.liveEstimatedCredits,
@@ -1161,7 +1184,7 @@ watch(
  */
 const composerStatus = computed(() =>
   buildStatusLine({
-    phase: describeActivity(lastAssistantMessage.value?.executionTrace?.steps),
+    phase: describeActivityFromTimeline(liveTimeline.value?.parts),
     progressRatio: null,
     etaSeconds: null,
     points:
@@ -1183,29 +1206,21 @@ const proposeWait = computed(() =>
   agent.blockingWait?.toolName === 'propose_generation' ? agent.blockingWait : null,
 )
 /**
- * ADR-0011（2026-10-19）：画布上下文 = 已切到画布视图（mobileCanvasView 由 CanvasPage 持真相）。
- * 此上下文下对话流提议卡降权为**只读提示**——确认 / 取消迁移到节点内联面（T1）/ dock，
- * 避免同一 pending_confirm 态在「对话卡 + 画布节点 + dock」三处各挂一份可操作入口（三带叠罗汉）。
- * 纯对话视图（mobileCanvasView=false，含桌面）维持可操作卡不变（与 2026-10-06「两处确认入口」拍板一致）。
+ * 根治规格（2026-10-28）：`proposeWaitInCanvas`（ADR-0011 画布上下文降权判定）与
+ * `turnHasFailedStep`（dock 警示）已随对话流外浮卡一并删除——前者唯一消费点是浮卡
+ * 的 canvas-always 落位，后者的警示块同属浮卡模板。
  */
-const proposeWaitInCanvas = computed(() => props.mobileCanvasView === true)
-// RB-D6②：本轮存在 failed 步骤 ⇒ dock 确认区持久警示（把红色 ✗ 与确认决策连起来）。
-const turnHasFailedStep = computed(() => hasFailedTraceStep(lastAssistantMessage.value?.executionTrace?.steps))
 // P0-C（2026-10-13 事故 cmv51vwpu0008p801hxaxcf8m）：等待结束信号。
 // CanvasPage 在等待期对 PUT 载荷强制声明 pending_confirm（防 stale 全量盖写 SSOT），
 // 等待结束必须解除，否则确认启动后的 generating/completed 会被倒灌回待确认。
 watch(proposeWait, (w, prev) => {
   if (prev && !w) emit('proposeWaitEnd')
 })
-function locateProposeNode() {
-  const nodeId = proposeWait.value?.nodeId
-  if (nodeId) onFocusNode(nodeId)
-}
 
 /**
  * 琥珀卡取消（2026-10-01；2026-10-06 接显式 decline）：只拒绝该节点的生成提议
  * （clear-propose → 节点回 draft，run 恢复继续对话）；绝不是中止整个 run —— 那是
- * composer「停止」的语义。等待期流式守卫刻意不设（与 locateProposeNode 一致）。
+ * composer「停止」的语义。等待期流式守卫刻意不设（定位/取消入口语义一致）。
  *
  * 2026-10-06 加的这半根线（生产事故 cmus6ha64001dk601lzsymqfa 第二处）：取消此前**只**
  * 写 Nest SSOT，工具侧靠 SSOT 时序推断「用户拒绝」；把文案中性化以后用户真按了取消，
@@ -1214,8 +1229,8 @@ function locateProposeNode() {
  * 前者失败不阻断后者（轮询兜底仍在，且画布状态必须收敛）。
  *
  * ADR-0011 T1（2026-10-19）：泛化为**节点级**入口——画布节点内联确认面
- * （ProposeConfirmOverlay）的「取消」与侧栏琥珀卡共用本函数、同一语义。
- * nodeId 缺省 = 侧栏卡语义（当前阻塞等待所属节点，与原 cancelBlockingPropose 一致）；
+ * （ProposeConfirmOverlay）与时间线内联卡共用本函数、同一语义。
+ * nodeId 缺省 = 当前阻塞等待所属节点；
  * 传入 nodeId = 画布节点语义，与当前等待的 nodeId 不一致时**安全 no-op**
  * （浮层竞态残留防护：宁可不发，也不把 decline 发到别的节点上）。
  */
@@ -1245,11 +1260,6 @@ async function cancelProposeForNode(nodeId?: string, opts?: { note?: string }) {
     }
   }
   emit('clearProposeGeneration', waitNodeId)
-}
-
-/** 侧栏琥珀卡取消入口（ADR-0011 后画布上下文已只读，此入口仅存于纯对话视图）。 */
-function cancelBlockingPropose() {
-  return cancelProposeForNode()
 }
 
 /**
@@ -3440,8 +3450,18 @@ function handleEvent(event: { type: string; data: unknown }) {
           question: d.question,
           timeoutMs: d.timeoutMs,
         })
-        // P1：waiting_user → TurnTimeline warn notice（flag 关闭时 feedTimeline 内短路，零成本）
-        agent.trackWaitingUser({ status: d.status, toolName: d.toolName, nodeId: d.nodeId, reason: d.reason })
+        // P1：waiting_user → TurnTimeline 单一真相（flag 关闭时 feedTimeline 内短路，零成本）。
+        // 根治规格 2026-10-28：propose_generation 经此 upsert 时间线 `proposal` part（稳定
+        // id = callId/nodeId），状态行与对话流内联卡同源读它。callId/timeoutMs 透传以保
+        // part 稳定 id 与倒计时准确（缺省回落 300_000）。
+        agent.trackWaitingUser({
+          status: d.status,
+          toolName: d.toolName,
+          nodeId: d.nodeId,
+          callId: d.callId,
+          timeoutMs: d.timeoutMs,
+          reason: d.reason,
+        })
         // L2：propose 等待开始即把画布节点同步成 pending_confirm（消除 stale draft，
         // 否则等待期任何 saveCanvas 都会用 draft 覆盖 SSOT 的待确认 → 被误判「用户取消」）
         if (d.toolName === 'propose_generation' && d.nodeId) {
@@ -3709,6 +3729,9 @@ function handleEvent(event: { type: string; data: unknown }) {
       } else if (cmd.type === 'ask_user') {
         const card = cmd as { callId?: string; questions?: Array<Omit<(typeof pendingAskUser.value)[number], 'callId'>> }
         if (card.questions?.length) {
+          // 根治规格（2026-10-28）：题面同时进时间线 question part（单一真相，状态行/内联卡同源）
+          // 与组件级 pendingAskUser ref（现有 AskUserCard 仍读它，待迁移到读 part）。
+          agent.trackAskUser({ callId: card.callId, questions: card.questions as never })
           // B-6：callId 是卡片级提交依据（update 快照 / end 旧路径透传），逐元素填充
           pendingAskUser.value = card.questions.map((q) => ({ ...q, callId: card.callId ?? '' }))
         }
@@ -3973,7 +3996,7 @@ defineExpose({
   reconcileFromNodes,
   /** L1：画布/dock 点生成时显式确认 propose 等待（answered），不再靠 SSOT 时序推断 */
   confirmProposeWait,
-  /** ADR-0011 T1：画布节点内联确认面的取消入口（与侧栏 cancelBlockingPropose 同源同语义） */
+  /** ADR-0011 T1：画布节点内联确认面的取消入口（与时间线内联卡同源同语义） */
   cancelProposeForNode,
   addFromCanvasNodes: (nodes: FocusNodeLike[]): CanvasRefAddResult => {
     const result = sidebar.addFromCanvasNodesDetailed(nodes)
@@ -4296,6 +4319,8 @@ defineExpose({
                   :resolve-node-url="resolveCanvasNodeUrl"
                   @retry-node="emit('generateNode', $event)"
                   @focus-node="onFocusNode($event)"
+                  @confirm-proposal="onInlineConfirmProposal($event)"
+                  @cancel-proposal="onInlineCancelProposal($event)"
                 />
                 <p v-if="hasBubbleText(msg) && !isMessageUnderEdit(msg) && !useTimeline(msg)" class="whitespace-pre-wrap">
                   {{
@@ -4566,6 +4591,8 @@ defineExpose({
               dense
               @retry-node="onLiveTimelineRetry"
               @focus-node="onFocusNode($event)"
+              @confirm-proposal="onInlineConfirmProposal($event)"
+              @cancel-proposal="onInlineCancelProposal($event)"
             />
             <!-- 阻塞等待 propose_generation（2026-10-14 移入 dock）：等待期回合内容钉在上方
                  live 时间线、气泡内近空，提示条留在消息流会被视觉顶到内容「上面」；
@@ -4636,52 +4663,15 @@ defineExpose({
                ⚠️ 新增系统层卡片必须放进本容器：进层即默认安全（画布视图藏）；需要露头的
                显式加白名单类，漏放行 = 立刻可见的功能缺失，而非看不见的 bug。
                白名单两类：
-                 canvas-always        画布三态恒显（propose 提示，有画布专属文案）
+                 canvas-always        已随对话流外浮卡下线退役（2026-10-28 根治规格：
+                                      propose 决策点 = 时间线内联卡 + 画布节点内联面）
                  canvas-with-composer 跟随 composer 可见性（ask_user 卡：窗态显、imm/dock 收起）
                                       ——pending 期间 composer 自由文本一律按 answer 提交
                                       （spec §5.3），输入面与阻塞问题永不分离。 -->
           <div class="agent-system-layer">
-            <div
-              v-if="proposeWait"
-              class="canvas-always mx-0.5 mb-1 rounded-xl border border-warning-border bg-warning-bg px-3 py-2 text-[12px] text-warning"
-              data-testid="propose-wait-hint"
-            >
-              <p v-if="turnHasFailedStep" data-testid="failed-step-warning" class="mb-1 text-[11px] leading-4" :style="{ color: 'var(--lnk-text-muted)' }">
-                ⚠️ 本轮有执行失败的步骤（如参考图挂载），确认生成前请检查执行记录。
-              </p>
-              <div class="flex items-start gap-2">
-                <span class="mt-[3px] h-1.5 w-1.5 shrink-0 rounded-full bg-warning"></span>
-                <p class="flex-1 leading-relaxed">
-                  <template v-if="proposeWaitInCanvas">已在画布上待确认：查看 / 修改提示词后，在节点上点「确认生成」</template>
-                  <template v-else>点👉🏻图标锚定画布「查看提示词」</template>
-                </p>
-              </div>
-              <!-- ADR-0011（2026-10-19）：画布上下文降权为只读——定位 / 取消按钮收起，
-                   确认 / 取消归节点内联面，避免对话流与画布节点双份可操作入口。纯对话视图保留原操作。 -->
-              <div v-if="!proposeWaitInCanvas" class="mt-1.5 flex items-center gap-1.5" data-testid="propose-wait-actions">
-                <button
-                  v-if="proposeWait.nodeId"
-                  type="button"
-                  class="inline-flex h-7 items-center gap-1 rounded-lg border border-warning-border bg-elevated px-2 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
-                  data-testid="propose-wait-locate"
-                  aria-label="点击定位到画布上待确认的节点"
-                  @click="locateProposeNode"
-                >
-                  <!-- 定位锚图标（2026-10-18）：品牌 45° 定位锚 glyph + 幽灵盘，与 composer ◎ 同款两态——
-                       幽灵 = 中灰盘 + hi-text 锚；hover/聚焦点亮 = hi-bg 盘 + 辉光 -->
-                  <span class="propose-locate-disc" aria-hidden="true" />
-                  <span>定位</span>
-                </button>
-                <button
-                  type="button"
-                  class="rounded-lg border border-warning-border bg-elevated px-2 py-1 text-[11px] font-medium text-warning hover:bg-warning-bg-hover hover:border-warning-border-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-overlay/40"
-                  data-testid="propose-wait-cancel"
-                  @click="cancelBlockingPropose"
-                >
-                  取消
-                </button>
-              </div>
-            </div>
+            <!-- 根治规格（2026-10-28）：对话流外浮卡已移除——「提议生成」决策点改为时间线内联
+                 proposal part（见 AgentTurnTimeline.vue），与画布节点 ProposeConfirmOverlay、底部状态行
+                 同读一份单一真相。桌面 = 对话流内联卡；移动端画布视图 = 节点内联面；状态行 ambient 播报。 -->
             <!-- P1-3.1 双显修复（T8 review 裁决）：流式 running 态由 composer-status-line
                  独占播报；本行只保留 waiting / failed / settled 态，避免阶段+积分双重显示 -->
             <!-- 2026-10-20：settled 收口态可 dismiss（气泡摘要保留同源落点）；dismiss 后
@@ -5444,16 +5434,15 @@ defineExpose({
  *   容器在画布视图默认 display:none —— 新卡片进层即安全；
  *   需要露头的显式加白名单类，漏放行的代价是「立刻可见的功能缺失」。
  * 白名单两类（特异性均压过容器规则）：
- *   canvas-always        画布三态恒显：propose 等待提示（待确认状态面，有画布专属文案）
+ *   canvas-always        已随对话流外浮卡下线退役（2026-10-28 根治规格：propose 决策点
+ *                         = 时间线内联卡 + 画布节点内联面，画布视图无需再放行浮卡）。
+ *                         ⚠️ 勿复活：往系统层加新常显卡须重新立白名单类 + 守卫测试。
  *   canvas-with-composer 跟随 composer：ask_user 卡（阻塞交互面）。窗态显——
  *                         pending 期间 composer 自由文本一律按 answer 提交（spec §5.3），
  *                         输入面与阻塞问题永不分离；imm / studio-dock 随 composer 收起。
  * 播报式 chrome（收口状态行 / 取消回执卡）不放行：画布视图全藏（#496/#516 行为不变）。 */
 .agent-panel-mobile-dock.is-canvas-view .agent-system-layer {
   display: none;
-}
-.agent-panel-mobile-dock.is-canvas-view .agent-system-layer > .canvas-always {
-  display: block;
 }
 .agent-panel-mobile-dock.is-canvas-view:not(.is-canvas-imm):not(.has-studio-dock) .agent-system-layer > .canvas-with-composer {
   display: block;

@@ -71,7 +71,7 @@ describe('三滚动条治理 2/2 — 滚动上下文唯一，dense 卡片自带�
       '主滚动容器 .agent-chat-scroll 必须仍在',
     ).toMatch(/agent-chat-scroll/)
     // 有效性断言（防空集假绿）：确认确实扫到了模板与样式主体
-    expect(rail, '应扫到模板主体').toMatch(/data-testid="propose-wait-hint"/)
+    expect(rail, '应扫到模板主体').toMatch(/data-testid="turn-status-line"/)
     expect(rail, '应扫到样式主体').toMatch(/\.agent-chat-scroll \{/)
   })
 
@@ -130,14 +130,15 @@ describe('三滚动条治理 2/2 — 滚动上下文唯一，dense 卡片自带�
   it('⑤ live 态对话内容在主滚动流内、composer 之后无对话内容（模板顺序断言）', () => {
     const rail = readFileSync(railPath, 'utf8')
     const iScroll = rail.indexOf('agent-chat-scroll')
-    const iWait = rail.indexOf('data-testid="propose-wait-hint"')
+    // 根治规格 2026-10-28：propose 浮卡下线，锚点换成同处系统层的状态行
+    const iWait = rail.indexOf('data-testid="turn-status-line"')
     const iInput = rail.indexOf('class="agent-input-area')
     expect(iScroll, '主滚动容器应存在').toBeGreaterThan(-1)
-    expect(iWait, 'proposeWait 提示条应存在').toBeGreaterThan(-1)
+    expect(iWait, '状态行应存在').toBeGreaterThan(-1)
     expect(iInput, '输入区应存在').toBeGreaterThan(-1)
     expect(
       iScroll < iWait && iWait < iInput,
-      `模板顺序必须是 主滚动容器(${iScroll}) < live 提示条(${iWait}) < 输入区(${iInput})——提示条搬回消息流后不得再落回 dock`,
+      `模板顺序必须是 主滚动容器(${iScroll}) < 状态行(${iWait}) < 输入区(${iInput})——系统层搬回消息流后不得再落回 dock`,
     ).toBe(true)
   })
 

@@ -1,5 +1,6 @@
 /** P1 回合状态行：running 实时秒数 / waiting 收口 / failed 人话摘要。 */
 
+import type { TimelinePart } from '@/components/agent/turnTimeline'
 import { isNetworkError } from '@/components/agent/networkFault'
 
 export interface TurnStatusLineInput {
@@ -105,22 +106,28 @@ export function turnStatusLine(input: TurnStatusLineInput): TurnStatusLine {
 }
 
 /**
- * waiting 收紧：两种「确定在等」的信号各自一票通过。
+ * waiting 收紧（根治规格 2026-10-28）：「是否在等」一律从时间线 parts 派生。
  *
- * 2026-10-06：原先还有第三路 ——「assistantText 片段嗅探出的 chipSet + 文本静默 ≥2s」，
- * 那是为确认卡片（gate → chipSet → 确认/取消按钮）做的假阳性防线。确认卡片整体下线后
- * 该路已无输入源，一并删除（`WAITING_TEXT_IDLE_MS` 随之移除）。
+ * 取代旧的 `resolveWaiting(blockingWait, proposePendingConfirm)` 双源判定——
+ * 旧判定读两套 store 态（来自不同 SSE 事件、不同时点），与对话流内联卡天然 desync。
+ * 新判定只读时间线：存在 `pending_confirm` 的 proposal part 或 `pending_answer` 的
+ * question part 即视为等待。时间线是等待态 + 执行态的单一真相，状态行与对话流同源。
+ */
+export function resolveWaitingFromTimeline(parts?: TimelinePart[]): boolean {
+  if (!parts || parts.length === 0) return false
+  return parts.some(
+    (p) =>
+      (p.kind === 'proposal' && p.status === 'pending_confirm') ||
+      (p.kind === 'question' && p.status === 'pending_answer'),
+  )
+}
+
+/**
+ * @deprecated 由 resolveWaitingFromTimeline 取代（根治规格）——保留以兼容旧调用方。
  */
 export function resolveWaiting(input: {
   isStreaming: boolean
   proposePendingConfirm: boolean
-  /**
-   * 阻塞等待中的工具（`waiting_user{status:"waiting"}`）——一票通过，无需文本静默。
-   *
-   * 存在理由（2026-10-01 生产实证）：阻塞式工具的 tool_result 要等**等待结束**才发，
-   * 所以 `proposePendingConfirm`（靠 tool_result 置位）在等待期内恒为 false；
-   * 只靠它判定，整段等待期都会显示「生成回复中 · Ns」= 用户看到的卡死。
-   */
   blockingWait?: { toolName?: string } | null
 }): boolean {
   if (!input.isStreaming) return false

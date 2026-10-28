@@ -37,6 +37,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   retryNode: [nodeId: string]
   focusNode: [nodeId: string]
+  /** 根治规格（2026-10-28）：对话流内联 proposal 卡的确认 / 取消（取代对话流外浮卡）。 */
+  confirmProposal: [nodeId: string]
+  cancelProposal: [nodeId: string]
 }>()
 
 const VIDEO_URL_RE = /\.(mp4|webm|mov)(\?|$)/i
@@ -113,6 +116,12 @@ function onLocate(nodeId: string) {
 }
 function onRetry(nodeId: string) {
   emit('retryNode', nodeId)
+}
+function onConfirmProposal(nodeId?: string) {
+  if (nodeId) emit('confirmProposal', nodeId)
+}
+function onCancelProposal(nodeId?: string) {
+  if (nodeId) emit('cancelProposal', nodeId)
 }
 
 /** 流式中：最后一个「streaming 文本块」尾部显示光标，对齐旧正文的 ▊。 */
@@ -333,6 +342,52 @@ const rootClass = computed(() =>
           class="shrink-0 rounded border border-danger/50 px-1.5 py-0.5 text-[10px] text-danger hover:bg-danger/10"
           @click="onRetry(part.nodeId)"
         >重试生成</button>
+      </div>
+
+      <!-- proposal（根治规格 2026-10-28）：等待态单一真相的内联决策点——确认 / 取消 / 定位
+           都在对话流里，不再有对话流之外的独立浮卡。状态行与画布浮层都读同一 part。
+           令牌纪律：本分支为新增样式，一律 --lnk-* 语义令牌（neoUsageRatchet 全仓只减不增）。 -->
+      <div
+        v-else-if="part.kind === 'proposal'"
+        class="rounded border px-2 py-1"
+        :class="part.status === 'pending_confirm'
+          ? 'border-[var(--lnk-warning-border)]'
+          : 'border-[var(--lnk-border-default)]'"
+      >
+        <div class="flex items-center gap-1.5">
+          <span>🎨</span>
+          <span class="font-medium text-[var(--lnk-text-primary)]">{{ part.title }}</span>
+          <span
+            v-if="part.status === 'pending_confirm'"
+            class="ml-auto text-[10px] text-[var(--lnk-text-muted)]"
+          >待确认</span>
+          <span
+            v-else
+            class="ml-auto text-[10px] text-[var(--lnk-text-muted)]"
+          >已确认</span>
+        </div>
+        <p class="mt-0.5 text-[10px] text-[var(--lnk-text-secondary)]">
+          等待你在画布上确认生成，确认后继续输出
+        </p>
+        <div class="mt-1 flex items-center gap-1.5">
+          <CanvasLocateButton
+            v-if="part.nodeId"
+            title="在画布中定位"
+            @click="onLocate(part.nodeId)"
+          />
+          <button
+            v-if="part.status === 'pending_confirm'"
+            type="button"
+            class="shrink-0 rounded border border-[var(--lnk-accent-border)] bg-[var(--lnk-accent-subtle)] px-2 py-0.5 text-[10px] text-[var(--lnk-accent-text)] hover:bg-[var(--lnk-accent-border)]"
+            @click="onConfirmProposal(part.nodeId)"
+          >确认生成</button>
+          <button
+            v-if="part.status === 'pending_confirm'"
+            type="button"
+            class="shrink-0 rounded border border-[var(--lnk-border-default)] px-2 py-0.5 text-[10px] text-[var(--lnk-text-secondary)] hover:bg-[var(--lnk-hover-overlay)]"
+            @click="onCancelProposal(part.nodeId)"
+          >取消</button>
+        </div>
       </div>
 
       <!-- notice -->
