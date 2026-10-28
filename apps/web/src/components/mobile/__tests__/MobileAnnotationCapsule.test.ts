@@ -40,6 +40,13 @@ describe('MobileAnnotationCapsule（§17-③ 胶囊意见框）', () => {
     await w.find('[data-testid="mobile-annotation-capsule-input"]').setValue('旧意见')
     await w.setProps({ visible: false })
     await w.setProps({ visible: true })
-    expect((w.find('[data-testid="mobile-annotation-capsule-input"]').element as HTMLTextAreaElement).value).toBe('')
+    expect((w.find('[data-testid="mobile-annotation-capsule-input"]').element as HTMLInputElement).value).toBe('')
+  })
+
+  it('v2 单行胶囊：输入框内回车 = 提交（⯈ 无需伸手点锚）', async () => {
+    const w = mount(MobileAnnotationCapsule, { props: { visible: true } })
+    await w.find('[data-testid="mobile-annotation-capsule-input"]').setValue('回车带回')
+    await w.find('[data-testid="mobile-annotation-capsule-input"]').trigger('keydown', { key: 'Enter' })
+    expect(w.emitted('anchor')).toEqual([[{ text: '回车带回' }]])
   })
 })

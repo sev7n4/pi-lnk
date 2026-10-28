@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { sameOriginApiMediaUrl } from '@/services/media-url'
-import { composeAnnotatedImage } from './annotate/composeAnnotatedImage'
+import { composeAnnotatedImage, type AnnotateMark } from './annotate/composeAnnotatedImage'
+import { mapMarksToImageSpace } from './annotate/mapMarksToImageSpace'
 import { renderReviewBaseImage } from './annotate/renderReviewBaseImage'
 import { useInkOverlay } from './annotate/useInkOverlay'
 import { useTextToSpeech } from '@/composables/useTextToSpeech'
@@ -160,13 +161,27 @@ const resolvedBottomActions = computed(() => {
       { key: 'edit-save', label: '保存', variant: 'primary' as const },
     ]
   }
+  // ⭐ 标注聚焦模式（2026-10-28 真机反馈③）：圈选态下底栏收敛为**唯一动作**
+  //   [取消圈选] —— 改词/朗读等全部退场（HIG：模态任务期只保留任务内动作；
+  //   此前改词紫卡仍钉在底栏，圈选流程里出现改词流程 UI = 场景错位）。
+  if (annotating.value) {
+    return [{ key: 'annotate', label: '取消圈选' }]
+  }
   const base = props.bottomActions ?? []
+  // ⭐ 入口统一（真机反馈①）：非文本节点且壳层未带 annotate 动作时，
+  //   注入 [圈选] 进工具栏（与改词同几何等宽胶囊；原浮动圆钮退役）。
+  //   pending 节点壳层已带【批注】⇒ 不重复注入。
+  const hasAnnotate = base.some((a) => a.key === 'annotate')
+  const needsAnnotate = props.type !== 'text' && !showReviewLayer.value && !hasAnnotate
+  const actions: Array<{ key: string; label: string; variant?: 'primary' | 'danger' }> = needsAnnotate
+    ? [{ key: 'annotate', label: '圈选' }, ...base]
+    : [...base]
   const isText = props.type === 'text'
   const hasText = Boolean(String(nodeData.value.content ?? '').trim())
   if (isText && hasText && !isPendingNode.value) {
-    return [...base, { key: 'tts', label: ttsSpeaking.value ? '停止' : '朗读' }]
+    actions.push({ key: 'tts', label: ttsSpeaking.value ? '停止' : '朗读' })
   }
-  return base
+  return actions
 })
 
 /**
@@ -257,7 +272,15 @@ async function onCapsuleAnchor(payload: { text: string }) {
       emit('annotate', { degraded: true, text })
       return
     }
-    const composed = composeAnnotatedImage(base.image, base.width, base.height, allMarks)
+    // ⭐ 坐标逆映射（2026-10-28 真机反馈②「标记漂移」）：marks 是屏幕空间，
+    //   合成图是图像自然空间 —— 必须经 contain/zoom 逆映射，否则必然错位。
+    //   映射不成立（元素缺失等）⇒ 诚实降级（⛔ 静默错位比没有截图更有害）。
+    const mappedMarks = mapMarksForCompose()
+    if (!mappedMarks) {
+      emit('annotate', { degraded: true, text })
+      return
+    }
+    const composed = composeAnnotatedImage(base.image, base.width, base.height, mappedMarks)
     const blob = await new Promise<Blob | null>((resolve) => composed.toBlob(resolve, 'image/png'))
     if (!blob) {
       emit('annotate', { degraded: true, text })
@@ -268,6 +291,40 @@ async function onCapsuleAnchor(payload: { text: string }) {
     // 跨域污染 / toBlob 失败 ⇒ 诚实降级
     emit('annotate', { degraded: true, text })
   }
+}
+
+/**
+ * marks（ink 画布空间）→ 底图空间（image/video = 自然尺寸；审核层 = 1:1 CSS）。
+ * image/video：经 `mapMarksToImageSpace` 做 contain + W-5 zoom 逆映射；
+ * 审核层：底图按 reviewRef 的 clientWidth/Height 重绘 ⇒ 与 ink 画布同为
+ * viewer-body 尺寸，天然 1:1（历史上未漂移的真因）。
+ * audio：波形底图是合成画布，无同构内容元素可映射 ⇒ 返回 null（诚实降级）。
+ */
+function mapMarksForCompose(): AnnotateMark[] | null {
+  if (showReviewLayer.value) {
+    return ink.marks.value
+  }
+  const inkEl = inkCanvas.value
+  const inkRect = inkEl?.getBoundingClientRect()
+  if (!inkRect) return null
+  const type = props.type
+  if (type !== 'image' && type !== 'video') return null
+  const el =
+    type === 'image'
+      ? (imgElRef.value as HTMLImageElement | null)
+      : (videoRef.value as HTMLVideoElement | null)
+  const r = el?.getBoundingClientRect()
+  if (!el || !r) return null
+  const nw = type === 'image' ? (el as HTMLImageElement).naturalWidth : (el as HTMLVideoElement).videoWidth
+  const nh = type === 'image' ? (el as HTMLImageElement).naturalHeight : (el as HTMLVideoElement).videoHeight
+  return mapMarksToImageSpace(ink.marks.value, {
+    elRect: { left: r.left, top: r.top, width: r.width, height: r.height },
+    elWidth: el.offsetWidth,
+    elHeight: el.offsetHeight,
+    naturalWidth: nw,
+    naturalHeight: nh,
+    inkRect: { left: inkRect.left, top: inkRect.top },
+  })
 }
 
 /** 取底图（图片 = 同源化后的图；视频 = 暂停后的当前帧；⭐ pending 审核层 = 整屏重绘） */
@@ -667,19 +724,11 @@ defineExpose({ videoRef })
     <!--
       标注入口（L1 · §4.3）：**显式进入**标注态（⛔ 不做隐式双击手势 ——
       单指拖动已是媒体滚动/缩放，隐式手势在移动端极易误触）。
-      ⭐ §17 v2：pending 审核层的批注入口 = 底栏【批注】键（onBottomAction 内消化），
-      此浮动键在审核层隐藏（无产物底图时不重复给入口；底图 = renderReviewBaseImage）。
+      ⭐ 2026-10-28 真机反馈①：浮动圆钮与底栏【改词】是两套几何（圆形 pill vs
+      通栏紫卡）⇒ **入口统一进底部工具栏**（resolvedBottomActions 注入
+      `圈选`，与改词同几何等宽胶囊；HIG：同级动作同一组件形态）。
+      本浮动键退役；pending 审核层依旧只走底栏【批注】键。
     -->
-    <button
-      v-if="type !== 'text' && !showReviewLayer"
-      class="viewer-annotate"
-      type="button"
-      :aria-label="annotating ? '取消圈选' : '圈选'"
-      data-testid="mobile-viewer-annotate"
-      @click="annotating ? exitAnnotate() : enterAnnotate()"
-    >
-      {{ annotating ? '取消' : '圈选' }}
-    </button>
 
     <!-- 画笔覆盖层（标注态：单指不再滚动/缩放，touch-action:none；
          Pointer Events 采集 + bitmap 尺寸/DPR 由 useInkOverlay 负责——W-26/W-27 真机修复） -->
@@ -972,28 +1021,8 @@ defineExpose({ videoRef })
   color: var(--lnk-accent-on-signature);
 }
 
-/* 标注入口按钮（44px 触控目标，§4.11.6） */
-.viewer-annotate {
-  position: absolute;
-  right: var(--lnk-space-2);
-  bottom: calc(var(--lnk-space-3) + env(safe-area-inset-bottom, 0px));
-  z-index: 3;
-  display: inline-flex;
-  min-width: var(--lnk-touch-target);
-  height: var(--lnk-touch-target);
-  align-items: center;
-  justify-content: center;
-  padding: 0 var(--lnk-space-3);
-  border: none;
-  border-radius: var(--lnk-radius-full);
-  background: var(--lnk-surface-overlay);
-  color: var(--lnk-text-primary);
-  font-size: var(--lnk-text-sm);
-  font-weight: var(--lnk-weight-medium);
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
+/* 标注入口按钮（44px 触控目标，§4.11.6）—— 2026-10-28 浮动圆钮退役：
+   入口统一进底部工具栏（真机反馈①两套几何并存），.viewer-annotate 样式随迁。 */
 
 /* 倍速循环按钮（走查⑤）：左下角，与右下「圈选」对称（44px 触控目标） */
 .viewer-speed {
@@ -1016,10 +1045,6 @@ defineExpose({ videoRef })
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
-}
-
-.viewer-annotate:active {
-  background: var(--lnk-pressed-overlay);
 }
 
 /* 画笔覆盖层：标注态独占手势（touch-action: none ⇒ 单指不滚动/缩放） */
