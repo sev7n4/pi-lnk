@@ -249,32 +249,39 @@ const mediaInfoText = computed(() => {
   return mediaInfoLine(info as Parameters<typeof mediaInfoLine>[0])
 })
 
-/* ── 走查①②（2026-10-27 规格 §6.2「磁贴属性行构成」）──────────────────
- * 属性行 = **节点名称（居首）** + 类型属性；音/视频在移动端自行 ensure
- * mediaInfo（此前 probe 只在 PC 组件跑 ⇒ 移动端会话恒缺属性行）。
+/* ── 走查①②（2026-10-27 规格 §6.2「磁贴属性行构成」；2026-10-28 四轮走查修订）──────
+ * ① 全生命周期显示：头部从各内容分支抽出，根级恒渲染（空态/生成中/pending 也显示）。
+ * ② 类型用图标示意（PC `neo-node-icon` 同款 SVG path），不再用「类型 ·」文字前缀。
+ * ③ 头部/底部三要素外置：对齐 PC `neo-node-external-title/footer` 模式
+ *    （absolute 浮于磁贴框外上下，不占节点内容空间 ⇒ 节点空间最大化）。
  */
+/** PC `neo-node-icon` 同款类型图标（neoNodeMeta.icon 单一真源） */
+const tileIcon = computed(() => getNeoNodeMeta(props.type).icon)
+
 /**
- * 左上角头部（⭐ 2026-10-27 三轮走查拍板）：**类型 · 自定义名**——PC 标题条
- * （`neo-node-title`）的移动端对位；名称兜底链与 PC `resolveNeoNodeTitle`
- * 同源（`label ?? title`，都没有则类型名）。无自定义名时只显示类型名；
- * 自定义名与类型名相同则去重。仅渲染在有产物媒体分支与文本分支
- * （空态占位分支已自解释类型，不重复）。
+ * 头部名字：名称兜底链与 PC `resolveNeoNodeTitle` 同源（label ?? title，都没有则类型名）。
+ * ⭐ 2026-10-28 ②：类型语义由图标承载，文字只放名字（无自定义名时兜底显示类型名，
+ * 与 PC resolveNeoNodeTitle 行为一致）。
  */
 const tileHeaderText = computed(() => {
   const d = props.data as Record<string, unknown> | undefined
   const custom = [d?.label, d?.title].find((v) => typeof v === 'string' && v.trim()) as string | undefined
-  const metaLabel = getNeoNodeMeta(props.type).label
   const name = custom?.trim()
-  if (name && name !== metaLabel) return `${metaLabel} · ${name}`
-  return metaLabel
+  return name || getNeoNodeMeta(props.type).label
 })
 
 /**
  * 媒体三类底部属性行（三轮走查修订：名称归头部，底部只放**媒体要素**）：
  * 图片 尺寸·比例·大小 / 视频 分辨率·比例·大小 / 音频 时长·格式·大小——
  * 判据单一真源 `mediaInfoLine`（PC MediaInfoSummary 同源），缺段不猜。
+ * ⭐ 四轮走查③外置后补产物门控：属性行描述的是**产物**的媒体事实，
+ *   空节点（无 url）即便脏数据带 mediaInfo 也不渲染（外置行脱离了
+ *   原「有 url 才进媒体分支」的隐式门控，须显式补回）。
  */
-const attributeLine = computed(() => mediaInfoText.value)
+const attributeLine = computed(() => {
+  if (!hasProduct.value) return ''
+  return mediaInfoText.value
+})
 
 /** 文本节点底部属性行：字数（名称归头部；空文本不渲染） */
 const textAttrLine = computed(() => {
@@ -521,6 +528,69 @@ function handleTextTap() {
     @touchcancel="bindings.onTouchcancel"
   >
     <!--
+      四轮走查①②③（2026-10-28）：头部外置恒渲染——全生命周期（空/生成中/pending/有产物）
+      都显示；类型用图标（PC neo-node-icon 同款），文字只放名字；absolute 浮于框外上方
+      （PC neo-node-external-title 同模式），不占节点内容空间。
+    -->
+    <header class="mobile-node-tile-header" data-testid="mobile-node-tile-header">
+      <svg
+        v-if="tileIcon === 'image'"
+        class="mobile-node-tile-header-icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.5"
+        aria-hidden="true"
+      >
+        <rect x="2.5" y="3" width="19" height="18" rx="3" />
+        <circle cx="8" cy="9" r="2" />
+        <path d="M21.5 15.5l-5-5L4 21" />
+      </svg>
+      <svg
+        v-else-if="tileIcon === 'video'"
+        class="mobile-node-tile-header-icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        aria-hidden="true"
+      >
+        <polygon points="23 7 16 12 23 17 23 7" />
+        <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+      </svg>
+      <svg
+        v-else-if="tileIcon === 'audio'"
+        class="mobile-node-tile-header-icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        aria-hidden="true"
+      >
+        <path d="M9 18V5l12-2v13" />
+        <circle cx="6" cy="18" r="3" />
+        <circle cx="18" cy="16" r="3" />
+      </svg>
+      <svg
+        v-else
+        class="mobile-node-tile-header-icon"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        aria-hidden="true"
+      >
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+      </svg>
+      <span class="mobile-node-tile-header-name">{{ tileHeaderText }}</span>
+    </header>
+
+    <!--
+      卡面（四轮走查③）：圆角/边框/裁切收进内层——根容器不再有卡面样式，
+      头部与底部属性行浮于框外，节点内容空间最大化（PC neo-node 同构）。
+    -->
+    <div class="mobile-node-tile-card">
+    <!--
       R3-T3 生成中轻态：骨架 + 不确定态进度环 + 计时。
       ⛔ 不显示任何百分比（全仓无生成进度字段，假造比不做更糟）。
       ⭐ G1（§4.7 表第 3 行，2026-10-27）：仅**首生成**（无旧产物）走骨架；
@@ -559,34 +629,9 @@ function handleTextTap() {
       </p>
     </div>
     <div v-else-if="type === 'image' && data?.url" class="mobile-node-media-box">
-      <!-- 三轮走查①：左上角头部 = 类型 · 名字（PC 标题条移动端对位） -->
-      <p v-if="tileHeaderText" class="mobile-node-tile-header" data-testid="mobile-node-tile-header">
-        {{ tileHeaderText }}
-      </p>
       <img :src="data.url" class="mobile-node-media" alt="" />
-      <!-- 走查②：PC MediaInfoSummary 的移动端对等物 + 名称居首（走查①，§6.2 属性行构成） -->
-      <p v-if="attributeLine" class="mobile-node-media-info" data-testid="mobile-node-media-info">
-        {{ attributeLine }}
-      </p>
-      <!-- G1（§4.7）：提示词 chips —— 单击打开全文审核层（§4.7.1） -->
-      <button
-        v-if="showPromptChip"
-        class="mobile-node-prompt-chip"
-        type="button"
-        data-testid="mobile-node-prompt-chip"
-        @click.stop="emit('open-prompt-review')"
-      >
-        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <path d="M4 5h16M4 5v14M20 5v14M4 19h16" stroke-linecap="round" />
-        </svg>
-        提示词
-      </button>
     </div>
     <div v-else-if="type === 'video' && data?.url" class="mobile-node-media-box">
-      <!-- 三轮走查①：左上角头部 = 类型 · 名字（PC 标题条移动端对位） -->
-      <p v-if="tileHeaderText" class="mobile-node-tile-header" data-testid="mobile-node-tile-header">
-        {{ tileHeaderText }}
-      </p>
       <video
         ref="videoTileRef"
         :src="data?.url"
@@ -604,22 +649,6 @@ function handleTextTap() {
           <polygon points="8 5 19 12 8 19 8 5" fill="currentColor" stroke="none" />
         </svg>
       </span>
-      <p v-if="attributeLine" class="mobile-node-media-info" data-testid="mobile-node-media-info">
-        {{ attributeLine }}
-      </p>
-      <!-- G1（§4.7）：提示词 chips —— 单击打开全文审核层（§4.7.1） -->
-      <button
-        v-if="showPromptChip"
-        class="mobile-node-prompt-chip"
-        type="button"
-        data-testid="mobile-node-prompt-chip"
-        @click.stop="emit('open-prompt-review')"
-      >
-        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <path d="M4 5h16M4 5v14M20 5v14M4 19h16" stroke-linecap="round" />
-        </svg>
-        提示词
-      </button>
     </div>
     <!--
       ⭐ 2026-10-27 真机回归②修复：音频分支加 `data?.url` 门控（图片/视频同款）——
@@ -627,10 +656,6 @@ function handleTextTap() {
       空音频落到下方类型占位分支（音频图标 + 类型名），与空图 / 空视频同型。
     -->
     <div v-else-if="type === 'audio' && data?.url" class="mobile-node-media-box">
-      <!-- 三轮走查①：左上角头部 = 类型 · 名字（PC 标题条移动端对位） -->
-      <p v-if="tileHeaderText" class="mobile-node-tile-header" data-testid="mobile-node-tile-header">
-        {{ tileHeaderText }}
-      </p>
       <div class="mobile-audio-wave">
         <button class="mobile-audio-play" type="button" :aria-label="playing ? '暂停' : '播放'" @click.stop="toggleAudio">▶</button>
         <MobileNodeWaveform
@@ -640,48 +665,11 @@ function handleTextTap() {
         />
       </div>
       <audio ref="audioEl" :src="data?.url" preload="metadata" @loadedmetadata="onAudioMeta" />
-      <p v-if="attributeLine" class="mobile-node-media-info" data-testid="mobile-node-media-info">
-        {{ attributeLine }}
-      </p>
-      <!-- G1（§4.7）：音频同样可达（§4.7.1 入口①「四类节点统一可达」） -->
-      <button
-        v-if="showPromptChip"
-        class="mobile-node-prompt-chip"
-        type="button"
-        data-testid="mobile-node-prompt-chip"
-        @click.stop="emit('open-prompt-review')"
-      >
-        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <path d="M4 5h16M4 5v14M20 5v14M4 19h16" stroke-linecap="round" />
-        </svg>
-        提示词
-      </button>
     </div>
     <div v-else-if="type === 'text'" class="mobile-node-text-wrap">
-      <!-- 三轮走查①：左上角头部 = 类型 · 名字（PC 标题条移动端对位） -->
-      <p v-if="tileHeaderText" class="mobile-node-tile-header" data-testid="mobile-node-tile-header">
-        {{ tileHeaderText }}
-      </p>
       <p class="mobile-node-text">{{ data?.content || '空文本' }}</p>
       <!-- 走查③：空文本也要有点按入口（tap ⇒ 编辑 sheet） -->
       <span v-if="!data?.content" class="mobile-node-text-cta">{{ emptyCtaLabel }}</span>
-      <!-- 走查①：文本节点属性行 = 名称 · 字数（§6.2 属性行构成） -->
-      <p v-if="textAttrLine" class="mobile-node-media-info" data-testid="mobile-node-text-info">
-        {{ textAttrLine }}
-      </p>
-      <!-- G1（§4.7）：文本节点有提示词时同样可达全文层 -->
-      <button
-        v-if="showPromptChip"
-        class="mobile-node-prompt-chip"
-        type="button"
-        data-testid="mobile-node-prompt-chip"
-        @click.stop="emit('open-prompt-review')"
-      >
-        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-          <path d="M4 5h16M4 5v14M20 5v14M4 19h16" stroke-linecap="round" />
-        </svg>
-        提示词
-      </button>
     </div>
     <!--
       空图 / 空视频的类型占位（2026-10-23 真机走查）：
@@ -731,6 +719,35 @@ function handleTextTap() {
       <!-- 走查③：空态主动作提示（tap 整卡 ⇒ 编辑 sheet，D-C empty 行） -->
       <span class="mobile-node-empty-cta">{{ emptyCtaLabel }}</span>
     </div>
+    </div><!-- /.mobile-node-tile-card -->
+
+    <!--
+      四轮走查③④（2026-10-28）：底部三要素外置（PC neo-node-external-footer 同模式，
+      absolute 浮于框外下方）——图片 尺寸·比例·大小 / 视频 分辨率·比例·大小 /
+      音频 时长·格式·大小 / 文本 字数；判据单一真源 mediaInfoLine，缺段不猜。
+      右侧 = G1 提示词 chips（④：挪出卡面，单击打开全文审核层 §4.7.1——
+      来源：创建节点时 propose 写入的 data.prompt，有产物态可回看）。
+    -->
+    <footer
+      v-if="attributeLine || textAttrLine || showPromptChip"
+      class="mobile-node-tile-footer"
+      data-testid="mobile-node-tile-footer"
+    >
+      <span v-if="attributeLine" class="mobile-node-media-info" data-testid="mobile-node-media-info">{{ attributeLine }}</span>
+      <span v-if="textAttrLine" class="mobile-node-media-info" data-testid="mobile-node-text-info">{{ textAttrLine }}</span>
+      <button
+        v-if="showPromptChip"
+        class="mobile-node-prompt-chip"
+        type="button"
+        data-testid="mobile-node-prompt-chip"
+        @click.stop="emit('open-prompt-review')"
+      >
+        <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M4 5h16M4 5v14M20 5v14M4 19h16" stroke-linecap="round" />
+        </svg>
+        提示词
+      </button>
+    </footer>
 
     <!--
       轻提示（P1「单击 = 查看」）：空 / 生成中 / 失败无旧产物时 tap 的唯一反馈——
@@ -808,15 +825,12 @@ function handleTextTap() {
 </template>
 
 <style scoped>
-/* 磁贴根元素：圆角裁切（外框尺寸由 script 区 tileStyle 内联钉死，内联优先故此处不写宽高）。
-   卡面 + 发丝线对所有类型生效——媒体加载后 cover 撑满自然盖住卡面；
-   空节点（无 url）也保持为一个可见的浅卡，不会是隐形框。 */
+/* 磁贴根元素（四轮走查③ 2026-10-28）：透明定位容器——卡面（圆角/边框/裁切）
+   收进内层 .mobile-node-tile-card，头部/底部属性行 absolute 浮于框外上下
+   （PC neo-node-external-title/footer 同模式）⇒ 节点内容空间最大化。
+   外框尺寸仍由 script 区 tileStyle 内联钉死（内联优先故此处不写宽高）。 */
 .mobile-node-tile {
   position: relative;
-  overflow: hidden;
-  border: 0.5px solid var(--lnk-border-subtle);
-  border-radius: var(--lnk-radius-lg);
-  background: var(--lnk-surface-base);
   box-sizing: border-box;
   transition: transform var(--lnk-duration-fast) var(--lnk-ease-standard);
 }
@@ -825,10 +839,23 @@ function handleTextTap() {
   transform: scale(0.98);
 }
 
+/* 卡面：圆角裁切 + 发丝线（原根元素样式下沉）。媒体 cover 撑满自然盖住卡面；
+   空节点（无 url）也保持为一个可见的浅卡，不会是隐形框。 */
+.mobile-node-tile-card {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border: 0.5px solid var(--lnk-border-subtle);
+  border-radius: var(--lnk-radius-lg);
+  background: var(--lnk-surface-base);
+  box-sizing: border-box;
+}
+
 /* ── R3-T3 状态轻态（D-C generating / error 两行）──────────────────────── */
 
-/* 失败态：红边（内容照常可见，用户能看见自己那张图 + 知道失败了） */
-.mobile-node-tile[data-state='error'] {
+/* 失败态：红边（内容照常可见，用户能看见自己那张图 + 知道失败了）。
+   ⭐ 边框在卡面层（四轮走查③ 卡面下沉后选择器随迁） */
+.mobile-node-tile[data-state='error'] .mobile-node-tile-card {
   border-color: var(--lnk-error-border);
 }
 
@@ -939,12 +966,13 @@ function handleTextTap() {
   pointer-events: none;
 }
 
-/* 属性行（尺寸 · 比例 · 大小）：PC MediaInfoSummary 的移动端对等物 */
+/* 属性行（尺寸 · 比例 · 大小）：PC MediaInfoSummary 的移动端对等物。
+   四轮走查③：已外置到框外 footer——画布底色上直接排版（透明背景），
+   ⛔ 不再带 surface-base 承载条（那是卡内时代贴卡的样式）。 */
 .mobile-node-media-info {
   flex: none;
   margin: 0;
-  padding: 2px 6px 3px;
-  background: var(--lnk-surface-base);
+  padding: 0;
   color: var(--lnk-text-muted);
   font-size: var(--lnk-text-2xs);
   line-height: var(--lnk-lh-2xs);
@@ -953,25 +981,61 @@ function handleTextTap() {
   text-overflow: ellipsis;
 }
 
-/* 三轮走查①：左上角头部 = 类型 · 名字（PC 标题条移动端对位）。
-   与底部 media-info 同视觉语言（surface-base 承载条），文字用次级色以区分主内容。 */
+/* 四轮走查①②③：外置头部——类型图标 + 名字，浮于磁贴框外上方（-24px）。
+   全生命周期恒渲染（空/生成中/pending/有产物）；颜色次级、不与卡面抢视觉。 */
 .mobile-node-tile-header {
-  flex: none;
-  margin: 0;
-  padding: 2px 6px 3px;
-  background: var(--lnk-surface-base);
+  position: absolute;
+  top: -24px;
+  left: 2px;
+  right: 2px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 20px;
   color: var(--lnk-text-secondary);
   font-size: var(--lnk-text-2xs);
   line-height: var(--lnk-lh-2xs);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  pointer-events: none;
 }
 
-/* ── G1（§4.7 / §4.7.1，2026-10-27 S1 批次）────────────────────────────── */
+.mobile-node-tile-header-icon {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
 
-/* 提示词 chips：有产物态的一行可点回看入口 —— 与 header/media-info 同视觉语言
-   （surface-base 承载条 + 次级色），accent 只做点睛（墨流纪律：品牌色不铺面）。
+.mobile-node-tile-header-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 四轮走查③④：外置底部属性行——三要素居左 + 提示词 chips 居右，
+   浮于磁贴框外下方（-22px），不占节点内容空间。 */
+.mobile-node-tile-footer {
+  position: absolute;
+  bottom: -22px;
+  left: 2px;
+  right: 2px;
+  display: flex;
+  align-items: center;
+  gap: var(--lnk-space-2);
+  min-height: 18px;
+  pointer-events: none;
+}
+
+.mobile-node-tile-footer .mobile-node-media-info {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── G1（§4.7 / §4.7.1，2026-10-27 S1 批次；2026-10-28 ④ 外置到 footer 右侧）── */
+
+/* 提示词 chips：有产物态的一行可点回看入口。外置 footer 上透明排版，
+   accent 只做点睛（墨流纪律：品牌色不铺面）。
    ⛔ 令牌纪律：只用 L2 成对令牌，不引 hex / 不用 accent-text（签名面专用）。 */
 .mobile-node-prompt-chip {
   flex: none;
@@ -979,19 +1043,20 @@ function handleTextTap() {
   align-items: center;
   gap: 3px;
   margin: 0;
-  padding: 3px 6px 4px;
+  margin-left: auto;
+  padding: 2px 0;
   border: none;
-  background: var(--lnk-surface-base);
+  background: transparent;
   color: var(--lnk-text-secondary);
   font-size: var(--lnk-text-2xs);
   line-height: var(--lnk-lh-2xs);
   text-align: left;
   cursor: pointer;
+  pointer-events: auto;
 }
 
 .mobile-node-prompt-chip:active {
   color: var(--lnk-text-primary);
-  background: var(--lnk-surface-overlay);
 }
 
 /* 「重新生成中」角标：叠加在旧产物上方（右上），保留视觉锚点不闪空（§4.7 表第 3 行） */

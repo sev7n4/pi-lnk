@@ -348,3 +348,21 @@ ADR-0013 的 14 项拍板 **12 项完全落地、2 项部分**，跨端组件哲
 **守卫同步**：V-5 图标按钮清单移除 `.viewer-annotate`（退役，有据注释）。
 **测试**：映射 7 + 胶囊 7（新增回车提交）+ viewer 55（新增入口统一/聚焦模式）+ sheet/shell 回归 29 + 守卫/令牌 145；vue-tsc 绿。
 **⏳ 待真机复测**：漂移（精确度）、底栏统一观感、胶囊交互、W-5/W-20/W-16。
+
+
+## §2-P 真机走查三轮反馈修复（2026-10-28 晚）——磁贴头部/三要素外置 + 图标化，已实现
+
+**反馈**：①「类型 · 名字」空节点时不显示；②类型应图标化；③头部与底部三要素占用了磁贴内部空间，期望外置（与 PC 一致）节点空间最大化；④询问底部「提示词」入口来源。
+
+**修复（对齐 PC `neo-node-external-title/footer` 模式）**：
+| # | 根因 | 修复 | 落点 |
+|---|---|---|---|
+| ① | header 渲染在各内容分支内部，空/生成中分支无 header | 头部抽到**根级恒渲染**（全生命周期显示） | `MobileNodeTile.vue` |
+| ② | 类型用「类型 ·」文字前缀 | 类型改**图标**（PC `neo-node-icon` 同款 SVG path，`neoNodeMeta.icon` 单一真源），文字只放名字 | 同上 |
+| ③ | 卡面 = 根元素（border/bg/overflow 在根上），header/info/chip 占卡内布局 | 根改**透明定位容器**，卡面下沉 `.mobile-node-tile-card`；header absolute top:-24px / footer absolute bottom:-22px **浮于框外**——节点内容空间最大化；error 红边选择器随迁 | 同上 |
+| ④ | 「提示词」= 2026-10-27 S1 批次 G1 实现的**回看入口**（propose 写入的 `data.prompt`，有产物态可点开全文审核层），非 bug | 保留功能并**外置到 footer 右侧**（与三要素同行，不占卡内空间） | 同上 |
+
+**门控补齐**：属性行外置后脱离了原「有 url 才进媒体分支」的隐式门控 ⇒ `attributeLine` 显式补 `hasProduct` 门控（空节点脏数据带 mediaInfo 也不渲染媒体要素）。
+
+**测试**：mediaInfo 22 + fit 12 + promptChip 10 + lightState 12 + placeholder 8 + propose 11 + tile 主 9 + policy/guards 25 + 令牌四件 126 全绿；新增外置定位契约/恒渲染/图标化 3 用例；vue-tsc 绿。
+**⏳ 待真机复测**：头部/三要素外置观感（与相邻节点间距）、空节点头部、图标辨识度。
