@@ -71,10 +71,12 @@ describe('MobileNodeTile 媒体适配（fit）', () => {
       expect(SRC).toContain('<style scoped>')
     })
 
-    it('磁贴根元素撑满并裁切溢出（overflow: hidden + 圆角）', () => {
+    it('卡面撑满并裁切溢出（overflow: hidden + 圆角；四轮走查③ 卡面下沉内层）', () => {
       const css = styleBlock(SRC)
-      expect(css).toMatch(/\.mobile-node-tile\s*\{[^}]*overflow:\s*hidden/)
-      expect(css).toMatch(/\.mobile-node-tile\s*\{[^}]*border-radius:\s*var\(--lnk-radius-lg\)/)
+      expect(css).toMatch(/\.mobile-node-tile-card\s*\{[^}]*overflow:\s*hidden/)
+      expect(css).toMatch(/\.mobile-node-tile-card\s*\{[^}]*border-radius:\s*var\(--lnk-radius-lg\)/)
+      // 根容器不再有卡面样式（透明定位容器，头部/底部外置的前提）
+      expect(css).toMatch(/\.mobile-node-tile\s*\{[^}]*position:\s*relative/)
     })
 
     it('图片/视频 object-fit: cover 裁填磁贴（不溢出、不变形）', () => {

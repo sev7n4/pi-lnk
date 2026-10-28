@@ -152,7 +152,7 @@ describe('MobileNodeTile 属性行样式契约（令牌纪律）', () => {  it('
 // 规格 §6.2「磁贴信息构成」（三轮走查拍板）：左上角头部 = 类型 · 自定义名
 // （PC 标题条对位）；底部属性行只放媒体要素（图片 尺寸·比例·大小 等）；
 // 音/视频移动端自己 ensure mediaInfo（此前只有 PC 组件跑 probe ⇒ 移动端恒缺）。
-describe('MobileNodeTile 头部 + 底部属性行（三轮走查修订，2026-10-27）', () => {
+describe('MobileNodeTile 头部 + 底部属性行（四轮走查修订，2026-10-28：图标化 + 外置）', () => {
   it('有名称 ⇒ 底部行 = 纯媒体要素，名称归头部（三轮走查修订）', () => {
     const w = mount(MobileNodeTile, {
       props: {
@@ -168,7 +168,7 @@ describe('MobileNodeTile 头部 + 底部属性行（三轮走查修订，2026-10
     const info = w.find('[data-testid="mobile-node-media-info"]')
     expect(info.exists()).toBe(true)
     expect(info.text()).toBe('1024×768 · 4:3 · 2.0KB')
-    expect(w.find('[data-testid="mobile-node-tile-header"]').text()).toBe('图片 · 封面图')
+    expect(w.find('[data-testid="mobile-node-tile-header"]').text()).toBe('封面图')
     w.unmount()
   })
 
@@ -195,7 +195,7 @@ describe('MobileNodeTile 头部 + 底部属性行（三轮走查修订，2026-10
         data: { title: '来自 title 的名字', content: '一二三' } as never,
       },
     })
-    expect(w.find('[data-testid="mobile-node-tile-header"]').text()).toBe('文本 · 来自 title 的名字')
+    expect(w.find('[data-testid="mobile-node-tile-header"]').text()).toBe('来自 title 的名字')
     w.unmount()
   })
 
@@ -209,7 +209,7 @@ describe('MobileNodeTile 头部 + 底部属性行（三轮走查修订，2026-10
     })
     const h = w.find('[data-testid="mobile-node-tile-header"]')
     expect(h.exists()).toBe(true)
-    expect(h.text()).toBe('图片 · 封面图')
+    expect(h.text()).toBe('封面图')
     w.unmount()
   })
 
@@ -225,11 +225,15 @@ describe('MobileNodeTile 头部 + 底部属性行（三轮走查修订，2026-10
     w.unmount()
   })
 
-  it('空态磁贴不渲染头部（占位分支已有类型名自解释，不重复）', () => {
+  it('空态磁贴头部恒渲染（四轮走查①：全生命周期显示，类型名兜底）', () => {
     const w = mount(MobileNodeTile, {
       props: { id: 'nh3', type: 'image', data: { url: '' } as never },
     })
-    expect(w.find('[data-testid="mobile-node-tile-header"]').exists()).toBe(false)
+    const h = w.find('[data-testid="mobile-node-tile-header"]')
+    expect(h.exists()).toBe(true)
+    expect(h.text()).toBe('图片')
+    // ②：类型用图标示意（PC neo-node-icon 同款），头部内含 svg
+    expect(h.find('svg').exists()).toBe(true)
     w.unmount()
   })
 
@@ -244,7 +248,7 @@ describe('MobileNodeTile 头部 + 底部属性行（三轮走查修订，2026-10
     const info = w.find('[data-testid="mobile-node-text-info"]')
     expect(info.exists()).toBe(true)
     expect(info.text()).toBe('5 字')
-    expect(w.find('[data-testid="mobile-node-tile-header"]').text()).toBe('文本 · 分镜笔记')
+    expect(w.find('[data-testid="mobile-node-tile-header"]').text()).toBe('分镜笔记')
     w.unmount()
   })
 
@@ -330,5 +334,50 @@ describe('MobileNodeTile 头部 + 底部属性行（三轮走查修订，2026-10
     } finally {
       probeState.holder = null
     }
+  })
+})
+
+// ── 四轮走查（2026-10-28）：头部/底部外置 + 图标化（PC external-title 同模式）──
+describe('MobileNodeTile 头部/底部外置（四轮走查①②③，2026-10-28）', () => {
+  it('外置定位契约：header 浮于框外上方 / footer 浮于框外下方（PC external 同模式）', () => {
+    const block = /<style scoped>([\s\S]*?)<\/style>/.exec(SRC)?.[1] ?? ''
+    const header = /\.mobile-node-tile-header\s*\{([^}]*)\}/.exec(block)?.[1] ?? ''
+    expect(header, '必须能定位 .mobile-node-tile-header 规则').not.toBe('')
+    expect(header).toMatch(/position:\s*absolute/)
+    expect(header).toMatch(/top:\s*-24px/)
+    const footer = /\.mobile-node-tile-footer\s*\{([^}]*)\}/.exec(block)?.[1] ?? ''
+    expect(footer, '必须能定位 .mobile-node-tile-footer 规则').not.toBe('')
+    expect(footer).toMatch(/position:\s*absolute/)
+    expect(footer).toMatch(/bottom:\s*-22px/)
+    // 卡面下沉：根容器透明，卡面类承载边框/圆角/裁切
+    const card = /\.mobile-node-tile-card\s*\{([^}]*)\}/.exec(block)?.[1] ?? ''
+    expect(card).toMatch(/overflow:\s*hidden/)
+    expect(card).toMatch(/border-radius:\s*var\(--lnk-radius-lg\)/)
+  })
+
+  it('全生命周期①：生成中磁贴也显示头部（恒渲染，不在任何内容分支内）', () => {
+    const w = mount(MobileNodeTile, {
+      props: {
+        id: 'lc1',
+        type: 'image',
+        data: { url: '', status: 'generating', generationStartedAt: new Date().toISOString() } as never,
+      },
+    })
+    const h = w.find('[data-testid="mobile-node-tile-header"]')
+    expect(h.exists()).toBe(true)
+    expect(h.text()).toBe('图片')
+    w.unmount()
+  })
+
+  it('全生命周期①：空态/生成态头部结构 = 图标 + 名字（②类型图标化，无「类型 ·」文字前缀）', () => {
+    const w = mount(MobileNodeTile, {
+      props: { id: 'lc2', type: 'video', data: { url: '', label: '宣传片' } as never },
+    })
+    const h = w.find('[data-testid="mobile-node-tile-header"]')
+    expect(h.exists()).toBe(true)
+    expect(h.text()).toBe('宣传片')
+    expect(h.find('svg').exists()).toBe(true)
+    expect(h.text()).not.toContain(' · ')
+    w.unmount()
   })
 })
