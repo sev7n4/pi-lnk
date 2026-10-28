@@ -350,15 +350,18 @@ git commit -m "feat(server): text node format whitelist on set-node-content and 
 
 ### Task 3: runtime 工具层——set_node_text / create_nodes_batch 加 format 参数与描述定稿
 
+> **SDD 预检裁决（2026-10-28）**：pi-runtime 的 package.json **没有** `@lnkpi/shared` 依赖（`agent-canvas-tools.service.ts:1462` 注释 = 有意架构决策，禁新增）。runtime 白名单**本地定义**在 `text-format.ts`，由 contract-mirror 测试对 shared 源文件做镜像断言防漂移——本任务代码已按此改写。
+
 **Files:**
+- Create: `services/pi-runtime/src/tools/text-format.ts`（runtime 本地白名单 + assert，同语义）
 - Modify: `services/pi-runtime/src/tools/canvas-write.ts`（`set_node_text` :277；`create_nodes_batch` :1002 及 body 映射 :1067-1073）
 - Test: `services/pi-runtime/src/tools/canvas-write.test.ts`（扩展）
-- Test: `services/pi-runtime/src/tools/canvas-write.contract-mirror.test.ts`（验证不改则不动；若有 DTO 对齐快照需同步 format 可选）
+- Test: `services/pi-runtime/src/tools/canvas-write.contract-mirror.test.ts`（追加 shared↔runtime 白名单镜像断言）
 - Verify: `pnpm verify-tool-contract && pnpm verify-tool-tiering && pnpm verify:details`（工具契约三脚本，description 变更必跑）
 - Verify: `services/pi-runtime/src/tools/tiering.test.ts` 实证**无** set_node_text/create_nodes_batch 断言（2026-10-28 grep 为空）——预期零改动，跑绿即可；若红按失败信息对齐
 
 **Interfaces:**
-- Consumes: Task 1 `TEXT_NODE_FORMATS`/`assertTextNodeFormat`（`import { assertTextNodeFormat, TEXT_NODE_FORMATS } from "@lnkpi/shared"`）；Task 2 的 HTTP 契约。
+- Consumes: Task 2 的 HTTP 契约；白名单**本地定义**（预检裁决，见任务头注）——`import { assertTextNodeFormat, TEXT_NODE_FORMATS } from "./text-format.js"`。
 - Produces: agent 可见工具签名——`set_node_text{ node_id, prompt?, content?, format? }`、`create_nodes_batch{ items:[{ key, type, prompt, title?, format? }], edges? }`；`format` 仅与 `content` 同发（set_node_text）。
 
 - [ ] **Step 1: 写失败测试（canvas-write.test.ts 追加；复用顶部 makeClient/CTX/findTool）**
@@ -439,7 +442,49 @@ Expected: FAIL。
 
 - [ ] **Step 3: 实现**
 
-`canvas-write.ts` 顶部 import 加 `import { assertTextNodeFormat, TEXT_NODE_FORMATS } from "@lnkpi/shared";`（若该文件已有 shared import，合并进既有语句）。
+新建 `text-format.ts`（runtime 本地白名单，**禁止**给 pi-runtime 加 @lnkpi/shared 依赖——预检裁决）：
+
+```ts
+// services/pi-runtime/src/tools/text-format.ts
+/**
+ * 文本节点格式白名单（runtime 本地副本）。
+ * ⚠️ pi-runtime 无 @lnkpi/shared 依赖（有意决策，见 agent-canvas-tools.service.ts:1462 注释）。
+ * SSOT 在 packages/shared/src/textNodeFormat.ts；两侧一致性由
+ * canvas-write.contract-mirror.test.ts 的镜像断言守卫（漂移即红），改任一侧必须同步另一侧。
+ */
+export const TEXT_NODE_FORMATS = ["plain", "markdown", "html"] as const;
+export type TextNodeFormat = (typeof TEXT_NODE_FORMATS)[number];
+
+const FORMAT_SET: ReadonlySet<string> = new Set(TEXT_NODE_FORMATS);
+
+/** 写入侧白名单 fail-closed：非法值 throw，错误信息列合法值（与 shared assertTextNodeFormat 同语义）。 */
+export function assertTextNodeFormat(v: unknown): asserts v is TextNodeFormat {
+	if (typeof v !== "string" || !FORMAT_SET.has(v)) {
+		throw new Error(`invalid text node format "${String(v)}" (allowed: ${TEXT_NODE_FORMATS.join(", ")})`);
+	}
+}
+```
+
+`canvas-write.ts` 顶部 import 加 `import { assertTextNodeFormat, TEXT_NODE_FORMATS } from "./text-format.js";`。
+
+`canvas-write.contract-mirror.test.ts` 追加镜像断言（放文件末尾新 describe）：
+
+```ts
+describe("text-node format whitelist mirror（shared SSOT ↔ runtime 本地副本）", () => {
+	it("runtime TEXT_NODE_FORMATS 与 shared 源文件数组逐项相等", () => {
+		const sharedSrc = readFileSync(
+			fileURLToPath(new URL("../../../../packages/shared/src/textNodeFormat.ts", import.meta.url)),
+			"utf8",
+		);
+		const m = sharedSrc.match(/TEXT_NODE_FORMATS = \[([^\]]+)\] as const/);
+		assert.ok(m, "shared textNodeFormat.ts 中未找到 TEXT_NODE_FORMATS 数组字面量（结构变更需同步本镜像测试）");
+		const sharedList = m[1].split(",").map((s) => s.trim().replaceAll("'", ""));
+		assert.deepEqual([...TEXT_NODE_FORMATS], sharedList);
+	});
+});
+```
+
+（该测试文件已 import `readFileSync`/`fileURLToPath`；`TEXT_NODE_FORMATS` 从 `./text-format.js` import。）
 
 **`set_node_text`**：parameters 追加（放在 `content` 之后）：
 
