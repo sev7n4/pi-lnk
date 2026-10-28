@@ -106,4 +106,36 @@ describe("ask_user 阻塞分支（B-1/B-5）", () => {
 			else process.env.ASK_USER_BLOCKING = prev;
 		}
 	});
+
+	it("T2 契约强制：题目数 >4 → 返回 invalidArgs tool_result，不注册 pending（卡片永不收到越界数据）", async () => {
+		const reg = new PendingToolRegistry();
+		const [tool] = createAskUserTools(reg);
+		const questions = Array.from({ length: 5 }, (_, i) => ({
+			id: `q${i}`, question: `Q${i}`, options: [{ label: "A", value: "a" }],
+		}));
+		const result = (await tool.execute!("c", ({ questions } as never), () => {}, { sessionId: "s" } as never, undefined as never, undefined as never)) as { content: Array<{ type: string; text: string }>; details: Record<string, unknown> };
+		assert.match(lastText(result), /invalidArgs/);
+		assert.match(lastText(result), /上限 4/);
+		assert.equal(reg.hasPending("s"), false); // 未进入等待 → 越界卡不会渲染
+	});
+
+	it("T2 契约强制：畸形题（空 options）→ 被拒，带精确指引", async () => {
+		const reg = new PendingToolRegistry();
+		const [tool] = createAskUserTools(reg);
+		const questions = [{ id: "q", question: "Q", options: [] as Array<{ label: string; value: string }> }];
+		const result = (await tool.execute!("c", ({ questions } as never), () => {}, { sessionId: "s" } as never, undefined as never, undefined as never)) as { content: Array<{ type: string; text: string }>; details: Record<string, unknown> };
+		assert.match(lastText(result), /invalidArgs/);
+		assert.match(lastText(result), /至少要有 1 个选项/);
+		assert.equal(reg.hasPending("s"), false);
+	});
+
+	it("T2 契约强制：合法 ≤4 题 → 正常进入等待，不误杀", async () => {
+		const reg = new PendingToolRegistry();
+		const [tool] = createAskUserTools(reg);
+		const questions = [{ id: "q", question: "Q", options: [{ label: "A", value: "a" }] }];
+		const pending = tool.execute!("c", { questions }, () => {}, { sessionId: "s" } as never, undefined as never, undefined as never);
+		const stillWaiting = await Promise.race([pending.then(() => false), Promise.resolve(true)]);
+		assert.equal(stillWaiting, true); // 进入等待（合法放行）
+		reg.abortAll("s");
+	});
 });

@@ -24,6 +24,41 @@ export interface AskUserQuestion {
 	allowOther?: boolean;
 }
 
+/** T2 契约上限：与 schema `max` 同源，单一事实源（spec §5.3 / §9）。 */
+export const ASK_USER_MAX_QUESTIONS = 4
+
+/**
+ * T2 契约强制（fail-closed，对齐 SP-D）：在工具入口校验 questions 的字段合法性与题目数上限，
+ * 非法输入以带精确指引的 tool_result 交还（非抛异常），引导模型修正后重试，
+ * 杜绝畸形/越界数据穿透到 UI 造成崩溃（生产实证：模型发 5 题 → 多题卡溢出卡死）。
+ * 纯函数，单测锁定（spec §8）。
+ */
+export function validateAskQuestions(
+	questions: unknown,
+	max = ASK_USER_MAX_QUESTIONS,
+): { ok: true } | { ok: false; reason: string } {
+	if (!Array.isArray(questions) || questions.length === 0) {
+		return { ok: false, reason: "questions 必须是非空数组" };
+	}
+	if (questions.length > max) {
+		return { ok: false, reason: `questions 超过上限 ${max}（收到 ${questions.length}），请合并或缩减为 ≤${max} 题后重试` };
+	}
+	for (const q of questions) {
+		if (!q || typeof q !== "object") return { ok: false, reason: "存在非法题目对象" };
+		const qq = q as Record<string, unknown>;
+		if (typeof qq.id !== "string" || !qq.id.trim()) return { ok: false, reason: "每题必须有非空 id" };
+		if (typeof qq.question !== "string" || !qq.question.trim()) return { ok: false, reason: `题目 ${qq.id} 必须有非空 question` };
+		if (!Array.isArray(qq.options) || qq.options.length < 1) return { ok: false, reason: `题目 ${qq.id} 至少要有 1 个选项` };
+		for (const o of qq.options) {
+			if (!o || typeof o !== "object") return { ok: false, reason: `题目 ${qq.id} 存在非法选项` };
+			const oo = o as Record<string, unknown>;
+			if (typeof oo.label !== "string" || !oo.label.trim()) return { ok: false, reason: `题目 ${qq.id} 选项 label 不能为空` };
+			if (typeof oo.value !== "string" || !oo.value.trim()) return { ok: false, reason: `题目 ${qq.id} 选项 value 不能为空` };
+		}
+	}
+	return { ok: true };
+}
+
 function uiResult(commands: unknown[]): {
 	content: [{ type: "text"; text: string }];
 	details: { ok: true; canvasCommands: unknown[] };
@@ -56,7 +91,7 @@ export function createAskUserTools(
 				}), { min: 1 }),
 				multiSelect: Type.Optional(Type.Boolean()),
 				allowOther: Type.Optional(Type.Boolean({ description: "show free-text other input, default true" })),
-			}), { min: 1, max: 4 }),
+			}), { min: 1, max: ASK_USER_MAX_QUESTIONS }),
 		}),
 		execute: async (
 			id,
@@ -66,6 +101,15 @@ export function createAskUserTools(
 			_invocation,
 			_context,
 		) => {
+			// T2 契约强制：入口校验 questions（字段合法 + ≤上限）。非法以带指引的 tool_result 交还，
+			// 阻塞/非阻塞两分支共用，fail-closed（模型按指引修正重试，UI 永不收到越界数据）。
+			const validation = validateAskQuestions(p.questions);
+			if (!validation.ok) {
+				return {
+					content: [{ type: "text", text: JSON.stringify({ ok: false, invalidArgs: true, message: validation.reason }) }],
+					details: { ok: false, invalidArgs: true },
+				};
+			}
 			// 2026-10-04：不再自计 tool_calls_total（移交事件层，避免与 harness 的
 			// tool_start/tool_end 双计）。阻塞结算指标仍走 index.ts 的 registry hook。
 			// B-5 off（或无 registry，如纯文本模式）→ 旧行为逐字节保留：立即返回，无 callId
