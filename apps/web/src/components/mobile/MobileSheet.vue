@@ -82,7 +82,7 @@ function dismiss() {
 .m-sheet-root {
   position: fixed;
   inset: 0;
-  z-index: 120;
+  z-index: var(--lnk-z-modal);
   display: flex;
   align-items: flex-end;
   justify-content: center;

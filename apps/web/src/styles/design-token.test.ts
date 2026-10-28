@@ -617,3 +617,36 @@ describe('签名画面：深海墨底上的文字', () => {
     }
   })
 })
+
+/* ============================================================
+   z-index 语义阶梯（规格 2026-10-27 顶栏 §13.2/B4）
+   viewer 按钮被顶栏遮挡事故的治本守卫：全屏竞争层必须消费
+   令牌且保持 chrome < viewer < modal 单调。
+   ============================================================ */
+describe('z-index 语义阶梯消费（§13.2）', () => {
+  // 既有 L1 层级阶梯（base<canvas-ui<chrome<dock<popover<overlay<modal<toast<debug）
+  // 已由「非颜色阶梯 > 层级阶梯单调递增」把关；本块只锁「全屏竞争层必须消费令牌」。
+  // 档位映射（§13.2/B2 v2）：三顶栏→chrome(40)、MobileNodeViewer→overlay(200)、
+  // MobileSheet→modal(1000)——viewer 治本靠 Teleport（下条），z 值单调由既有阶梯保证。
+  const consumers: Array<[string, string, RegExp]> = [
+    ['components/mobile/MobileTopBar.vue', 'chrome', /z-index:\s*var\(--lnk-z-chrome\)/],
+    ['components/canvas/WorkspaceTopBar.vue', 'chrome', /z-index:\s*var\(--lnk-z-chrome\)/],
+    ['components/mobile/MobileNodeViewer.vue', 'overlay', /z-index:\s*var\(--lnk-z-overlay\)/],
+    ['components/mobile/MobileSheet.vue', 'modal', /z-index:\s*var\(--lnk-z-modal\)/],
+  ]
+  it('全屏竞争层四文件必须消费 z 令牌，不得回写裸数字', () => {
+    for (const [file, token, re] of consumers) {
+      const src = readFileSync(join(HERE, '..', file), 'utf8')
+      expect(src, `${file} 必须消费 var(--lnk-z-${token})`).toMatch(re)
+    }
+  })
+
+  it('MobileNodeViewer 根元素必须 Teleport 到 body（§13.2/B3：脱离 shell 祖先 stacking context）', () => {
+    const src = readFileSync(join(HERE, '..', 'components/mobile/MobileNodeViewer.vue'), 'utf8')
+    const tpl = src.slice(src.indexOf('<template>'), src.indexOf('</template>'))
+    expect(tpl).toMatch(/<Teleport to="body">/)
+    // 有效性配对：viewer 根 testid 必须在 Teleport 内部（防"加了 Teleport 但包错层"）
+    const tele = tpl.match(/<Teleport to="body">([\s\S]*?)<\/Teleport>/)?.[1] ?? ''
+    expect(tele).toContain('data-testid="mobile-viewer"')
+  })
+})

@@ -192,7 +192,7 @@ onUnmounted(() => {
   top: 0;
   left: 0;
   right: 0;
-  z-index: 85;
+  z-index: var(--lnk-z-chrome);
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -202,7 +202,8 @@ onUnmounted(() => {
   background: var(--lnk-surface-overlay);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  border-bottom: 0.5px solid var(--lnk-border-subtle);
+  /* §13.1/A1：发丝线退役（封条感主源）；对话/画布内容穿栏（shell 对话流
+     padding-top 16px < 栏高 44px）⇒ 材质底+blur 保留，is-ghost 机制不变 */
   transform: translateZ(0);
 }
 
@@ -211,7 +212,6 @@ onUnmounted(() => {
   background: transparent;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-  border-bottom-color: transparent;
   pointer-events: none;
 }
 

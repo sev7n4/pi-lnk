@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter }  from 'vue-router'
 import BrandLogo from '@/components/brand/BrandLogo.vue'
 import AccountChrome from '@/components/account/AccountChrome.vue'
@@ -39,6 +39,23 @@ const isBrandPage = computed(() => route.path === '/workflow')
 // 走**裸栏**——仅 logo + 🔍 + ＋，去掉 创作/发现/主题/账号。移动 + WEB 同一组件、同一视觉。
 const isGalleryRoute = computed(() => route.path === '/canvases')
 
+// 2026-10-28 v3 追加（规格 §13.1/A2）：scroll-edge 材质化——顶栏默认 ghost（透明、无
+// 发丝线），内容滚动越过阈值才淡入材质。iOS UINavigationBar scroll-edge appearance 范式，
+// 消除「常驻封条感」。AppHeader 是 sticky 文档流栏，滚动后内容会从栏下穿过 ⇒ 材质必须
+// 滚动驱动而非常驻。
+const scrolled = ref(false)
+const SCROLL_THRESHOLD = 8
+function onScroll() {
+  scrolled.value = window.scrollY > SCROLL_THRESHOLD
+}
+onMounted(() => {
+  window.addEventListener('scroll', onScroll, { passive: true })
+  onScroll()
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('scroll', onScroll)
+})
+
 function navigate(path: string) {
   router.push(path)
 }
@@ -75,8 +92,12 @@ async function createProject() {
        改指语义 token 后，深色取值基本不变（canvas #131318 ≈ 旧 #141414）。
        ⚠️ `bg-surface/95` 不生效：CSS 变量类无法做 alpha 合成（见 tailwind.config.js 注释），
        故用不透明底色 + backdrop-blur 保留层次。 -->
+  <!-- 2026-10-28 v3（规格 §13.1/A2）：常驻材质退役——默认 ghost 透明，滚动 >8px 才
+       淡入材质（is-material）。发丝线随 border-b 移除，材质态用 inset 阴影画分隔
+       （阴影只在材质态出现，ghost 态零轮廓）。 -->
   <header
-    class="sticky top-0 z-50 border-b border-line-subtle bg-surface backdrop-blur-xl"
+    class="app-header sticky top-0 z-50"
+    :class="{ 'is-material': scrolled }"
     style="height: var(--neo-header-height)"
   >
     <div class="mx-auto flex h-full max-w-7xl items-center justify-between px-4 sm:px-6">
@@ -140,6 +161,20 @@ async function createProject() {
 </template>
 
 <style scoped>
+/* scroll-edge 材质化（§13.1/A2）：默认融入页面，滚动后内容穿栏才浮现材质。
+   iOS scroll-edge appearance 范式；backdrop-filter 从 none 到 blur 的过渡
+   部分浏览器不连续，故材质态直接切换 blur、透明度交给 background-color 过渡。 */
+.app-header {
+  background: transparent;
+  transition: background-color 0.25s ease, box-shadow 0.25s ease;
+}
+.app-header.is-material {
+  background: var(--lnk-surface);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  box-shadow: inset 0 -0.5px 0 var(--lnk-border-subtle);
+}
+
 /* 画廊裸栏图标钮：44px 命中区（触控达标），视觉 20px 图标 */
 .gallery-icon-btn,
 .gallery-create-btn {

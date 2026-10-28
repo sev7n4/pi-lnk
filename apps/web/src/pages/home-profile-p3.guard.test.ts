@@ -27,8 +27,11 @@ const PROFILE = read('ProfilePage.vue')
 const HERO = read('../components/workflow/SignatureHero.vue')
 const WORKFLOW = read('WorkflowPage.vue')
 // 2026-10-26 规格收敛 v2：SessionCard 退役（创作首页行卡取代媒体卡形态），
-// 画布卡面守卫改指向 CanvasesPage（行卡是列表行语言，不挂 lnk-media-card）。
-const CANVASES = read('CanvasesPage.vue')
+// 画布卡面守卫改指向列表视图组件（行卡是列表行语言，不挂 lnk-media-card）。
+// 2026-10-28 §13.3：CanvasesPage 拆展示子组件 ⇒ 行卡真身迁 ProjectList /
+// PC 卡墙迁 ProjectGrid，守卫载体随之指向两视图组件（页面层只剩编排）。
+const PROJECT_LIST = read('../components/canvases/ProjectList.vue')
+const PROJECT_GRID = read('../components/canvases/ProjectGrid.vue')
 const WORK_CARD = read('../components/works/WorkCard.vue')
 const COVER_FALLBACK = read('../components/workflow/CanvasCoverFallback.vue')
 const LAUNCHER = read('../components/workflow/CreativeLauncher.vue')
@@ -97,7 +100,8 @@ describe('P3-C 主页内容栅格（2026-10-26 规格收敛 v2 后反转为「�
 
 describe('P3-G 画布兜底 / 标题口径 / 墨圈（走查「没有设计品味」轮）', () => {
   // 2026-10-26 规格收敛 v2：守卫意图不变，载体从 SessionCard 换成 CanvasesPage 行卡。
-  const CARD = stripComments(CANVASES)
+  // 2026-10-28 §13.3 后行卡/卡墙分居两视图组件，守卫合并两源（防任一视图回潮）。
+  const CARD = stripComments(PROJECT_LIST) + '\n' + stripComments(PROJECT_GRID)
   const HERO_SRC = stripComments(HERO)
   const FALLBACK_SRC = stripComments(COVER_FALLBACK)
 
