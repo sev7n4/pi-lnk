@@ -149,6 +149,7 @@ flowchart TD
 ```
 props:  content: string            // 完整 HTML 源码（data.content 原样）
         readonly?: boolean = false // 只读页/回放页=true：无源码编辑、无保存、无 emit
+        embedded?: boolean = false // 移动端内嵌态=true：不渲染 overlay/关闭钮，退出由宿主 viewer 负责（实施期补充）
 emits:  save(payload: { content: string; format: 'html' })  // 源码 tab 保存
         close()                                             // 浮层退出（移动端含下滑关闭）
 ```
