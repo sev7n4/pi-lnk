@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { turnStatusLine, resolveWaiting, failureReason } from '@/components/agent/turnStatusBar'
+import { turnStatusLine, resolveWaiting, resolveWaitingFromTimeline, failureReason } from '@/components/agent/turnStatusBar'
+import { createTurnTimeline, applyTimelineEvent, type TimelinePart } from '@/components/agent/turnTimeline'
+
+/** 从事件流构造 parts（复用模型层 reducer，避免手写 part 假数据漂移）。 */
+function partsFrom(events: Parameters<typeof applyTimelineEvent>[1][]): TimelinePart[] {
+  const tl = createTurnTimeline()
+  for (const e of events) applyTimelineEvent(tl, e)
+  return tl.parts
+}
 
 describe('turnStatusLine（P1 状态行）', () => {
   const t0 = 1_000_000
@@ -133,6 +141,46 @@ describe('turnStatusLine（P2 T7 settled 收口态）', () => {
     expect(
       turnStatusLine({ isStreaming: true, turnStartedAt: t0, now: t0 + 3000, waiting: false, settledText }),
     ).toEqual({ text: '生成回复中 · 3s', mode: 'running' })
+  })
+})
+
+describe('resolveWaitingFromTimeline（根治规格 2026-10-28：waiting 单一真相 = 时间线）', () => {
+  it('pending_confirm 的 proposal part ⇒ true（与对话流内联卡同源）', () => {
+    const parts = partsFrom([
+      { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation', nodeId: 'n1' } },
+    ])
+    expect(resolveWaitingFromTimeline(parts)).toBe(true)
+  })
+
+  it('pending_answer 的 question part ⇒ true（ask_user 经时间线收敛）', () => {
+    const parts = partsFrom([
+      {
+        type: 'ask_user',
+        data: { callId: 'a1', questions: [{ id: 'q1', question: '选风格', options: [] }] },
+      },
+    ])
+    expect(resolveWaitingFromTimeline(parts)).toBe(true)
+  })
+
+  it('resolved 后（proposal 翻 confirmed）⇒ false（状态行与对话流同步解除，不再双源抢跑）', () => {
+    const tl = createTurnTimeline()
+    applyTimelineEvent(tl, { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation', nodeId: 'n1' } })
+    expect(resolveWaitingFromTimeline(tl.parts)).toBe(true)
+    applyTimelineEvent(tl, { type: 'waiting_user', data: { status: 'resolved', toolName: 'propose_generation' } })
+    expect(resolveWaitingFromTimeline(tl.parts)).toBe(false)
+  })
+
+  it('空 / 无等待 parts（仅 tool/text/artifact）⇒ false（状态行不抢跑的判据）', () => {
+    expect(resolveWaitingFromTimeline(undefined)).toBe(false)
+    expect(resolveWaitingFromTimeline([])).toBe(false)
+    const busy = partsFrom([
+      { type: 'tool_call', data: { toolCallId: 'c1', name: 'propose_generation', args: {} } },
+      { type: 'tool_result', data: { toolCallId: 'c1', name: 'propose_generation', result: {} } },
+    ])
+    // Q2 根因：tool_result 先于 waiting_user 到达时，旧双源判定会抢跑「等待」——
+    // 时间线判定此刻 proposal part 尚未建立 ⇒ false，与对话流所见严格一致。
+    expect(busy.some((p) => p.kind === 'tool')).toBe(true)
+    expect(resolveWaitingFromTimeline(busy)).toBe(false)
   })
 })
 

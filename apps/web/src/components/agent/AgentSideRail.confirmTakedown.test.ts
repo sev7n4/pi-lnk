@@ -99,6 +99,38 @@ async function mountRail() {
   return w
 }
 
+/**
+ * 根治规格（2026-10-28）：propose 等待的 seed 复刻生产 `waiting_user` handler——
+ * **同一拍**置位 store 镜像（blockingWait，cancelProposeForNode/confirmProposeWait 的
+ * callId 来源）与时间线 proposal part（内联卡的渲染来源）。只 seed 一边 = 假场景。
+ */
+function seedProposeWait(opts: { callId?: string; nodeId?: string } = {}) {
+  const agent = useAgentStore()
+  agent.messages.push({
+    id: 'm-live',
+    role: 'assistant',
+    content: '',
+    streaming: true,
+  } as never)
+  agent.isStreaming = true
+  agent.trackWaitingUser({
+    status: 'waiting',
+    toolName: 'propose_generation',
+    callId: opts.callId,
+    nodeId: opts.nodeId,
+  })
+  agent.blockingWait = {
+    toolName: 'propose_generation',
+    callId: opts.callId,
+    nodeId: opts.nodeId,
+  } as never
+}
+
+/** 内联 proposal 卡的取消按钮（对话流内决策点，取代对话流外浮卡）。 */
+function findInlineCancelButton(w: { findAll: (s: string) => Array<{ text: () => string; trigger: (e: string) => Promise<void> }> }) {
+  return w.findAll('button').find((b) => b.text().trim() === '取消')
+}
+
 /** 确认型卡片的 DOM 出口（全部应与本次下线一起消失）。 */
 const CONFIRM_CARD_SELECTORS = [
   '[data-testid="next-chips"]',
@@ -158,18 +190,14 @@ describe('① 确认型确认卡片全下线（回归锁）', () => {
     }
   })
 
-  it('阻塞等待 propose 时只保留「定位该节点 / 取消」两个动作，不掺确认型卡片', async () => {
+  it('阻塞等待 propose：定位 / 取消入口在对话流内联卡上，不掺确认型卡片', async () => {
     const w = await mountRail()
-    const agent = useAgentStore()
-    agent.blockingWait = {
-      toolName: 'propose_generation',
-      callId: 'call-1',
-      nodeId: 'node-1',
-    } as never
+    seedProposeWait({ callId: 'call-1', nodeId: 'node-1' })
     await flushPromises()
 
-    expect(w.find('[data-testid="propose-wait-hint"]').exists()).toBe(true)
-    expect(w.find('[data-testid="propose-wait-cancel"]').exists()).toBe(true)
+    // 决策点 = 时间线内联卡（浮卡已下线）：定位 + 取消可达
+    expect(w.find('button[title="在画布中定位"]').exists()).toBe(true)
+    expect(findInlineCancelButton(w)).toBeTruthy()
     for (const sel of CONFIRM_CARD_SELECTORS) {
       expect(w.find(sel).exists(), `不该再出现 ${sel}`).toBe(false)
     }
@@ -188,15 +216,12 @@ describe('② propose「取消」走显式 decline（回归锁）', () => {
 
   it('点取消 → POST /answers 带 decision=decline 与 callId，并回落画布收敛事件', async () => {
     const w = await mountRail()
-    const agent = useAgentStore()
-    agent.blockingWait = {
-      toolName: 'propose_generation',
-      callId: 'call-1',
-      nodeId: 'node-1',
-    } as never
+    seedProposeWait({ callId: 'call-1', nodeId: 'node-1' })
     await flushPromises()
 
-    await w.find('[data-testid="propose-wait-cancel"]').trigger('click')
+    const cancelBtn = findInlineCancelButton(w)
+    expect(cancelBtn, '取消入口在时间线内联卡上').toBeTruthy()
+    await cancelBtn!.trigger('click')
     await flushPromises()
 
     expect(answersRequests).toHaveLength(1)
@@ -210,14 +235,12 @@ describe('② propose「取消」走显式 decline（回归锁）', () => {
 
   it('callId 缺席（blocking 关闭的旧等待）不再发 decline，但仍要收敛画布', async () => {
     const w = await mountRail()
-    const agent = useAgentStore()
-    agent.blockingWait = {
-      toolName: 'propose_generation',
-      nodeId: 'node-9',
-    } as never
+    seedProposeWait({ nodeId: 'node-9' })
     await flushPromises()
 
-    await w.find('[data-testid="propose-wait-cancel"]').trigger('click')
+    const cancelBtn = findInlineCancelButton(w)
+    expect(cancelBtn).toBeTruthy()
+    await cancelBtn!.trigger('click')
     await flushPromises()
 
     expect(answersRequests).toHaveLength(0)
@@ -234,15 +257,12 @@ describe('② propose「取消」走显式 decline（回归锁）', () => {
       }
       return { ok: true, status: 200, json: async () => ({ data: [] }) }
     }))
-    const agent = useAgentStore()
-    agent.blockingWait = {
-      toolName: 'propose_generation',
-      callId: 'call-err',
-      nodeId: 'node-err',
-    } as never
+    seedProposeWait({ callId: 'call-err', nodeId: 'node-err' })
     await flushPromises()
 
-    await w.find('[data-testid="propose-wait-cancel"]').trigger('click')
+    const cancelBtn = findInlineCancelButton(w)
+    expect(cancelBtn).toBeTruthy()
+    await cancelBtn!.trigger('click')
     await flushPromises()
 
     expect(answersRequests).toHaveLength(1)
@@ -260,37 +280,25 @@ describe('③ proposeWait 传送门（2026-10-15：整句文案即「点击定�
     vi.unstubAllGlobals()
   })
 
-  it('有 nodeId：传送门（testid=propose-wait-locate）存在，点击 → emit focusNode(nodeId)', async () => {
+  it('有 nodeId：内联卡定位按钮存在（<button>，键盘可达），点击 → emit focusNode(nodeId)', async () => {
     const w = await mountRail()
-    const agent = useAgentStore()
-    agent.blockingWait = {
-      toolName: 'propose_generation',
-      callId: 'call-1',
-      nodeId: 'node-1',
-    } as never
+    seedProposeWait({ callId: 'call-1', nodeId: 'node-1' })
     await flushPromises()
 
-    const portal = w.find('[data-testid="propose-wait-locate"]')
-    expect(portal.exists()).toBe(true)
-    // 传送门是 <button>（键盘可达），不是挂在 div 上的 click
+    const portal = w.find('button[title="在画布中定位"]')
+    expect(portal.exists(), '定位入口 = 时间线内联卡的 CanvasLocateButton').toBe(true)
     expect(portal.element.tagName).toBe('BUTTON')
     await portal.trigger('click')
     await flushPromises()
     expect(w.emitted('focusNode')).toEqual([['node-1']])
   })
 
-  it('无 nodeId：传送门降级为纯文本（定位无目标时不装可点）', async () => {
+  it('无 nodeId：内联卡不渲染定位按钮（定位无目标时不装可点）', async () => {
     const w = await mountRail()
-    const agent = useAgentStore()
-    agent.blockingWait = {
-      toolName: 'propose_generation',
-      callId: 'call-1',
-    } as never
+    seedProposeWait({ callId: 'call-1' })
     await flushPromises()
 
-    expect(w.find('[data-testid="propose-wait-hint"]').exists()).toBe(true)
-    expect(w.find('[data-testid="propose-wait-locate"]').exists()).toBe(false)
-    await w.find('[data-testid="propose-wait-hint"]').trigger('click')
+    expect(w.find('button[title="在画布中定位"]').exists()).toBe(false)
     expect(w.emitted('focusNode')).toBeUndefined()
   })
 })

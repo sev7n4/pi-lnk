@@ -86,6 +86,42 @@ export type TimelinePart =
       /** D2：error notice 携带重试入口文案（由渲染层出按钮）。 */
       retryLabel?: string
     }
+  /**
+   * 等待态单一真相（2026-10-28 根治规格）：propose_generation 的「等用户在画布上确认」
+   * 不再用 `blockingWait`/`proposePendingConfirm` 两套 store 态 + 对话流外浮卡各自表达，
+   * 而是时间线里的一个内联 part——对话流（live dock + 历史气泡同源）、画布节点浮层、
+   * 底部状态行都只读它。一个 `waiting_user{status:'waiting'}` 事件只 upsert 这一个 part。
+   */
+  | {
+      kind: 'proposal'
+      id: string
+      toolName: 'propose_generation'
+      nodeId?: string
+      title: string
+      status: 'pending_confirm' | 'confirmed' | 'declined' | 'expired'
+      callId?: string
+      timeoutMs?: number
+      startedAt: number
+    }
+  /**
+   * 等待态单一真相（ask_user）：题面 + 选项 + 多选/其他，内联在对话流。
+   * 取代组件级 `pendingAskUser` ref，成为 ask 等待的唯一来源。
+   */
+  | {
+      kind: 'question'
+      id: string
+      callId?: string
+      title: string
+      status: 'pending_answer' | 'answered' | 'declined'
+      questions: Array<{
+        id: string
+        question: string
+        options: { label: string; value: string }[]
+        multiSelect?: boolean
+        allowOther?: boolean
+      }>
+      startedAt: number
+    }
 
 export interface TurnTimeline {
   parts: TimelinePart[]
@@ -151,7 +187,33 @@ export type TimelineEvent =
        * 上游对照与渲染落点见 docs/superpowers/specs/2026-10-19-propose-confirm-single-surface-design.md §7。
        */
       type: 'waiting_user'
-      data: { status?: string; toolName?: string; nodeId?: string; reason?: string }
+      data: {
+        status?: string
+        toolName?: string
+        nodeId?: string
+        reason?: string
+        /** 根治规格：确认/取消走 POST /answers 的 callId（propose_generation 由 waiting_user 携带）。 */
+        callId?: string
+        /** 人话标题，如「提议生成 · 1个节点」。 */
+        title?: string
+        /** 自动取消倒计时（ms，决策 6）。 */
+        timeoutMs?: number
+      }
+    }
+  | {
+      /** ask_user 题面（根治规格）：从 `canvas_command{type:'ask_user'}` 收敛进时间线单一真相。 */
+      type: 'ask_user'
+      data: {
+        callId?: string
+        title?: string
+        questions: Array<{
+          id: string
+          question: string
+          options: { label: string; value: string }[]
+          multiSelect?: boolean
+          allowOther?: boolean
+        }>
+      }
     }
   | {
       type: 'error'
@@ -535,42 +597,99 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
       return
     }
     case 'waiting_user': {
-      // 2026-10-17（恢复可见化，双粒度）：等待态在时间线里恢复**单条 upsert** notice——
-      // 本 notice 回答「对话流为什么空了/在等什么」（原因），倒计时仍只在 dock 状态行
-      // （turnStatusBar waitHint「还剩 N 分钟自动取消」）⇒ 两处文案不重复、各司其职。
-      // 历史：10-14 曾因「等待你在画布上确认生成 重复」整体下线本 notice（D3 一处渲染），
-      // 但状态行在 composer 角上，用户盯消息流时那 ~300s 阻塞期形同「死了」（生产投诉）。
-      // 单条 upsert（稳定 id；resolved 只改文案、不新增不删除）既复现可见性，又不重犯重复。
+      // 2026-10-28 根治：等待态单一真相 = 时间线 part。
+      // propose_generation ⇒ upsert 一个 `proposal` part（pending_confirm）；ask 等 ⇒ 保留
+      // `notice:waiting` 兜底（question part 由 ask_user 事件另建）。resolved ⇒ 把匹配的
+      // proposal/question part 翻终态，并把旧 notice 翻「已继续执行」，绝不新增/删除（保位）。
       const d = event.data
-      const waitingNoticeId = 'notice:waiting'
-      const findWaitingNotice = () =>
-        timeline.parts.find(
-          (p): p is Extract<TimelinePart, { kind: 'notice' }> =>
-            p.kind === 'notice' && p.id === waitingNoticeId,
-        )
       if (d.status === 'resolved') {
-        // 解除：同一条改文案（⏸→·），留着说明「刚才那段空白在等什么」
-        const existing = findWaitingNotice()
-        if (existing) {
-          existing.text = '已继续执行'
-          existing.tone = 'info'
+        const prop = timeline.parts.find(
+          (p): p is Extract<TimelinePart, { kind: 'proposal' }> => p.kind === 'proposal',
+        )
+        if (prop) prop.status = 'confirmed'
+        const q = timeline.parts.find(
+          (p): p is Extract<TimelinePart, { kind: 'question' }> => p.kind === 'question',
+        )
+        if (q) q.status = 'answered'
+        const notice = timeline.parts.find(
+          (p): p is Extract<TimelinePart, { kind: 'notice' }> =>
+            p.kind === 'notice' && p.id === 'notice:waiting',
+        )
+        if (notice) {
+          notice.text = '已继续执行'
+          notice.tone = 'info'
         }
         return
       }
-      const text =
-        d.toolName === 'propose_generation'
-          ? '等待你在画布上确认生成，确认后继续输出'
-          : d.reason
-            ? `等待你确认：${d.reason}`
-            : '等待你确认后继续'
-      const existing = findWaitingNotice()
-      if (existing) {
-        // 等待事件重复到达（重放/多段等待）只改文案，绝不追加第二条（10-14 反馈不回归）
-        existing.text = text
-        existing.tone = 'warn'
+      if (d.toolName === 'propose_generation') {
+        // 单一 upsert：稳定 id 由 callId/nodeId 决定，重复到达只更新不追加。
+        const pid = `proposal:${d.callId ?? d.nodeId ?? 'waiting'}`
+        const existing = timeline.parts.find(
+          (p): p is Extract<TimelinePart, { kind: 'proposal' }> =>
+            p.kind === 'proposal' && p.id === pid,
+        )
+        if (existing) {
+          existing.status = 'pending_confirm'
+          existing.nodeId = d.nodeId
+          existing.title = d.title ?? existing.title
+          existing.callId = d.callId
+          existing.timeoutMs = d.timeoutMs
+        } else {
+          timeline.parts.push({
+            kind: 'proposal',
+            id: pid,
+            toolName: 'propose_generation',
+            nodeId: d.nodeId,
+            title: d.title ?? '提议生成',
+            status: 'pending_confirm',
+            callId: d.callId,
+            timeoutMs: d.timeoutMs,
+            startedAt: Date.now(),
+          })
+        }
+        // 不再另推 notice：proposal part 自带「等待你在画布上确认生成」文案 + 操作按钮
+        // （见 AgentTurnTimeline.vue），根治「对话流之外浮卡 + 状态条双源」。
         return
       }
-      timeline.parts.push({ kind: 'notice', id: waitingNoticeId, text, tone: 'warn' })
+      // 非 propose 的等待（ask 等，无 proposal/question part）：保留 notice 兜底。
+      const waitingNoticeId = 'notice:waiting'
+      const text = d.reason ? `等待你确认：${d.reason}` : '等待你确认后继续'
+      const existingNotice = timeline.parts.find(
+        (p): p is Extract<TimelinePart, { kind: 'notice' }> =>
+          p.kind === 'notice' && p.id === waitingNoticeId,
+      )
+      if (existingNotice) {
+        existingNotice.text = text
+        existingNotice.tone = 'warn'
+      } else {
+        timeline.parts.push({ kind: 'notice', id: waitingNoticeId, text, tone: 'warn' })
+      }
+      return
+    }
+    case 'ask_user': {
+      // 根治规格：ask_user 题面收敛进时间线单一真相，取代组件级 pendingAskUser ref。
+      const d = event.data
+      const qid = `question:${d.callId ?? 'ask'}`
+      const existing = timeline.parts.find(
+        (p): p is Extract<TimelinePart, { kind: 'question' }> =>
+          p.kind === 'question' && p.id === qid,
+      )
+      if (existing) {
+        existing.status = 'pending_answer'
+        existing.callId = d.callId
+        existing.title = d.title ?? existing.title
+        existing.questions = d.questions
+      } else {
+        timeline.parts.push({
+          kind: 'question',
+          id: qid,
+          callId: d.callId,
+          title: d.title ?? '需要你回答',
+          status: 'pending_answer',
+          questions: d.questions,
+          startedAt: Date.now(),
+        })
+      }
       return
     }
     case 'error': {

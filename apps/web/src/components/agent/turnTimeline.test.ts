@@ -59,12 +59,16 @@ describe('turnTimeline — 模型层（设计 §4 / §5-P1）', () => {
     expect(byKind(tl, 'artifact')).toHaveLength(1)
     expect(byKind(tl, 'text')).toHaveLength(1)
 
-    // 2026-10-17：waiting_user 恢复单条 notice（双粒度：原因在 notice，倒计时在 dock 状态行）
-    const waitingNotices = byKind(tl, 'notice')
-    expect(waitingNotices).toHaveLength(1)
-    expect(waitingNotices[0].id).toBe('notice:waiting')
-    expect(waitingNotices[0].text).toBe('等待你在画布上确认生成，确认后继续输出')
-    expect(waitingNotices[0].tone).toBe('warn')
+    // 2026-10-28 根治：propose_generation 经 waiting_user 收敛进时间线「proposal」part（单一真相），
+    // 取代对话流外 notice 浮卡。状态行与对话流内联卡同源读它；不再出 notice:waiting。
+    const proposals = byKind(tl, 'proposal')
+    expect(proposals).toHaveLength(1)
+    expect(proposals[0].id).toBe('proposal:n1')
+    expect(proposals[0].status).toBe('pending_confirm')
+    expect(proposals[0].nodeId).toBe('n1')
+    expect(proposals[0].title).toBe('提议生成')
+    // 单一真相纪律：propose 等待不再出 notice:waiting（旧浮卡路径已拆除）
+    expect(byKind(tl, 'notice')).toHaveLength(0)
 
     // 交错成立：第 2 段思考 出现在 第 1 个工具之后（unshift 不复活的证据）
     const firstToolIdx = k.indexOf('tool')
@@ -346,29 +350,33 @@ describe('turnTimeline — 模型层（设计 §4 / §5-P1）', () => {
     expect(kinds(tl)[1]).toBe('tool')
   })
 
-  it('⭐ 2026-10-17 双粒度：waiting_user 产单条 notice（稳定 id upsert，重复 waiting 不追加）', () => {
+  it('⭐ 2026-10-28 根治：propose_generation 经 waiting_user 收敛进「proposal」part（稳定 id upsert，重复 waiting 不追加）', () => {
     const tl = feed([
       { type: 'waiting_user', data: { status: 'resolved', toolName: 'propose_generation' } },
-      { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation', nodeId: 'n1' } },
-      // 重复 waiting（重放/多段等待）：只改文案，绝不刷屏（10-14「重复」反馈不回归）
-      { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation', nodeId: 'n1' } },
+      { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation', nodeId: 'n1', callId: 'c1' } },
+      // 重复 waiting（重放/多段等待）：只改状态/字段，绝不刷屏（10-14「重复」反馈不回归）
+      { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation', nodeId: 'n1', callId: 'c1' } },
     ])
-    const notices = byKind(tl, 'notice')
-    expect(notices).toHaveLength(1)
-    expect(notices[0].id).toBe('notice:waiting')
-    expect(notices[0].text).toBe('等待你在画布上确认生成，确认后继续输出')
-    expect(notices[0].tone).toBe('warn')
+    // 单一真相：propose 不再出 notice:waiting，而是 proposal part
+    const proposals = byKind(tl, 'proposal')
+    expect(proposals).toHaveLength(1)
+    expect(proposals[0].id).toBe('proposal:c1')
+    expect(proposals[0].status).toBe('pending_confirm')
+    expect(proposals[0].nodeId).toBe('n1')
+    expect(proposals[0].callId).toBe('c1')
+    expect(byKind(tl, 'notice')).toHaveLength(0)
   })
 
-  it('⭐ resolved 只改同一条 notice 文案（不新增不删除；⏸→· 表等待已解除）', () => {
+  it('⭐ resolved 把 proposal part 翻 confirmed（不新增不删除；状态行/内联卡读同一 part）', () => {
     const tl = feed([
       { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation', nodeId: 'n1' } },
       { type: 'waiting_user', data: { status: 'resolved', toolName: 'propose_generation' } },
     ])
-    const notices = byKind(tl, 'notice')
-    expect(notices).toHaveLength(1)
-    expect(notices[0].text).toBe('已继续执行')
-    expect(notices[0].tone).toBe('info')
+    const proposals = byKind(tl, 'proposal')
+    expect(proposals).toHaveLength(1)
+    expect(proposals[0].status).toBe('confirmed')
+    // 单一真相纪律：propose 等待不创建 notice:waiting，resolved 也不补 notice（翻 part 即可）
+    expect(byKind(tl, 'notice')).toHaveLength(0)
   })
 
   it('ask_user 形态：reason 进 notice 文案（toolName 缺失也可见）', () => {
@@ -388,16 +396,17 @@ describe('turnTimeline — 模型层（设计 §4 / §5-P1）', () => {
     expect(tl.parts).toHaveLength(0)
   })
 
-  it('⭐ 重放（历史 executionEvents）兼容：waiting→resolved 序列收口为一条 info notice', () => {
+  it('⭐ 重放（历史 executionEvents）兼容：waiting→resolved 序列把 proposal part 翻 confirmed', () => {
     const tl = replayTimelineEvents([
       { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation', nodeId: 'n1' } },
       { type: 'waiting_user', data: { status: 'resolved', toolName: 'propose_generation' } },
     ] as never[])
-    // 只锁等待 notice 这一条（replay 末尾还可能追加回合摘要 notice，互不干扰）
-    const waiting = byKind(tl, 'notice').filter((n) => n.id === 'notice:waiting')
-    expect(waiting).toHaveLength(1)
-    expect(waiting[0].text).toBe('已继续执行')
-    expect(waiting[0].tone).toBe('info')
+    // 单一真相：propose 不再出 notice:waiting，resolved 翻 proposal part 终态（replay 末尾还
+    // 可能追加回合摘要 notice，互不干扰）
+    const proposals = byKind(tl, 'proposal')
+    expect(proposals).toHaveLength(1)
+    expect(proposals[0].status).toBe('confirmed')
+    expect(byKind(tl, 'notice').filter((n) => n.id === 'notice:waiting')).toHaveLength(0)
   })
 
   it('⭐ 2026-10-14 累积快照差分：存量 done.summary 带前文时按前缀差分出段增量，不再整段重复', () => {
@@ -608,17 +617,19 @@ describe('turnTimeline — 晚到生成状态回填（2026-10-17 产物体验补
     expect(empty.parts).toHaveLength(count)
   })
 
-  it('finalize 的摘要 notice 稳定 id 与 waiting/孤儿/partial notice 不冲突', () => {
+  it('finalize 的稳定 id 不冲突：proposal part id 与 notice:turn-summary 不撞（2026-10-28 单一真相）', () => {
     const tl = feed([
       addNode('n1'),
       { type: 'node_status', data: { nodeId: 'n1', status: 'done', url: 'https://x/a.png' } },
-      { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation' } },
+      { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation', nodeId: 'n1' } },
     ])
     finalizeTurnTimeline(tl)
-    const ids = byKind(tl, 'notice').map((n) => n.id)
-    expect(ids).toContain('notice:waiting')
-    expect(ids).toContain('notice:turn-summary')
-    expect(new Set(ids).size).toBe(ids.length)
+    // 全部 part 的 id 全局唯一（杜绝「键不出现」纪律被撞穿）
+    const allIds = tl.parts.map((p) => p.id)
+    expect(new Set(allIds).size).toBe(allIds.length)
+    // 摘要 notice 稳定 id 与 proposal part id 并存不冲突
+    expect(allIds).toContain('notice:turn-summary')
+    expect(allIds).toContain('proposal:n1')
   })
 })
 
@@ -672,5 +683,79 @@ describe('generation_progress — run_* / propose 阻塞期活体进度（2026-1
     const before = kinds(tl)
     applyTimelineEvent(tl, { type: 'generation_progress', data: { nodeId: 'n1', elapsedMs: 45_000 } })
     expect(kinds(tl)).toEqual(before)
+  })
+})
+
+describe('ask_user — 题面收敛进时间线 question part（2026-10-28 根治规格）', () => {
+  const askEvent: TimelineEvent = {
+    type: 'ask_user',
+    data: {
+      callId: 'ask-1',
+      title: '风格选择',
+      questions: [
+        {
+          id: 'q1',
+          question: '想要哪种风格？',
+          options: [
+            { label: '皮克斯', value: 'pixar' },
+            { label: '写实', value: 'realistic' },
+          ],
+          multiSelect: false,
+          allowOther: true,
+        },
+      ],
+    },
+  }
+
+  it('ask_user 事件 ⇒ 单个 question part（题面/选项/多选透传，稳定 id）', () => {
+    const tl = feed([askEvent])
+    const qs = byKind(tl, 'question')
+    expect(qs).toHaveLength(1)
+    expect(qs[0].id).toBe('question:ask-1')
+    expect(qs[0].status).toBe('pending_answer')
+    expect(qs[0].callId).toBe('ask-1')
+    expect(qs[0].title).toBe('风格选择')
+    expect(qs[0].questions).toHaveLength(1)
+    expect(qs[0].questions[0].options).toHaveLength(2)
+    expect(qs[0].questions[0].multiSelect).toBe(false)
+    expect(qs[0].questions[0].allowOther).toBe(true)
+  })
+
+  it('重复 ask_user（重放）⇒ upsert 同一 part，不追加（10-14「重复」反馈不回归）', () => {
+    const tl = feed([askEvent, askEvent])
+    expect(byKind(tl, 'question')).toHaveLength(1)
+  })
+
+  it('waiting_user{resolved} 把 question part 翻 answered（与 proposal 翻转同拍）', () => {
+    const tl = feed([
+      askEvent,
+      { type: 'waiting_user', data: { status: 'waiting', toolName: 'ask_user' } },
+      { type: 'waiting_user', data: { status: 'resolved', toolName: 'ask_user' } },
+    ])
+    const qs = byKind(tl, 'question')
+    expect(qs).toHaveLength(1)
+    expect(qs[0].status).toBe('answered')
+    // ask 的 notice:waiting 兜底翻「已继续执行」（resolved 路径照旧更新已存在的 notice）
+    const waiting = byKind(tl, 'notice').filter((n) => n.id === 'notice:waiting')
+    expect(waiting).toHaveLength(1)
+    expect(waiting[0].text).toBe('已继续执行')
+    expect(waiting[0].tone).toBe('info')
+  })
+
+  it('ask 等待仍保留 notice:waiting 兜底（question part 之外的可读性线索不丢）', () => {
+    const tl = feed([{ type: 'waiting_user', data: { status: 'waiting', toolName: 'ask_user', reason: '请选择风格' } }])
+    const waiting = byKind(tl, 'notice').filter((n) => n.id === 'notice:waiting')
+    expect(waiting).toHaveLength(1)
+    expect(waiting[0].tone).toBe('warn')
+  })
+
+  it('callId 缺省 ⇒ 稳定 id 回落 question:ask（不炸、可 upsert）', () => {
+    const tl = feed([
+      { type: 'ask_user', data: { title: '无 callId', questions: [{ id: 'q1', question: '?', options: [] }] } },
+      { type: 'ask_user', data: { title: '无 callId', questions: [{ id: 'q1', question: '?', options: [] }] } },
+    ])
+    const qs = byKind(tl, 'question')
+    expect(qs).toHaveLength(1)
+    expect(qs[0].id).toBe('question:ask')
   })
 })

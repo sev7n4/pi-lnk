@@ -6,12 +6,16 @@ import { useAgentStore } from '@/stores/agent'
 import AgentSideRail from './AgentSideRail.vue'
 
 /**
- * ADR-0011（2026-10-19，T2）：对话流 propose 卡在**画布上下文**下降权为只读。
+ * 根治规格（2026-10-28）：等待态单一真相 = 时间线 proposal part。
  *
- * 背景：一次 propose 的 pending_confirm 态曾被渲染成「对话卡 + 画布节点 + 自动 dock」
- * 三带叠罗汉。收敛后对话流卡片在画布可见上下文（mobileCanvasView=true）只作提示，
- * 定位 / 取消按钮收起——确认 / 取消归节点内联面 / dock，避免同一态双份可操作入口。
- * 纯对话视图（mobileCanvasView=false，含桌面）维持可操作卡不变（2026-10-06 两处确认入口拍板）。
+ * 背景（Q1/Q2 漂移）：propose 的 pending_confirm 态此前由**对话流外浮卡**
+ * （.agent-system-layer 内 propose-wait-hint）+ `blockingWait`/`proposePendingConfirm`
+ * 两套 store 态各自表达——决策点脱离对话时序（Q1），状态行经 executionTrace 抢跑
+ * （Q2：tool_result 先更新 trace，waiting_user 晚到 ⇒ 状态条说「等待」而对话流没显示）。
+ *
+ * 根治后：
+ * - 对话流外浮卡**整体下线**（决策点 = 时间线内联卡 + 画布节点浮层）；
+ * - 状态行与内联卡同读一份 proposal part（`resolveWaitingFromTimeline`）。
  *
  * 断言落在 DOM testid 出口，不碰源码字符串。
  */
@@ -68,7 +72,8 @@ async function mountRail(extraProps: Record<string, unknown> = {}) {
   return w
 }
 
-function seedProposeWait() {
+/** 旧双源残留置位：证明状态行/浮卡都不再读它们（浮卡已下线的回归锁）。 */
+function seedLegacyMirrors() {
   const agent = useAgentStore()
   agent.blockingWait = {
     toolName: 'propose_generation',
@@ -77,7 +82,25 @@ function seedProposeWait() {
   } as never
 }
 
-describe('ADR-0011 T2：propose 卡在画布上下文降权为只读', () => {
+/** 单一真相端到端种子：流式 assistant 消息 + waiting_user 事件 ⇒ 时间线 proposal part。 */
+function seedTimelineProposal() {
+  const agent = useAgentStore()
+  agent.messages.push({
+    id: 'm1',
+    role: 'assistant',
+    content: '',
+    streaming: true,
+  } as never)
+  agent.isStreaming = true
+  agent.trackWaitingUser({
+    status: 'waiting',
+    toolName: 'propose_generation',
+    callId: 'call-1',
+    nodeId: 'node-1',
+  })
+}
+
+describe('根治规格：propose 等待的单一真相 = 时间线 proposal part', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     stubFetch()
@@ -86,41 +109,54 @@ describe('ADR-0011 T2：propose 卡在画布上下文降权为只读', () => {
     vi.unstubAllGlobals()
   })
 
-  it('mobileCanvasView=true（画布上下文）：hint 仍在，但定位 / 取消按钮收起（只读）', async () => {
+  it('对话流外浮卡已下线：blockingWait 置位也不出 propose-wait-hint（决策点回归对话流+画布）', async () => {
     const w = await mountRail({ mobileCanvasView: true })
-    seedProposeWait()
+    seedLegacyMirrors()
     await flushPromises()
 
-    // 提示横幅保留（回答"在等什么"），失败警示安全层也保留
-    const hint = w.find('[data-testid="propose-wait-hint"]')
-    expect(hint.exists()).toBe(true)
-    expect(hint.text()).toContain('已在画布上待确认')
-    // 可操作入口全部收起——不再与画布节点 / dock 双份可操作
+    expect(w.find('[data-testid="propose-wait-hint"]').exists()).toBe(false)
     expect(w.find('[data-testid="propose-wait-actions"]').exists()).toBe(false)
     expect(w.find('[data-testid="propose-wait-locate"]').exists()).toBe(false)
     expect(w.find('[data-testid="propose-wait-cancel"]').exists()).toBe(false)
   })
 
-  it('mobileCanvasView=false（纯对话视图 / 桌面）：维持可操作卡（定位 + 取消）', async () => {
+  it('纯对话视图（桌面）同样无浮卡（下线不分形态）', async () => {
     const w = await mountRail({ mobileCanvasView: false })
-    seedProposeWait()
+    seedLegacyMirrors()
     await flushPromises()
 
-    const hint = w.find('[data-testid="propose-wait-hint"]')
-    expect(hint.exists()).toBe(true)
-    expect(hint.text()).toContain('锚定画布')
-    // 既有可操作入口不变
-    expect(w.find('[data-testid="propose-wait-actions"]').exists()).toBe(true)
-    expect(w.find('[data-testid="propose-wait-locate"]').exists()).toBe(true)
-    expect(w.find('[data-testid="propose-wait-cancel"]').exists()).toBe(true)
+    expect(w.find('[data-testid="propose-wait-hint"]').exists()).toBe(false)
+    expect(w.find('[data-testid="propose-wait-locate"]').exists()).toBe(false)
+    expect(w.find('[data-testid="propose-wait-cancel"]').exists()).toBe(false)
   })
 
-  it('省略 mobileCanvasView（默认未传）等同纯对话视图，按钮保留（向后兼容）', async () => {
+  it('单一真相端到端：trackWaitingUser ⇒ 状态行与内联卡同显（都不读 blockingWait/trace）', async () => {
     const w = await mountRail()
-    seedProposeWait()
+    seedTimelineProposal()
     await flushPromises()
 
-    expect(w.find('[data-testid="propose-wait-locate"]').exists()).toBe(true)
-    expect(w.find('[data-testid="propose-wait-cancel"]').exists()).toBe(true)
+    // 状态行：从 proposal part 派生（未置位任何 store 镜像 ⇒ 同显即同源证据）
+    const statusLine = w.find('[data-testid="turn-status-line"]')
+    expect(statusLine.exists()).toBe(true)
+    expect(statusLine.text()).toContain('等待你在画布上确认生成')
+
+    // 对话流内联卡：决策点在时间线内（title + 确认按钮）
+    expect(w.text()).toContain('提议生成')
+    const confirmBtn = w.findAll('button').find((b) => b.text() === '确认生成')
+    expect(confirmBtn).toBeTruthy()
+  })
+
+  it('resolved 翻转后状态行与内联卡同步解除（不再有「状态条说等待、流里看不到」的 desync）', async () => {
+    const w = await mountRail()
+    seedTimelineProposal()
+    await flushPromises()
+    expect(w.find('[data-testid="turn-status-line"]').text()).toContain('等待你在画布上确认生成')
+
+    const agent = useAgentStore()
+    agent.trackWaitingUser({ status: 'resolved', toolName: 'propose_generation' })
+    await flushPromises()
+
+    expect(w.find('[data-testid="turn-status-line"]').exists()).toBe(false)
+    expect(w.findAll('button').map((b) => b.text())).not.toContain('确认生成')
   })
 })

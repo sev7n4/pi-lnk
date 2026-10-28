@@ -39,10 +39,11 @@ function stripComments(src: string): string {
 }
 
 describe('AgentSideRail — 滚动上下文唯一（治理 2/2 终局结构）', () => {
-  it('① live 态对话内容全部在主滚动流内：提示条模板位置在输入区之前', () => {
+  it('① live 态对话内容全部在主滚动流内：状态行模板位置在输入区之前', () => {
     const rail = sideRail // ① 已是 readFileSync 的文件内容，勿再当路径读（CI 曾因此假红）
     const iScroll = rail.indexOf('agent-chat-scroll')
-    const iWait = rail.indexOf('data-testid="propose-wait-hint"')
+    // 根治规格 2026-10-28：propose 浮卡下线，锚点换成同处系统层的状态行（等待/收口播报）
+    const iWait = rail.indexOf('data-testid="turn-status-line"')
     const iAsk = rail.indexOf('<AskUserCard')
     const iInput = rail.indexOf('class="agent-input-area')
     expect(iScroll).toBeGreaterThan(-1)
@@ -51,7 +52,7 @@ describe('AgentSideRail — 滚动上下文唯一（治理 2/2 终局结构）',
     expect(iInput).toBeGreaterThan(-1)
     expect(
       iScroll < iWait && iWait < iInput && iAsk < iInput,
-      `模板顺序必须 主滚动容器(${iScroll}) < 提示条(${iWait})/ask卡(${iAsk}) < 输入区(${iInput})——对话内容不得落回 dock`,
+      `模板顺序必须 主滚动容器(${iScroll}) < 状态行(${iWait})/ask卡(${iAsk}) < 输入区(${iInput})——对话内容不得落回 dock`,
     ).toBe(true)
   })
 
@@ -60,7 +61,7 @@ describe('AgentSideRail — 滚动上下文唯一（治理 2/2 终局结构）',
     expect(rail, '.agent-dock-scroll 系列必须完全删除').not.toMatch(/agent-dock-scroll/)
     expect(rail, 'hasDockPresentation 已无消费点，必须删除').not.toMatch(/hasDockPresentation/)
     // 有效性断言（防空集假绿）
-    expect(rail, '应扫到模板主体').toMatch(/data-testid="propose-wait-hint"/)
+    expect(rail, '应扫到模板主体').toMatch(/data-testid="turn-status-line"/)
     expect(rail, '应扫到样式主体').toMatch(/\.agent-chat-scroll \{/)
   })
 

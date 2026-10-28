@@ -607,8 +607,31 @@ export const useAgentStore = defineStore('agent', () => {
    * 收敛为**单一锚定表面**：propose 类阻塞的确认面在画布节点内联（ProposeConfirmOverlay），
    * 对话流只保留只读 notice。传输名不改（见 turnTimeline.ts 同名事件的注）。
    */
-  function trackWaitingUser(data: { status?: string; toolName?: string; nodeId?: string; reason?: string }) {
+  function trackWaitingUser(data: {
+    status?: string
+    toolName?: string
+    nodeId?: string
+    reason?: string
+    callId?: string
+    title?: string
+    timeoutMs?: number
+  }) {
     feedTimeline({ type: 'waiting_user', data })
+  }
+
+  /** 根治规格（2026-10-28）：ask_user 题面收敛进时间线单一真相（取代组件级 pendingAskUser ref）。 */
+  function trackAskUser(data: {
+    callId?: string
+    title?: string
+    questions: Array<{
+      id: string
+      question: string
+      options: { label: string; value: string }[]
+      multiSelect?: boolean
+      allowOther?: boolean
+    }>
+  }) {
+    feedTimeline({ type: 'ask_user', data })
   }
 
   /**
@@ -865,6 +888,7 @@ export const useAgentStore = defineStore('agent', () => {
     trackTurnSettled,
     trackUsageDelta,
     trackWaitingUser,
+    trackAskUser,
     finishStreaming,
     loadHistory,
     clear,

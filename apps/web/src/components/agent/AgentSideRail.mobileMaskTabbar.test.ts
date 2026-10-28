@@ -12,7 +12,8 @@ import { describe, expect, it } from 'vitest'
  * 2026-10-20 起范围扩展为「贴底容器跨页签泄漏」家族守卫：
  * 画布/发现/我的页签下，对话 chrome（系统层卡片）不得残留在透明壳里浮在页面上。
  * 2026-10-21 起第三代形态：系统层容器「默认全隐 + 白名单放行」——断言守护容器规则、
- * 两个白名单类落位、旧逐卡选择器不得回归、四卡位置不变量。
+ * 白名单类落位（2026-10-28 根治规格后 canvas-always 随浮卡退役，仅剩 canvas-with-composer）、
+ * 旧逐卡选择器不得回归、容器内卡片位置不变量。
  *
  * 断言只作用于提取出的 CSS 规则块内部（不含注释），避免「记录被删历史」的
  * 注释文本污染否定断言；每个否定断言都配有块存在性 + 关键属性的有效性断言。
@@ -68,12 +69,17 @@ describe('mobile mask never covers the tab bar (页签失灵回归守卫)', () =
     expect(block).toContain('display: none')
   })
 
-  it('画布视图：白名单放行 propose 提示（canvas-always，画布三态恒显）', () => {
-    // propose 等待提示属「待确认状态面」：有画布专属文案（proposeWaitInCanvas），
-    // 画布三态恒显。双向断言：模板类落位 + 放行规则存在（防选择器空转）。
-    expect(sfc).toContain('class="canvas-always mx-0.5 mb-1')
-    const block = extractRuleBlock(sfc, '.agent-panel-mobile-dock.is-canvas-view .agent-system-layer > .canvas-always')
-    expect(block).toContain('display: block')
+  it('画布视图：canvas-always 白名单已随对话流外浮卡下线退役（死规则不残留）', () => {
+    // 根治规格 2026-10-28：propose 决策点 = 时间线内联卡 + 画布节点内联面，浮卡删除后
+    // `canvas-always` 消费点归零——规则与模板类必须一并退役，防死选择器空转。
+    expect(sfc, '模板不得再有 canvas-always 落位').not.toContain('class="canvas-always')
+    expect(
+      extractRuleBlock(sfc, '.agent-panel-mobile-dock.is-canvas-view .agent-system-layer > .canvas-always'),
+      '放行规则必须删除',
+    ).toBe('')
+    // 有效性断言：容器默认全隐规则仍在（证明扫的是活的样式主体）
+    const container = extractRuleBlock(sfc, '.agent-panel-mobile-dock.is-canvas-view .agent-system-layer')
+    expect(container).toContain('display: none')
   })
 
   it('画布视图：白名单放行 ask_user 卡（canvas-with-composer，跟随 composer）', () => {
@@ -91,11 +97,12 @@ describe('mobile mask never covers the tab bar (页签失灵回归守卫)', () =
     expect(sfc).not.toContain('.agent-panel-mobile-dock.is-canvas-view .agent-cancelled-layer')
   })
 
-  it('系统层容器位置不变量：四张卡必须都在容器内', () => {
+  it('系统层容器位置不变量：容器内卡片必须都在容器内', () => {
     // 新卡片若被加到容器外，画布视图会露头（旧 bug 形态）。容器开标签必须先于全部已知卡片。
+    // 根治规格 2026-10-28：propose 浮卡下线（决策点收敛进时间线内联卡），容器内剩
+    // 状态行 / ask 卡 / 取消回执三张。
     const open = sfc.indexOf('<div class="agent-system-layer">')
     expect(open).toBeGreaterThan(0)
-    expect(open).toBeLessThan(sfc.indexOf('data-testid="propose-wait-hint"'))
     expect(open).toBeLessThan(sfc.indexOf('class="agent-turn-status mx-0.5 mb-1'))
     expect(open).toBeLessThan(sfc.indexOf('class="mx-0.5 mb-2 canvas-with-composer"'))
     expect(open).toBeLessThan(sfc.indexOf('data-testid="run-cancelled-callout"'))
