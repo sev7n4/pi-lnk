@@ -78,6 +78,14 @@
 > 该规格**不新增 agent 工具**（走会话级 SSE 与投影面），因此不阻塞
 > `agent/tool-framework-roadmap.html` §4 P1 的常驻集下沉。
 
+## 连线根治闭环（2026-10-28 起）
+
+| 文件 | 内容 | 性质 |
+|---|---|---|
+| [`discussion/2026-10-28-canvas-agent-architecture-review-discussion.md`](./discussion/2026-10-28-canvas-agent-architecture-review-discussion.md) | **画布 Agent 架构审视**——移动端连线不可见 canary → 上游 pi 能力对照（7 项未用）+ F1–F18 静默失败清单 + P0–P4 治本路线图 + §9 评审（G1–G8 修订项） | 活资产 —— 方向/决策来源 |
+| [`superpowers/specs/2026-10-28-canvas-edge-remedy-loop-design.md`](./superpowers/specs/2026-10-28-canvas-edge-remedy-loop-design.md) | **SP-F 连线根治闭环**——Q1 移动端边可见性 + P1c connectNodes 回执（缩范围：SP-D 已在 master 落 fail-closed）+ O1/O2 派发/暂存丢弃可观测；含实施期 Task 1 Ruling 修订 | 活资产 —— 实现依据 |
+| [`superpowers/plans/2026-10-28-canvas-edge-remedy-loop.md`](./superpowers/plans/2026-10-28-canvas-edge-remedy-loop.md) | **SP-F 实施计划**——3 task TDD 步骤 | 活资产 —— 实现依据 |
+
 ## 保留的目录
 
 | 目录 | 内容 | 性质 |

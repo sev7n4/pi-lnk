@@ -1,10 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	createThinkingAccumulator,
 	createTextSegmentPersister,
 	createUsageAccumulator,
 	extractCanvasActions,
 	extractCanvasCommands,
+	piEventsLogger,
 	extractGenerationProgress,
 	extractTaskEvents,
 	extractTextEnd,
@@ -785,5 +786,66 @@ describe("2026-10-18 上游对齐：generation_progress 派生 / snapshot 透传
 				partialResult: { details: { generating: true, nodeId: "n" } },
 			})),
 		).toEqual({ nodeId: "n", elapsedMs: 0 });
+	});
+});
+
+// SP-F O1（spec 2026-10-28-canvas-edge-remedy-loop-design.md V-5）：
+// 三类静默丢弃（zod / whitelist / isError-with-actions）必须留痕，健康链路零新增日志。
+describe("extractCanvasActions 可观测（SP-F O1）", () => {
+	it("zod 丢弃记 warn，含 issue 数与首个 path", () => {
+		const warn = vi.spyOn(piEventsLogger, "warn").mockImplementation(() => {});
+		const actions = extractCanvasActions(
+			toolEnd({
+				details: {
+					// 未知 type ⇒ CanvasActionTypeSchema 枚举失败（payload 字段全 optional，
+					// 缺 source/target 不会触发 zod_drop——那是 executor 层的 break，不是派生层）
+					actions: [{ type: "nonsense_type", payload: {} }],
+				},
+			}),
+		);
+		expect(actions).toHaveLength(0);
+		expect(warn).toHaveBeenCalledTimes(1);
+		expect(String(warn.mock.calls[0][0])).toContain("zod_drop");
+		warn.mockRestore();
+	});
+
+	it("nodeType 白名单丢弃记 warn；isError 且有 actions 记 partial_skip；纯 isError 不记；合法路径零日志", () => {
+		const warn = vi.spyOn(piEventsLogger, "warn").mockImplementation(() => {});
+		extractCanvasActions(
+			toolEnd({
+				details: {
+					actions: [
+						{ type: "add_node", payload: { id: "n1", nodeType: "hologram" } },
+					],
+				},
+			}),
+		);
+		expect(String(warn.mock.calls[0][0])).toContain("whitelist_drop");
+
+		extractCanvasActions(
+			toolEnd(
+				{
+					details: {
+						actions: [{ type: "add_edge", payload: { id: "e", source: "a", target: "b" } }],
+					},
+				},
+				true,
+			),
+		);
+		expect(String(warn.mock.calls[1][0])).toContain("partial_skip");
+
+		const before = warn.mock.calls.length;
+		extractCanvasActions(toolEnd({}, true)); // 无 actions ⇒ 纯失败，不记
+		expect(warn.mock.calls.length).toBe(before);
+
+		extractCanvasActions(
+			toolEnd({
+				details: {
+					actions: [{ type: "update_node", payload: { id: "n2", data: { status: "completed" } } }],
+				},
+			}),
+		);
+		expect(warn.mock.calls.length).toBe(before); // 合法路径零新增 warn
+		warn.mockRestore();
 	});
 });

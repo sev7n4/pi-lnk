@@ -1,0 +1,22 @@
+/**
+ * 移动端连线可见性兜底（SP-F Q1，spec 2026-10-28-canvas-edge-remedy-loop-design.md §3.1）。
+ *
+ * 背景：2026-10-28 个案取证——移动端 agent 连线在画布上不可见（默认 --neo-edge
+ * alpha 0.3 × 磁贴缝隙 × fitView 缩放 ≈ 亚像素淡线）。本文件只抬移动端可见性下限：
+ * - 桌面规则块（neo-node.css `.vue-flow__edge .vue-flow__edge-path`）不动；
+ * - 用户显式 edgeColor 优先：--canvas-edge-color 仍是第一候选；
+ * - 用户显式 edgeWidth 优先：CanvasPage 仅在用户改过 DEFAULT_EDGE_WIDTH 时才注入
+ *   --canvas-edge-width（评审 Important#1），此处 var 第二候选兜底 2px；
+ * - 状态高亮边（selected / upstream / downstream / hover）不抢占：:not 链挂在 edge 元素上，
+ *   特异性抬到 (0,7,0) 的同时显式让出这些态（评审 Important#2，脱离 import 顺序依赖）；
+ * - 由壳层 MobileCanvasShell.vue 导入（AGENTS.md 移动端规则 1：编排唯一所有者是壳层）。
+ * 锚点退化（MobileNodeTile 无 Handle）与布局网格属 P3，不在本文件。
+ */
+@media (max-width: 767px) {
+  .vue-flow
+    .vue-flow__edge:not(:hover):not(.selected):not(.neo-edge-upstream):not(.neo-edge-downstream)
+    .vue-flow__edge-path {
+    stroke: var(--canvas-edge-color, var(--lnk-canvas-edge-strong)) !important;
+    stroke-width: var(--canvas-edge-width, 2px) !important;
+  }
+}

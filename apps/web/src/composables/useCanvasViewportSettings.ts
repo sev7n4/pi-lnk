@@ -23,6 +23,9 @@ export interface CanvasViewportSettings {
 
 const STORAGE_KEY = 'lnkpi-canvas-viewport-settings'
 
+/** SP-F Q1（评审 Important#1）：移动端兜底需要区分「用户改过宽度」与「默认值」，故导出 */
+export const DEFAULT_EDGE_WIDTH = 1.5
+
 const defaults: CanvasViewportSettings = {
   gridVisible: true,
   gridVariant: 'dots',
@@ -32,7 +35,7 @@ const defaults: CanvasViewportSettings = {
   minimapExpanded: 0,
   snapToGrid: true,
   edgeAnimated: true,
-  edgeWidth: 1.5,
+  edgeWidth: DEFAULT_EDGE_WIDTH,
   edgeColor: '',
   edgeGlow: false,
   edgeDash: 'solid',

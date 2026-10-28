@@ -247,6 +247,9 @@
   --lnk-border-strong: rgba(255, 255, 255, 0.18);
   --lnk-border-focus: var(--lnk-purple-400);
 
+  /* 画布连线（SP-F Q1）：移动端 ≤767px 兜底用的强一档边色（桌面默认仍走 --neo-edge） */
+  --lnk-canvas-edge-strong: rgba(148, 151, 180, 0.62);
+
   /* 品牌点睛：注意 hover 走更深一档而非更浅
      —— 白字压在 #8a7dff 上只有 3.25:1，不达标；#5b4ce6 为 5.80:1。
      深色下"hover 变深"靠外发光补偿前进感，不是靠提亮。 */
@@ -391,6 +394,9 @@
   --lnk-border-default: rgba(23, 25, 35, 0.14);
   --lnk-border-strong: rgba(23, 25, 35, 0.22);
   --lnk-border-focus: var(--lnk-purple-600);
+
+  /* 画布连线（SP-F Q1）：移动端 ≤767px 兜底用的强一档边色（桌面默认仍走 --neo-edge） */
+  --lnk-canvas-edge-strong: rgba(23, 25, 35, 0.5);
 
   --lnk-accent: var(--lnk-purple-600);
   --lnk-accent-hover: var(--lnk-purple-700);

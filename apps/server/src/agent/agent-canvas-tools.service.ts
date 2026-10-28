@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common'
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common'
 import { ModuleRef } from '@nestjs/core'
 import { ZodError } from 'zod'
 import { parseVisionQaJson, type ParsedVisionQaJson } from '@lnkpi/agent'
@@ -803,6 +803,8 @@ export class AgentCanvasToolsService {
   /** Overridable in unit tests */
   pollIntervalMs = DEFAULT_POLL_INTERVAL_MS
   pollTimeoutMs = DEFAULT_POLL_TIMEOUT_MS
+  /** SP-F O2：暂存/回执异常路径的可观测出口（测试可 spy） */
+  private readonly logger = new Logger(AgentCanvasToolsService.name)
 
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
@@ -1280,7 +1282,7 @@ export class AgentCanvasToolsService {
     sessionId: string
     edges: Array<{ source: string; target: string }>
     stage?: boolean
-  }): Promise<{ actions: CanvasAction[] }> {
+  }): Promise<{ actions: CanvasAction[]; applied: number; duplicates: number }> {
     const { canvas } = await this.loadSession(input.sessionId)
     // SP-D（ADR-0014）：统一连线校验 chokepoint——端点存在性(N1)/自环(N2)/环(N3)
     // 硬非法整批 fail-closed；duplicate 幂等跳过(N4)，不报错不产生第二条。
@@ -1302,7 +1304,14 @@ export class AgentCanvasToolsService {
     }))
 
     await this.applyOrStage(input.sessionId, actions, input.stage)
-    return { actions }
+    // SP-F P1c（spec 2026-10-28-canvas-edge-remedy-loop-design.md V-3 修订）：
+    // 回执带计数——模型对「幂等跳过了几条重复边」可感知（此前静默跳过，模型无从自纠）。
+    // 增量字段：details.actions 形状不变，SSE 派发零感知；hard-reject 仍走上方异常（ADR-0014）。
+    return {
+      actions,
+      applied: actions.length,
+      duplicates: result.rejected.filter((r) => r.reason === 'duplicate').length,
+    }
   }
 
   /**
@@ -3677,6 +3686,10 @@ export class AgentCanvasToolsService {
     })
     if (!session?.stagedActions || !session.stagedAt) return
     if (Date.now() - session.stagedAt.getTime() <= STAGE_TTL_MS) return
+    // SP-F O2（spec V-6）：过期清空此前是静默 delete——暂存动作无痕蒸发（架构审视 F4）
+    this.logger.warn(
+      `stageCanvasActions expired: dropped ${parseStagedActions(session.stagedActions).length} staged actions (session=${sessionId}, ageMs=${Date.now() - session.stagedAt.getTime()})`,
+    )
     await this.prisma.session.update({
       where: { id: sessionId },
       data: { stagedActions: null, stagedAt: null },
