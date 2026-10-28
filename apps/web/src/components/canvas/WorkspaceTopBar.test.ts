@@ -35,18 +35,24 @@ describe('WorkspaceTopBar（WEB 工作台顶栏）', () => {
     expect(topBar).toContain('创作空间')
   })
 
-  it('v3 §13.1/A1：发丝线退役（封条感主源），材质底+blur 保留（画布节点穿栏）', () => {
+  it('§13.5（真机走查四轮）：封条彻底退役——栏体透明、材质/blur 全去', () => {
     const block = stripComments(topBar)
     expect(block).not.toContain('border-bottom')
-    expect(block).toContain('backdrop-filter')
+    expect(block).toMatch(/\.workspace-top-bar\s*\{[\s\S]{0,500}?background:\s*transparent/)
+    // 封条退役后 blur 一并去掉（画布节点穿栏时与画布同底，用户裁决视觉不抢占）
+    expect(block).not.toContain('backdrop-filter')
   })
 
-  it('项目名样式（§6.4）：次级灰、超长截断、非交互', () => {
+  it('居中页题注（§13.5 v2）：「画布·「项目名称」」，细体小字、绝对居中、超长截断、非交互', () => {
     const block = stripComments(topBar)
+    expect(block).toContain('画布·「{{ projectName }}」')
+    expect(block).toMatch(/\.wkb-page-title\s*\{[\s\S]{0,400}?left:\s*50%/)
+    expect(block).toMatch(/\.wkb-page-title\s*\{[\s\S]{0,400}?transform:\s*translateX\(-50%\)/)
+    expect(block).toMatch(/\.wkb-page-title\s*\{[\s\S]{0,400}?font-size:\s*13px/)
+    expect(block).toMatch(/\.wkb-page-title\s*\{[\s\S]{0,400}?font-weight:\s*300/)
     expect(block).toContain('var(--lnk-text-secondary')
     expect(block).toContain('text-overflow: ellipsis')
-    // 截断上限：不让项目名抢占视觉
-    expect(block).toMatch(/max-width:\s*calc\(100% - 1[0-9][0-9]px\)/)
+    expect(block).toContain('pointer-events: none')
   })
 
   it('菜单含发布 / 导出（含轻量包二级）/ 导入，与移动端同构', () => {

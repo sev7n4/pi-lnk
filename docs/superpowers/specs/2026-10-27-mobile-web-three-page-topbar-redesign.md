@@ -129,6 +129,11 @@
 
 ### 6.4 项目名称统一样式规约（用户硬约束，移动+WEB 通用）
 
+> ⭐ **§14 v4 取代注（2026-10-28）**：本节「左置 15px / weight 500」样式已升级为
+> **居中页题注**——「对话·「项目名称」」/「画布·「项目名称」」（页签前缀 + 直角引号包裹），
+> 细体 `font-weight: 300`、小字号（移动 12px / PC 13px）、绝对居中、次级灰、截断、非交互。
+> 详见 §14.2-D2；颜色（次级灰）与非交互约束沿用本节。
+
 适用：§6.2、§6.3（移动端顶栏）、§6.8（WEB 工作台顶栏）的项目名。**目的：可见但不抢眼，超长必须截断。**
 
 - **颜色**：`var(--lnk-text-secondary)`（次级灰），**禁止**用 `--lnk-text-primary`、禁止纯黑。
@@ -402,3 +407,37 @@ iOS 范式（scroll-edge appearance）：导航栏默认融入内容，仅当内
 6. `components/mobile/MobileSheet.vue`：z→modal 令牌（B2）。
 7. `components/canvases/ProjectGrid.vue`（新增）/ `ProjectList.vue`（自 CanvasesPage 抽出）；`pages/CanvasesPage.vue` 断点切换（C1-C3）。
 8. 测试：`AppHeader.test.ts`/`galleryBareBar.test.ts`（V14/V15）、`WorkspaceTopBar.test.ts`（V18）、`design-token.test.ts`（B4/V16/V19）、`CanvasesPage.test.ts`（V17）、新增 `ProjectGrid.test.ts`（卡墙契约）。
+
+## 14. 追加迭代 v4（2026-10-28 晚 · 真机走查：封条终撤 + 居中页题注 + 对话页顶栏可见性回归修复）
+
+### 14.1 背景与根因
+
+真机走查（#631 后第四轮）三条反馈：
+
+1. **【画布】页仍有「封条」**：#628 只撤了发丝线，`WorkspaceTopBar`（PC）保留 `--lnk-surface` 材质底+blur、`MobileTopBar` 画布页签保留 `--lnk-surface-overlay` 材质底——材质横带在画布底色上仍是一根「封条」。
+2. **【对话】页看不到项目名称、也没有「‹ 创作空间」回城出口**：⭐ **#628 引入的 z 序回归**——顶栏 z 从裸 85 收敛为 `var(--lnk-z-chrome)`=40（§13.2），而移动端对话面板 `.agent-panel-mobile-dock`（Teleport 到 body，与顶栏同层竞争）仍是裸 `z-index: 70` ⇒ 面板不透明背景（`--lnk-surface-canvas`，top:0 满屏）**反盖顶栏**，回城出口与项目名整体不可见。画布页签面板不遮顶栏 ⇒ 只暴露「封条」，形成「画布页有名称、对话页啥都没有」的错位观感。
+3. **顶栏标题内容与位置不对**：项目名左置、15px/500，用户要求**居中**且带页签前缀（对话/画布），细体小字不抢占。
+
+### 14.2 裁定
+
+- **D1 画布封条终撤**：`WorkspaceTopBar` 去材质底+blur（`background: transparent`）；`MobileTopBar` 画布页签加 `is-canvas-bare`（透明）。**对话页签材质保留**——对话流 `padding-top: 16px < 栏高 44px`，内容从栏下穿过，透明栏会让正文顶进题注区。
+- **D2 居中页题注（取代 §6.4 左置样式，见 §6.4 取代注）**：
+  - 文案：chat → `对话·「项目名称」`；canvas → `画布·「项目名称」`；PC（WorkspaceTopBar 恒为画布语义）→ `画布·「项目名称」`。
+  - 样式：绝对居中（`left:50%` + `translateX(-50%)`，不随左右簇宽度漂移）、`font-weight: 300`、移动 12px / PC 13px、`--lnk-text-secondary`、ellipsis 截断、`pointer-events: none`。视觉权重全栏最低。
+- **D3 对话面板 z 序治本**：`.agent-panel-mobile-dock` z `70 → 30`——面板是页面级表面，落在 `main`(z-10 堆叠上下文) 之上、三顶栏 chrome(40) 与项目抽屉(95) 之下。design-token.test.ts 新增守卫钉死（面板 z 回到 ≥40 即红）。
+- **D4 取代关系**：本条取代 §6.4 样式细则（颜色/非交互沿用）、§13.1 中「材质底保留」的画布分支表述；`backdrop-filter` 在 WorkspaceTopBar 全退（V14 延伸：blur 也零命中）。
+
+### 14.3 验收判据（v4 追加）
+
+| # | 判据 | 验证方式 |
+|---|---|---|
+| V20 | 对话页（tab='chat'）顶栏可见：`‹ 创作空间` 可点、居中题注 `对话·「…」` 可见；面板 z=30 被 design-token 守卫钉死 | 真机走查 + design-token.test.ts |
+| V21 | 画布页（tab='canvas'）与 PC 工作台顶栏零封条：无材质底、无 blur、无发丝线 | grep 守卫（WorkspaceTopBar.test.ts / MobileTopBar.redesign.test.ts） |
+| V22 | 居中题注三处齐备：MobileTopBar（对话/画布双前缀）+ WorkspaceTopBar（画布·「」）；`left:50%`+`translateX(-50%)`+weight 300 | 静态契约测试 |
+
+### 14.4 文件级改动清单（v4 追加）
+
+1. `components/mobile/MobileTopBar.vue`：`is-canvas-bare` 画布页签透明；左置项目名 → 居中题注 `topbar-page-title`（testid `mobile-topbar-project-name` 保留）。
+2. `components/canvas/WorkspaceTopBar.vue`：栏体透明（去 bg+blur）；左置项目名 → 居中题注 `wkb-page-title`（testid `workspace-project-name` 保留）。
+3. `components/agent/AgentSideRail.vue`：`.agent-panel-mobile-dock` z `70 → 30`（根因修复）。
+4. 测试：`MobileTopBar.redesign.test.ts`（V21/V22）、`WorkspaceTopBar.test.ts`（V21/V22）、`design-token.test.ts`（D3 守卫）。

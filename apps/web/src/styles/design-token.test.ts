@@ -649,4 +649,15 @@ describe('z-index 语义阶梯消费（§13.2）', () => {
     const tele = tpl.match(/<Teleport to="body">([\s\S]*?)<\/Teleport>/)?.[1] ?? ''
     expect(tele).toContain('data-testid="mobile-viewer"')
   })
+
+  it('移动端对话面板必须压在顶栏 chrome(40) 之下（§13.5：对话页回城出口被面板反盖的根因守卫）', () => {
+    // 面板与顶栏都 teleport 到 body 同层竞争：面板 30 ∈ (main z-10, chrome 40)。
+    // 历史回归：#628 顶栏 85→chrome(40) 后面板裸 z:70 反盖顶栏 ⇒
+    // 对话页「‹ 创作空间」与页题注整体不可见。此值禁止回到 ≥40。
+    const src = readFileSync(join(HERE, '..', 'components/agent/AgentSideRail.vue'), 'utf8')
+    const block = src.match(/\.agent-panel-mobile-dock\.agent-panel-shell\s*\{[\s\S]*?\}/)?.[0] ?? ''
+    expect(block, '找不到 .agent-panel-mobile-dock.agent-panel-shell 规则块').not.toBe('')
+    const z = block.match(/z-index:\s*(\d+)/)?.[1]
+    expect(Number(z), '对话面板 z-index 必须是 30（页面表面：< chrome 40、> main 10）').toBe(30)
+  })
 })
