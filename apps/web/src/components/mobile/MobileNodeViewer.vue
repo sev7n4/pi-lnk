@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { sameOriginApiMediaUrl } from '@/services/media-url'
-import { composeAnnotatedImage, type AnnotateMark } from './annotate/composeAnnotatedImage'
+import { composeAnnotatedImage } from './annotate/composeAnnotatedImage'
 import { renderReviewBaseImage } from './annotate/renderReviewBaseImage'
+import { useInkOverlay } from './annotate/useInkOverlay'
 import { useTextToSpeech } from '@/composables/useTextToSpeech'
 import { useNodeWaveform } from '@/composables/useNodeWaveform'
 import { formatMediaDuration } from '@/utils/mediaInfoFormat'
@@ -199,100 +200,41 @@ function onBottomAction(key: string) {
   emit('bottom-action', key)
 }
 
-/* ── 标注态（L1：只有一支笔 —— 手指自由圈选）──────────────────────── */
+/* ── 标注态（L1：只有一支笔 —— 手指自由圈选；共享 useInkOverlay）──────────
+ *   ⭐ 2026-10-28 W-26/W-27 真机修复：此前此处与全文层各自实现画笔且同犯
+ *   「bitmap 尺寸从未设置」bug（默认 300×150 被拉伸全屏 ⇒ 手指笔画大多落在
+ *   bitmap 外不可见）——现收敛到共享组合式（DPR bitmap + Pointer Events +
+ *   rAF 重绘 + 中点贝塞尔平滑），修一次两处生效。marks 坐标空间不变（CSS 像素），
+ *   合成图（composeAnnotatedImage）零适配。 */
 const annotating = ref(false)
-/** 当前手绘的标记（一条 = 一串点） */
-const marks = ref<AnnotateMark[]>([])
 /** 画笔实时预览用的覆盖层 canvas */
 const inkCanvas = ref<HTMLCanvasElement | null>(null)
-/** 手势起点 */
-const inkStart = ref<{ x: number; y: number } | null>(null)
-/** 当前这一笔 */
-const inkPoints = ref<Array<{ x: number; y: number }>>([])
 /** §17-③：胶囊意见框可见（**首笔落定即弹**，无「完成」步骤） */
 const capsuleVisible = ref(false)
+const ink = useInkOverlay({
+  canvas: inkCanvas,
+  active: annotating,
+  // 首笔落定即弹胶囊（§17-③）：落定时 marks 已含该笔
+  onStrokeEnd: () => {
+    capsuleVisible.value = true
+  },
+})
 /** §17-④：编辑态（就地改字，沿用原 viewer，⛔ 不弹 sheet） */
 const editing = ref(false)
 const editText = ref('')
 
-function inkPoint(e: TouchEvent): { x: number; y: number } {
-  const t = e.touches?.[0] ?? e.changedTouches?.[0]
-  const rect = inkCanvas.value?.getBoundingClientRect()
-  return {
-    x: Math.round((t?.clientX ?? 0) - (rect?.left ?? 0)),
-    y: Math.round((t?.clientY ?? 0) - (rect?.top ?? 0)),
-  }
-}
-
-function onInkStart(e: TouchEvent) {
-  if (!annotating.value) return
-  const p = inkPoint(e)
-  inkStart.value = p
-  inkPoints.value = [p]
-  drawInk()
-}
-
-function onInkMove(e: TouchEvent) {
-  if (!annotating.value || !inkStart.value) return
-  inkPoints.value = [...inkPoints.value, inkPoint(e)]
-  drawInk()
-}
-
-function drawInk() {
-  const canvas = inkCanvas.value
-  const ctx = canvas?.getContext('2d')
-  if (!canvas || !ctx) return
-  ctx.clearRect(0, 0, canvas.width, canvas.height)
-  ctx.lineWidth = 6
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-  ctx.strokeStyle = 'rgba(255, 64, 64, 0.92)'
-  // ⭐ §17-③：批注可持续多笔（胶囊弹出后仍可补画）⇒ 已收笔的 marks 也要画，
-  // 否则每起新笔上一笔就从覆盖层消失（视觉断裂）。
-  const drawStroke = (pts: Array<{ x: number; y: number }>) => {
-    if (!pts.length) return
-    ctx.beginPath()
-    ctx.moveTo(pts[0]!.x, pts[0]!.y)
-    for (const p of pts.slice(1)) ctx.lineTo(p.x, p.y)
-    if (pts.length === 1) {
-      ctx.arc(pts[0]!.x, pts[0]!.y, 6, 0, Math.PI * 2)
-      ctx.fillStyle = 'rgba(255, 64, 64, 0.18)'
-      ctx.fill()
-      return
-    }
-    ctx.stroke()
-  }
-  for (const mark of marks.value) drawStroke(mark.points)
-  drawStroke(inkPoints.value)
-}
-
 /** 进入标注态（§17-③：底栏【批注】1 步进入） */
 function enterAnnotate() {
   annotating.value = true
-  marks.value = []
-  inkPoints.value = []
+  ink.reset()
   capsuleVisible.value = false
 }
 
 /** 退出标注态（放弃：清标记收胶囊） */
 function exitAnnotate() {
   annotating.value = false
-  marks.value = []
-  inkPoints.value = []
+  ink.reset()
   capsuleVisible.value = false
-}
-
-/**
- * 松手 ⇒ 收笔。⭐ §17-③ v2：**不再立即合成跳浮层** —— 首笔落定即弹胶囊意见框
- * （无「完成」步骤），用户可继续补画；点胶囊 ⚓ 才合成带回（onCapsuleAnchor）。
- */
-function onInkEnd() {
-  if (!annotating.value) return
-  if (inkPoints.value.length) {
-    marks.value = [...marks.value, { points: inkPoints.value }]
-  }
-  inkPoints.value = []
-  if (marks.value.length) capsuleVisible.value = true
 }
 
 /**
@@ -302,7 +244,7 @@ function onInkEnd() {
  */
 async function onCapsuleAnchor(payload: { text: string }) {
   capsuleVisible.value = false
-  const allMarks = marks.value
+  const allMarks = ink.marks.value
   annotating.value = false
   const text = payload.text.trim()
   if (!allMarks.length) {
@@ -540,7 +482,7 @@ function requestClose() {
 
 function onTouchStart(e: TouchEvent) {
   // ⭐ 评审 C1：标注态画笔手势不参与关闭判定——任何 >100px 的圈选笔画
-  // 都不得关掉查看器（否则 onInkEnd 的异步合成还没 emit，节点已被清空，标注静默丢失）。
+  // 都不得关掉查看器（否则收笔后异步合成还没 emit，节点已被清空，标注静默丢失）。
   if (annotating.value) return
   // ⭐ W-5：图片双指捏合进入缩放态——本次手势被消费，不参与关闭判定。
   if (props.type === 'image' && e.touches.length === 2) {
@@ -639,7 +581,7 @@ function onTouchEnd() {
     touchStartScrollTop.value = 0
     return
   }
-  // ⭐ 评审 C1：标注态（含 onInkEnd 异步合成期间）不触发关闭
+  // ⭐ 评审 C1：标注态（含收笔后的异步合成期间）不触发关闭
   if (annotating.value) return
   // ⭐ 方向判据（2026-10-27 走查③修）：currentY − startY > 0 才是「下拉」。
   // 旧实现 startY − currentY > 100 = **上滑**关闭（方向写反），长文上滑滚动
@@ -735,16 +677,17 @@ defineExpose({ videoRef })
       {{ annotating ? '取消' : '圈选' }}
     </button>
 
-    <!-- 画笔覆盖层（标注态：单指不再滚动/缩放，touch-action: none） -->
+    <!-- 画笔覆盖层（标注态：单指不再滚动/缩放，touch-action:none；
+         Pointer Events 采集 + bitmap 尺寸/DPR 由 useInkOverlay 负责——W-26/W-27 真机修复） -->
     <canvas
       v-show="annotating"
       ref="inkCanvas"
       class="viewer-ink"
       data-testid="mobile-viewer-ink"
-      @touchstart.passive="onInkStart"
-      @touchmove.passive="onInkMove"
-      @touchend="onInkEnd"
-      @touchcancel="onInkEnd"
+      @pointerdown.stop="ink.onPointerDown"
+      @pointermove.stop="ink.onPointerMove"
+      @pointerup.stop="ink.onPointerUp"
+      @pointercancel.stop="ink.onPointerCancel"
     />
 
     <!-- pending 无产物 ⇒ 审核内容层（提示词全文 + 参数只读），⛔ 禁空黑媒体区。

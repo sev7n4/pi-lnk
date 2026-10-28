@@ -2,6 +2,7 @@
 // 壳层正确渲染动作 sheet / 编辑 sheet，并把用户意图经回调路由回页面级真源逻辑
 // （不另起一套、不伪造）。覆盖 Review Focus #2「删 Dock 后编辑不丢链」。
 import { describe, expect, it, beforeEach, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import MobileCanvasShell, { type MobileEditorContext } from './MobileCanvasShell.vue'
@@ -124,6 +125,17 @@ beforeEach(() => {
   setActivePinia(createPinia())
   document.body.innerHTML = ''
 })
+
+
+/** 派发 PointerEvent（jsdom 实例属性只读 ⇒ test-utils trigger 赋值会炸，须走构造器） */
+async function firePointer(
+  el: Element,
+  type: string,
+  o: { pointerId: number; clientX?: number; clientY?: number },
+): Promise<void> {
+  el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, ...o }))
+  await nextTick()
+}
 
 describe('MobileCanvasShell 长按动作集成', () => {
   it('mobileActionNode 设置 → 渲染动作 sheet', () => {
@@ -377,8 +389,9 @@ describe('MobileCanvasShell 审核层底栏两键（§17 v2 · 拍板①）', ()
     })
     await w.find('[data-testid="mobile-viewer-bottom-annotate"]').trigger('click')
     const ink = w.find('[data-testid="mobile-viewer-ink"]')
-    await ink.trigger('touchstart', { touches: [{ clientX: 10, clientY: 10 }] })
-    await ink.trigger('touchend')
+    // 画笔已迁 useInkOverlay：Pointer Events 采集（touchstart → pointerdown）
+    await firePointer(ink.element as Element, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 })
+    await firePointer(ink.element as Element, 'pointerup', { pointerId: 1 })
     await w.find('[data-testid="mobile-annotation-capsule-input"]').setValue('构图太挤')
     await w.find('[data-testid="mobile-annotation-capsule-anchor"]').trigger('click')
     await vi.waitFor(() => expect(onViewerAnnotate).toHaveBeenCalled())

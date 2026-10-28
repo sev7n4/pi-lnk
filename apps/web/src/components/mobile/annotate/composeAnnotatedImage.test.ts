@@ -22,6 +22,7 @@ describe('composeAnnotatedImage（整图 + 标记 → 合成）', () => {
         beginPath: () => calls.push({ op: 'beginPath', args: [] }),
         moveTo: (...args: unknown[]) => calls.push({ op: 'moveTo', args }),
         lineTo: (...args: unknown[]) => calls.push({ op: 'lineTo', args }),
+        quadraticCurveTo: (...args: unknown[]) => calls.push({ op: 'quadraticCurveTo', args }),
         stroke: () => calls.push({ op: 'stroke', args: [] }),
         arc: (...args: unknown[]) => calls.push({ op: 'arc', args }),
         fill: () => calls.push({ op: 'fill', args: [] }),
@@ -59,12 +60,24 @@ describe('composeAnnotatedImage（整图 + 标记 → 合成）', () => {
     expect(draw!.args).toEqual([base, 0, 0, 320, 240])
   })
 
-  it('多点标记 ⇒ 画一条折线（moveTo + lineTo… + stroke）', () => {
+  it('两点标记 ⇒ 直线段（moveTo + lineTo + stroke，无贝塞尔）', () => {
+    const { calls, factory } = stubCanvas()
+    const marks: AnnotateMark[] = [{ points: [{ x: 1, y: 2 }, { x: 3, y: 4 }] }]
+    composeAnnotatedImage(null, 100, 100, marks, factory)
+    expect(calls.filter((c) => c.op === 'moveTo')).toHaveLength(1)
+    expect(calls.filter((c) => c.op === 'lineTo')).toHaveLength(1)
+    expect(calls.filter((c) => c.op === 'quadraticCurveTo')).toHaveLength(0)
+    expect(calls.filter((c) => c.op === 'stroke')).toHaveLength(1)
+  })
+
+  it('多点标记 ⇒ 平滑笔画（moveTo + 中点贝塞尔×(n−2) + lineTo 收笔 + stroke）', () => {
     const { calls, factory } = stubCanvas()
     const marks: AnnotateMark[] = [{ points: [{ x: 1, y: 2 }, { x: 3, y: 4 }, { x: 5, y: 6 }] }]
     composeAnnotatedImage(null, 100, 100, marks, factory)
     expect(calls.filter((c) => c.op === 'moveTo')).toHaveLength(1)
-    expect(calls.filter((c) => c.op === 'lineTo')).toHaveLength(2)
+    // ⭐ 与实时预览共享 strokeMarkPath —— 合成图同样走中点二次贝塞尔（所见即所得）
+    expect(calls.filter((c) => c.op === 'quadraticCurveTo')).toHaveLength(1)
+    expect(calls.filter((c) => c.op === 'lineTo')).toHaveLength(1)
     expect(calls.filter((c) => c.op === 'stroke')).toHaveLength(1)
   })
 
