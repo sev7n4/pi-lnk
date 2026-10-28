@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { sameOriginApiMediaUrl } from '@/services/media-url'
+import { resolveTextNodeFormat, stripHtmlTags } from '@lnkpi/shared'
+import HtmlNodePreview from '@/components/canvas/HtmlNodePreview.vue'
 import { composeAnnotatedImage, type AnnotateMark } from './annotate/composeAnnotatedImage'
 import { mapMarksToImageSpace } from './annotate/mapMarksToImageSpace'
 import { renderReviewBaseImage } from './annotate/renderReviewBaseImage'
@@ -79,6 +81,12 @@ const emit = defineEmits<{
 const tts = useTextToSpeech()
 const ttsSpeaking = ref(false)
 
+/** S5（§8 同源）：format:'html' 文本节点 ⇒ embedded 沙箱预览面（无浮层/第二关闭钮，
+ *  退出仍归 viewer 自己的 X + 下滑）；朗读源改 strip 后纯文本（§8 节点卡摘要同源）。 */
+const isHtmlNode = computed(() =>
+  resolveTextNodeFormat((props.data as Record<string, unknown> | undefined)?.format) === 'html',
+)
+
 /** 朗读自然结束复位：SpeechSynthesis 在 utterance 结束时派发 'end' 事件
  * （onend 在实例上、不在 SpeechSynthesis 上）。用具名 handler 以便重复朗读时
  * 不累积监听器、卸载时移除。 */
@@ -90,7 +98,10 @@ function toggleReaderSpeak() {
     ttsSpeaking.value = false
     return
   }
-  const text = String((props.data as Record<string, unknown> | undefined)?.content ?? '')
+  // ⭐ S5（§8 同源）：html 节点朗读 strip 后纯文本（非 raw html）；
+  //   strip 为空（纯标签/脚本）⇒ 无内容可读，同「空文本不出朗读钮」。
+  const raw = String((props.data as Record<string, unknown> | undefined)?.content ?? '')
+  const text = isHtmlNode.value ? stripHtmlTags(raw) : raw
   if (!text.trim()) return
   const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined
   if (ttsEndHandler && synth) synth.removeEventListener('end', ttsEndHandler)
@@ -177,7 +188,9 @@ const resolvedBottomActions = computed(() => {
     ? [{ key: 'annotate', label: '圈选' }, ...base]
     : [...base]
   const isText = props.type === 'text'
-  const hasText = Boolean(String(nodeData.value.content ?? '').trim())
+  // ⭐ S5：hasText 判据与朗读源同源——html 节点用 strip 后文本（纯标签不出朗读钮）
+  const rawContent = String(nodeData.value.content ?? '')
+  const hasText = Boolean((isHtmlNode.value ? stripHtmlTags(rawContent) : rawContent).trim())
   if (isText && hasText && !isPendingNode.value) {
     actions.push({ key: 'tts', label: ttsSpeaking.value ? '停止' : '朗读' })
   }
@@ -827,7 +840,18 @@ defineExpose({ videoRef })
         <span class="viewer-audio-time">{{ audioTimeLabel }}</span>
       </div>
     </div>
-    <div v-else-if="type === 'text'" ref="readerRef" class="viewer-reader">{{ data?.content }}</div>
+    <!-- S5：text 分支——format:'html' ⇒ embedded 沙箱预览面（HtmlNodePreview embedded
+         自带 iframe 沙箱与 CSP；退出/触控/reduced-motion 契约全部归 viewer 本体）；
+         无 format ⇒ 既有纯文本阅读器路径不变（G3）。 -->
+    <template v-else-if="type === 'text'">
+      <HtmlNodePreview
+        v-if="isHtmlNode"
+        class="viewer-reader viewer-reader--html"
+        :content="String(data?.content ?? '')"
+        embedded
+      />
+      <div v-else ref="readerRef" class="viewer-reader">{{ data?.content }}</div>
+    </template>
 
     <!-- §17-③ 胶囊意见框：首笔落定即弹（in-viewer 内联浮条，可继续补画） -->
     <MobileAnnotationCapsule
