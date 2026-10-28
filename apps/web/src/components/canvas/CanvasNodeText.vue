@@ -6,7 +6,9 @@ import NeoBaseNode from '@/components/canvas/NeoBaseNode.vue'
 import NodeTaskCornerActions from '@/components/canvas/NodeTaskCornerActions.vue'
 import NodeStatusInfoButton from '@/components/canvas/NodeStatusInfoButton.vue'
 import PromptMarkdownEditor from '@/components/canvas/PromptMarkdownEditor.vue'
-import { CANVAS_NODE_PATCH_KEY } from '@/composables/canvasNodeActions'
+import HtmlNodePreview from '@/components/canvas/HtmlNodePreview.vue'
+import { CANVAS_NODE_PATCH_KEY, CANVAS_NODE_READONLY_KEY } from '@/composables/canvasNodeActions'
+import { htmlNodeSummary, resolveTextNodeFormat } from '@lnkpi/shared'
 import { NODE_GENERATION_STATUS } from '@/constants/dockStudio'
 
 const props = defineProps<{
@@ -14,6 +16,7 @@ const props = defineProps<{
   data: {
     content: string
     label?: string
+    format?: string
     status?: string
     errorMessage?: string
     errorCode?: string
@@ -77,11 +80,57 @@ function onSave(md: string) {
     updateNodeData(nodeId, { content: md })
   }
 }
+
+const readonlyPage = inject(CANVAS_NODE_READONLY_KEY, false)
+const isHtml = computed(() => resolveTextNodeFormat(props.data.format) === 'html')
+const htmlSummary = computed(() => htmlNodeSummary(props.data as Record<string, unknown>))
+const previewOpen = ref(false)
+
+function openHtmlPreview() {
+  if (readonlyPage) return
+  previewOpen.value = true
+}
+
+// 规格 §5.4：emit save → 宿主 patch 通路；patchCanvasNode 缺席（无 patch 通道的宿主）
+// 不落 updateNodeData fallback——预览本就不该在只读宿主打开（openHtmlPreview 已拦）。
+function onHtmlSave(payload: { content: string; format: 'html' }) {
+  if (patchCanvasNode && nodeId) {
+    patchCanvasNode(nodeId, { content: payload.content, format: payload.format })
+  }
+  previewOpen.value = false
+}
 </script>
 
 <template>
   <NeoBaseNode node-type="text" :selected="selected" :data="data" :status="data.status">
-    <div class="neo-text-card" title="双击打开沉浸编辑（全屏）" @dblclick.stop="openEditor">
+    <div
+      v-if="isHtml"
+      class="neo-text-card neo-text-card--html"
+      title="双击打开 HTML 沙箱预览"
+      @dblclick.stop="openHtmlPreview"
+    >
+      <span class="neo-html-badge">HTML</span>
+      <p class="neo-html-summary">{{ htmlSummary || 'HTML 产物' }}</p>
+      <NodeStatusInfoButton
+        v-if="showStatusInfoButton"
+        :status="data.status"
+        :task-kind="taskKind"
+        :task-id="taskId"
+        :node-label="typeof data.label === 'string' ? data.label : undefined"
+      />
+      <NodeTaskCornerActions
+        :status="data.status"
+        :started-at="typeof data.generationStartedAt === 'string' ? data.generationStartedAt : undefined"
+        :error-message="data.errorMessage as string | undefined"
+        :error-code="data.errorCode as string | undefined"
+        :task-kind="taskKind"
+        :task-id="taskId"
+        :node-label="typeof data.label === 'string' ? data.label : undefined"
+        :session-id="sessionId"
+        error-detail="status-icon"
+      />
+    </div>
+    <div v-else class="neo-text-card" title="双击打开沉浸编辑（全屏）" @dblclick.stop="openEditor">
       <p>{{ data.content || '双击编辑文本,或在下方 Dock 生成' }}</p>
       <NodeStatusInfoButton
         v-if="showStatusInfoButton"
@@ -107,6 +156,12 @@ function onSave(md: string) {
       v-model="draft"
       :title="typeof data.label === 'string' ? data.label : undefined"
       @save="onSave"
+    />
+    <HtmlNodePreview
+      v-if="previewOpen"
+      :content="String(data.content ?? '')"
+      @save="onHtmlSave"
+      @close="previewOpen = false"
     />
   </NeoBaseNode>
 </template>
