@@ -86,7 +86,7 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
 
   it('audio: 有圈选入口（底图 = 波形图，§4.3）', async () => {
     const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'audio', data: { url: 'x.mp3' } } })
-    const btn = w.find('[data-testid="mobile-viewer-annotate"]')
+    const btn = w.find('[data-testid="mobile-viewer-bottom-annotate"]')
     expect(btn.exists()).toBe(true)
     await btn.trigger('click')
     expect(w.find('[data-testid="mobile-viewer-ink"]').isVisible()).toBe(true)
@@ -200,11 +200,11 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
       expect(w.find('audio').attributes('preload')).toBe('metadata')
     })
 
-    it('媒体区收进 .viewer-body；圈选 / 倍速在 body 内（绝对锚点=媒体区底，不再被主栏盖）', () => {
+    it('媒体区收进 .viewer-body；圈选在底栏（入口统一）、倍速在 body 内（绝对锚点=媒体区底）', () => {
       const img = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'image', data: { url: 'x.png' } } })
       const body = img.find('.viewer-body')
       expect(body.exists()).toBe(true)
-      expect(body.find('[data-testid="mobile-viewer-annotate"]').exists()).toBe(true)
+      expect(img.find('[data-testid="mobile-viewer-bottom-annotate"]').exists()).toBe(true)
       img.unmount()
       const vid = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'video', data: { url: 'x.mp4' } } })
       expect(vid.find('.viewer-body [data-testid="mobile-viewer-speed"]').exists()).toBe(true)
@@ -237,7 +237,7 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
 
     it('标注态下手势不触发关闭（评审 C1：画圈 >100px 不得关掉查看器丢标注）', async () => {
       const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'image', data: { url: 'x.png' } } })
-      await w.get('[data-testid="mobile-viewer-annotate"]').trigger('click')
+      await w.get('[data-testid="mobile-viewer-bottom-annotate"]').trigger('click')
       const root = w.get('[data-testid="mobile-viewer"]')
       await root.trigger('touchstart', { touches: [{ clientY: 150 }] })
       await root.trigger('touchmove', { touches: [{ clientY: 400 }] })
@@ -296,11 +296,11 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
 
   // ── 回归③④：底部互殴结构性修复 ─────────────────────────────────────────
   describe('底部布局结构（回归③④：viewer-body + 文档流主栏）', () => {
-    it('媒体区收进 .viewer-body；圈选 / 倍速在 body 内（绝对锚点=媒体区底，不再被主栏盖）', () => {
+    it('媒体区收进 .viewer-body；圈选在底栏（入口统一）、倍速在 body 内（绝对锚点=媒体区底）', () => {
       const img = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'image', data: { url: 'x.png' } } })
       const body = img.find('.viewer-body')
       expect(body.exists()).toBe(true)
-      expect(body.find('[data-testid="mobile-viewer-annotate"]').exists()).toBe(true)
+      expect(img.find('[data-testid="mobile-viewer-bottom-annotate"]').exists()).toBe(true)
       img.unmount()
       const vid = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'video', data: { url: 'x.mp4' } } })
       expect(vid.find('.viewer-body [data-testid="mobile-viewer-speed"]').exists()).toBe(true)
@@ -378,21 +378,46 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
   describe('标注态（显式进入 + 轻点即画）', () => {
     it('有「圈选」入口（显式进入，⛔ 不做隐式双击手势）', () => {
       const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'image', data: { url: 'https://x/a.png' } } })
-      expect(w.find('[data-testid="mobile-viewer-annotate"]').exists()).toBe(true)
+      expect(w.find('[data-testid="mobile-viewer-bottom-annotate"]').exists()).toBe(true)
       w.unmount()
     })
 
     it('文本节点不提供圈选入口（文本走文字引用，无底图）', () => {
       const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'text', data: { content: '你好' } } })
-      expect(w.find('[data-testid="mobile-viewer-annotate"]').exists()).toBe(false)
+      expect(w.find('[data-testid="mobile-viewer-bottom-annotate"]').exists()).toBe(false)
       w.unmount()
     })
 
     it('点「圈选」⇒ 进入标注态（画布覆盖层出现 + 按钮文案变「取消」）', async () => {
       const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'image', data: { url: 'https://x/a.png' } } })
-      await w.get('[data-testid="mobile-viewer-annotate"]').trigger('click')
+      await w.get('[data-testid="mobile-viewer-bottom-annotate"]').trigger('click')
       expect(w.find('[data-testid="mobile-viewer-ink"]').isVisible()).toBe(true)
-      expect(w.get('[data-testid="mobile-viewer-annotate"]').text()).toContain('取消')
+      expect(w.get('[data-testid="mobile-viewer-bottom-annotate"]').text()).toContain('取消')
+      w.unmount()
+    })
+
+    it('入口统一（真机反馈①）：confirmed image 底栏 = [圈选][改词] 同工具栏，浮动圆钮退役', async () => {
+      const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } },
+        props: { type: 'image', data: { url: 'x.png' }, bottomActions: [{ key: 'edit', label: '改词', variant: 'primary' as const }] },
+      })
+      expect(w.find('.viewer-annotate').exists()).toBe(false)
+      const bar = w.get('.viewer-bottom-actions')
+      const keys = bar.findAll('[data-testid]').map((b) => b.attributes('data-testid'))
+      expect(keys).toEqual(['mobile-viewer-bottom-annotate', 'mobile-viewer-bottom-edit'])
+      w.unmount()
+    })
+
+    it('标注聚焦模式（真机反馈③）：圈选态底栏收敛为唯一 [取消圈选]，改词退场', async () => {
+      const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } },
+        props: { type: 'image', data: { url: 'x.png' }, bottomActions: [{ key: 'edit', label: '改词' }] },
+      })
+      await w.get('[data-testid="mobile-viewer-bottom-annotate"]').trigger('click')
+      const keys = w.get('.viewer-bottom-actions').findAll('[data-testid]').map((b) => b.attributes('data-testid'))
+      expect(keys).toEqual(['mobile-viewer-bottom-annotate'])
+      expect(w.get('[data-testid="mobile-viewer-bottom-annotate"]').text()).toContain('取消圈选')
+      // 再点 = 退出
+      await w.get('[data-testid="mobile-viewer-bottom-annotate"]').trigger('click')
+      expect(w.find('[data-testid="mobile-viewer-ink"]').isVisible()).toBe(false)
       w.unmount()
     })
 
@@ -435,7 +460,7 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
       const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } },
         props: { type: 'image', data: { status: 'pending_confirm', prompt: '一段提示词' } },
       })
-      expect(w.find('[data-testid="mobile-viewer-annotate"]').exists()).toBe(false)
+      expect(w.find('[data-testid="mobile-viewer-bottom-annotate"]').exists()).toBe(false)
       w.unmount()
     })
 
@@ -445,7 +470,7 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
       })
       expect(w.find('[data-testid="mobile-viewer-review"]').exists()).toBe(false)
       expect(w.find('img').exists()).toBe(true)
-      expect(w.find('[data-testid="mobile-viewer-annotate"]').exists()).toBe(true)
+      expect(w.find('[data-testid="mobile-viewer-bottom-annotate"]').exists()).toBe(true)
       w.unmount()
     })
 

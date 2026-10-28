@@ -2,13 +2,17 @@
 import { ref, watch } from 'vue'
 
 /**
- * 批注态胶囊意见框（规格 §17-③ / §9 #46，2026-10-27）。
+ * 批注态胶囊意见框（规格 §17-③ / §9 #46；2026-10-28 真机反馈③ 重设计）。
  *
  * ⭐ **首笔即弹**：批注态下首笔落定由 Viewer 置 `visible=true` —— 无「完成」步骤、
  *   无缩略图确认条（v1 两段式已废弃）。用户可继续补画，填/不填文字都可点 ⚓。
  * ⚡ 带回语义（拍板③④）：文字作为 composer **正文预填**（截图只含圈选标记，
  *   不烧字）；⚓ 落下即标提议拒绝（decline 结算在壳层）。
  * 容器：viewer 内联浮条（⛔ 非 MobileSheet —— 不遮批注画布，可继续画）。
+ *
+ * ⭐ v2 视觉（HIG 极简）：单行**毛玻璃小胶囊**（surface-glass + glass-blur）——
+ *   [输入框 flex][⚓ 圆形主色钮]，总高 ≈ 1 个触控目标；说明文案并入 placeholder。
+ *   此前大卡片（textarea×2 行 + 大按钮 + 说明段）遮挡圈选/取消且与工具栏抢视觉。
  */
 const props = withDefaults(
   defineProps<{
@@ -37,30 +41,36 @@ function anchor() {
   if (props.uploading) return
   emit('anchor', { text: text.value.trim() })
 }
+
+function onInputKeydown(e: KeyboardEvent) {
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    anchor()
+  }
+}
 </script>
 
 <template>
   <div v-if="visible" class="mobile-annotation-capsule" data-testid="mobile-annotation-capsule">
-    <textarea
+    <input
       v-model="text"
       class="mobile-annotation-capsule-input"
-      rows="2"
-      placeholder="补充意见（可不填，直接点 ⚓）"
+      type="text"
+      :placeholder="uploading ? '截图上传中…' : '补充意见，可不填'"
+      :disabled="uploading"
       data-testid="mobile-annotation-capsule-input"
+      @keydown.enter="onInputKeydown"
     />
-    <div class="mobile-annotation-capsule-row">
-      <button
-        type="button"
-        class="mobile-annotation-capsule-anchor"
-        :disabled="uploading"
-        data-testid="mobile-annotation-capsule-anchor"
-        @click="anchor"
-      >
-        <span class="mobile-annotation-capsule-anchor-icon" aria-hidden="true" />
-        <span>{{ uploading ? '上传中…' : '带回对话' }}</span>
-      </button>
-      <p class="mobile-annotation-capsule-note">当前屏截为图（含圈选标记）· 意见也可稍后在对话补充</p>
-    </div>
+    <button
+      type="button"
+      class="mobile-annotation-capsule-anchor"
+      :disabled="uploading"
+      :aria-label="uploading ? '上传中' : '带回对话'"
+      data-testid="mobile-annotation-capsule-anchor"
+      @click="anchor"
+    >
+      <span class="mobile-annotation-capsule-anchor-icon" aria-hidden="true" />
+    </button>
   </div>
 </template>
 
@@ -69,49 +79,48 @@ function anchor() {
   position: absolute;
   left: var(--lnk-space-2);
   right: var(--lnk-space-2);
-  bottom: calc(var(--lnk-space-2) + env(safe-area-inset-bottom));
+  bottom: var(--lnk-space-2);
   z-index: 6;
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: var(--lnk-space-2);
-  padding: var(--lnk-space-3);
-  border: 1px solid var(--lnk-border-strong);
-  border-radius: var(--lnk-radius-lg);
-  background: var(--lnk-surface-base);
-  box-shadow: var(--lnk-shadow-md);
+  padding: var(--lnk-space-1) var(--lnk-space-1) var(--lnk-space-1) var(--lnk-space-3);
+  border: 0.5px solid var(--lnk-glass-topline);
+  border-radius: var(--lnk-radius-full);
+  background: var(--lnk-surface-glass);
+  -webkit-backdrop-filter: blur(var(--lnk-glass-blur)) saturate(160%);
+  backdrop-filter: blur(var(--lnk-glass-blur)) saturate(160%);
+  box-shadow: var(--lnk-shadow-sm);
 }
 
 .mobile-annotation-capsule-input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: var(--lnk-space-2);
-  border: 1px solid var(--lnk-border-strong);
-  border-radius: var(--lnk-radius-md);
-  background: var(--lnk-surface-raised);
+  flex: 1;
+  min-width: 0;
+  height: var(--lnk-touch-target);
+  border: none;
+  background: transparent;
   color: var(--lnk-text-primary);
   font-size: var(--lnk-text-md);
   line-height: var(--lnk-lh-md);
-  resize: none;
+  outline: none;
 }
 
-.mobile-annotation-capsule-row {
-  display: flex;
-  align-items: center;
-  gap: var(--lnk-space-2);
+.mobile-annotation-capsule-input::placeholder {
+  color: var(--lnk-text-muted);
 }
 
 .mobile-annotation-capsule-anchor {
+  flex: none;
   display: inline-flex;
   align-items: center;
-  gap: var(--lnk-space-2);
-  min-height: var(--lnk-touch-target);
-  padding: 0 var(--lnk-space-3);
+  justify-content: center;
+  width: var(--lnk-touch-target);
+  height: var(--lnk-touch-target);
   border: none;
-  border-radius: var(--lnk-radius-md);
+  border-radius: var(--lnk-radius-full);
   background: var(--lnk-accent);
   color: var(--lnk-accent-on-signature);
-  font-size: var(--lnk-text-md);
-  font-weight: var(--lnk-weight-semibold);
+  cursor: pointer;
 }
 
 .mobile-annotation-capsule-anchor:disabled {
@@ -127,11 +136,5 @@ function anchor() {
   mask-size: contain;
   mask-repeat: no-repeat;
   mask-position: center;
-}
-
-.mobile-annotation-capsule-note {
-  margin: 0;
-  font-size: var(--lnk-text-xs);
-  color: var(--lnk-text-secondary);
 }
 </style>

@@ -126,7 +126,8 @@ describe('跨端视觉与组件哲学守卫（§4.11）', () => {
     const ICON_BUTTON_CLASSES = [
       'viewer-close',      // 查看器右上 X
       'viewer-more',       // 查看器右上 ⋯
-      'viewer-annotate',   // 圈选入口
+      // viewer-annotate（圈选入口）已退役（2026-10-28 真机反馈①：浮动圆钮与底栏
+      // 两套几何并存 ⇒ 入口统一进底部工具栏，为文本按钮非图标钮，V-5 不再适用）
       'mobile-account-close', // 「我的」面板关闭钮
     ]
     for (const cls of ICON_BUTTON_CLASSES) {
