@@ -332,3 +332,19 @@ ADR-0013 的 14 项拍板 **12 项完全落地、2 项部分**，跨端组件哲
 
 **测试**：批 1（strokePath 4 + useInkOverlay 7 + compose 8）19/19；批 2（viewer 53 + sheet 9 + shell 22）84/84；守卫/令牌 128/128；vue-tsc -b 绿。
 **⏳ 待真机复测**：W-26/W-27（画笔可见性 + 手感）、W-5、W-20/V-7 链、W-16、chips 四类可达。
+
+
+## §2-O 真机走查二轮反馈修复（2026-10-28 傍晚）——漂移 P0 + 底栏/胶囊 HIG 统一，已实现
+
+**反馈**：①圈选=圆形浮钮 vs 改词=紫色通栏卡，两套几何并存；②笔迹实时可见（#629 生效）但带回后标记位置漂移；③意见卡过大且遮挡取消钮、圈选流程里仍出现改词卡（场景错位）。
+
+**修复**：
+| # | 根因 | 修复 | 落点 |
+|---|---|---|---|
+| ② P0 | marks 记录在 ink 画布**屏幕空间**，compose 按**原图自然尺寸**绘制 ⇒ contain 留白 + W-5 zoom 双重未映射 | 逆映射纯函数（元素 rect + offset 尺寸 + 自然尺寸 ⇒ contain+transform 一步回映）；image/video 双路径接入；映射不成立⇒诚实降级（⛔ 静默错位比没有截图更有害） | `annotate/mapMarksToImageSpace.ts`（新）+ viewer `mapMarksForCompose()` |
+| ① | 浮动圆钮（absolute pill）与底栏（文档流按钮）是两套组件系统 | 浮动钮退役；圈选注入 `resolvedBottomActions` 工具栏，与改词**同几何等宽胶囊**（HIG：同级动作同一组件形态） | `MobileNodeViewer.vue` |
+| ③ | 意见卡 = 大卡片（textarea×2+大按钮+说明段）；圈选态底栏仍显示改词 | **标注聚焦模式**：圈选态底栏收敛为唯一[取消圈选]；胶囊重设计为**单行毛玻璃小胶囊**（surface-glass+glass-blur 既有令牌对，[输入框 flex][⚓ 圆钮]，回车即提交），悬浮工具栏正上方零遮挡 | `MobileAnnotationCapsule.vue` v2 |
+
+**守卫同步**：V-5 图标按钮清单移除 `.viewer-annotate`（退役，有据注释）。
+**测试**：映射 7 + 胶囊 7（新增回车提交）+ viewer 55（新增入口统一/聚焦模式）+ sheet/shell 回归 29 + 守卫/令牌 145；vue-tsc 绿。
+**⏳ 待真机复测**：漂移（精确度）、底栏统一观感、胶囊交互、W-5/W-20/W-16。
