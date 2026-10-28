@@ -310,3 +310,25 @@ ADR-0013 的 14 项拍板 **12 项完全落地、2 项部分**，跨端组件哲
 **交付**：commit 07a5fbe2 → REST push v4（FINAL tree MATCH，分支 head 6a859e4e）→ PR #624 更新。
 **规格回写**：§9 #31/#34 已实现注 + 新增 #57/#58；§10.3 W-5 行注（代码已实现，待真机复测）。
 **⏳ 待真机复测**：W-5（缩放/平移手感）、W-20/V-7 链、W-26/W-27、W-16 可见部分、chips 四类可达。
+
+
+## §2-N 真机走查首轮反馈修复（2026-10-28）——W-26/W-27 画笔不可见（P0），已实现
+
+**反馈**：全文层批注手指画线/圈**完全不可见**，无任何绘制反馈。
+
+**根因（P0 实现 bug，非手感问题）**：`viewer-ink`（查看器）与 `mpr-ink`（全文层）两处 canvas **从未设置 bitmap 尺寸**（`canvas.width/height` 默认 300×150），CSS `inset:0` 只拉伸显示盒 ⇒ 手指坐标（CSS 空间 ~390×844）大多落在 bitmap 外 = 不可见；左上角可见部分被非均匀拉伸（横 1.3×/纵 5.6×）。⭐ 合成图（composeAnnotatedImage）尺寸是对的——若点 ⚓ 带回 agent 收到的截图其实正常，坏的是实时预览致用户以为功能不存在。
+
+**修复（零第三方依赖）**：
+| 项 | 内容 | 落点 |
+|---|---|---|
+| 架构收敛 | 两处 ~90% 重复的画笔实现抽共享组合式（同源复发是本次结构性根因） | `annotate/useInkOverlay.ts`（新） |
+| bitmap/DPR | bitmap = CSS×devicePixelRatio（上限 3）+ setTransform；坐标空间保持 CSS 像素 ⇒ marks/合成图零适配 | 同上 |
+| 事件层 | TouchEvent → **Pointer Events**（pointerId 多点过滤 + setPointerCapture 出界不丢 + getCoalescedEvents 高频采样）+ rAF 合并重绘 | 同上 |
+| 笔迹平滑 | 中点二次贝塞尔（~10 行，八成观感提升）；**预览与合成图共享 strokeMarkPath = 所见即所得** | `annotate/strokePath.ts`（新）+ composeAnnotatedImage 接入 |
+
+**架构裁决（造轮子问题）**：web 无内建画笔（iOS PencilKit / Android Ink 为 native 专属），Canvas2D + PointerEvents **就是**原生路线，与 tldraw / excalidraw / signature_pad 同地基；值得借开源的不是事件采集而是笔迹渲染——`perfect-freehand`（MIT 单文件 ~2KB，tldraw 作者）记为备选升级路径，仅当真机复测后仍嫌笔迹生硬再 vendor。零第三方依赖优先（本仓约定）。
+
+**⭐ 坑（记死）**：①jsdom 盲区——getBoundingClientRect 恒 0 + canvas 假对象 ⇒ bitmap 尺寸 bug 单测完全不可见，可见性判据必须真机走查；②jsdom PointerEvent 实例属性只读 ⇒ test-utils `trigger('pointerdown', {...})` 赋值炸（`Cannot set property clientX`），须 `new PointerEvent(type, {...})` 构造器派发；③expose() 的 ref 在 vm 代理被自动解包（`exposed.active` 是布尔）⇒ 测试 harness 用存取器暴露；④本机 WorkBuddy 宿主 shim 经 NODE_OPTIONS 注入 brokered fs ⇒ `pnpm install` 的并行 mkdir 风暴必超时（3 连败含非沙箱），**`env -u NODE_OPTIONS pnpm install`** 1 分钟通过。
+
+**测试**：批 1（strokePath 4 + useInkOverlay 7 + compose 8）19/19；批 2（viewer 53 + sheet 9 + shell 22）84/84；守卫/令牌 128/128；vue-tsc -b 绿。
+**⏳ 待真机复测**：W-26/W-27（画笔可见性 + 手感）、W-5、W-20/V-7 链、W-16、chips 四类可达。
