@@ -6,9 +6,11 @@ const Q2 = [
 	{ id: 'style', question: '风格？', options: [{ label: '水墨', value: 'ink' }, { label: '水彩', value: 'water' }] },
 	{ id: 'count', question: '张数？', options: [{ label: '1 张', value: '1' }, { label: '2 张', value: '2' }] },
 ]
+// allowOther 缺省视为开启（与旧契约 allowOther !== false 一致）→ 每题渲染 1 行「其他…」
+const CHIPS_PER_Q = 3
 
-describe('AskUserCard（spec 2026-10-28 分页单题推进 / T0-T2）', () => {
-	it('单问题单选：点 chip 即 emit submit（低摩擦主路径，S1）', async () => {
+describe('AskUserCard（spec 2026-10-28 分页单题推进 / T0-T2 + 视觉重制）', () => {
+	it('单问题单选：点选项行即 emit submit（低摩擦主路径，S1）', async () => {
 		const w = mount(AskUserCard, { props: { questions: [Q2[0]] } })
 		await w.findAll('.ask-chip')[0].trigger('click')
 		expect(w.emitted('submit')![0][0]).toEqual({ answers: { style: ['ink'] } })
@@ -32,6 +34,25 @@ describe('AskUserCard（spec 2026-10-28 分页单题推进 / T0-T2）', () => {
 		await w.find('.ask-multi-confirm').trigger('click')
 		expect(w.emitted('submit')![0][0]).toEqual({ answers: { m: ['a'] } })
 	})
+	it('单问题「其他」：点「其他…」行展开输入，回车即提交（自由文本与选项同通道）', async () => {
+		const w = mount(AskUserCard, { props: { questions: [Q2[0]] } })
+		await w.find('.ask-chip-other').trigger('click')
+		expect(w.find('.ask-other-input').exists()).toBe(true)
+		await w.find('.ask-other-input').setValue('手绘风')
+		await w.find('.ask-other-input').trigger('keyup.enter')
+		expect(w.emitted('submit')![0][0]).toEqual({ answers: { style: ['手绘风'] } })
+	})
+	it('multiSelect「其他」：文本进已选集合随确认提交（修复旧实现写单选暂存位被静默丢弃）', async () => {
+		const q = { id: 'm', question: '多选？', multiSelect: true, options: [{ label: 'A', value: 'a' }, { label: 'B', value: 'b' }] }
+		const w = mount(AskUserCard, { props: { questions: [q] } })
+		await w.findAll('.ask-chip')[0].trigger('click') // A
+		await w.find('.ask-chip-other').trigger('click')
+		await w.find('.ask-other-input').setValue('自定义')
+		await w.find('.ask-other-done').trigger('click')
+		expect(w.find('.ask-multi-confirm').text()).toContain('已选 2 项')
+		await w.find('.ask-multi-confirm').trigger('click')
+		expect(w.emitted('submit')![0][0]).toEqual({ answers: { m: ['a', '自定义'] } })
+	})
 
 	// ---- T1 分页单题推进（吸上游 questionnaire.ts 范式）----
 	it('多题卡：一次只渲染一题（DOM 有界，防溢出死锁，S2/S6）', () => {
@@ -41,7 +62,7 @@ describe('AskUserCard（spec 2026-10-28 分页单题推进 / T0-T2）', () => {
 		const w = mount(AskUserCard, { props: { questions: five } })
 		// 只渲染当前一题，而非全部 5 题 → 不会因 DOM 无限增长溢出宿主（根因 1 复测）
 		expect(w.findAll('.ask-question')).toHaveLength(1)
-		expect(w.findAll('.ask-chip')).toHaveLength(2) // 仅当前题的 2 个选项
+		expect(w.findAll('.ask-chip')).toHaveLength(CHIPS_PER_Q) // 当前题 2 选项 + 1「其他…」行
 		expect(w.find('.ask-progress').text()).toContain('第 1 / 5 题')
 	})
 	it('多题卡：5 题可逐题导航抵达每一题（无 Q5 死锁，S2）', async () => {
@@ -61,12 +82,10 @@ describe('AskUserCard（spec 2026-10-28 分页单题推进 / T0-T2）', () => {
 			}
 		}
 	})
-	it('多题卡：上一题/下一题导航 + 答案跨页保留 + 答满自动提交（S2/S3）', async () => {
+	it('多题卡：首答自动推进下一未答题 + 上一题回退 + 答案跨页保留 + 答满自动提交（S2/S3）', async () => {
 		const w = mount(AskUserCard, { props: { questions: Q2 } })
-		await w.findAll('.ask-chip')[0].trigger('click') // Q1=ink
+		await w.findAll('.ask-chip')[0].trigger('click') // Q1=ink → 自动推进 Q2
 		expect(w.emitted('submit')).toBeUndefined() // 未答满不提交
-		expect(w.find('.ask-progress').text()).toContain('第 1 / 2 题')
-		await w.find('.ask-nav-next').trigger('click') // → Q2
 		expect(w.find('.ask-progress').text()).toContain('第 2 / 2 题')
 		await w.find('.ask-nav-prev').trigger('click') // 回 Q1
 		expect(w.find('.ask-progress').text()).toContain('第 1 / 2 题')
@@ -75,10 +94,25 @@ describe('AskUserCard（spec 2026-10-28 分页单题推进 / T0-T2）', () => {
 		await w.findAll('.ask-chip')[0].trigger('click') // count=1 → 答满自动提交
 		expect(w.emitted('submit')![0][0]).toEqual({ answers: { style: ['ink'], count: ['1'] } })
 	})
+	it('多题卡：修改已答题不触发自动推进（停留原地，防误跳）', async () => {
+		const w = mount(AskUserCard, { props: { questions: Q2 } })
+		await w.findAll('.ask-chip')[0].trigger('click') // Q1=ink → 推进 Q2
+		await w.find('.ask-nav-prev').trigger('click') // 回 Q1
+		await w.findAll('.ask-chip')[1].trigger('click') // 改选 water（改答）
+		expect(w.find('.ask-progress').text()).toContain('第 1 / 2 题') // 不推进
+	})
+	it('多题卡：跳过后自动推进 + 可返回「重新作答」', async () => {
+		const w = mount(AskUserCard, { props: { questions: Q2 } })
+		await w.find('.ask-skip').trigger('click') // skip Q1 → 推进 Q2
+		expect(w.find('.ask-progress').text()).toContain('第 2 / 2 题')
+		await w.find('.ask-nav-prev').trigger('click')
+		expect(w.find('.ask-skipped-note').text()).toContain('此题已跳过')
+		await w.find('.ask-unskip').trigger('click')
+		expect(w.find('.ask-skipped-note').exists()).toBe(false)
+	})
 	it('多题卡末页「提交」钮可显式提交（S3）', async () => {
 		const w = mount(AskUserCard, { props: { questions: Q2 } })
-		await w.findAll('.ask-chip')[0].trigger('click') // Q1=ink（未答满）
-		await w.find('.ask-nav-next').trigger('click') // → Q2（末页，未答）
+		await w.findAll('.ask-chip')[0].trigger('click') // Q1=ink（自动推进到末页）
 		expect(w.find('.ask-nav-submit').exists()).toBe(true)
 		expect(w.find('.ask-nav-next').exists()).toBe(false) // 末页无「下一题」
 		await w.find('.ask-nav-submit').trigger('click')
