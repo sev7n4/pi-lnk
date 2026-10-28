@@ -17,6 +17,19 @@ describe("html-craft skill wiring", () => {
 			assert.ok(entry.description.includes(word), `description 缺触发词: ${word}`);
 		}
 	});
+	it("loader 解析的 description 完整（>-> 折叠生效，含强制加载句与不适用边界）", () => {
+		// 守卫 parseSimpleYaml 截断回归：frontmatter 若退回多行 plain scalar，
+		// description 会截断到首行（~38 字符），路由索引丢失强制加载句与不适用边界。
+		const entries = discoverSkills(SKILLS_ROOT);
+		const entry = entries.find((e) => e.name === "html-craft");
+		assert.ok(entry, "html-craft 未被 loader 发现");
+		assert.ok(
+			entry.description.length > 100,
+			`loader 解析的 description 被截断（length=${entry.description.length}）：${entry.description}`,
+		);
+		assert.ok(entry.description.includes("必须先加载本 skill"), "description 缺强制加载句");
+		assert.ok(entry.description.includes("不适用"), "description 缺不适用边界");
+	});
 	it("正文含环境硬约束关键句（CSP 白名单/图片禁外链/弹窗失效/数据边界）", () => {
 		const body = readFileSync(new URL("../../../../skills/html-craft/SKILL.md", import.meta.url), "utf8");
 		for (const needle of [

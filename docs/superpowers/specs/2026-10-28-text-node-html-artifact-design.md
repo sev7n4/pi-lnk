@@ -14,6 +14,7 @@
 - v2（2026-10-28）：吸收 WorkBuddy `show_widget`/`widget_guidelines` 一手机制调研与 anthropics/skills 开源实践——P6 从「工具描述一句话」升级为「工具描述 + `html-craft` skill（经 `load_skill` 按需加载）」三件套（出口 / 规范 / 分层加载）；§4.3 CSP 增加 CDN 白名单（图表/流程图交给 echarts/mermaid 等生态轮子，不自造渲染）；新增 §4.9 出口选择判据与图 3；render-canvas-view 定位调整（冻结不迭代，下线判据登记 §12）。
 - v3（2026-10-28）：规格评审细化（防实施偏差），全部回代码核实——① zod schema 是文档位非闸门位（`SetNodeContentRequestSchema` 全仓无消费方，校验真身 = typebox 枚举 + DTO `@IsIn`，§5.3/§5.4 改写）；② create 链路字段映射三处口径不一致（工具 `type` → body `targetType`，`title ?? prompt`；端点名 `/agent/internal/add-nodes-batch`；`BatchNodeItemDto` :98），format 插入点精确到 4 处（§5.3）；③ 移动端接线点从「实施时定位」落为 `MobileNodeViewer.vue`（text 分支，v3 实证其 props 契约）+ `MobileNodeEditorSheet`（§6 S5 / §9 #13）；④ 新增 §5.4 HtmlNodePreview 组件契约（readonly prop + emit save，禁直接 inject patch——CanvasNodeText onSave 注释里的既有覆盖陷阱）；⑤ 旁路系统验证清单（duplicate/workflowExchange 等 data 整包拷贝，format 自动随行，§4.11）；⑥ S9 数据边界（`get_canvas_layout` 仅 `{id,type,title,position}`，读正文须 get_node，防编造进 skill 内容清单）；⑦ 外链图片必裂（CSP img-src 无远程域）⇒ html-craft 强约束「图片一律 data URI/SVG/CSS」；⑧ 沙箱 modals 未授予 ⇒ alert/confirm 静默失效，skill 写「用行内提示」。
 - v4（2026-10-28）：**WorkBuddy 最佳实践原文纳入**（用户拍板「照抄」）——新增 §14 附录：`show_widget`/`widget_guidelines` 一手原文摘录（会话内取证）、照抄/改写/弃用三档逐条对照（含理由）、`skills/html-craft/SKILL.md` 全文草案（实施照此落盘，不自行撰写）、`set_node_text` / `create_nodes_batch` 工具描述改写全文（现状原文 → 定稿全文）。§2.1 P6 / §9 #14 指向 §14。
+- v4.1（2026-10-28，SDD 执行期）：§14.4 frontmatter description 改 `>-` 折叠块标量——runtime parseSimpleYaml 不解析多行 plain scalar，截断导致路由索引丢失强制加载句与不适用边界（评审发现，loader 零改动纪律保持）。
 
 > 一句话：**HTML 是文本节点的一种内容格式（`data.format:'html'`）加一种沙箱渲染视图**——不新增节点类型、不新增工具、不动 vendor、不动 DB；agent 经现有 `set_node_text` 直写 HTML 源码，前端按 format 分支进 sandbox iframe 预览。
 
@@ -288,7 +289,8 @@ emits:  save(payload: { content: string; format: 'html' })  // 源码 tab 保存
 ---
 name: html-craft
 version: "0.1.0"
-description: 生成高质量 HTML 产物的强制规范。当用户要求做网页、页面、原型、落地页、
+description: >-
+  生成高质量 HTML 产物的强制规范。当用户要求做网页、页面、原型、落地页、
   H5、可交互演示，或要把画布数据做成总览卡片/流程图/时间线卡片时，写 html 格式文本节点
   前必须先加载本 skill。纯文案、markdown 内容、媒体节点不适用。
 ---
