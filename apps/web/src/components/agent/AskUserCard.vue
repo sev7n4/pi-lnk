@@ -8,7 +8,7 @@ import { computed, ref } from 'vue'
  * - T0：卡片自身 max-height + overflow-y:auto（有界可滚），导航钮 sticky 常驻，杜绝高度溢出到 tab 栏。
  * - T2：多题卡提供「提交已答部分」逃生钮，已答 A<N 时显式交还已答部分（其余隐式 skipped）。
  * - 多题自动提交保留（答满即 emit），与显式提交双路径（S3）。
- * 样式走既有 --neo-* / --lnk-* 令牌（暗/亮主题自适应）。
+ * 样式走 --lnk-* 令牌（暗/亮主题自适应；旧 --neo-* 已迁出，neoUsageRatchet 禁增）。
  * AskUserQuestion 结构与 pi-events.ts 同构（内联避免跨包 import server 类型）。
  */
 interface AskUserQuestion {
@@ -215,10 +215,10 @@ function submitOther(q: AskUserQuestion) {
 	flex-direction: column;
 	gap: 12px;
 	padding: 12px;
-	border: 1px solid var(--neo-border-strong);
+	border: 1px solid var(--lnk-border-strong);
 	border-radius: 10px;
-	background: var(--neo-surface-card);
-	color: var(--neo-text-primary);
+	background: var(--lnk-surface-raised);
+	color: var(--lnk-text-primary);
 	/* T0：有界可滚兜底——卡片自身高度受限、内部滚动，绝不依赖宿主滚动容器，
 	   杜绝多题/长题干溢出到 tab 栏之下（根因 1 修复，spec §5.1）。 */
 	max-height: min(60vh, 520px);
@@ -233,8 +233,8 @@ function submitOther(q: AskUserQuestion) {
 	align-items: center;
 	padding-bottom: 8px;
 	font-size: 12px;
-	color: var(--neo-text-muted);
-	background: var(--neo-surface-card);
+	color: var(--lnk-text-muted);
+	background: var(--lnk-surface-raised);
 }
 .ask-progress-count {
 	font-variant-numeric: tabular-nums;
@@ -247,7 +247,7 @@ function submitOther(q: AskUserQuestion) {
 .ask-question-text {
 	font-size: 13px;
 	font-weight: 500;
-	color: var(--neo-text-primary);
+	color: var(--lnk-text-primary);
 }
 .ask-options {
 	display: flex;
@@ -256,22 +256,22 @@ function submitOther(q: AskUserQuestion) {
 }
 .ask-chip {
 	padding: 4px 12px;
-	border: 1px solid var(--neo-border-strong);
+	border: 1px solid var(--lnk-border-strong);
 	border-radius: 999px;
-	background: var(--neo-surface-elevated);
-	color: var(--neo-text-primary);
+	background: var(--lnk-surface-raised);
+	color: var(--lnk-text-primary);
 	font-size: 12px;
 	cursor: pointer;
 	transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 .ask-chip:hover {
-	border-color: var(--neo-accent-border);
-	background: var(--neo-accent-soft);
+	border-color: var(--lnk-accent-border);
+	background: var(--lnk-accent-subtle);
 }
 .ask-chip.is-selected {
-	border-color: var(--neo-accent-border);
-	background: var(--neo-accent-soft);
-	color: var(--neo-accent-text);
+	border-color: var(--lnk-accent-border);
+	background: var(--lnk-accent-subtle);
+	color: var(--lnk-accent-text);
 }
 .ask-chip:disabled {
 	opacity: 0.5;
@@ -282,14 +282,14 @@ function submitOther(q: AskUserQuestion) {
 	padding: 4px 12px;
 	border: none;
 	border-radius: 6px;
-	background: var(--neo-accent);
+	background: var(--lnk-accent);
 	color: var(--lnk-text-on-accent);
 	font-size: 12px;
 	cursor: pointer;
 	transition: background 0.15s;
 }
 .ask-multi-confirm:hover {
-	background: var(--neo-accent-hover);
+	background: var(--lnk-accent-hover);
 }
 .ask-other {
 	display: flex;
@@ -299,30 +299,30 @@ function submitOther(q: AskUserQuestion) {
 	flex: 1;
 	min-width: 0;
 	padding: 5px 8px;
-	border: 1px solid var(--neo-border-strong);
+	border: 1px solid var(--lnk-border-strong);
 	border-radius: 6px;
-	background: var(--neo-surface-elevated);
-	color: var(--neo-text-primary);
+	background: var(--lnk-surface-raised);
+	color: var(--lnk-text-primary);
 	font-size: 12px;
 }
 .ask-other-input::placeholder {
-	color: var(--neo-text-muted);
+	color: var(--lnk-text-muted);
 }
 .ask-other-submit,
 .ask-cancel {
 	padding: 4px 10px;
-	border: 1px solid var(--neo-border-strong);
+	border: 1px solid var(--lnk-border-strong);
 	border-radius: 6px;
-	background: var(--neo-surface-elevated);
-	color: var(--neo-text-secondary);
+	background: var(--lnk-surface-raised);
+	color: var(--lnk-text-secondary);
 	font-size: 12px;
 	cursor: pointer;
 	transition: color 0.15s, border-color 0.15s;
 }
 .ask-other-submit:hover,
 .ask-cancel:hover {
-	color: var(--neo-text-primary);
-	border-color: var(--neo-accent-border);
+	color: var(--lnk-text-primary);
+	border-color: var(--lnk-accent-border);
 }
 .ask-cancel {
 	align-self: flex-start;
@@ -333,16 +333,16 @@ function submitOther(q: AskUserQuestion) {
 	padding: 2px 0;
 	border: none;
 	background: none;
-	color: var(--neo-text-muted);
+	color: var(--lnk-text-muted);
 	font-size: 12px;
 	cursor: pointer;
 	transition: color 0.15s;
 }
 .ask-skip:hover {
-	color: var(--neo-text-primary);
+	color: var(--lnk-text-primary);
 }
 .ask-skip.is-skipped {
-	color: var(--neo-text-muted);
+	color: var(--lnk-text-muted);
 	cursor: default;
 	text-decoration: line-through;
 }
@@ -356,18 +356,18 @@ function submitOther(q: AskUserQuestion) {
 	align-items: center;
 	padding-top: 10px;
 	margin-top: 2px;
-	border-top: 1px solid var(--neo-border-strong);
-	background: var(--neo-surface-card);
+	border-top: 1px solid var(--lnk-border-strong);
+	background: var(--lnk-surface-raised);
 }
 .ask-nav-prev,
 .ask-nav-next,
 .ask-nav-submit {
 	min-height: 38px;
 	padding: 6px 16px;
-	border: 1px solid var(--neo-border-strong);
+	border: 1px solid var(--lnk-border-strong);
 	border-radius: 8px;
-	background: var(--neo-surface-elevated);
-	color: var(--neo-text-primary);
+	background: var(--lnk-surface-raised);
+	color: var(--lnk-text-primary);
 	font-size: 13px;
 	font-weight: 500;
 	cursor: pointer;
@@ -379,28 +379,28 @@ function submitOther(q: AskUserQuestion) {
 }
 .ask-nav-next,
 .ask-nav-submit {
-	border-color: var(--neo-accent-border);
-	background: var(--neo-accent);
+	border-color: var(--lnk-accent-border);
+	background: var(--lnk-accent);
 	color: var(--lnk-text-on-accent);
 }
 .ask-nav-next:hover:not(:disabled),
 .ask-nav-submit:hover {
-	background: var(--neo-accent-hover);
+	background: var(--lnk-accent-hover);
 }
 /* T2 逃生钮：已答部分提交，次级样式（accent 描边 + 软底） */
 .ask-partial {
 	min-height: 38px;
 	padding: 6px 14px;
-	border: 1px solid var(--neo-accent-border);
+	border: 1px solid var(--lnk-accent-border);
 	border-radius: 8px;
-	background: var(--neo-accent-soft);
-	color: var(--neo-accent-text);
+	background: var(--lnk-accent-subtle);
+	color: var(--lnk-accent-text);
 	font-size: 12px;
 	font-weight: 500;
 	cursor: pointer;
 	transition: background 0.15s;
 }
 .ask-partial:hover {
-	background: var(--neo-accent-soft);
+	background: var(--lnk-accent-subtle);
 }
 </style>
