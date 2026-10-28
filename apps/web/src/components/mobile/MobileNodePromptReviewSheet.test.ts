@@ -3,6 +3,7 @@
 // ⛔ 无确认/拒绝按钮、无参数控件（单一确认面 ADR-0011）。
 // 数据源 = data.prompt + 参数字段（⛔ 不读 data.content，§4.8.1）。
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import MobileNodePromptReviewSheet from './MobileNodePromptReviewSheet.vue'
 
@@ -32,6 +33,17 @@ function mountSheet(overrides: Record<string, unknown> = {}) {
     props: { node, ...overrides },
     attachTo: document.body,
   })
+}
+
+
+/** 派发 PointerEvent（jsdom 实例属性只读 ⇒ test-utils trigger 赋值会炸，须走构造器） */
+async function firePointer(
+  el: Element,
+  type: string,
+  o: { pointerId: number; clientX?: number; clientY?: number },
+): Promise<void> {
+  el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, ...o }))
+  await nextTick()
 }
 
 describe('MobileNodePromptReviewSheet 内容（§4.7.1）', () => {
@@ -109,8 +121,9 @@ describe('MobileNodePromptReviewSheet 动作（§17 v2 收敛）', () => {
     await w.find('[data-testid="mobile-prompt-review-annotate"]').trigger('click')
     const ink = w.find('[data-testid="mobile-prompt-review-ink"]')
     expect(ink.exists()).toBe(true)
-    await ink.trigger('touchstart', { touches: [{ clientX: 10, clientY: 10 }] })
-    await ink.trigger('touchend')
+    // 画笔已迁 useInkOverlay：Pointer Events 采集（touchstart → pointerdown）
+    await firePointer(ink.element as Element, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 })
+    await firePointer(ink.element as Element, 'pointerup', { pointerId: 1 })
     expect(w.find('[data-testid="mobile-annotation-capsule"]').exists()).toBe(true)
     await w.find('[data-testid="mobile-annotation-capsule-input"]').setValue('构图太挤')
     // ⭐ 环境无关断言：CI 装了 canvas 包 ⇒ 合成成功走 marks 路径（degraded:false + Blob）；

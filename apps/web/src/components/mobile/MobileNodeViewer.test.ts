@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import MobileNodeViewer from './MobileNodeViewer.vue'
 import { readFileSync } from 'node:fs'
@@ -33,6 +34,17 @@ vi.mock('@/composables/useNodeWaveform', async (importOriginal) => {
  *   识别失败）已删除，改为**右上角 X 的内联 SVG**（§4.11.5：禁文本字符当图标）。
  *   既有断言 `.viewer-back` 相应改写为 `.viewer-close`，**回归防护保留**。
  */
+
+/** 派发 PointerEvent（jsdom 实例属性只读 ⇒ test-utils trigger 赋值会炸，须走构造器） */
+async function firePointer(
+  el: Element,
+  type: string,
+  o: { pointerId: number; clientX?: number; clientY?: number },
+): Promise<void> {
+  el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, ...o }))
+  await nextTick()
+}
+
 describe('MobileNodeViewer（退出通道 · D2）', () => {
   it('右上角有 X 按钮（44px 触控目标）并 emit close', async () => {
     const wrapper = mount(MobileNodeViewer, { global: { stubs: { teleport: true } },
@@ -474,9 +486,10 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
       const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: pendingProps })
       await w.get('[data-testid="mobile-viewer-bottom-annotate"]').trigger('click')
       const ink = w.get('[data-testid="mobile-viewer-ink"]')
-      await ink.trigger('touchstart', { touches: [{ clientX: 10, clientY: 10 }] })
-      await ink.trigger('touchmove', { touches: [{ clientX: 40, clientY: 30 }] })
-      await ink.trigger('touchend')
+      // 画笔已迁 useInkOverlay：Pointer Events 采集（touchstart → pointerdown）
+      await firePointer(ink.element as Element, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 })
+      await firePointer(ink.element as Element, 'pointermove', { pointerId: 1, clientX: 40, clientY: 30 })
+      await firePointer(ink.element as Element, 'pointerup', { pointerId: 1 })
       expect(w.find('[data-testid="mobile-annotation-capsule"]').exists()).toBe(true)
       await w.get('[data-testid="mobile-viewer-bottom-annotate"]').trigger('click')
       expect(w.find('[data-testid="mobile-annotation-capsule"]').exists()).toBe(false)
@@ -488,8 +501,8 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
       const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: pendingProps })
       await w.get('[data-testid="mobile-viewer-bottom-annotate"]').trigger('click')
       const ink = w.get('[data-testid="mobile-viewer-ink"]')
-      await ink.trigger('touchstart', { touches: [{ clientX: 10, clientY: 10 }] })
-      await ink.trigger('touchend')
+      await firePointer(ink.element as Element, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 })
+      await firePointer(ink.element as Element, 'pointerup', { pointerId: 1 })
       await w.get('[data-testid="mobile-annotation-capsule-input"]').setValue('配色太冷')
       await w.get('[data-testid="mobile-annotation-capsule-anchor"]').trigger('click')
       await vi.waitFor(() => expect(w.emitted('annotate')).toBeTruthy())

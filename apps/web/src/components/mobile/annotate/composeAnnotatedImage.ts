@@ -1,3 +1,5 @@
+import { strokeMarkPath } from './strokePath'
+
 /**
  * 标注合成：底图 + 手指标记 → 一张**带标记的整图**（规格 §4.3 / 拍板项 L1）。
  *
@@ -54,16 +56,13 @@ export function composeAnnotatedImage(
 
   for (const mark of marks) {
     if (!mark.points.length) continue
-    ctx.beginPath()
-    ctx.moveTo(mark.points[0]!.x, mark.points[0]!.y)
-    for (const p of mark.points.slice(1)) ctx.lineTo(p.x, p.y)
-    if (mark.points.length === 1) {
-      // 单点 = 一个点（tap 一下）⇒ 画成实心圆点
-      ctx.arc(mark.points[0]!.x, mark.points[0]!.y, ctx.lineWidth, 0, Math.PI * 2)
-      ctx.fill()
-    } else {
-      ctx.stroke()
-    }
+    // ⭐ 与实时预览共享同一支笔画函数（strokePath.ts）——所见即所得，
+    //   含中点贝塞尔平滑（2026-10-28 W-26/W-27 修复；此前两处各自 lineTo 折线）。
+    strokeMarkPath(ctx, mark.points, {
+      // 单点 = 一个点（tap 一下）⇒ 画成实心圆点（半径随线宽）
+      dotRadius: ctx.lineWidth,
+      dotFill: 'rgba(255, 64, 64, 0.18)',
+    })
   }
   return canvas
 }

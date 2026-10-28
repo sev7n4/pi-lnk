@@ -2,8 +2,9 @@
 import { computed, ref } from 'vue'
 import MobileReadingSurface from './MobileReadingSurface.vue'
 import MobileAnnotationCapsule from './MobileAnnotationCapsule.vue'
-import { composeAnnotatedImage, type AnnotateMark } from './annotate/composeAnnotatedImage'
+import { composeAnnotatedImage } from './annotate/composeAnnotatedImage'
 import { renderReviewBaseImage } from './annotate/renderReviewBaseImage'
+import { useInkOverlay } from './annotate/useInkOverlay'
 
 /**
  * 提示词全文审核层（规格 §4.7.1，2026-10-27 S1 批次 · 场景1 补齐）。
@@ -75,13 +76,22 @@ const paramsLine = computed(() => {
   return parts.join(' · ')
 })
 
-/* ── 标注态（§4.3 一支笔 + §17-③ 首笔即弹胶囊；与 viewer 同款实现）──────── */
+/* ── 标注态（§4.3 一支笔 + §17-③ 首笔即弹胶囊；共享 useInkOverlay ────────
+ *   ⭐ 2026-10-28 W-26/W-27 真机修复：此前本处与 viewer 各自实现画笔且同犯
+ *   「bitmap 尺寸从未设置」bug（默认 300×150 被拉伸全屏 ⇒ 手指笔画大多落在
+ *   bitmap 外不可见）——现收敛到共享组合式（DPR bitmap + Pointer Events +
+ *   rAF 重绘 + 中点贝塞尔平滑），修一次两处生效。 */
 const annotating = ref(false)
-const marks = ref<AnnotateMark[]>([])
-const inkPoints = ref<Array<{ x: number; y: number }>>([])
 const inkCanvas = ref<HTMLCanvasElement | null>(null)
-const inkStart = ref<{ x: number; y: number } | null>(null)
 const capsuleVisible = ref(false)
+const ink = useInkOverlay({
+  canvas: inkCanvas,
+  active: annotating,
+  // 首笔落定即弹胶囊（§17-③）：落定时 marks 已含该笔
+  onStrokeEnd: () => {
+    capsuleVisible.value = true
+  },
+})
 
 /* ── 编辑态（§17-④：就地改字，不弹 sheet）────────────────────────────── */
 const editing = ref(false)
@@ -96,15 +106,13 @@ const rootRef = ref<HTMLElement | null>(null)
 function enterAnnotate() {
   editing.value = false
   annotating.value = true
-  marks.value = []
-  inkPoints.value = []
+  ink.reset()
   capsuleVisible.value = false
 }
 
 function exitAnnotate() {
   annotating.value = false
-  marks.value = []
-  inkPoints.value = []
+  ink.reset()
   capsuleVisible.value = false
 }
 
@@ -129,65 +137,6 @@ function saveEdit() {
   emit('edit-save', text)
 }
 
-function inkPoint(e: TouchEvent): { x: number; y: number } {
-  const t = e.touches?.[0] ?? e.changedTouches?.[0]
-  const rect = inkCanvas.value?.getBoundingClientRect()
-  return {
-    x: Math.round((t?.clientX ?? 0) - (rect?.left ?? 0)),
-    y: Math.round((t?.clientY ?? 0) - (rect?.top ?? 0)),
-  }
-}
-
-function drawInk() {
-  const canvas = inkCanvas.value
-  const ctx = canvas?.getContext('2d')
-  if (!canvas || !ctx) return
-  ctx.clearRect(0, 0, canvas.width, canvas.height)
-  ctx.lineWidth = 6
-  ctx.lineCap = 'round'
-  ctx.lineJoin = 'round'
-  ctx.strokeStyle = 'rgba(255, 64, 64, 0.92)'
-  const drawStroke = (pts: Array<{ x: number; y: number }>) => {
-    if (!pts.length) return
-    ctx.beginPath()
-    ctx.moveTo(pts[0]!.x, pts[0]!.y)
-    for (const p of pts.slice(1)) ctx.lineTo(p.x, p.y)
-    if (pts.length === 1) {
-      ctx.arc(pts[0]!.x, pts[0]!.y, 6, 0, Math.PI * 2)
-      ctx.fillStyle = 'rgba(255, 64, 64, 0.18)'
-      ctx.fill()
-      return
-    }
-    ctx.stroke()
-  }
-  for (const mark of marks.value) drawStroke(mark.points)
-  drawStroke(inkPoints.value)
-}
-
-function onInkStart(e: TouchEvent) {
-  if (!annotating.value) return
-  const p = inkPoint(e)
-  inkStart.value = p
-  inkPoints.value = [p]
-  drawInk()
-}
-
-function onInkMove(e: TouchEvent) {
-  if (!annotating.value || !inkStart.value) return
-  inkPoints.value = [...inkPoints.value, inkPoint(e)]
-  drawInk()
-}
-
-/** 首笔落定即弹胶囊（§17-③：无「完成」步骤），可继续补画 */
-function onInkEnd() {
-  if (!annotating.value) return
-  if (inkPoints.value.length) {
-    marks.value = [...marks.value, { points: inkPoints.value }]
-  }
-  inkPoints.value = []
-  if (marks.value.length) capsuleVisible.value = true
-}
-
 /**
  * 胶囊 ⚓ ⇒ 合成满屏截图 + 意见一并上抛（§5.3 锚管线零新字段）。
  * 底图 = 提示词全文渲染页（R-17：skipLines 按 scrollTop 折算——滚动到哪圈哪）；
@@ -195,7 +144,7 @@ function onInkEnd() {
  */
 async function onCapsuleAnchor(payload: { text: string }) {
   capsuleVisible.value = false
-  const allMarks = marks.value
+  const allMarks = ink.marks.value
   annotating.value = false
   const text = payload.text.trim()
   if (!allMarks.length) {
@@ -302,16 +251,17 @@ async function onCapsuleAnchor(payload: { text: string }) {
       </template>
     </MobileReadingSurface>
 
-    <!-- 画笔覆盖层（标注态；touchstart.stop 防止关闭手势抢画笔——评审 C1 同款） -->
+    <!-- 画笔覆盖层（标注态；Pointer Events + .stop 防关闭手势抢画笔——评审 C1 同款；
+         bitmap 尺寸/DPR/多点过滤由 useInkOverlay 负责，CSS touch-action:none 保采集不被滚动手势打断） -->
     <canvas
       v-show="annotating"
       ref="inkCanvas"
       class="mpr-ink"
       data-testid="mobile-prompt-review-ink"
-      @touchstart.stop.passive="onInkStart"
-      @touchmove.stop.passive="onInkMove"
-      @touchend.stop="onInkEnd"
-      @touchcancel.stop="onInkEnd"
+      @pointerdown.stop="ink.onPointerDown"
+      @pointermove.stop="ink.onPointerMove"
+      @pointerup.stop="ink.onPointerUp"
+      @pointercancel.stop="ink.onPointerCancel"
     />
 
     <!-- §17-③ 胶囊意见框：首笔落定即弹（内联浮条，可继续补画） -->
