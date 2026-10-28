@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { SidebarAttachmentSchema } from './sidebarAttachments'
+import { TEXT_NODE_FORMATS } from './textNodeFormat'
 // type-only：CanvasData 定义在 barrel（index.ts），仅类型引用，编译后擦除，不产生运行时循环
 import type { CanvasData } from './index'
 
@@ -250,6 +251,9 @@ export const SetNodeContentRequestSchema = z.object({
   nodeId: z.string(),
   content: z.string(),
   stage: z.boolean().optional(),
+  // 文档位（规格 §5.3 实证：本 schema 全仓无消费方）——仅类型契约同步，校验真身
+  // = runtime typebox 枚举 + Nest DTO @IsIn + service 复检。禁止因这里有校验就删下游。
+  format: z.enum(TEXT_NODE_FORMATS).optional(),
 })
 
 export type SetNodeContentRequest = z.infer<typeof SetNodeContentRequestSchema>
