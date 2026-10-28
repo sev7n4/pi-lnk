@@ -2,9 +2,10 @@
 /**
  * WEB 工作台统一顶栏（规格 §6.8）：画布路由顶部整页栏，替代原 CanvasFloatingChrome
  * （可编辑 title + 返回 + 保存/发布/导入/导出）与右上漂浮簇（ThemeToggle + AccountChrome）。
- * 职责：左 ‹ 返回创作空间 + 项目名（§6.4 次级灰、15px、截断）；右簇 发现/主题/账号/⋯
- * （v3 §13.4：「我的」撤除，头像下拉全权承载个人枢纽）。
- * 项目名是上下文而非操作（次级静默、非交互），与移动端 MobileTopBar 共用 §6.4 语义。
+ * 职责：左 ‹ 返回创作空间；居中页题注「画布·「项目名称」」（§13.5 v2：细体小字、
+ * 次级灰、截断）；右簇 发现/主题/账号/⋯（v3 §13.4：「我的」撤除，头像下拉全权承载个人枢纽）。
+ * 项目名是上下文而非操作（§13.5 起居中题注语义），与移动端 MobileTopBar 同构。
+ * §13.5（2026-10-28 真机走查四轮）：材质横带（封条）彻底退役，栏体透明。
  */
 import { ref } from 'vue'
 import { RouterLink } from 'vue-router'
@@ -57,7 +58,7 @@ function onMenuItem(
 
 <template>
   <header class="workspace-top-bar">
-    <!-- 左：‹ 返回创作空间 + 项目名 -->
+    <!-- 左：‹ 返回创作空间 -->
     <div class="wkb-left">
       <button
         type="button"
@@ -71,11 +72,14 @@ function onMenuItem(
         </svg>
         <span class="wkb-back__label">创作空间</span>
       </button>
-      <span
-        class="wkb-project-name"
-        data-testid="workspace-project-name"
-      >{{ projectName }}</span>
     </div>
+
+    <!-- 居中页题注（规格 §13.5）：「画布·「项目名称」」，细体小字、绝对居中、
+         超长截断、非交互——取代原左置项目名（§6.4 v2）。 -->
+    <span
+      class="wkb-page-title"
+      data-testid="workspace-project-name"
+    >画布·「{{ projectName }}」</span>
 
     <!-- 右簇：发现/主题/账号/⋯（§13.4/D1：「我的」撤除——与头像下拉（我的主页）重复） -->
     <div class="wkb-right">
@@ -150,10 +154,10 @@ function onMenuItem(
   justify-content: space-between;
   height: 52px;
   padding: 0 12px;
-  background: var(--lnk-surface);
-  /* §13.1/A1：发丝线退役（封条感主源）；画布节点平移穿栏 ⇒ 材质底+blur 保留 */
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  /* §13.5（2026-10-28 真机走查四轮）：封条彻底退役——材质底+blur 一并去掉。
+     画布节点平移穿栏时透明栏与画布同底（用户裁决：视觉不抢占），
+     此前顶栏迭代 v3 保留的材质横带即用户所指「封条」。 */
+  background: transparent;
 }
 
 .wkb-left {
@@ -190,18 +194,25 @@ function onMenuItem(
   white-space: nowrap;
 }
 
-/* 项目名（规格 §6.4：次级灰、15px、超长截断、非交互） */
-.wkb-project-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: calc(100% - 160px);
+/* 居中页题注（§13.5）：细体小字、次级灰、绝对居中（不随左右簇宽度漂移）、
+   超长截断、非交互。视觉权重全栏最低——上下文标签，不是标题。 */
+.wkb-page-title {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  height: 52px;
+  max-width: min(48%, 360px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 15px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 300;
   color: var(--lnk-text-secondary);
   line-height: 1;
+  pointer-events: none;
 }
 
 .wkb-right {

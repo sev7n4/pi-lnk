@@ -14,7 +14,11 @@
  * 没有这条路就回不了前门；③ 「画布管理菜单」→「项目管理菜单」（项目语义收口）。
  * 2026-10-21 用户裁决：积分胶囊撤出顶栏（对话/画布双页）——积分是账户属性
  * 非任务上下文，「我的」页已有同一数字（信息重复）；余额在「我的-我的积分」
- * 与花销时刻（状态行预估/充值入口）展示。 */
+ * 与花销时刻（状态行预估/充值入口）展示。
+ * 2026-10-28 真机走查四轮（规格 §13.5）：① 画布页签去封条（材质横带退役，
+ * is-canvas-bare）；② 居中页题注「对话·「项目名称」」/「画布·「项目名称」」
+ * （细体 12px 次级灰，取代左置 15px 项目名，§6.4 v2）；③ 对话页顶栏被
+ * 对话面板（裸 z:70）反盖的回归在 AgentSideRail 侧修（面板降到 chrome 之下）。 */
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useClickOutside } from '@/composables/useClickOutside'
 
@@ -46,6 +50,19 @@ const exportOpen = ref(false)
 const menuRef = ref<HTMLElement | null>(null)
 
 const isGhost = computed(() => props.tab === 'discover' || props.tab === 'mine')
+
+/** 画布页签去封条（2026-10-28 真机走查四轮）：材质横带在画布底色上是一根「封条」。
+ *  对话页签保留材质——对话流 padding-top 16px < 栏高 44px，内容从栏下穿过，
+ *  透明栏会让正文顶进题注区；画布页签无滚动内容依赖（节点平移本就穿栏，用户裁决去材质）。 */
+const isCanvasBare = computed(() => props.tab === 'canvas')
+
+/** 居中页题注（2026-10-28 真机走查四轮）：「对话·「项目名称」」/「画布·「项目名称」」。
+ *  细体小字次级灰——上下文标签而非标题，不抢占内容视觉（iOS 导航栏 center 隐喻）。 */
+const pageTitle = computed(() => {
+  if (props.tab !== 'chat' && props.tab !== 'canvas') return ''
+  const label = props.tab === 'canvas' ? '画布' : '对话'
+  return `${label}·「${props.projectName}」`
+})
 
 /** 任务动态项（D-2 入口收敛）：有任务才出现；运行中/排队带计数徽标 */
 const showTaskItem = computed(() => props.tab === 'canvas' && props.hasTaskHistory === true)
@@ -93,7 +110,10 @@ onUnmounted(() => {
        面板不透明背景盖住 ≡、点击穿透到面板，抽屉打不开。与抽屉/面板同走 body 层保证
        z 序：抽屉(95) > 顶栏(85) > 面板(70)。 -->
   <Teleport to="body">
-    <header class="mobile-top-bar" :class="{ 'is-ghost': isGhost }">
+    <header
+      class="mobile-top-bar"
+      :class="{ 'is-ghost': isGhost, 'is-canvas-bare': isCanvasBare }"
+    >
       <!-- 返回创作空间（chat + canvas 共用；规格 §6.2/§6.3）：chevron(<) + 文案「创作空间」 -->
       <button
         v-if="props.tab === 'chat' || props.tab === 'canvas'"
@@ -109,12 +129,13 @@ onUnmounted(() => {
         <span class="bar-back__label">创作空间</span>
       </button>
 
-      <!-- 项目名（规格 §6.4：次级灰、15px、超长截断、非交互） -->
+      <!-- 居中页题注（规格 §13.5）：「对话·「项目名称」」/「画布·「项目名称」」，
+           细体小字、绝对居中、超长截断、非交互——取代原左置项目名（§6.4 v2） -->
       <span
-        v-if="props.tab === 'chat' || props.tab === 'canvas'"
-        class="topbar-project-name"
+        v-if="pageTitle"
+        class="topbar-page-title"
         data-testid="mobile-topbar-project-name"
-      >{{ projectName }}</span>
+      >{{ pageTitle }}</span>
 
       <!-- 右侧工具簇 -->
       <div class="bar-actions">
@@ -215,6 +236,14 @@ onUnmounted(() => {
   pointer-events: none;
 }
 
+/* 画布页签：去封条（§13.5）——材质横带在画布底色上是一根「封条」，整条退役。
+   画布节点平移本就穿栏，透明栏与画布同底，无信息被遮。 */
+.mobile-top-bar.is-canvas-bare {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 .bar-btn {
   position: relative;
   display: flex;
@@ -278,18 +307,25 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
-/* 项目名（规格 §6.4：次级灰、15px、超长截断、非交互、视觉权重低于返回簇） */
-.topbar-project-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: calc(100% - 150px);
+/* 居中页题注（§13.5）：细体小字、次级灰、绝对居中（不随左右簇宽度漂移）、
+   超长截断、非交互。视觉权重全栏最低——上下文标签，不是标题。 */
+.topbar-page-title {
+  position: absolute;
+  top: env(safe-area-inset-top, 0px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  height: 44px;
+  max-width: min(52%, 240px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 15px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 300;
   color: var(--lnk-text-secondary);
   line-height: 1;
+  pointer-events: none;
 }
 
 /* 品牌字标（IA v4 2026-10-23）：回工作台 hero 的常驻路。用字标不用墨鱼图标——

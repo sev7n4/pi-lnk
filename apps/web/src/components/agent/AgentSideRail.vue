@@ -5331,7 +5331,14 @@ defineExpose({
   bottom: calc(env(safe-area-inset-bottom, 0px) + var(--lnk-tabbar-h, 0px));
   right: 12px;
   left: 12px;
-  z-index: 70;
+  /* §13.5（2026-10-28 真机走查四轮）根因修复：面板是页面级表面——
+     main(z-10 堆叠上下文) 之上、顶栏 chrome(40) 之下。
+     历史：原裸 z:70 在顶栏还是 85 时成立（面板 70 < 顶栏 85）；
+     顶栏迭代 v3 收敛为 var(--lnk-z-chrome)=40 后 70 反盖顶栏 ⇒
+     对话页「‹ 创作空间」回城出口与页题注整体不可见（teleport 到 body 后
+     两者同层竞争，面板不透明背景全遮）。30 = (10, 40) 区间：页面内容之上、
+     三顶栏与项目抽屉(95) 之下。 */
+  z-index: 30;
   height: auto;
   max-height: none;
   /* 2026-10-23 溢出修复（第 3 道闸）：overflow-y 保持 visible（popover/浮层向下出），
