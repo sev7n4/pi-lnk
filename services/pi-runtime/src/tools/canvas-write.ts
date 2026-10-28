@@ -20,6 +20,7 @@ import { askUserBlocking, askUserTimeoutMs, genTerminalWaitMs } from "../runtime
 import type { NodeStatusData } from "../session-manager.js";
 import type { PendingToolRegistry } from "../pending-registry.js";
 import { NestToolError } from "./nest-client.js";
+import { assertTextNodeFormat, TEXT_NODE_FORMATS } from "./text-format.js";
 
 const CONNECT_NODES_MAX_EDGES = 20;
 /** SP-A：create_nodes_batch 单批上限（Nest 侧 BATCH_NODES_MAX 同值；工具层先拦，端点侧兜底）。 */
@@ -277,22 +278,37 @@ export function createCanvasWriteTools(
 			name: "set_node_text",
 			label: "改节点文本",
 			description:
-				"Update prompt and/or content text on an EXISTING node (at least one of prompt/content; passing both updates both). For creating nodes use upsert_media_node instead.",
+				"Update prompt and/or content text on an EXISTING node (at least one of prompt/content; passing both updates both). For creating nodes use upsert_media_node instead. For HTML pages (webpage / prototype / interactive / canvas overview card) set format='html' and ALWAYS call load_skill('html-craft') FIRST — required before writing any html content. Keep it a single self-contained file: images as data URI or inline SVG (remote images blocked), no alert/confirm, everything else inline.",
 			parameters: Type.Object({
 				node_id: Type.String({ description: "Canvas node id" }),
 				prompt: Type.Optional(
 					Type.String({ description: "New prompt text (generation prompt; doubles as node title)" }),
 				),
 				content: Type.Optional(Type.String({ description: "New node content text" })),
+				format: Type.Optional(
+					Type.Union(
+						TEXT_NODE_FORMATS.map((f) => Type.Literal(f)),
+						{
+							description:
+								"Optional content format: 'html' for webpage / interactive artifacts (then call load_skill('html-craft') before writing content via set_node_text).",
+						},
+					),
+				),
 			}),
 			execute: async (
 				_id,
-				p: { node_id: string; prompt?: string; content?: string },
+				p: { node_id: string; prompt?: string; content?: string; format?: string },
 				_u,
 				tc: LnkpiToolContext,
 			) => {
 				if (!p.prompt && !p.content) {
 					throw new Error("set_node_text requires prompt or content (at least one)");
+				}
+				if (p.format !== undefined) {
+					if (!p.content) {
+						throw new Error("set_node_text: format requires content (format is a content attribute)");
+					}
+					assertTextNodeFormat(p.format);
 				}
 				// content 路径 Nest DTO 必填 userId，fail-closed：缺身份时提前抛错而非发 undefined。
 				if (p.content && !tc.userId) {
@@ -316,6 +332,7 @@ export function createCanvasWriteTools(
 						userId: tc.userId,
 						nodeId: p.node_id,
 						content: p.content,
+						...(p.format !== undefined ? { format: p.format } : {}),
 					});
 					collected.push(...extractActions(done));
 				}
@@ -1027,6 +1044,15 @@ export function createCanvasWriteTools(
 						type: Type.String({ description: "Node type: image | video | text | audio" }),
 						prompt: Type.String({ description: "Node prompt (required)" }),
 						title: Type.Optional(Type.String({ description: "Node title (defaults to prompt)" })),
+						format: Type.Optional(
+							Type.Union(
+								TEXT_NODE_FORMATS.map((f) => Type.Literal(f)),
+								{
+									description:
+										"Optional content format: 'html' for webpage / interactive artifacts (then call load_skill('html-craft') before writing content via set_node_text).",
+								},
+							),
+						),
 					}),
 					{ description: `Nodes to create (max ${CREATE_NODES_BATCH_MAX_NODES})` },
 				),
@@ -1043,7 +1069,7 @@ export function createCanvasWriteTools(
 			execute: async (
 				_id,
 				p: {
-					items: Array<{ key: string; type: string; prompt: string; title?: string }>;
+					items: Array<{ key: string; type: string; prompt: string; title?: string; format?: string }>;
 					edges?: Array<{ source: string; target: string }>;
 				},
 				_u,
@@ -1074,6 +1100,7 @@ export function createCanvasWriteTools(
 							`create_nodes_batch: unsupported node type "${t}" (allowed: ${[...CREATE_NODES_BATCH_ALLOWED_TYPES].join(", ")})`,
 						);
 					}
+					if (it.format !== undefined) assertTextNodeFormat(it.format);
 				}
 				return withWriteSignal(
 					await client.post("/agent/internal/add-nodes-batch", {
@@ -1084,6 +1111,7 @@ export function createCanvasWriteTools(
 							title: it.title ?? it.prompt,
 							targetType: it.type,
 							prompt: it.prompt,
+							...(it.format !== undefined ? { format: it.format } : {}),
 						})),
 						edges: p.edges,
 					}),

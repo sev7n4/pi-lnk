@@ -1318,3 +1318,63 @@ describe("canvas-write: 写工具串行化（spec 2026-10-16 P1-A）", () => {
 		}
 	});
 });
+
+describe("set_node_text format", () => {
+	it("content+format:'html' ⇒ set-node-content body 带 format", async () => {
+		const { client, calls } = makeClient();
+		const tools = createCanvasWriteTools(client);
+		const tool = findTool(tools, "set_node_text");
+		await run(tool, { node_id: "n1", content: "<h1>hi</h1>", format: "html" });
+		const body = calls.find((c) => c.path === "/agent/internal/set-node-content")?.body;
+		assert.equal(body?.format, "html");
+	});
+	it("format 缺省 ⇒ body 无 format 键", async () => {
+		const { client, calls } = makeClient();
+		const tool = findTool(createCanvasWriteTools(client), "set_node_text");
+		await run(tool, { node_id: "n1", content: "纯文本" });
+		const body = calls.find((c) => c.path === "/agent/internal/set-node-content")?.body;
+		assert.equal("format" in (body ?? {}), false);
+	});
+	it("format 非法值 ⇒ 工具层抛错（信息列合法值），不发请求", async () => {
+		const { client, calls } = makeClient();
+		const tool = findTool(createCanvasWriteTools(client), "set_node_text");
+		await assert.rejects(
+			() => run(tool, { node_id: "n1", content: "x", format: "jsx" }),
+			/plain, markdown, html/,
+		);
+		assert.equal(calls.length, 0);
+	});
+	it("format 无 content ⇒ 抛错（format 仅与 content 同发）", async () => {
+		const { client } = makeClient();
+		const tool = findTool(createCanvasWriteTools(client), "set_node_text");
+		await assert.rejects(
+			() => run(tool, { node_id: "n1", prompt: "p", format: "html" }),
+			/format requires content/,
+		);
+	});
+});
+
+describe("create_nodes_batch item format", () => {
+	it("item.format:'html' ⇒ add-nodes-batch body items 带 format", async () => {
+		const { client, calls } = makeClient();
+		const tool = findTool(createCanvasWriteTools(client), "create_nodes_batch");
+		await run(tool, { items: [{ key: "k1", type: "text", prompt: "落地页", format: "html" }] });
+		const body = calls.find((c) => c.path === "/agent/internal/add-nodes-batch")?.body;
+		assert.equal((body?.items as Array<Record<string, unknown>>)[0].format, "html");
+	});
+	it("item.format 非法值 ⇒ 抛错", async () => {
+		const { client } = makeClient();
+		const tool = findTool(createCanvasWriteTools(client), "create_nodes_batch");
+		await assert.rejects(
+			() => run(tool, { items: [{ key: "k1", type: "text", prompt: "p", format: "jsx" }] }),
+			/plain, markdown, html/,
+		);
+	});
+});
+
+describe("set_node_text description 路由线索（规格 §10 skill 接线守卫）", () => {
+	it("描述含 load_skill('html-craft') 强制线索", () => {
+		const tool = findTool(createCanvasWriteTools((undefined as never) as never), "set_node_text");
+		assert.match(tool.description, /load_skill\('html-craft'\)/);
+	});
+});
