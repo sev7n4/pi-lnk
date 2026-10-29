@@ -968,3 +968,23 @@ describe('chrome 显隐（v1.5 P / G-20）', () => {
     w.unmount()
   })
 })
+
+describe('提示词摘要条退役（v1.5 P / G-21）', () => {
+  type ViewerProps = InstanceType<typeof MobileNodeViewer>['$props']
+  function mountViewer(props: ViewerProps) {
+    return mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props })
+  }
+
+  it('查看器不渲染提示词摘要条（G-21：chrome 三态一屏一主角）', () => {
+    const w = mountViewer({ type: 'image', data: { url: 'a.png', prompt: '一只猫'.repeat(30), status: 'confirmed' } })
+    expect(w.find('[data-testid="mobile-viewer-prompt-strip"]').exists()).toBe(false)
+    expect(w.text()).not.toContain('提示词：')
+    w.unmount()
+  })
+
+  it('pending 审核内容层保留（决策需要全文，非 G-21 管辖）', () => {
+    const w = mountViewer({ type: 'image', data: { status: 'pending_confirm', prompt: '一只猫' } })
+    expect(w.find('[data-testid="mobile-viewer-review"]').exists()).toBe(true)
+    w.unmount()
+  })
+})

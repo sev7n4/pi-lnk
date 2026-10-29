@@ -87,7 +87,7 @@ describe('查看器编辑保存 → 覆盖磁贴（§17-④）', () => {
     expect(EDIT_SAVE_BODY).not.toContain('confirmProposeWait')
   })
 
-  it('保存后关来源层回画布（缺省 = 查看器；S1 全文层传 closePromptReview）', () => {
+  it('保存后关来源层回画布（close 参数化，缺省 = 查看器）', () => {
     expect(EDIT_SAVE_BODY).toContain('close: () => void = closeMobileViewer')
     expect(EDIT_SAVE_BODY).toContain('close()')
   })

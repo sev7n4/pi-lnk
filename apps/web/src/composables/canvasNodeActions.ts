@@ -89,14 +89,12 @@ export const MOBILE_NODE_OPEN_VIEWER_KEY: InjectionKey<MobileNodeOpenViewerFn> =
 )
 
 /**
- * 移动端磁贴提示词 chips / 查看器提示词摘要条 → 打开**提示词全文审核层**
- * （规格 §4.7.1，2026-10-27 S1 批次）。
+ * 移动端磁贴提示词 chips → 打开**轻量编辑器**（规格 v1.5 §4.12.7，拍板项 P）。
  *
- * ⭐ 为什么是独立注入键而不是复用 `MOBILE_NODE_OPEN_VIEWER_KEY`：
- *   §4.7.1 / §4.8.1 双拍板 —— 全文层是**独立于媒体查看器的文本阅读面**
- *   （`MobileNodePromptReviewSheet`），⛔ 禁做成 viewer 的一个 `type`
- *   （D2 audio 死分支教训：契约位留死分支 = 未来按契约调用必得空白屏）。
- *   载体不同 ⇒ 入口契约也必须分开，防「顺手塞回 viewer」。
+ * ⭐ 历史包袱说明（key 名保留防 Tile / NodeRenderer 契约 churn）：
+ *   本键曾指向**提示词全文审核层**（`MobileNodePromptReviewSheet`，§4.7.1 / §4.8.1，
+ *   2026-10-27 S1 批次）。v1.5（2026-10-29）评审退役该层——chips 直达编辑器，
+ *   提示词全文改由编辑器内阅读。provide 体在 CanvasPage（空 prompt 守卫保留）。
  */
 export type MobileNodeOpenPromptReviewFn = (node: {
   id?: string

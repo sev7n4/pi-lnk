@@ -2865,34 +2865,15 @@ provide(MOBILE_NODE_OPEN_VIEWER_KEY, (node: { id?: string; type: 'image' | 'vide
 })
 
 /**
- * G1/S1（§4.7.1，2026-10-27）：磁贴提示词 chips / 查看器摘要条 → 打开
- * **提示词全文审核层**（独立载体 `MobileNodePromptReviewSheet`，§4.8.1）。
- * ⭐ 守卫：prompt 为空不开（无内容可审）；同时关查看器（两层不叠）。
+ * 磁贴提示词 chips / 查看器入口（§4.7.1）⇒ 规格 v1.5 §4.12.7（拍板项 P）：
+ * **全文审核层（`MobileNodePromptReviewSheet`）退役**——chips 直达轻量编辑器
+ * （`openMobileNodeEditor`）。注入键名保留（防 Tile / NodeRenderer 契约 churn）。
+ * ⭐ 守卫保留：prompt 为空不开（无内容可改）。
  */
-const mobilePromptReviewNode = ref<{
-  id?: string
-  type: 'image' | 'video' | 'audio' | 'text'
-  data?: any
-} | null>(null)
-
 provide(MOBILE_NODE_OPEN_PROMPT_REVIEW_KEY, (node: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any }) => {
   if (!String(node?.data?.prompt ?? '').trim()) return
-  mobileViewerNode.value = null
-  mobilePromptReviewNode.value = node
+  if (node?.id) openMobileNodeEditor(node.id)
 })
-
-/** 查看器提示词摘要条（§4.7.1 入口②）⇒ 以当前查看节点打开全文层并收起查看器 */
-function openPromptReviewFromViewer() {
-  const node = mobileViewerNode.value
-  if (!node) return
-  if (!String((node.data as Record<string, unknown> | undefined)?.prompt ?? '').trim()) return
-  mobileViewerNode.value = null
-  mobilePromptReviewNode.value = node
-}
-
-function closePromptReview() {
-  mobilePromptReviewNode.value = null
-}
 
 /**
  * 移动端 tap **空节点** → 打开编辑 sheet（R2-T2，2026-10-23 真机走查）。
@@ -2937,7 +2918,7 @@ function handleMobileViewerBottomAction(key: string) {
  * §17-④（拍板②）：查看器编辑态保存 ⇒ 覆盖磁贴提示词，不触发生成、不回 composer。
  * 通道与 applyMobileEditorPatch 同源（patchNodeData + persistUserEdit）；
  * 保存后关查看器回画布，用户经画布状态胶囊确认生成（§17.2）。
- * ⭐ S1（§4.7.1）：close 参数化——全文层保存走 closePromptReview（其余同通道）。
+ * ⭐ close 参数化保留（关闭动作可注入；缺省 = 查看器）。
  */
 function handleMobileViewerEditSave(nodeId: string, prompt: string, close: () => void = closeMobileViewer) {
   const text = prompt.trim()
@@ -2945,25 +2926,6 @@ function handleMobileViewerEditSave(nodeId: string, prompt: string, close: () =>
   patchNodeData(nodeId, { prompt: text })
   persistUserEdit()
   close()
-}
-
-/* ── G1/S1（§4.7.1，2026-10-27）：提示词全文审核层页面级处理器 ────────────── */
-
-/** 满屏截图 + 意见经 §5.3 锚管线回传（与 viewer annotate 同管线，来源=全文层节点） */
-function handlePromptReviewAnnotate(payload: {
-  imageBlob?: Blob
-  degraded: boolean
-  text?: string
-}) {
-  void handleMobileAnnotateAnchor(payload, {
-    node: mobilePromptReviewNode.value,
-    close: closePromptReview,
-  })
-}
-
-/** 就地改字保存（§17-④ 同通道）：覆盖磁贴提示词 + 关全文层 */
-function handlePromptReviewEditSave(nodeId: string, prompt: string) {
-  handleMobileViewerEditSave(nodeId, prompt, closePromptReview)
 }
 
 function closeMobileViewer() {
@@ -6429,11 +6391,6 @@ onUnmounted(() => {
       :on-viewer-more="openMobileNodeMenuFromViewer"
       :on-viewer-bottom-action="handleMobileViewerBottomAction"
       :on-viewer-edit-save="handleMobileViewerEditSave"
-      :on-viewer-prompt-review="openPromptReviewFromViewer"
-      :prompt-review-node="mobilePromptReviewNode"
-      :on-prompt-review-close="closePromptReview"
-      :on-prompt-review-annotate="handlePromptReviewAnnotate"
-      :on-prompt-review-edit-save="handlePromptReviewEditSave"
       :on-node-editor-remove-ref="handleMobileNodeRemoveRef"
       :viewer-node="mobileViewerNode"
       :on-viewer-close="closeMobileViewer"

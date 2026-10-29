@@ -79,8 +79,6 @@ const emit = defineEmits<{
   (e: 'more'): void
   /** 底部主栏动作被点击（key 透传） */
   (e: 'bottom-action', key: string): void
-  /** G1（§4.7.1 入口②）：提示词摘要条单击 ⇒ 打开提示词全文审核层（独立载体） */
-  (e: 'open-prompt-review'): void
 }>()
 
 /** 文本阅读器朗读（规格 §6.2「可朗读、可停」）：朗读状态本地维护，退出即停 */
@@ -223,18 +221,6 @@ const hasProduct = computed(() => Boolean(String(nodeData.value.url ?? '').trim(
 const showReviewLayer = computed(() => isPendingNode.value && !hasProduct.value)
 const reviewPrompt = computed(() => String(nodeData.value.prompt ?? '').trim())
 
-/**
- * G1（§4.7.1 入口②，2026-10-27 S1 批次）：confirmed / error 查看器内的
- * **提示词摘要条**——一行截断，单击打开全文审核层（`MobileNodePromptReviewSheet`）。
- * pending 不渲染（其全文入口 = 审核内容层本体，⛔ 不给第二入口）。
- */
-const promptStripVisible = computed(
-  () => !isPendingNode.value && !showReviewLayer.value && reviewPrompt.value.length > 0,
-)
-const promptStripText = computed(() => {
-  const p = reviewPrompt.value
-  return p.length > 24 ? `${p.slice(0, 24)}…` : p
-})
 /** 参数只读摘要：与磁贴 proposeParams 同源（缺省模型不猜、不显示占位） */
 const reviewParams = computed(() => {
   const d = nodeData.value
@@ -957,18 +943,6 @@ defineExpose({ videoRef })
     </button>
     </div><!-- /viewer-body -->
 
-    <!-- G1（§4.7.1 入口②）：提示词摘要条 —— confirmed/error 查看器内一行回看，
-         单击打开全文审核层；pending 不渲染（审核内容层本体即全文）。 -->
-    <button
-      v-if="promptStripVisible"
-      class="viewer-prompt-strip"
-      type="button"
-      data-testid="mobile-viewer-prompt-strip"
-      @click="emit('open-prompt-review')"
-    >
-      提示词：{{ promptStripText }}
-    </button>
-
     <!--
       查看 chrome（规格 v1.5 §4.12.4 P）：右上 X + 自隐迷你操作条。
       fragment 双根 ⇒ 条仍与 .viewer-body 同层（文档流兄弟，回归③④契约保持）。
@@ -984,32 +958,6 @@ defineExpose({ videoRef })
 </template>
 
 <style scoped>
-/* G1（§4.7.1 入口②）：提示词摘要条 —— 文档流窄条（surface-base 承载 + 次级色），
-   不与底部主栏互抢（回归③④教训：⛔ 不用 absolute 钉底）。 */
-.viewer-prompt-strip {
-  flex: none;
-  display: block;
-  width: 100%;
-  margin: 0;
-  padding: 4px var(--lnk-space-3);
-  border: none;
-  border-top: 0.5px solid var(--lnk-border-subtle);
-  background: var(--lnk-surface-base);
-  color: var(--lnk-text-secondary);
-  font-size: var(--lnk-text-2xs);
-  line-height: var(--lnk-lh-2xs);
-  text-align: left;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
-}
-
-.viewer-prompt-strip:active {
-  color: var(--lnk-text-primary);
-  background: var(--lnk-surface-overlay);
-}
-
 /* 全屏查看器（D-B）：fixed 贴视口（2026-10-20 定位契约：fixed 而非 absolute 贴 100vh） */
 .mobile-node-viewer {
   position: fixed;
