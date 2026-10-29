@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, provide, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { VueFlow, type Edge, type Node } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
@@ -12,6 +12,7 @@ import CanvasNodePrompt from '@/components/canvas/CanvasNodePrompt.vue'
 import CanvasNodeImage from '@/components/canvas/CanvasNodeImage.vue'
 import CanvasNodeVideo from '@/components/canvas/CanvasNodeVideo.vue'
 import CanvasNodeText from '@/components/canvas/CanvasNodeText.vue'
+import { CANVAS_NODE_READONLY_KEY } from '@/composables/canvasNodeActions'
 
 interface AgentMessage {
   id: string
@@ -40,6 +41,10 @@ const router = useRouter()
 const sessionId = computed(() => route.params.sessionId as string)
 const agentDebug = computed(() => route.query.agentDebug === '1')
 const graphTimeline = ref<Array<{ phase?: string | null; step?: number | null }>>([])
+
+// 只读回放页（规格 §9 #12 v3 升级）：无 patch 通道，必须关死编辑/预览入口，
+// 防 updateNodeData fallback 静默假写（§5.4）。
+provide(CANVAS_NODE_READONLY_KEY, true)
 
 const sessionTitle = ref('创作回放')
 const steps = ref<ReplayStep[]>([])

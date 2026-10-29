@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createCanvasWriteTools } from "./canvas-write.js";
+import { TEXT_NODE_FORMATS } from "./text-format.js";
 
 // makeClient/findTool 与 canvas-write.test.ts 顶部同构（该文件未导出 helper；漂移时以彼为准）。
 function makeClient() {
@@ -67,4 +68,17 @@ describe("canvas-write: 侧栏附件契约镜像（RB-D7，fixture SSOT）", () 
 			assert.equal(out.mode, "localRefs");
 		});
 	}
+});
+
+describe("text-node format whitelist mirror（shared SSOT ↔ runtime 本地副本）", () => {
+	it("runtime TEXT_NODE_FORMATS 与 shared 源文件数组逐项相等", () => {
+		const sharedSrc = readFileSync(
+			fileURLToPath(new URL("../../../../packages/shared/src/textNodeFormat.ts", import.meta.url)),
+			"utf8",
+		);
+		const m = sharedSrc.match(/TEXT_NODE_FORMATS = \[([^\]]+)\] as const/);
+		assert.ok(m, "shared textNodeFormat.ts 中未找到 TEXT_NODE_FORMATS 数组字面量（结构变更需同步本镜像测试）");
+		const sharedList = m[1].split(",").map((s) => s.trim().replaceAll("'", ""));
+		assert.deepEqual([...TEXT_NODE_FORMATS], sharedList);
+	});
 });

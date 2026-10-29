@@ -7,6 +7,9 @@ export type CanvasNodePatchFn = (nodeId: string, patch: Record<string, unknown>)
 export const CANVAS_NODE_RENAME_KEY: InjectionKey<CanvasNodeRenameFn> = Symbol('canvasNodeRename')
 export const CANVAS_NODE_PATCH_KEY: InjectionKey<CanvasNodePatchFn> = Symbol('canvasNodePatch')
 
+/** 只读页/回放页注入：true ⇒ 节点组件禁开一切编辑/预览浮层（规格 §9 #12）。 */
+export const CANVAS_NODE_READONLY_KEY: InjectionKey<true> = Symbol('CANVAS_NODE_READONLY_KEY')
+
 export type CanvasNodeCancelFn = (nodeId: string) => void
 /**
  * S2-3 一键换模型重试：`overrides.modelKey` 可选（向后兼容——既有调用点零改动）。

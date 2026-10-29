@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import MobileNodeViewer from './MobileNodeViewer.vue'
+import { stripHtmlTags } from '@lnkpi/shared'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -747,6 +748,72 @@ describe('图片双指缩放（W-5）', () => {
     await root.trigger('touchmove', { touches: [{ clientY: 100 }] })
     await root.trigger('touchend')
     expect(w.emitted('close')).toHaveLength(1)
+    w.unmount()
+  })
+})
+
+// ── S5（Task 7）：MobileNodeViewer text·html 分支 + TTS strip 朗读源 ─────────
+// format:'html' ⇒ embedded HtmlNodePreview（沙箱 iframe，无第二关闭钮/浮层）；
+// 无 format ⇒ 既有 viewer-reader 纯文本路径不变（G3）；html 节点 TTS 朗读
+// strip 后纯文本（规格 §8 同源），strip 为空则不出朗读钮。
+describe('MobileNodeViewer text·html 分支（规格 S5）', () => {
+  // data prop 类型未声明 format（透传字段）⇒ 变量绕开对象字面量 excess check
+  const htmlData = (content: string) =>
+    ({ content, format: 'html' }) as { content?: string; format?: string }
+
+  it("format:'html' ⇒ 渲染沙箱 iframe（sandbox 无 allow-same-origin）", () => {
+    const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'text', data: htmlData('<h1>x</h1>') } })
+    const iframe = w.find('iframe')
+    expect(iframe.exists()).toBe(true)
+    expect(iframe.attributes('sandbox')).not.toContain('allow-same-origin')
+    w.unmount()
+  })
+
+  it('html 分支是 embedded 预览面：无第二关闭钮 / 无浮层（退出契约归 viewer）', () => {
+    const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'text', data: htmlData('<h1>x</h1>') } })
+    expect(w.find('[data-testid="html-close"]').exists()).toBe(false)
+    expect(w.find('.html-preview-overlay').exists()).toBe(false)
+    // viewer 自己的 X 与下滑退出契约不动
+    expect(w.find('[data-testid="mobile-viewer-close"]').exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('无 format ⇒ 既有 viewer-reader 纯文本（G3：路径不变）', () => {
+    const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'text', data: { content: '纯文本' } } })
+    expect(w.find('iframe').exists()).toBe(false)
+    expect(w.find('.viewer-reader').exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('html 节点 TTS 朗读源 = strip-tags 纯文本（非 raw html）', async () => {
+    // 补齐浏览器语音合成 API 面（镜像 MobileNodeTile.tts.test.ts 的 stubSpeech）
+    ;(window as any).SpeechSynthesisUtterance = class {
+      text: string
+      constructor(text: string) {
+        this.text = text
+      }
+    }
+    const speak = vi.fn()
+    ;(window as any).speechSynthesis = {
+      speak,
+      cancel: vi.fn(),
+      getVoices: () => [],
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }
+    const content = '<h1>你好</h1><p>世界</p>'
+    const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'text', data: htmlData(content) } })
+    await w.get('[data-testid="mobile-viewer-bottom-tts"]').trigger('click')
+    expect(speak).toHaveBeenCalledTimes(1)
+    const spoken = (speak.mock.calls[0]![0] as { text: string }).text
+    expect(spoken).toBe(stripHtmlTags(content))
+    expect(spoken).not.toContain('<h1>')
+    w.unmount()
+  })
+
+  it('html 节点 strip 后为空 ⇒ 不出朗读钮（hasText 判据用 strip 后文本）', () => {
+    const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'text', data: htmlData('<script>x</script>') } })
+    expect(w.find('[data-testid="mobile-viewer-bottom-tts"]').exists()).toBe(false)
     w.unmount()
   })
 })

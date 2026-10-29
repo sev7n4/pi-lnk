@@ -5,6 +5,7 @@ import { parseVisionQaJson, type ParsedVisionQaJson } from '@lnkpi/agent'
 import { CANVAS_ACTION_APPLIER, defaultCanvasActionApplier } from './canvas-action-applier'
 import type { ProviderContext, ProviderSource } from '../provider/provider-context'
 import {
+  assertTextNodeFormat,
   audioKindOf,
   computeImportTranslation,
   decodeChannelModel,
@@ -952,6 +953,7 @@ export class AgentCanvasToolsService {
       referenceImageUrl?: string
       guideSceneId?: string
       guideEditIntentId?: string
+      format?: string
     }>
     /** SP-A：批内连边。端点按「本批 key → 既有节点 id」序解析；未解析 fail-closed 整体 400。 */
     edges?: Array<{ source: string; target: string }>
@@ -1025,6 +1027,13 @@ export class AgentCanvasToolsService {
       if (item.referenceImageUrl) nodeData.referenceImageUrl = item.referenceImageUrl
       if (item.guideSceneId) nodeData.guideSceneId = item.guideSceneId
       if (item.guideEditIntentId) nodeData.guideEditIntentId = item.guideEditIntentId
+      // 格式即属性（规格 §4.4/§5.3）：缺省不写键（存量语义不变）；仅 text 节点合法；
+      // fail-closed 在此兜底（绕 HTTP 的内部调用不过 DTO）。
+      if (item.format !== undefined) {
+        assertTextNodeFormat(item.format)
+        if (nodeType !== 'text') throw new BadRequestException('仅 text 节点可携带 format')
+        nodeData.format = item.format
+      }
       actions.push({
         type: 'add_node',
         payload: {
@@ -1408,6 +1417,7 @@ export class AgentCanvasToolsService {
     nodeId: string
     content: string
     stage?: boolean
+    format?: string
   }): Promise<{ actions: CanvasAction[] }> {
     const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
     const node = canvas.nodes.find((n) => n.id === input.nodeId)
@@ -1421,12 +1431,18 @@ export class AgentCanvasToolsService {
     if (['image', 'video', 'audio'].includes(String(node.type))) {
       throw new BadRequestException('媒体节点正文不可写；改生成提示词请用 set_node_text 的 prompt 参数')
     }
+    // 格式白名单复检（规格 §5.3）：绕 HTTP 的内部调用不过 DTO，fail-closed 在此兜底。
+    if (input.format !== undefined) assertTextNodeFormat(input.format)
     const actions: CanvasAction[] = [
       {
         type: 'update_node',
         payload: {
           id: input.nodeId,
-          data: { content: input.content, status: 'completed' },
+          data: {
+            content: input.content,
+            status: 'completed',
+            ...(input.format !== undefined ? { format: input.format } : {}),
+          },
         },
       },
     ]

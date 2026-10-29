@@ -16,8 +16,7 @@ import { AgentCanvasToolsService } from './agent-canvas-tools.service'
 // 2026-10-12 事故（cmv51vwpu0008p801hxaxcf8m）里模型把皮克斯文本写进 image 节点的
 // data.content，且旧实现顺带强制 status:'completed' 污染生成状态机。fail-closed：
 // 把静默错写变成模型可自愈的显式报错（错误消息必须指引 prompt 参数）。
-describe('setNodeContent —— 媒体节点拒收 content（P1-1）', () => {
-  async function makeSvc(initial: CanvasData) {
+async function makeSvc(initial: CanvasData) {
     const sessionUpdate = vi.fn(async ({ data }: { data: { canvasData: string } }) => ({
       id: 's1',
       canvasData: data.canvasData,
@@ -85,6 +84,19 @@ describe('setNodeContent —— 媒体节点拒收 content（P1-1）', () => {
     return { svc, sessionUpdate }
   }
 
+// makeSvcWithTextNode：makeSvc 薄封装——初始画布含 n1 text 节点（format 白名单用例专用）。
+async function makeSvcWithTextNode() {
+  return makeSvc({
+    nodes: [{ id: 'n1', type: 'text', position: { x: 0, y: 0 }, data: {} }],
+    edges: [],
+  })
+}
+
+// P1-1（spec 2026-10-13 §P1-1）：媒体节点（image/video/audio）拒收 content 写入——
+// 2026-10-12 事故（cmv51vwpu0008p801hxaxcf8m）里模型把皮克斯文本写进 image 节点的
+// data.content，且旧实现顺带强制 status:'completed' 污染生成状态机。fail-closed：
+// 把静默错写变成模型可自愈的显式报错（错误消息必须指引 prompt 参数）。
+describe('setNodeContent —— 媒体节点拒收 content（P1-1）', () => {
   it('image 节点 content 写入 → BadRequest，消息指引 prompt 参数', async () => {
     const { svc } = await makeSvc({
       nodes: [{ id: 'img-1', type: 'image', position: { x: 0, y: 0 }, data: { prompt: '旧提示词', status: 'completed' } }],
@@ -128,5 +140,30 @@ describe('setNodeContent —— 媒体节点拒收 content（P1-1）', () => {
     const written = JSON.parse(sessionUpdate.mock.calls[0][0].data.canvasData) as CanvasData
     expect(written.nodes[0].data.content).toBe('新正文')
     expect(written.nodes[0].data.status).toBe('completed')
+  })
+})
+
+// 规格 §4.4/§5.3：文本节点内容格式（format）白名单。DTO 只在走 HTTP 时生效，
+// 内部调用绕过 DTO ⇒ service 层复检（assertTextNodeFormat）fail-closed 兜底。
+// 缺省不写键：format 缺省时 data 不得出现 format 键（存量语义不变）。
+describe('setNodeContent —— format 白名单（规格 §4.4/§5.3）', () => {
+  it('format:"html" 写入 data 且 status 不受污染', async () => {
+    const { svc, sessionUpdate } = await makeSvcWithTextNode()
+    await svc.setNodeContent({ sessionId: 's1', userId: 'u1', nodeId: 'n1', content: '<h1>hi</h1>', format: 'html' })
+    const written = JSON.parse(sessionUpdate.mock.calls[0][0].data.canvasData)
+    expect(written.nodes[0].data.format).toBe('html')
+    expect(written.nodes[0].data.status).toBe('completed')
+  })
+  it('format 缺省 ⇒ data 不出现 format 键（存量语义不变）', async () => {
+    const { svc, sessionUpdate } = await makeSvcWithTextNode()
+    await svc.setNodeContent({ sessionId: 's1', userId: 'u1', nodeId: 'n1', content: '纯文本' })
+    const written = JSON.parse(sessionUpdate.mock.calls[0][0].data.canvasData)
+    expect('format' in written.nodes[0].data).toBe(false)
+  })
+  it('非法值（绕 HTTP 的内部调用）⇒ service 复检 fail-closed 抛错', async () => {
+    const { svc } = await makeSvcWithTextNode()
+    await expect(
+      svc.setNodeContent({ sessionId: 's1', userId: 'u1', nodeId: 'n1', content: 'x', format: 'jsx' as never }),
+    ).rejects.toThrow(/plain, markdown, html/)
   })
 })
