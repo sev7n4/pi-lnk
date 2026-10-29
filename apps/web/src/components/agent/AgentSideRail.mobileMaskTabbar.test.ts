@@ -12,8 +12,8 @@ import { describe, expect, it } from 'vitest'
  * 2026-10-20 起范围扩展为「贴底容器跨页签泄漏」家族守卫：
  * 画布/发现/我的页签下，对话 chrome（系统层卡片）不得残留在透明壳里浮在页面上。
  * 2026-10-21 起第三代形态：系统层容器「默认全隐 + 白名单放行」——断言守护容器规则、
- * 白名单类落位（2026-10-28 根治规格后 canvas-always 随浮卡退役，仅剩 canvas-with-composer）、
- * 旧逐卡选择器不得回归、容器内卡片位置不变量。
+ * 白名单类落位（canvas-always 2026-10-28 随浮卡退役、canvas-with-composer 2026-10-29
+ * 随对话流外 ask 卡退役，白名单现已全部清零）、旧逐卡选择器不得回归、容器内卡片位置不变量。
  *
  * 断言只作用于提取出的 CSS 规则块内部（不含注释），避免「记录被删历史」的
  * 注释文本污染否定断言；每个否定断言都配有块存在性 + 关键属性的有效性断言。
@@ -82,12 +82,22 @@ describe('mobile mask never covers the tab bar (页签失灵回归守卫)', () =
     expect(container).toContain('display: none')
   })
 
-  it('画布视图：白名单放行 ask_user 卡（canvas-with-composer，跟随 composer）', () => {
-    // 窗态（:not imm :not studio-dock）显——pending 期间 composer 自由文本一律按
-    // answer 提交（spec §5.3），输入面与阻塞问题永不分离；imm/dock 随 composer 收起。
-    expect(sfc).toContain('class="mx-0.5 mb-2 canvas-with-composer"')
-    const block = extractRuleBlock(sfc, '.agent-panel-mobile-dock.is-canvas-view:not(.is-canvas-imm):not(.has-studio-dock) .agent-system-layer > .canvas-with-composer')
-    expect(block).toContain('display: block')
+  it('画布视图：canvas-with-composer 白名单已随对话流外 ask 卡下线退役（死规则不残留）', () => {
+    // 根治规格 2026-10-29：ask 题面收敛进时间线 question part（AgentTurnTimeline 内联），
+    // 跟随 chat-wrap 可见性——`canvas-with-composer` 消费点归零，规则与模板类一并退役。
+    expect(sfc, '模板不得再有 canvas-with-composer 落位').not.toContain(
+      'class="mx-0.5 mb-2 canvas-with-composer"',
+    )
+    expect(
+      extractRuleBlock(
+        sfc,
+        '.agent-panel-mobile-dock.is-canvas-view:not(.is-canvas-imm):not(.has-studio-dock) .agent-system-layer > .canvas-with-composer',
+      ),
+      '放行规则必须删除',
+    ).toBe('')
+    // 有效性断言：容器默认全隐规则仍在（证明扫的是活的样式主体）
+    const container = extractRuleBlock(sfc, '.agent-panel-mobile-dock.is-canvas-view .agent-system-layer')
+    expect(container).toContain('display: none')
   })
 
   it('画布视图：旧逐卡登记模式不得回归（deny-list 只许 header/chat-wrap/composer）', () => {
@@ -99,12 +109,11 @@ describe('mobile mask never covers the tab bar (页签失灵回归守卫)', () =
 
   it('系统层容器位置不变量：容器内卡片必须都在容器内', () => {
     // 新卡片若被加到容器外，画布视图会露头（旧 bug 形态）。容器开标签必须先于全部已知卡片。
-    // 根治规格 2026-10-28：propose 浮卡下线（决策点收敛进时间线内联卡），容器内剩
-    // 状态行 / ask 卡 / 取消回执三张。
+    // 根治规格 2026-10-28/29：浮卡与对话流外 ask 卡均下线（决策点收敛进时间线内联卡，
+    // 跟随 chat-wrap 可见性），容器内剩状态行 / 取消回执两张播报式 chrome。
     const open = sfc.indexOf('<div class="agent-system-layer">')
     expect(open).toBeGreaterThan(0)
     expect(open).toBeLessThan(sfc.indexOf('class="agent-turn-status mx-0.5 mb-1'))
-    expect(open).toBeLessThan(sfc.indexOf('class="mx-0.5 mb-2 canvas-with-composer"'))
     expect(open).toBeLessThan(sfc.indexOf('data-testid="run-cancelled-callout"'))
   })
 })

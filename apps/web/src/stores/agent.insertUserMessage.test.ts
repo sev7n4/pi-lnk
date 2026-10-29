@@ -6,8 +6,9 @@
 // 为什么不能直接用 `addUserMessage`（两条独立的不变量）：
 //  ① 它 push 到**末尾** —— 流式中 assistant 气泡已存在且持续累积正文，
 //     追加到末尾会让用户气泡排到 assistant 之后（顺序错乱）。
-//  ② 它会**重置回合级瞬态**（propose / blockingWait / recovering / turnError /
+//  ② 它会**重置回合级瞬态**（propose 等待 / recovering / turnError /
 //     turnRefusal）—— 插话发生在本轮中途，重置等于把本轮的阻塞等待与失败态抹掉。
+//     （propose 等待现已收敛进时间线 proposal part，单一真相，无并行 store 镜像。）
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useAgentStore } from '@/stores/agent'
@@ -46,13 +47,15 @@ describe('insertUserMessageBeforeAssistant', () => {
     const agent = useAgentStore()
     agent.addUserMessage('第一句')
     agent.startAssistantMessage()
-    agent.setBlockingWait({ toolName: 'propose_generation' })
+    // 等待态单一真相：时间线 pending_confirm proposal part（取代旧 blockingWait 镜像）
+    agent.trackWaitingUser({ status: 'waiting', toolName: 'propose_generation', callId: 'call-1', nodeId: 'node-1' })
     agent.markTurnError(new Error('上游超时'))
     agent.setRecovering(true)
 
     agent.insertUserMessageBeforeAssistant('插话补充', { entryId: 'e-3' })
 
-    expect(agent.blockingWait?.toolName).toBe('propose_generation')
+    // 时间线等待态不被插话抹掉（pendingProposal 派生自时间线，与对话流/状态行同源）
+    expect(agent.pendingProposal?.callId).toBe('call-1')
     expect(agent.turnError).toBeInstanceOf(Error)
     expect(agent.recovering).toBe(true)
   })

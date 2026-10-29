@@ -212,7 +212,6 @@ import PublishNeoTVDialog from '@/components/works/PublishNeoTVDialog.vue'
 import AgentSideRail from '@/components/agent/AgentSideRail.vue'
 import AgentNodeGraph from '@/components/agent/presentation/AgentNodeGraph.vue'
 import { useAgentStore } from '@/stores/agent'
-import { forcePendingConfirmInPayload, shouldSyncProposePending } from '@/components/agent/proposeWaitActions'
 import { dedupeNodesById, mergeCanvasNodesFromServer } from '@/pages/canvas/canvasNodeMerge'
 import { useSelectedNodeEditor, type EditableFlowNode, EDITABLE_NODE_TYPES } from '@/composables/useSelectedNodeEditor'
 import type { CanvasEdgeLike } from '@/composables/useUpstreamNodeContext'
@@ -4708,27 +4707,6 @@ function handleProposeConfirmEdit(nodeId: string) {
   selectOnlyNode(nodeId)
 }
 
-/**
- * L2（2026-10-06）：propose 等待开始 → 本地节点同步成 pending_confirm。
- *
- * 等待期 `update_node{pending_confirm}` 还没随 tool result 下发，本地是 stale draft；
- * 期间任何 saveCanvas（点生成时的 flush / 拖节点 / 改参数 / 别处出图完成）都会用它
- * **整份覆盖** SSOT 的待确认 ⇒ runtime 判「连续两次 draft = 用户取消」。
- * 守卫：只在草稿态同步（见 shouldSyncProposePending），已 in-flight / 终态不动。
- */
-// P0-C（2026-10-13 事故 cmv51vwpu0008p801hxaxcf8m）：propose 等待期记录等待节点，
-// saveCanvas 载荷对该节点强制声明 pending_confirm（真值），防 stale 全量盖写 SSOT。
-// AgentSideRail proposeWaitEnd 时解除；服务端另有 P0-B 状态转移守卫兜底。
-const proposeWaitingNodeId = ref<string | null>(null)
-
-function handleProposeWaitStart(nodeId: string) {
-  proposeWaitingNodeId.value = nodeId
-  const node = nodes.value.find((n) => n.id === nodeId)
-  if (!node) return
-  if (!shouldSyncProposePending((node.data as Record<string, unknown> | undefined)?.status)) return
-  patchNodeData(nodeId, { status: 'pending_confirm' })
-}
-
 /** Phase 2c.1: cancel propose → Nest Jwt clear-propose, then local draft patch. */
 async function handleClearProposeGeneration(nodeId: string) {
   try {
@@ -5199,9 +5177,6 @@ async function saveCanvas() {
         compositionRunGroup.value = canvasData.compositionRunGroup
       }
     }
-    // P0-C：propose 等待期，等待节点 status 强制声明真值（整份替换语义下
-    // 「剥离」= 删除字段，同样是一次状态变化——强制 pending_confirm 才是不覆盖）。
-    forcePendingConfirmInPayload(canvasData, proposeWaitingNodeId.value)
     await api.put(`/sessions/${sessionId.value}`, {
       title: sessionTitle.value,
       canvasData,
@@ -6371,8 +6346,6 @@ onUnmounted(() => {
         @expanded-change="onAgentExpandedChange"
         @generate-node="handleAgentGenerateNode"
         @clear-propose-generation="handleClearProposeGeneration"
-        @propose-wait-start="handleProposeWaitStart"
-        @propose-wait-end="proposeWaitingNodeId = null"
         :can-open="canOpenAgentPanel"
       />
     </div>

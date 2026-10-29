@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import {
   type AgentChatMessage,
   type AgentMessageMetadata,
@@ -38,9 +38,10 @@ import {
   refreshTimelineSummary,
   replayTimelineEvents,
   type TimelineEvent,
+  type TimelinePart,
   type TurnTimeline,
 } from '@/components/agent/turnTimeline'
-import { isFeatureOn } from '@/composables/useFeatureFlag'
+import { reportWaitStarted, reportWaitResolved } from '@/components/agent/waitTelemetry'
 import type { AgentPresentationEnvelope } from '@/components/agent/presentation/types'
 import { useAuthStore } from '@/stores/auth'
 import { randomId } from '@/utils/randomId'
@@ -125,29 +126,43 @@ export const useAgentStore = defineStore('agent', () => {
   /** Q2（2026-10-14）：本回合实时预估积分（usage_delta 事件逐段覆盖，turn 结束清位）。
    * 状态行 running 段「预估 -N积分」数据源；纯展示预估，P2 落账后由 settled 权威值替代。 */
   const liveEstimatedCredits = ref<number | null>(null)
-  /** P1 状态行：本回合 propose_generation 已返回 pending_confirm（waiting 一票通过） */
-  const proposePendingConfirm = ref(false)
   /**
-   * 阻塞等待中的确认类工具（`waiting_user{status:"waiting"}`，2026-10-01）。
-   * 与 proposePendingConfirm 的分工：后者靠 tool_result 反推（阻塞模式下太晚），
-   * 本字段由后端在**等待开始**即下发 —— 等待期状态行收口的唯一可靠信号。
+   * 等待态单一真相的查询侧（根治规格 2026-10-28）：当前处于 `pending_confirm` 的
+   * proposal part（来自上游 `waiting_user` 事件，时间线 reducer 已把它收敛成 part）。
+   * 画布节点内联确认面 / 对话流内联卡 / 底部状态行都只读它，不再用 `blockingWait` 这类
+   * 并行 store 态。返回最后一个含 pending_confirm proposal 的 assistant 消息里的该 part。
    */
+  const pendingProposal = computed(() => {
+    for (let i = messages.value.length - 1; i >= 0; i -= 1) {
+      const m = messages.value[i]
+      if (m.role === 'assistant' && m.timeline) {
+        const p = m.timeline.parts.find(
+          (part): part is Extract<TimelinePart, { kind: 'proposal' }> =>
+            part.kind === 'proposal' && part.status === 'pending_confirm',
+        )
+        if (p) return p
+      }
+    }
+    return null
+  })
   /**
-   * `deadlineAt` = 自动取消时刻（waiting_user 的 timeoutMs 起点）。
-   * 状态行进二阶（决策 6）：显示「还剩 N 分钟自动取消」，让用户判断要不要先处理。
+   * 等待态单一真相的查询侧（ask_user）：当前处于 `pending_answer` 的 question part
+   * （来自上游 `ask_user` 事件，时间线 reducer 已把它收敛成 part）。`AskUserCard` 与
+   * 对话流内联卡都只读它，不再用 `pendingAskUser` 这类并行组件 ref。
    */
-  const blockingWait = ref<{
-    toolName: string
-    callId?: string
-    nodeId?: string
-    /**
-     * 阻塞题干（ask_user 经 `waiting_user` 事件的 meta.questionTitle 下发，2026-10-02）。
-     * 状态行据此显示「等待你作答：<题面>」，而不是无信息量的「等待你确认」——
-     * 用户至少知道在等他答什么。
-     */
-    question?: string
-    deadlineAt?: number
-  } | null>(null)
+  const pendingQuestion = computed(() => {
+    for (let i = messages.value.length - 1; i >= 0; i -= 1) {
+      const m = messages.value[i]
+      if (m.role === 'assistant' && m.timeline) {
+        const p = m.timeline.parts.find(
+          (part): part is Extract<TimelinePart, { kind: 'question' }> =>
+            part.kind === 'question' && part.status === 'pending_answer',
+        )
+        if (p) return p
+      }
+    }
+    return null
+  })
   /**
    * P2「会话恢复中」：vendor `retry_scheduled{recovery:true}` 标记经 recovery 事件透传。
    * 瞬时态——真实进度事件（activity/tool_call）或回合结束（agent_end/error）清位，
@@ -249,9 +264,7 @@ export const useAgentStore = defineStore('agent', () => {
       selectionNodeIds?: string[]
     },
   ) {
-    // 新回合开始：重置回合级状态行信号（propose 置位 / 阻塞等待 / 恢复态 / 文本时间戳 / 失败态）
-    proposePendingConfirm.value = false
-    blockingWait.value = null
+    // 新回合开始：重置回合级状态行信号（恢复态 / 文本时间戳 / 失败态）
     recovering.value = false
     lastTextDeltaAt.value = 0
     turnError.value = null
@@ -349,11 +362,22 @@ export const useAgentStore = defineStore('agent', () => {
    * 自举创建消息上的 timeline（与 ensureExecutionTrace 同形），再 applyTimelineEvent 落 parts。
    */
   function feedTimeline(event: TimelineEvent) {
-    if (!isFeatureOn('turn_timeline')) return
     const last = lastAssistant()
     if (!last) return
     if (!last.timeline) last.timeline = createTurnTimeline()
+    // T4 打点：waiting_user{resolved} ⇒ 先捕获等待中的 proposal part（callId+startedAt），
+    // 应用后若翻 confirmed 则上报等待时长（时长取自 part.startedAt，无并行状态）。
+    let resolvedProposal: { callId: string; startedAt: number } | null = null
+    if (event.type === 'waiting_user' && event.data.status === 'resolved') {
+      const wait = pendingProposal.value
+      if (wait && wait.status === 'pending_confirm' && wait.callId) {
+        resolvedProposal = { callId: wait.callId, startedAt: wait.startedAt }
+      }
+    }
     applyTimelineEvent(last.timeline, event)
+    if (resolvedProposal) {
+      reportWaitResolved('proposal', resolvedProposal.callId, 'confirmed', resolvedProposal.startedAt)
+    }
   }
 
   function appendText(text: string) {
@@ -412,13 +436,6 @@ export const useAgentStore = defineStore('agent', () => {
   }
 
   function endToolCall(toolCallId: string | undefined, name: string, result?: unknown, isError?: boolean) {
-    // tool_result 落点：propose_generation 返回 pending_confirm → waiting 一票通过信号
-    if (
-      name === 'propose_generation'
-      && (result as { status?: string } | null)?.status === 'pending_confirm'
-    ) {
-      proposePendingConfirm.value = true
-    }
     const last = lastAssistant()
     if (!last) return
     ensureExecutionTrace()
@@ -453,7 +470,6 @@ export const useAgentStore = defineStore('agent', () => {
    * 找不到不伪造）。非终态事件，不刷新摘要快照。
    */
   function trackGenerationProgress(data: { nodeId?: string; elapsedMs?: number }) {
-    if (!isFeatureOn('turn_timeline')) return
     if (!data?.nodeId || typeof data.elapsedMs !== 'number') return
     for (let i = messages.value.length - 1; i >= 0; i -= 1) {
       const m = messages.value[i]
@@ -484,7 +500,6 @@ export const useAgentStore = defineStore('agent', () => {
    * 找不到归属就不伪造（N4：不冒充全量），静默跳过。
    */
   function backfillTimelineNodeStatus(data: { nodeId: string; status: string; url?: string }) {
-    if (!isFeatureOn('turn_timeline')) return
     if (!data?.nodeId || !data.status) return
     for (let i = messages.value.length - 1; i >= 0; i -= 1) {
       const m = messages.value[i]
@@ -616,6 +631,13 @@ export const useAgentStore = defineStore('agent', () => {
     title?: string
     timeoutMs?: number
   }) {
+    // T4 打点：propose 等待开始（幂等键 callId；时长由 part.startedAt 承载）。
+    if (data.status === 'waiting' && data.toolName === 'propose_generation' && data.callId) {
+      reportWaitStarted('proposal', data.callId, {
+        nodeId: data.nodeId ?? null,
+        timeoutMs: data.timeoutMs ?? null,
+      })
+    }
     feedTimeline({ type: 'waiting_user', data })
   }
 
@@ -631,7 +653,37 @@ export const useAgentStore = defineStore('agent', () => {
       allowOther?: boolean
     }>
   }) {
+    // T4 打点：ask 等待开始（幂等键 callId）。
+    if (data.callId) reportWaitStarted('question', data.callId)
     feedTimeline({ type: 'ask_user', data })
+  }
+
+  /**
+   * 根治规格（2026-10-28）：提交/取消后把匹配的 question part 翻终态（answered/declined），
+   * 或 POST 失败时回滚到 `pending_answer`（乐观置位防双击双发）。
+   * 与 proposal 的 resolved 同构——等待态出口全部从 part 状态流转，无并行组件 ref。
+   */
+  function resolveQuestionPart(callId: string, status: 'answered' | 'declined' | 'pending_answer') {
+    for (const m of messages.value) {
+      if (m.role !== 'assistant' || !m.timeline) continue
+      const p = m.timeline.parts.find(
+        (part): part is Extract<TimelinePart, { kind: 'question' }> =>
+          part.kind === 'question' && part.callId === callId,
+      )
+      if (p) {
+        // T4 打点：翻终态上报等待时长（回滚到 pending_answer 不算终态，不打点）。
+        if (status !== 'pending_answer') {
+          reportWaitResolved(
+            'question',
+            callId,
+            status === 'answered' ? 'answered' : 'skipped',
+            p.startedAt,
+          )
+        }
+        p.status = status
+        break
+      }
+    }
   }
 
   /**
@@ -654,33 +706,12 @@ export const useAgentStore = defineStore('agent', () => {
     }
     if (last) last.streaming = false
     isStreaming.value = false
-    // 回合结束即无等待（后端 resolved 事件可能因断流迟到，这里再兜一次）
-    blockingWait.value = null
     // 回合结束同样无「恢复中」（P2：瞬时态不跨回合残留）
     recovering.value = false
     // TURN-IDENTITY PR3：发言被拒的瞬时态也不跨回合残留
     turnRefusal.value = null
   }
 
-  /**
-   * 阻塞等待置位/清位（`waiting_user` 事件，2026-10-01）。
-   * `status:"resolved"` 或空工具名一律清位——宁可少显示等待，也不要卡在「等待你确认」。
-   */
-  /** 缺省 300000ms 与线上 `ASK_USER_TIMEOUT_MS` 对齐（runtime 未下发 timeoutMs 时的兜底）。 */
-  const BLOCKING_WAIT_DEFAULT_TIMEOUT_MS = 300_000
-
-  function setBlockingWait(
-    wait: { toolName: string; callId?: string; nodeId?: string; question?: string; timeoutMs?: number } | null,
-  ) {
-    if (!wait?.toolName) {
-      blockingWait.value = null
-      return
-    }
-    blockingWait.value = {
-      ...wait,
-      deadlineAt: Date.now() + (wait.timeoutMs ?? BLOCKING_WAIT_DEFAULT_TIMEOUT_MS),
-    }
-  }
 
   /** P2：recovery 事件落点——置位/清位「会话恢复中」（清位由组件层在真实进度事件里调用）。 */
   function setRecovering(next: boolean) {
@@ -771,7 +802,7 @@ export const useAgentStore = defineStore('agent', () => {
       // executionEvents 重放出 TurnTimeline；bodyText 取自 persisted.content（历史无
       // text_delta，用正文补一个 done 文本块，避免时间线缺正文）。flag 关闭时不构建。
       let timeline: TurnTimeline | undefined
-      if (isFeatureOn('turn_timeline') && meta?.executionEvents?.length) {
+      if (meta?.executionEvents?.length) {
         // TURN-IDENTITY PR3：`partial` 是服务端判定的「账本不完整」（本流没捕获到
         // run 起点）⇒ 重放时置顶一条缺口标注，不让残缺过程冒充完整过程。
         // D2（multi-device Task 2）：`truncated` 是「尾部未捕获」（本流没等到 agent_end，
@@ -839,8 +870,6 @@ export const useAgentStore = defineStore('agent', () => {
 
   function clear() {
     messages.value = []
-    proposePendingConfirm.value = false
-    blockingWait.value = null
     recovering.value = false
     lastTextDeltaAt.value = 0
     turnError.value = null
@@ -851,14 +880,13 @@ export const useAgentStore = defineStore('agent', () => {
     messages,
     isStreaming,
     liveEstimatedCredits,
-    proposePendingConfirm,
-    blockingWait,
+    pendingProposal,
+    pendingQuestion,
     recovering,
     lastTextDeltaAt,
     turnError,
     turnRefusal,
     setTurnRefusal,
-    setBlockingWait,
     setRecovering,
     addUserMessage,
     insertUserMessageBeforeAssistant,
@@ -889,6 +917,7 @@ export const useAgentStore = defineStore('agent', () => {
     trackUsageDelta,
     trackWaitingUser,
     trackAskUser,
+    resolveQuestionPart,
     finishStreaming,
     loadHistory,
     clear,

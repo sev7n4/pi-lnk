@@ -2,8 +2,8 @@
  * B-6：POST /api/agent/sessions/:sessionId/answers —— 阻塞式 ask_user /
  * propose_generation 的回答回传（Nest 统一包装按 data 取值）。
  *
- * 401/403/网络异常一律 throw——调用方必须 try/catch，失败时恢复 pendingAskUser
- * （端点幂等，重试安全）。payload 只含 threadId/callId/answers；
+ * 401/403/网络异常一律 throw——调用方必须 try/catch，失败时把 question part 回滚到
+ * pending_answer（端点幂等，重试安全）。payload 只含 threadId/callId/answers；
  * skipped 不进 payload——skipped 问题已从 answers 省略，「未答」语义由模型侧
  * sawtooth（answers 缺键）表达。
  *
