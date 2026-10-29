@@ -44,7 +44,10 @@ describe('移动端节点交互 · 行为级守卫（规格 §10.2）', () => {
   })
 
   it('G-2 查看器有两条退出通道（右上 X + 下滑关闭）', () => {
-    expect(viewer).toContain('mobile-viewer-close')
+    // v1.5 P：X 钮迁 MobileViewerChrome（自隐 chrome 组件），关闭契约随组件迁移
+    const viewerWithChrome =
+      viewer + stripComments(read('./MobileViewerChrome.vue'))
+    expect(viewerWithChrome).toContain('mobile-viewer-close')
     expect(viewer).toMatch(/touchstart/)
     expect(viewer).toMatch(/touchmove/)
   })

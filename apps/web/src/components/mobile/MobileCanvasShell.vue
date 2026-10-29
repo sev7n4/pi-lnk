@@ -42,7 +42,6 @@ import MobileMultiSelectBar from './MobileMultiSelectBar.vue'
 import MobileNodeActionSheet, { type MobileNodeActionNode } from './MobileNodeActionSheet.vue'
 import MobileNodeEditorSheet from './MobileNodeEditorSheet.vue'
 import MobileNodeViewer from './MobileNodeViewer.vue'
-import MobileNodePromptReviewSheet from './MobileNodePromptReviewSheet.vue'
 import MobileNodeCoachMark from './MobileNodeCoachMark.vue'
 import type { EditableFlowNode } from '@/composables/useSelectedNodeEditor'
 import type { UpstreamNodeContext } from '@/composables/useUpstreamNodeContext'
@@ -159,21 +158,12 @@ const props = defineProps<{
   onViewerClose: () => void
   /** 右上「⋯」= 打开与长按同一个 Menu（同源同容器，§4.6） */
   onViewerMore: () => void
-  /** 查看器底部主栏动作（如「改词」，§4.11.6 高频下沉） */
-  onViewerBottomAction: (key: string) => void
+  /** 查看器底部主栏动作（如「改词」，§4.11.6 高频下沉；音频 edit 携带 meta.mediaTime——v1.5 Q） */
+  onViewerBottomAction: (key: string, meta?: { mediaTime?: number }) => void
   /** D8/L1/M1 + §17 v2：查看器标注锚带回（带标记整图 blob 或降级 + 胶囊意见） */
   onViewerAnnotate: (payload: { imageBlob?: Blob; degraded: boolean; text?: string }) => void
   /** §17-④（拍板②）：编辑态保存 ⇒ 页面层覆盖磁贴提示词（不触发生成、不带回 composer） */
   onViewerEditSave: (nodeId: string, prompt: string) => void
-  /** G1（§4.7.1 入口②）：查看器提示词摘要条单击 ⇒ 打开全文审核层 */
-  onViewerPromptReview: () => void
-  /** ── G1/S1（§4.7.1，2026-10-27）：提示词全文审核层（独立载体，⛔ 非 viewer type）── */
-  promptReviewNode: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any } | null
-  onPromptReviewClose: () => void
-  /** 满屏截图 + 意见经 §5.3 锚管线回传（与 viewer annotate 同管线） */
-  onPromptReviewAnnotate: (payload: { imageBlob?: Blob; degraded: boolean; text?: string }) => void
-  /** 就地改字保存 ⇒ 页面层覆盖磁贴提示词（§17-④ 同通道） */
-  onPromptReviewEditSave: (nodeId: string, prompt: string) => void
   /** ── R3-T4 壳层聚合状态栏（D-C 状态机的壳层聚合）── */
   /** 正在生成的节点数（0 = 无） */
   nodeGeneratingCount: number
@@ -228,6 +218,8 @@ export interface MobileEditorContext {
   refs: NodeRef[]
   mentions: MentionOption[]
   generating: boolean
+  /** 意见预填（v1.5 Q：音频改词 meta.mediaTime ⇒「at mm:ss」） */
+  initialOpinion?: string
 }
 
 const auth = useAuthStore()
@@ -512,6 +504,7 @@ onUnmounted(() => stopMobileTaskPolling())
     :refs="mobileEditor.refs"
     :mentions="mobileEditor.mentions"
     :generating="mobileEditor.generating"
+    :initial-opinion="mobileEditor.initialOpinion"
     @close="props.onNodeEditorClose"
     @patch="props.onNodeEditorPatch"
     @send-to-agent="props.onNodeEditorSendToAgent"
@@ -524,6 +517,7 @@ onUnmounted(() => stopMobileTaskPolling())
     :type="viewerNode.type"
     :data="viewerNode.data"
     :bottom-actions="viewerBottomActions"
+    :menu-open="mobileActionNode?.context === 'viewer'"
     @close="props.onViewerClose"
     @annotate="props.onViewerAnnotate"
     @edit-save="
@@ -534,22 +528,6 @@ onUnmounted(() => stopMobileTaskPolling())
     "
     @more="props.onViewerMore"
     @bottom-action="props.onViewerBottomAction"
-    @open-prompt-review="props.onViewerPromptReview"
-  />
-  <!-- G1/S1（§4.7.1，2026-10-27）：提示词全文审核层 —— 独立文本阅读面载体
-       （MobileReadingSurface），⛔ 不是 viewer 的 type（D2 死分支教训）；
-       无确认/拒绝按钮（单一确认面 ADR-0011，V-11 守卫）。 -->
-  <MobileNodePromptReviewSheet
-    v-if="promptReviewNode"
-    :node="promptReviewNode"
-    @close="props.onPromptReviewClose"
-    @annotate="props.onPromptReviewAnnotate"
-    @edit-save="
-      (prompt: string) => {
-        if (!promptReviewNode) return
-        props.onPromptReviewEditSave(promptReviewNode.id ?? '', prompt)
-      }
-    "
   />
   <!-- R1-T7：节点交互范式反转一次性引导（点按播放 · 长按编辑），仅画布页签首进一次 -->
   <MobileNodeCoachMark v-if="mobileAppTab === 'canvas'" />

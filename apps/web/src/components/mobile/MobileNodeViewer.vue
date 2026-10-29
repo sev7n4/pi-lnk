@@ -12,6 +12,7 @@ import { useNodeWaveform } from '@/composables/useNodeWaveform'
 import { formatMediaDuration } from '@/utils/mediaInfoFormat'
 import MobileNodeWaveform from './MobileNodeWaveform.vue'
 import MobileAnnotationCapsule from './MobileAnnotationCapsule.vue'
+import MobileViewerChrome, { type MobileViewerChromeAction } from './MobileViewerChrome.vue'
 
 /**
  * 全屏查看器（D2 · 2026-10-25 规格 §6.2 / §4.1 P3）
@@ -55,8 +56,13 @@ const props = withDefaults(
      * ⭐ 如 confirmed 态的「改词」—— ⛔ 不放右上角（那是低频区）。
      */
     bottomActions?: Array<{ key: string; label: string; variant?: 'primary' | 'danger' }>
+    /**
+     * 规格 v1.5 §4.12.2（拍板项 O）：长按唤起的 Menu 是否打开中。
+     * 打开时轻暂停媒体；关闭时恢复此前播放态（仅在播才恢复）。
+     */
+    menuOpen?: boolean
   }>(),
-  { bottomActions: () => [] },
+  { bottomActions: () => [], menuOpen: false },
 )
 
 const emit = defineEmits<{
@@ -71,10 +77,8 @@ const emit = defineEmits<{
   (e: 'edit-save', prompt: string): void
   /** 右上「⋯」= 操作全集（打开与长按同一个 Menu，§4.6 同源同容器） */
   (e: 'more'): void
-  /** 底部主栏动作被点击（key 透传） */
-  (e: 'bottom-action', key: string): void
-  /** G1（§4.7.1 入口②）：提示词摘要条单击 ⇒ 打开提示词全文审核层（独立载体） */
-  (e: 'open-prompt-review'): void
+  /** 底部主栏动作被点击（key 透传；音频 edit 携带 mediaTime——v1.5 Q at mm:ss 链路起点） */
+  (e: 'bottom-action', key: string, meta?: { mediaTime?: number }): void
 }>()
 
 /** 文本阅读器朗读（规格 §6.2「可朗读、可停」）：朗读状态本地维护，退出即停 */
@@ -117,7 +121,81 @@ onBeforeUnmount(() => {
   if (ttsEndHandler && typeof window !== 'undefined' && window.speechSynthesis) {
     window.speechSynthesis.removeEventListener('end', ttsEndHandler)
   }
+  cancelLongPress()
 })
+
+/* ── 长按唤起同源 Menu（规格 v1.5 §4.12.2 拍板项 O / G-19）─────────────────
+ * 「⋯」按钮退役：长按媒体任意处 = 与画布长按同一 Menu（同一浮层、同一门控，
+ * 仅 context='viewer' 裁剪子集）。唤起时媒体轻暂停（pause 不复位），
+ * Menu 关闭（menuOpen true→false）恢复此前播放态。
+ * ⭐ 手势仲裁：标注态 / 编辑态 / 文本类型（长按留给拖选）/ 音频类型（§4.12.2：
+ *   波形/进度拖动手势冲突且无内容类操作诉求）/ 多指 / 位移>10px
+ *   一律取消；长按触发后本次触控不得再触发 chrome 点按切换（suppressNextTap）。 */
+const LONG_PRESS_MS = 500
+const LONG_PRESS_MOVE_PX = 10
+let lpTimer: number | null = null
+let lpStart: { x: number; y: number } | null = null
+const suppressNextTap = ref(false)
+const wasPlayingBeforeMenu = ref(false)
+
+function onBodyTouchStart(e: TouchEvent) {
+  // 文本（长按留给拖选）/ 音频（§4.12.2：不挂 Menu，波形与进度拖动手势冲突）一律早退
+  if (props.type === 'text' || props.type === 'audio') return
+  if (annotating.value || editing.value || props.menuOpen) return
+  if (e.touches.length !== 1) return
+  const t = e.touches[0]!
+  lpStart = { x: t.clientX, y: t.clientY }
+  lpTimer = window.setTimeout(fireLongPress, LONG_PRESS_MS)
+}
+
+function fireLongPress() {
+  lpTimer = null
+  lpStart = null
+  suppressNextTap.value = true
+  if (props.type === 'video' && videoRef.value && !videoRef.value.paused) {
+    videoRef.value.pause()
+    wasPlayingBeforeMenu.value = true
+  }
+  emit('more')
+}
+
+function onBodyTouchMove(e: TouchEvent) {
+  if (!lpTimer || !lpStart) return
+  const t = e.touches[0]
+  if (!t) return
+  if (Math.hypot(t.clientX - lpStart.x, t.clientY - lpStart.y) > LONG_PRESS_MOVE_PX) cancelLongPress()
+}
+
+function cancelLongPress() {
+  if (lpTimer !== null) {
+    window.clearTimeout(lpTimer)
+    lpTimer = null
+  }
+  lpStart = null
+}
+
+function onBodyTouchEnd() {
+  const firedLongPress = suppressNextTap.value
+  const wasTap = lpTimer !== null && lpStart !== null && !firedLongPress
+  cancelLongPress()
+  if (firedLongPress) {
+    suppressNextTap.value = false
+    return
+  }
+  if (wasTap && !annotating.value && !editing.value) {
+    chromeVisible.value = !chromeVisible.value
+  }
+}
+
+watch(
+  () => props.menuOpen,
+  (open) => {
+    if (open || !wasPlayingBeforeMenu.value) return
+    wasPlayingBeforeMenu.value = false
+    if (props.type === 'video') void videoRef.value?.play().catch(() => {})
+    if (props.type === 'audio') void audioRef.value?.play().catch(() => {})
+  },
+)
 
 /**
  * 查看器底部主栏动作：外部注入的 bottomActions + 文本节点的「朗读 / 停止」。
@@ -141,18 +219,6 @@ const hasProduct = computed(() => Boolean(String(nodeData.value.url ?? '').trim(
 const showReviewLayer = computed(() => isPendingNode.value && !hasProduct.value)
 const reviewPrompt = computed(() => String(nodeData.value.prompt ?? '').trim())
 
-/**
- * G1（§4.7.1 入口②，2026-10-27 S1 批次）：confirmed / error 查看器内的
- * **提示词摘要条**——一行截断，单击打开全文审核层（`MobileNodePromptReviewSheet`）。
- * pending 不渲染（其全文入口 = 审核内容层本体，⛔ 不给第二入口）。
- */
-const promptStripVisible = computed(
-  () => !isPendingNode.value && !showReviewLayer.value && reviewPrompt.value.length > 0,
-)
-const promptStripText = computed(() => {
-  const p = reviewPrompt.value
-  return p.length > 24 ? `${p.slice(0, 24)}…` : p
-})
 /** 参数只读摘要：与磁贴 proposeParams 同源（缺省模型不猜、不显示占位） */
 const reviewParams = computed(() => {
   const d = nodeData.value
@@ -163,6 +229,29 @@ const reviewParams = computed(() => {
   if (typeof d.imageResolution === 'string' && d.imageResolution.trim()) parts.push(d.imageResolution.trim())
   return parts.join(' · ')
 })
+
+/* ── chrome 三态（规格 v1.5 §4.12.4 拍板项 P / G-20）──────────────────────
+ * 点按媒体 ⇒ X + 迷你操作条整体淡出（iOS Photos 范式）；再点淡入。
+ * 隐藏态下滑/上滑关闭恒可用（手势在根容器，P3 不依赖 chrome）。
+ * 标注态/编辑态为任务模式，不参与 chrome 切换。 */
+const chromeVisible = ref(true)
+
+/** 底栏动作 → chrome 迷你项（图标映射 §4.12.6；key 契约不变） */
+const chromeActions = computed<MobileViewerChromeAction[]>(() =>
+  resolvedBottomActions.value.map((a) => ({
+    key: a.key,
+    label: a.label,
+    icon: a.key === 'annotate' ? 'marker' : a.key === 'tts' ? 'speaker' : 'pencil',
+  })),
+)
+
+function onChromeAction(key: string) {
+  if (key === 'tts') {
+    toggleReaderSpeak()
+    return
+  }
+  onBottomAction(key)
+}
 
 const resolvedBottomActions = computed(() => {
   // §17-④：编辑态下底栏 = 取消/保存（就地改字，保存回画布覆盖磁贴——拍板②）
@@ -182,8 +271,10 @@ const resolvedBottomActions = computed(() => {
   // ⭐ 入口统一（真机反馈①）：非文本节点且壳层未带 annotate 动作时，
   //   注入 [圈选] 进工具栏（与改词同几何等宽胶囊；原浮动圆钮退役）。
   //   pending 节点壳层已带【批注】⇒ 不重复注入。
+  //   v1.5 Q（§4.12.8）：音频不注入圈选——波形圈选判伪功能，改走 at mm:ss 时间戳。
   const hasAnnotate = base.some((a) => a.key === 'annotate')
-  const needsAnnotate = props.type !== 'text' && !showReviewLayer.value && !hasAnnotate
+  const needsAnnotate =
+    props.type !== 'text' && props.type !== 'audio' && !showReviewLayer.value && !hasAnnotate
   const actions: Array<{ key: string; label: string; variant?: 'primary' | 'danger' }> = needsAnnotate
     ? [{ key: 'annotate', label: '圈选' }, ...base]
     : [...base]
@@ -225,7 +316,12 @@ function onBottomAction(key: string) {
     emit('edit-save', editText.value.trim())
     return
   }
-  emit('bottom-action', key)
+  // v1.5 Q：音频 edit 携带 mediaTime（当前播放时刻）⇒ 页面层预填编辑器意见 at mm:ss
+  const meta =
+    key === 'edit' && props.type === 'audio' && Number.isFinite(audioRef.value?.currentTime ?? NaN)
+      ? { mediaTime: audioRef.value!.currentTime }
+      : undefined
+  emit('bottom-action', key, meta)
 }
 
 /* ── 标注态（L1：只有一支笔 —— 手指自由圈选；共享 useInkOverlay）──────────
@@ -251,12 +347,26 @@ const ink = useInkOverlay({
 const editing = ref(false)
 const editText = ref('')
 
-/** 进入标注态（§17-③：底栏【批注】1 步进入） */
+/** 进入标注态（§17-③：底栏【批注】1 步进入）。
+ * v1.5 Q（G-23）：视频先暂停再记当前帧时刻 ⇒ 胶囊草稿自动前缀「第 m:ss 帧：」。 */
 function enterAnnotate() {
   annotating.value = true
   ink.reset()
   capsuleVisible.value = false
+  if (props.type === 'video' && videoRef.value) {
+    videoRef.value.pause()
+    annotateTime.value = videoRef.value.currentTime
+  }
 }
+
+/** 视频标注时刻（圈选时的当前帧；非视频恒 0） */
+const annotateTime = ref(0)
+/** G-23：胶囊草稿自动前缀（仅视频；可删改）。 */
+const capsuleDraftPrefix = computed(() =>
+  props.type === 'video'
+    ? `第 ${formatMediaDuration(annotateTime.value) ?? '0:00'} 帧：`
+    : '',
+)
 
 /** 退出标注态（放弃：清标记收胶囊） */
 function exitAnnotate() {
@@ -311,7 +421,7 @@ async function onCapsuleAnchor(payload: { text: string }) {
  * image/video：经 `mapMarksToImageSpace` 做 contain + W-5 zoom 逆映射；
  * 审核层：底图按 reviewRef 的 clientWidth/Height 重绘 ⇒ 与 ink 画布同为
  * viewer-body 尺寸，天然 1:1（历史上未漂移的真因）。
- * audio：波形底图是合成画布，无同构内容元素可映射 ⇒ 返回 null（诚实降级）。
+ * audio/text：无底图（v1.5 Q 音频不圈选；文本走文字引用）⇒ 返回 null（诚实降级）。
  */
 function mapMarksForCompose(): AnnotateMark[] | null {
   if (showReviewLayer.value) {
@@ -372,30 +482,7 @@ async function captureBaseImage(): Promise<{ image: CanvasImageSource; width: nu
     ctx.drawImage(video, 0, 0, w, h)
     return { image: c, width: w, height: h }
   }
-  if (type === 'audio') {
-    // 底图 = 波形图（§4.3）：显示组件是 SVG 不可 drawImage ⇒ 用同一 peaks
-    // 真源画一份 canvas。⭐ 评审 I1：**只认真实 peaks**（waveSource==='real'）——
-    // 占位波形是确定性假数据（nodeId 种子），跨域无 CORS / 文件过大时把它合成进
-    // 标注图 = 给 agent 一张与音频无关的假波形，违反「诚实降级，不静默失败」。
-    if (waveSource.value !== 'real') return null
-    const p = wavePeaks.value
-    if (!p.length || !p.some((v) => v > 0)) return null
-    const barW = 4
-    const gap = 2
-    const h = 160
-    const w = Math.max(320, p.length * (barW + gap))
-    const c = document.createElement('canvas')
-    c.width = w
-    c.height = h
-    const ctx = c.getContext('2d')
-    if (!ctx) return null
-    ctx.fillStyle = 'rgba(110, 110, 110, 0.9)'
-    p.forEach((peak, i) => {
-      const bh = Math.max(2, peak * (h - 8))
-      ctx.fillRect(i * (barW + gap), (h - bh) / 2, barW, bh)
-    })
-    return { image: c, width: w, height: h }
-  }
+  // v1.5 Q（§4.12.8）：音频波形底图分支删除——音频不圈选（none），不会走到这里。
   // 图片：⛔ 必须**同源化**后再 drawImage（否则 canvas 被污染 ⇒ toBlob 抛错）
   const url = String((props.data as Record<string, unknown> | undefined)?.url ?? '')
   if (!url) return null
@@ -471,7 +558,10 @@ function resetImageZoom() {
 // 节点切换（组件复用场景）⇒ 缩放态复位，不把上一张图的 zoom 带进下一张
 watch(
   () => props.data?.url,
-  () => resetImageZoom(),
+  () => {
+    resetImageZoom()
+    chromeVisible.value = true
+  },
 )
 
 /* ── 音频波形查看器（D2 修订 2026-10-27，走查④）────────────────────── */
@@ -681,6 +771,7 @@ defineExpose({ videoRef })
   <Teleport to="body">
   <div
     class="mobile-node-viewer"
+    :class="{ 'chrome-hidden': !chromeVisible }"
     role="dialog"
     aria-modal="true"
     data-testid="mobile-viewer"
@@ -689,51 +780,26 @@ defineExpose({ videoRef })
     @touchend="onTouchEnd"
     @touchcancel="onTouchCancel"
   >
-    <!-- 右上角 X（内联 SVG；⛔ 禁文本字符当图标，§4.11.5） -->
-    <button
-      class="viewer-close"
-      type="button"
-      aria-label="关闭"
-      data-testid="mobile-viewer-close"
-      @click="requestClose"
-    >
-      <svg
-        viewBox="0 0 24 24"
-        width="18"
-        height="18"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        aria-hidden="true"
-      >
-        <path d="M18 6 6 18M6 6l12 12" stroke-linecap="round" />
-      </svg>
-    </button>
     <!--
-      右上「⋯」= 操作全集（§4.6 · §4.11.6）
-      ⭐ 与画布长按**同一个 Menu 浮层**（同源同容器，避免双入口分裂）。
-      ⛔ 顶部只放**低频**（退出 / 更多）—— 高频的「改词」在底部主栏。
-      ⛔ 内联 SVG（禁文本字符 ⋯，§4.11.5）。
+      规格 v1.5 §4.12.2（拍板项 O）：「⋯」按钮退役——长按媒体唤起同源 Menu
+      （CanvasPage.openMobileNodeMenuFromViewer → 与画布长按同一浮层，仅 context 裁剪）。
+      右上仅 X 一枚（G-19）。
     -->
-    <button
-      class="viewer-more"
-      type="button"
-      aria-label="更多操作"
-      data-testid="mobile-viewer-more"
-      @click="emit('more')"
-    >
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-        <path d="M6 12h.01M12 12h.01M18 12h.01" stroke-linecap="round" />
-      </svg>
-    </button>
-
     <!--
       ⭐ 2026-10-27 真机回归③④结构性修复：媒体区收进 `.viewer-body`（flex:1 +
       position:relative），底部主栏改**文档流**（原 absolute bottom:0 把同位钉底的
       圈选 / 倍速 / 音频控制条全部盖住——音频播/停/拖/圈选与视频倍速「不可用」的根因）。
       圈选 / 倍速的 absolute 锚点随之变为 body 底部 ⇒ 恒在主栏上方，互不遮挡。
+      v1.5：长按手势挂本容器（媒体区），测试锚 mobile-viewer-body。
     -->
-    <div class="viewer-body">
+    <div
+      class="viewer-body"
+      data-testid="mobile-viewer-body"
+      @touchstart.passive="onBodyTouchStart"
+      @touchmove.passive="onBodyTouchMove"
+      @touchend="onBodyTouchEnd"
+      @touchcancel="onBodyTouchEnd"
+    >
     <!--
       标注入口（L1 · §4.3）：**显式进入**标注态（⛔ 不做隐式双击手势 ——
       单指拖动已是媒体滚动/缩放，隐式手势在移动端极易误触）。
@@ -852,9 +918,14 @@ defineExpose({ videoRef })
     />
     <div v-else-if="type === 'text'" ref="readerRef" class="viewer-reader">{{ data?.content }}</div>
 
-    <!-- §17-③ 胶囊意见框：首笔落定即弹（in-viewer 内联浮条，可继续补画） -->
+    <!-- §17-③ 胶囊意见框：首笔落定即弹（in-viewer 内联浮条，可继续补画）；
+         v1.5 Q：视频标注草稿自动前缀「第 m:ss 帧：」（可删改）。
+         ⭐ v-if 外提 = 弹出即新实例（text 以 draftPrefix 初始化）——
+         规避 Teleport stub / fragment diff 下的多实例与 watch 时序坑。 -->
     <MobileAnnotationCapsule
+      v-if="capsuleVisible"
       :visible="capsuleVisible"
+      :draft-prefix="capsuleDraftPrefix"
       @anchor="onCapsuleAnchor"
       @dismiss="capsuleVisible = false"
     />
@@ -873,69 +944,21 @@ defineExpose({ videoRef })
     </button>
     </div><!-- /viewer-body -->
 
-    <!-- G1（§4.7.1 入口②）：提示词摘要条 —— confirmed/error 查看器内一行回看，
-         单击打开全文审核层；pending 不渲染（审核内容层本体即全文）。 -->
-    <button
-      v-if="promptStripVisible"
-      class="viewer-prompt-strip"
-      type="button"
-      data-testid="mobile-viewer-prompt-strip"
-      @click="emit('open-prompt-review')"
-    >
-      提示词：{{ promptStripText }}
-    </button>
-
     <!--
-      底部主栏（§4.11.6 可达性）：高频动作放**下方拇指区**，顶部只留低频退出类。
-      ⭐ 回归③④：改**文档流**（原 absolute bottom:0 覆盖圈选/倍速/音频控制条）——
-      媒体区（viewer-body）自动让出主栏高度，四者互不遮挡。
-      ⭐ 「改词」经此下沉（§4.6 / §4.8 修订：⛔ 不再放右上角）。
+      查看 chrome（规格 v1.5 §4.12.4 P）：右上 X + 自隐迷你操作条。
+      fragment 双根 ⇒ 条仍与 .viewer-body 同层（文档流兄弟，回归③④契约保持）。
     -->
-    <div v-if="resolvedBottomActions.length" class="viewer-bottom-actions">
-      <button
-        v-for="a in resolvedBottomActions"
-        :key="a.key"
-        type="button"
-        class="viewer-bottom-action"
-        :class="{ 'is-primary': a.variant === 'primary' }"
-        :data-action="a.key"
-        :data-testid="`mobile-viewer-bottom-${a.key}`"
-        @click="a.key === 'tts' ? toggleReaderSpeak() : onBottomAction(a.key)"
-      >
-        {{ a.label }}
-      </button>
-    </div>
+    <MobileViewerChrome
+      :visible="chromeVisible"
+      :actions="chromeActions"
+      @close="requestClose"
+      @action="onChromeAction"
+    />
   </div>
   </Teleport>
 </template>
 
 <style scoped>
-/* G1（§4.7.1 入口②）：提示词摘要条 —— 文档流窄条（surface-base 承载 + 次级色），
-   不与底部主栏互抢（回归③④教训：⛔ 不用 absolute 钉底）。 */
-.viewer-prompt-strip {
-  flex: none;
-  display: block;
-  width: 100%;
-  margin: 0;
-  padding: 4px var(--lnk-space-3);
-  border: none;
-  border-top: 0.5px solid var(--lnk-border-subtle);
-  background: var(--lnk-surface-base);
-  color: var(--lnk-text-secondary);
-  font-size: var(--lnk-text-2xs);
-  line-height: var(--lnk-lh-2xs);
-  text-align: left;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  cursor: pointer;
-}
-
-.viewer-prompt-strip:active {
-  color: var(--lnk-text-primary);
-  background: var(--lnk-surface-overlay);
-}
-
 /* 全屏查看器（D-B）：fixed 贴视口（2026-10-20 定位契约：fixed 而非 absolute 贴 100vh） */
 .mobile-node-viewer {
   position: fixed;
@@ -964,84 +987,6 @@ defineExpose({ videoRef })
   flex-direction: column;
   /* ⭐ W-5：缩放变换不得溢出媒体区（盖住底栏/顶栏） */
   overflow: hidden;
-}
-
-/* 右上角 X：44px 触控热区（图标视觉 18px，热区达标 ⇒ G-18） */
-.viewer-close {
-  position: absolute;
-  top: calc(env(safe-area-inset-top) + var(--lnk-space-2));
-  right: var(--lnk-space-2);
-  z-index: 2;
-  display: inline-flex;
-  width: var(--lnk-touch-target);
-  height: var(--lnk-touch-target);
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: var(--lnk-radius-md);
-  background: var(--lnk-surface-overlay);
-  color: var(--lnk-text-primary);
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.viewer-close:active {
-  background: var(--lnk-pressed-overlay);
-}
-
-/* 右上「⋯」（44px 触控目标，§4.11.6） */
-.viewer-more {
-  position: absolute;
-  top: calc(env(safe-area-inset-top) + var(--lnk-space-2));
-  right: calc(var(--lnk-space-2) + var(--lnk-touch-target) + var(--lnk-space-1));
-  z-index: 3;
-  display: inline-flex;
-  width: var(--lnk-touch-target);
-  height: var(--lnk-touch-target);
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: var(--lnk-radius-md);
-  background: var(--lnk-surface-overlay);
-  color: var(--lnk-text-primary);
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.viewer-more:active {
-  background: var(--lnk-pressed-overlay);
-}
-
-/* 底部主栏：高频动作恒在拇指区（§4.11.6）。
-   ⭐ 回归③④：文档流（原 absolute bottom:0 z-3 覆盖同区按钮群）——
-   viewer-body（flex:1）自动让出本栏高度，圈选/倍速/音频控制条不再被盖。 */
-.viewer-bottom-actions {
-  display: flex;
-  gap: var(--lnk-space-2);
-  padding: var(--lnk-space-3) var(--lnk-space-3)
-    calc(var(--lnk-space-3) + env(safe-area-inset-bottom));
-  background: var(--lnk-surface-overlay);
-}
-
-.viewer-bottom-action {
-  flex: 1;
-  min-height: var(--lnk-touch-target);
-  border: none;
-  border-radius: var(--lnk-radius-md);
-  background: var(--lnk-surface-raised);
-  color: var(--lnk-text-primary);
-  font-size: var(--lnk-text-md);
-  font-weight: var(--lnk-weight-medium);
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.viewer-bottom-action.is-primary {
-  background: var(--lnk-accent);
-  color: var(--lnk-accent-on-signature);
 }
 
 /* 标注入口按钮（44px 触控目标，§4.11.6）—— 2026-10-28 浮动圆钮退役：

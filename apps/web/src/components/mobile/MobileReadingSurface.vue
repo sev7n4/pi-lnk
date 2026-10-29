@@ -6,7 +6,7 @@ import { useTextToSpeech } from '@/composables/useTextToSpeech'
  * 共享「全屏文本阅读面」（规格 §4.8.1，2026-10-27 S1 批次）。
  *
  * 承载三形态收敛的**交互范式**：全屏可滚动文本 + X + 下滑可退（P3）+ 朗读/停 +
- * 安全区 + reduce-motion。首个消费方 = `MobileNodePromptReviewSheet`（§4.7.1 全文层）。
+ * 安全区 + reduce-motion。（历史：首个消费方为已退役的 `MobileNodePromptReviewSheet` §4.7.1 全文层。）
  *
  * ⭐ §4.8.1 数据层纪律：共享的是**壳与手势**，不是取数——⛔ 共享面内部不得摸
  * `data.content`：朗读文本经 `speechText` prop **显式注入**（§4.7.1 复用边界

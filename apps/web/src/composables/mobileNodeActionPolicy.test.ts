@@ -171,3 +171,46 @@ describe('resolveMobileNodeMenuTiers（一级 / 二级分层 · §4.11.3）', ()
     })
   })
 })
+
+describe('context: viewer（规格 v1.5 §4.12.2 / G-19）', () => {
+  const confirmedNode = {
+    id: 'n1',
+    type: 'image',
+    data: { url: 'https://x/a.png', status: 'completed' },
+  }
+
+  it('剔除 multi-select 与 rename，其余与 canvas 一致', () => {
+    const canvas = resolveMobileNodeActions(confirmedNode)
+    const viewer = resolveMobileNodeActions(confirmedNode, 'viewer')
+    expect(viewer).not.toContain('multi-select')
+    expect(viewer).not.toContain('rename')
+    for (const k of ['edit', 'reference', 'duplicate', 'duplicate-upstream', 'save-asset', 'save-local', 'delete']) {
+      expect(viewer).toContain(k)
+    }
+    expect(canvas).toContain('multi-select')
+    expect(canvas).toContain('rename')
+  })
+
+  it('分层同样吃 context（viewer 一级/二级都不出现被剔项）', () => {
+    const tiers = resolveMobileNodeMenuTiers(confirmedNode, 'viewer')
+    expect([...tiers.primary, ...tiers.more]).not.toContain('rename')
+    expect([...tiers.primary, ...tiers.more]).not.toContain('multi-select')
+  })
+
+  it('缺省 context = canvas（既有调用零改动）', () => {
+    expect(resolveMobileNodeActions(confirmedNode)).toEqual(
+      resolveMobileNodeActions(confirmedNode, 'canvas'),
+    )
+    expect(resolveMobileNodeMenuTiers(confirmedNode)).toEqual(
+      resolveMobileNodeMenuTiers(confirmedNode, 'canvas'),
+    )
+  })
+
+  it('viewer context 下 empty 态裁剪集同样生效（不回填被剔项）', () => {
+    const tiers = resolveMobileNodeMenuTiers({ id: 'n2', type: 'image', data: {} }, 'viewer')
+    const all = [...tiers.primary, ...tiers.more]
+    expect(all).not.toContain('rename')
+    expect(all).not.toContain('multi-select')
+    expect(all).toContain('edit')
+  })
+})

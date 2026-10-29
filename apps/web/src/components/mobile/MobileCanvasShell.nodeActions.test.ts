@@ -84,12 +84,6 @@ function baseProps(overrides: Record<string, unknown> = {}) {
     onViewerBottomAction: vi.fn(),
     // §17-④（拍板②）：查看器编辑态保存 ⇒ 页面层覆盖磁贴提示词
     onViewerEditSave: vi.fn(),
-    // G1/S1（§4.7.1，2026-10-27）：提示词全文审核层（独立载体 + 摘要条入口）
-    onViewerPromptReview: vi.fn(),
-    promptReviewNode: null as { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any } | null,
-    onPromptReviewClose: vi.fn(),
-    onPromptReviewAnnotate: vi.fn(),
-    onPromptReviewEditSave: vi.fn(),
     onNodeEditorClose: vi.fn(),
     onNodeEditorPatch: vi.fn(),
     viewerNode: null,
@@ -225,90 +219,17 @@ describe('MobileCanvasShell 全屏查看器集成（R1-T4/T6）', () => {
   })
 })
 
-describe('MobileCanvasShell 提示词全文审核层（G1/S1 · §4.7.1）', () => {
-  it('confirmed 查看器 + 有提示词 → 摘要条可见，单击 → onViewerPromptReview', async () => {
-    const onViewerPromptReview = vi.fn()
+describe('提示词摘要条 + 全文审核层退役（v1.5 P / G-21）', () => {
+  it('摘要条与全文审核层均不再渲染（chips 直达编辑器，路由归 CanvasPage provide）', () => {
     const w = mount(MobileCanvasShell, {
       global: { stubs: { teleport: true } }, // §13.2：viewer Teleport 后 jsdom 断言需内联渲染
       props: baseProps({
-        viewerNode: {
-          id: 'n1',
-          type: 'image',
-          data: { url: 'x.png', prompt: '赛博朋克城市夜景', status: 'confirmed' },
-        },
-        onViewerPromptReview,
-      }),
-      attachTo: document.body,
-    })
-    const strip = w.find('[data-testid="mobile-viewer-prompt-strip"]')
-    expect(strip.exists()).toBe(true)
-    expect(strip.text()).toContain('赛博朋克城市夜景')
-    await strip.trigger('click')
-    expect(onViewerPromptReview).toHaveBeenCalled()
-    w.unmount()
-  })
-
-  it('confirmed 查看器 + 无提示词 → 摘要条不渲染（缺省不占位）', () => {
-    const w = mount(MobileCanvasShell, {
-      global: { stubs: { teleport: true } }, // §13.2：viewer Teleport 后 jsdom 断言需内联渲染
-      props: baseProps({
-        viewerNode: { id: 'n1', type: 'image', data: { url: 'x.png', status: 'confirmed' } },
+        viewerNode: { id: 'n1', type: 'image', data: { url: 'x.png', prompt: '赛博朋克城市夜景', status: 'confirmed' } },
       }),
       attachTo: document.body,
     })
     expect(w.find('[data-testid="mobile-viewer-prompt-strip"]').exists()).toBe(false)
-    w.unmount()
-  })
-
-  it('promptReviewNode 设置 → 渲染全文审核层（含全文 + 参数摘要），无确认/拒绝按钮（V-11）', () => {
-    const w = mount(MobileCanvasShell, {
-      global: { stubs: { teleport: true } }, // §13.2：viewer Teleport 后 jsdom 断言需内联渲染
-      props: baseProps({
-        promptReviewNode: {
-          id: 'n1',
-          type: 'image',
-          data: {
-            prompt: '赛博朋克城市夜景，霓虹雨夜，电影感构图',
-            imageModel: 'qwen-image',
-            imageAspect: '1:1',
-          },
-        },
-      }),
-      attachTo: document.body,
-    })
-    expect(w.find('[data-testid="mobile-prompt-review"]').exists()).toBe(true)
-    expect(w.find('[data-testid="mobile-prompt-review-prompt"]').text()).toContain('赛博朋克城市夜景')
-    expect(w.find('[data-testid="mobile-prompt-review-params"]').text()).toContain('qwen-image')
-    // V-11：全文层无确认/拒绝按钮、无参数控件
-    const text = w.find('[data-testid="mobile-prompt-review"]').text()
-    expect(text).not.toContain('确认')
-    expect(text).not.toContain('拒绝')
-    expect(w.find('[data-testid="mobile-prompt-review"] select').exists()).toBe(false)
-    expect(w.find('[data-testid="mobile-prompt-review"] input[type="range"]').exists()).toBe(false)
-    w.unmount()
-  })
-
-  it('全文层关闭 → onPromptReviewClose；锚带回/编辑保存透传', async () => {
-    const onPromptReviewClose = vi.fn()
-    const onPromptReviewAnnotate = vi.fn()
-    const onPromptReviewEditSave = vi.fn()
-    const w = mount(MobileCanvasShell, {
-      global: { stubs: { teleport: true } }, // §13.2：viewer Teleport 后 jsdom 断言需内联渲染
-      props: baseProps({
-        promptReviewNode: { id: 'n1', type: 'image', data: { prompt: '原词' } },
-        onPromptReviewClose,
-        onPromptReviewAnnotate,
-        onPromptReviewEditSave,
-      }),
-      attachTo: document.body,
-    })
-    await w.find('[data-testid="mobile-reading-close"]').trigger('click')
-    expect(onPromptReviewClose).toHaveBeenCalled()
-    // 编辑保存：点编辑 → 改字 → 保存 ⇒ onPromptReviewEditSave(nodeId, prompt)
-    await w.find('[data-testid="mobile-prompt-review-edit"]').trigger('click')
-    await w.find('[data-testid="mobile-prompt-review-edit-input"]').setValue('新词')
-    await w.find('[data-testid="mobile-prompt-review-edit-save"]').trigger('click')
-    expect(onPromptReviewEditSave).toHaveBeenCalledWith('n1', '新词')
+    expect(w.find('[data-testid="mobile-prompt-review"]').exists()).toBe(false)
     w.unmount()
   })
 })
@@ -322,7 +243,7 @@ describe('MobileCanvasShell 审核层底栏两键（§17 v2 · 拍板①）', ()
       }),
       attachTo: document.body,
     })
-    const labels = w.findAll('.viewer-bottom-action').map((b) => b.text())
+    const labels = w.findAll('.mv-chrome-item').map((b) => b.text())
     expect(labels).toEqual(['批注', '编辑'])
     w.unmount()
   })
@@ -339,7 +260,7 @@ describe('MobileCanvasShell 审核层底栏两键（§17 v2 · 拍板①）', ()
       }),
       attachTo: document.body,
     })
-    const labels = w.findAll('.viewer-bottom-action').map((b) => b.text())
+    const labels = w.findAll('.mv-chrome-item').map((b) => b.text())
     expect(labels).toEqual(['批注', '编辑'])
     w.unmount()
   })
@@ -352,7 +273,7 @@ describe('MobileCanvasShell 审核层底栏两键（§17 v2 · 拍板①）', ()
       }),
       attachTo: document.body,
     })
-    const labels = w.findAll('.viewer-bottom-action').map((b) => b.text())
+    const labels = w.findAll('.mv-chrome-item').map((b) => b.text())
     expect(labels).toEqual(['批注', '编辑'])
     w.unmount()
   })
@@ -365,7 +286,7 @@ describe('MobileCanvasShell 审核层底栏两键（§17 v2 · 拍板①）', ()
       }),
       attachTo: document.body,
     })
-    const labels = w.findAll('.viewer-bottom-action').map((b) => b.text())
+    const labels = w.findAll('.mv-chrome-item').map((b) => b.text())
     // text 节点合法追加「朗读」（viewer 内消化），审核层两键不得泄漏
     expect(labels).toContain('改词')
     expect(labels).not.toContain('批注')

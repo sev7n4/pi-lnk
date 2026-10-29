@@ -25,11 +25,14 @@ const props = withDefaults(
     refs?: NodeRef[]
     mentions?: MentionOption[]
     generating?: boolean
+    /** 意见预填（v1.5 Q：音频改词经 viewer meta.mediaTime ⇒「at mm:ss」） */
+    initialOpinion?: string
   }>(),
   {
     refs: () => [],
     mentions: () => [],
     generating: false,
+    initialOpinion: '',
   },
 )
 
@@ -49,8 +52,8 @@ const nodeData = computed(() => (props.node.data ?? {}) as Record<string, unknow
 /** 提示词初值（agent 提议时写入 `data.prompt`） */
 const prompt = ref(String(nodeData.value.prompt ?? ''))
 
-/** 我的意见（要一起交给 agent 的自然语言） */
-const opinion = ref('')
+/** 我的意见（要一起交给 agent 的自然语言；initialOpinion = 页面层预填，v1.5 Q） */
+const opinion = ref(props.initialOpinion)
 
 /**
  * 参数**只读**摘要（agent 定的，用户不可改）。

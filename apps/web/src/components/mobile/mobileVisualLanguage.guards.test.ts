@@ -63,8 +63,7 @@ describe('跨端视觉与组件哲学守卫（§4.11）', () => {
       //   ① 全屏媒体查看器 / ② 全屏文本阅读面 / ③ 全屏表单 / ④ 既有全屏面板。
       //   豁免纪律 = P3（X + 手势可退）+ §4.11.5 内联 SVG + V-5 44px + reduce-motion。
       'MobileNodeViewer.vue': '全屏**媒体查看器**（灯箱/逐帧/全屏阅读）—— §4.11.8 豁免类①',
-      'MobileReadingSurface.vue': '共享**全屏文本阅读面**（§4.8.1，全文审核层的壳）—— §4.11.8 豁免类②',
-      'MobileNodePromptReviewSheet.vue': '提示词**全文审核层**（§4.7.1，消费 MobileReadingSurface）—— §4.11.8 豁免类②',
+      'MobileReadingSurface.vue': '共享**全屏文本阅读面**（§4.8.1）—— §4.11.8 豁免类②',
       'MobileNodeEditorSheet.vue': '全屏**表单**（长提示词需整屏输入面；MobileSheet 是 62vh 选择型）—— §4.11.8 豁免类③',
       'ProfilePane.vue': '全屏**资料面板**（既有能力）—— §4.11.8 豁免类④',
       'DiscoverPane.vue': '全屏**发现面板**（既有能力）—— §4.11.8 豁免类④',
@@ -124,14 +123,17 @@ describe('跨端视觉与组件哲学守卫（§4.11）', () => {
   it('V-5 图标按钮命中区：min-width + min-height 均 ≥ --lnk-touch-target', () => {
     // 移动端的图标按钮（视觉 glyph 可小，但命中区必须 44px）
     const ICON_BUTTON_CLASSES = [
-      'viewer-close',      // 查看器右上 X
-      'viewer-more',       // 查看器右上 ⋯
+      'mv-chrome-close',   // 查看器右上 X（v1.5 P：MobileViewerChrome 自隐 chrome）
+      // viewer-close / viewer-more 已退役（v1.5 O/P：⋯ 移除、旧 X 换 chrome 关闭钮）
       // viewer-annotate（圈选入口）已退役（2026-10-28 真机反馈①：浮动圆钮与底栏
       // 两套几何并存 ⇒ 入口统一进底部工具栏，为文本按钮非图标钮，V-5 不再适用）
       'mobile-account-close', // 「我的」面板关闭钮
     ]
     for (const cls of ICON_BUTTON_CLASSES) {
-      const src = stripComments(read('MobileNodeViewer.vue')) + stripComments(read('MobileCanvasShell.vue'))
+      const src =
+        stripComments(read('MobileNodeViewer.vue')) +
+        stripComments(read('MobileViewerChrome.vue')) +
+        stripComments(read('MobileCanvasShell.vue'))
       const m = new RegExp(`\\.${cls}\\s*\\{[^}]*\\}`).exec(src)
       expect(m, `找不到 .${cls} 的样式规则`).toBeTruthy()
       const rule = m![0]

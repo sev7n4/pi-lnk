@@ -87,7 +87,7 @@ describe('查看器编辑保存 → 覆盖磁贴（§17-④）', () => {
     expect(EDIT_SAVE_BODY).not.toContain('confirmProposeWait')
   })
 
-  it('保存后关来源层回画布（缺省 = 查看器；S1 全文层传 closePromptReview）', () => {
+  it('保存后关来源层回画布（close 参数化，缺省 = 查看器）', () => {
     expect(EDIT_SAVE_BODY).toContain('close: () => void = closeMobileViewer')
     expect(EDIT_SAVE_BODY).toContain('close()')
   })
@@ -108,5 +108,10 @@ describe('查看器底部主栏死分支退役（§17 v2）', () => {
   it('非 pending 的 edit（改词 sheet）保留', () => {
     expect(fn).toContain("key === 'edit'")
     expect(fn).toContain('openMobileNodeEditor')
+  })
+
+  it('edit meta.mediaTime ⇒ 预填编辑器意见 at mm:ss（v1.5 Q 音频链路终点）', () => {
+    expect(fn).toContain('mediaTime')
+    expect(fn).toContain('mobileEditorInitialOpinion')
   })
 })

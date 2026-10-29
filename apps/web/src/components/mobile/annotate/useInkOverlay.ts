@@ -21,7 +21,7 @@ const DPR_CAP = 3
 /**
  * 移动端画笔覆盖层共享逻辑（§4.3 一支笔 · 2026-10-28 W-26/W-27 真机修复）。
  *
- * 消费方：`MobileNodeViewer`（查看器批注）+ `MobileNodePromptReviewSheet`
+ * 消费方：`MobileNodeViewer`（查看器批注）。（历史：曾供已退役的 `MobileNodePromptReviewSheet` 使用。）
  * （全文审核层批注）——此前两处各自实现 ~90% 重复，且同犯一个真机 bug：
  *
  * ⭐ **修复 1（根因）：bitmap 尺寸从未设置**。canvas 有 CSS 尺寸与 bitmap 尺寸

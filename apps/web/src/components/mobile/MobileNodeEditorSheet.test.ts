@@ -76,6 +76,12 @@ describe('MobileNodeEditorSheet 轻量编辑器（D8 / J1 / K1）', () => {
     w.unmount()
   })
 
+  it('initialOpinion 预填意见框（音频 at mm:ss 链路终点，规格 v1.5 Q）', () => {
+    const w = mount(MobileNodeEditorSheet, { props: { node: baseNode, initialOpinion: 'at 0:07' } })
+    expect((w.get('[data-testid="mobile-editor-opinion"]').element as HTMLTextAreaElement).value).toBe('at 0:07')
+    w.unmount()
+  })
+
   it('提交 ⇒ emit send-to-agent({ prompt, opinion })，且提示词有改动时同时 emit patch', async () => {
     const w = mount(MobileNodeEditorSheet, { props: { node: baseNode } })
     await w.get('[data-testid="mobile-editor-prompt"]').setValue('一只戴帽子的猫')

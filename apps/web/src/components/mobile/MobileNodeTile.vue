@@ -78,9 +78,9 @@ const emit = defineEmits<{
    */
   (e: 'toggle-select'): void
   /**
-   * G1（§4.7 / §4.7.1，2026-10-27 S1 批次）：提示词 chips 单击 ⇒ 打开
-   * **提示词全文审核层**（`MobileNodePromptReviewSheet`，独立于媒体查看器）。
-   * ⛔ 不复用 `tap`（那会开查看器/编辑器）—— 全文层是独立契约位。
+   * G1（§4.7 / §4.7.1，2026-10-27 S1 批次）：提示词 chips 单击。
+   * 规格 v1.5 §4.12.7（拍板项 P）：全文审核层退役 ⇒ emit 名保留、
+   * 路由改「直达轻量编辑器」（CanvasPage provide 体决定，⛔ 不复用 `tap`）。
    */
   (e: 'open-prompt-review'): void
 }>()
