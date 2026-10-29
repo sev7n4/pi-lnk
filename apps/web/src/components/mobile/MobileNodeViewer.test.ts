@@ -900,3 +900,71 @@ describe('长按唤起同源 Menu（v1.5 O / G-19）', () => {
     }
   })
 })
+
+describe('chrome 显隐（v1.5 P / G-20）', () => {
+  type ViewerProps = InstanceType<typeof MobileNodeViewer>['$props']
+  function mountViewer(props: ViewerProps) {
+    return mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props })
+  }
+
+  it('点按媒体 ⇒ 根元素带 chrome-hidden；再点恢复', async () => {
+    const w = mountViewer({ type: 'image', data: { url: 'x.png' } })
+    const body = w.find('[data-testid="mobile-viewer-body"]')
+    expect(w.find('.mobile-node-viewer').classes()).not.toContain('chrome-hidden')
+    await body.trigger('touchstart', { touches: [{ clientX: 5, clientY: 5 }] })
+    await body.trigger('touchend', { touches: [] })
+    expect(w.find('.mobile-node-viewer').classes()).toContain('chrome-hidden')
+    await body.trigger('touchstart', { touches: [{ clientX: 5, clientY: 5 }] })
+    await body.trigger('touchend', { touches: [] })
+    expect(w.find('.mobile-node-viewer').classes()).not.toContain('chrome-hidden')
+    w.unmount()
+  })
+
+  it('长按触发后本次触控不切换 chrome（suppress）', async () => {
+    vi.useFakeTimers()
+    try {
+      const w = mountViewer({ type: 'image', data: { url: 'x.png' } })
+      const body = w.find('[data-testid="mobile-viewer-body"]')
+      await body.trigger('touchstart', { touches: [{ clientX: 5, clientY: 5 }] })
+      await vi.advanceTimersByTimeAsync(500)
+      expect(w.emitted('more')).toHaveLength(1)
+      expect(w.find('.mobile-node-viewer').classes()).not.toContain('chrome-hidden')
+      await body.trigger('touchend', { touches: [] })
+      expect(w.find('.mobile-node-viewer').classes()).not.toContain('chrome-hidden')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('chrome 隐藏态下滑关闭恒可用（P3 不依赖 chrome）', async () => {
+    const w = mountViewer({ type: 'image', data: { url: 'x.png' } })
+    const root = w.find('.mobile-node-viewer')
+    // 先点按隐藏 chrome
+    const body = w.find('[data-testid="mobile-viewer-body"]')
+    await body.trigger('touchstart', { touches: [{ clientX: 100, clientY: 100 }] })
+    await body.trigger('touchend', { touches: [] })
+    expect(w.find('.mobile-node-viewer').classes()).toContain('chrome-hidden')
+    // 下滑关闭手势在根容器，不受 chrome 影响
+    await root.trigger('touchstart', { touches: [{ clientX: 100, clientY: 100 }] })
+    await root.trigger('touchmove', { touches: [{ clientX: 100, clientY: 260 }] })
+    await root.trigger('touchend', { touches: [] })
+    expect(w.emitted('close')).toHaveLength(1)
+    w.unmount()
+  })
+
+  it('pending 批注/编辑同迷你条几何（无独立决策栏，§17 v2 对账）', () => {
+    // 壳层（MobileCanvasShell.viewerBottomActions）为 pending 注入 [批注][编辑]
+    const w = mountViewer({
+      type: 'image',
+      data: { status: 'pending_confirm', prompt: 'p' },
+      bottomActions: [
+        { key: 'annotate', label: '批注', variant: 'primary' },
+        { key: 'edit', label: '编辑' },
+      ],
+    })
+    expect(w.find('[data-testid="mobile-viewer-bottom-annotate"]').exists()).toBe(true)
+    expect(w.find('[data-testid="mobile-viewer-bottom-edit"]').exists()).toBe(true)
+    expect(w.find('[data-testid="mobile-viewer-chrome-bar"]').exists()).toBe(true)
+    w.unmount()
+  })
+})

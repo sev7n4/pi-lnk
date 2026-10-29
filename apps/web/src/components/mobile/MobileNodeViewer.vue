@@ -12,6 +12,7 @@ import { useNodeWaveform } from '@/composables/useNodeWaveform'
 import { formatMediaDuration } from '@/utils/mediaInfoFormat'
 import MobileNodeWaveform from './MobileNodeWaveform.vue'
 import MobileAnnotationCapsule from './MobileAnnotationCapsule.vue'
+import MobileViewerChrome, { type MobileViewerChromeAction } from './MobileViewerChrome.vue'
 
 /**
  * 全屏查看器（D2 · 2026-10-25 规格 §6.2 / §4.1 P3）
@@ -178,7 +179,16 @@ function cancelLongPress() {
 }
 
 function onBodyTouchEnd() {
+  const firedLongPress = suppressNextTap.value
+  const wasTap = lpTimer !== null && lpStart !== null && !firedLongPress
   cancelLongPress()
+  if (firedLongPress) {
+    suppressNextTap.value = false
+    return
+  }
+  if (wasTap && !annotating.value && !editing.value) {
+    chromeVisible.value = !chromeVisible.value
+  }
 }
 
 watch(
@@ -235,6 +245,29 @@ const reviewParams = computed(() => {
   if (typeof d.imageResolution === 'string' && d.imageResolution.trim()) parts.push(d.imageResolution.trim())
   return parts.join(' · ')
 })
+
+/* ── chrome 三态（规格 v1.5 §4.12.4 拍板项 P / G-20）──────────────────────
+ * 点按媒体 ⇒ X + 迷你操作条整体淡出（iOS Photos 范式）；再点淡入。
+ * 隐藏态下滑/上滑关闭恒可用（手势在根容器，P3 不依赖 chrome）。
+ * 标注态/编辑态为任务模式，不参与 chrome 切换。 */
+const chromeVisible = ref(true)
+
+/** 底栏动作 → chrome 迷你项（图标映射 §4.12.6；key 契约不变） */
+const chromeActions = computed<MobileViewerChromeAction[]>(() =>
+  resolvedBottomActions.value.map((a) => ({
+    key: a.key,
+    label: a.label,
+    icon: a.key === 'annotate' ? 'marker' : a.key === 'tts' ? 'speaker' : 'pencil',
+  })),
+)
+
+function onChromeAction(key: string) {
+  if (key === 'tts') {
+    toggleReaderSpeak()
+    return
+  }
+  onBottomAction(key)
+}
 
 const resolvedBottomActions = computed(() => {
   // §17-④：编辑态下底栏 = 取消/保存（就地改字，保存回画布覆盖磁贴——拍板②）
@@ -543,7 +576,10 @@ function resetImageZoom() {
 // 节点切换（组件复用场景）⇒ 缩放态复位，不把上一张图的 zoom 带进下一张
 watch(
   () => props.data?.url,
-  () => resetImageZoom(),
+  () => {
+    resetImageZoom()
+    chromeVisible.value = true
+  },
 )
 
 /* ── 音频波形查看器（D2 修订 2026-10-27，走查④）────────────────────── */
@@ -753,6 +789,7 @@ defineExpose({ videoRef })
   <Teleport to="body">
   <div
     class="mobile-node-viewer"
+    :class="{ 'chrome-hidden': !chromeVisible }"
     role="dialog"
     aria-modal="true"
     data-testid="mobile-viewer"
@@ -761,26 +798,6 @@ defineExpose({ videoRef })
     @touchend="onTouchEnd"
     @touchcancel="onTouchCancel"
   >
-    <!-- 右上角 X（内联 SVG；⛔ 禁文本字符当图标，§4.11.5） -->
-    <button
-      class="viewer-close"
-      type="button"
-      aria-label="关闭"
-      data-testid="mobile-viewer-close"
-      @click="requestClose"
-    >
-      <svg
-        viewBox="0 0 24 24"
-        width="18"
-        height="18"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        aria-hidden="true"
-      >
-        <path d="M18 6 6 18M6 6l12 12" stroke-linecap="round" />
-      </svg>
-    </button>
     <!--
       规格 v1.5 §4.12.2（拍板项 O）：「⋯」按钮退役——长按媒体唤起同源 Menu
       （CanvasPage.openMobileNodeMenuFromViewer → 与画布长按同一浮层，仅 context 裁剪）。
@@ -953,25 +970,15 @@ defineExpose({ videoRef })
     </button>
 
     <!--
-      底部主栏（§4.11.6 可达性）：高频动作放**下方拇指区**，顶部只留低频退出类。
-      ⭐ 回归③④：改**文档流**（原 absolute bottom:0 覆盖圈选/倍速/音频控制条）——
-      媒体区（viewer-body）自动让出主栏高度，四者互不遮挡。
-      ⭐ 「改词」经此下沉（§4.6 / §4.8 修订：⛔ 不再放右上角）。
+      查看 chrome（规格 v1.5 §4.12.4 P）：右上 X + 自隐迷你操作条。
+      fragment 双根 ⇒ 条仍与 .viewer-body 同层（文档流兄弟，回归③④契约保持）。
     -->
-    <div v-if="resolvedBottomActions.length" class="viewer-bottom-actions">
-      <button
-        v-for="a in resolvedBottomActions"
-        :key="a.key"
-        type="button"
-        class="viewer-bottom-action"
-        :class="{ 'is-primary': a.variant === 'primary' }"
-        :data-action="a.key"
-        :data-testid="`mobile-viewer-bottom-${a.key}`"
-        @click="a.key === 'tts' ? toggleReaderSpeak() : onBottomAction(a.key)"
-      >
-        {{ a.label }}
-      </button>
-    </div>
+    <MobileViewerChrome
+      :visible="chromeVisible"
+      :actions="chromeActions"
+      @close="requestClose"
+      @action="onChromeAction"
+    />
   </div>
   </Teleport>
 </template>
@@ -1031,62 +1038,6 @@ defineExpose({ videoRef })
   flex-direction: column;
   /* ⭐ W-5：缩放变换不得溢出媒体区（盖住底栏/顶栏） */
   overflow: hidden;
-}
-
-/* 右上角 X：44px 触控热区（图标视觉 18px，热区达标 ⇒ G-18） */
-.viewer-close {
-  position: absolute;
-  top: calc(env(safe-area-inset-top) + var(--lnk-space-2));
-  right: var(--lnk-space-2);
-  z-index: 2;
-  display: inline-flex;
-  width: var(--lnk-touch-target);
-  height: var(--lnk-touch-target);
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: var(--lnk-radius-md);
-  background: var(--lnk-surface-overlay);
-  color: var(--lnk-text-primary);
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.viewer-close:active {
-  background: var(--lnk-pressed-overlay);
-}
-
-/* 右上「⋯」已退役（规格 v1.5 O：长按媒体唤起同源 Menu，G-19） */
-
-/* 底部主栏：高频动作恒在拇指区（§4.11.6）。
-   ⭐ 回归③④：文档流（原 absolute bottom:0 z-3 覆盖同区按钮群）——
-   viewer-body（flex:1）自动让出本栏高度，圈选/倍速/音频控制条不再被盖。 */
-.viewer-bottom-actions {
-  display: flex;
-  gap: var(--lnk-space-2);
-  padding: var(--lnk-space-3) var(--lnk-space-3)
-    calc(var(--lnk-space-3) + env(safe-area-inset-bottom));
-  background: var(--lnk-surface-overlay);
-}
-
-.viewer-bottom-action {
-  flex: 1;
-  min-height: var(--lnk-touch-target);
-  border: none;
-  border-radius: var(--lnk-radius-md);
-  background: var(--lnk-surface-raised);
-  color: var(--lnk-text-primary);
-  font-size: var(--lnk-text-md);
-  font-weight: var(--lnk-weight-medium);
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.viewer-bottom-action.is-primary {
-  background: var(--lnk-accent);
-  color: var(--lnk-accent-on-signature);
 }
 
 /* 标注入口按钮（44px 触控目标，§4.11.6）—— 2026-10-28 浮动圆钮退役：
