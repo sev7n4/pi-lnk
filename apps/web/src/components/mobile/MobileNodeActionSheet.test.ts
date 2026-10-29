@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
-import MobileNodeActionSheet from './MobileNodeActionSheet.vue'
+import MobileNodeActionSheet, { type MobileNodeActionNode } from './MobileNodeActionSheet.vue'
 
 /**
  * 移动端长按 **Menu**（2026-10-25 §4.11 Menu 化）。
@@ -91,6 +91,29 @@ describe('MobileNodeActionSheet（Menu · 一级/二级分层）', () => {
   it('⛔ 零 --neo-* 旧令牌（G-15）', () => {
     const w = mountSheet()
     expect(w.html()).not.toContain('--neo-')
+    w.unmount()
+  })
+})
+
+describe('viewer context 子集（规格 v1.5 §4.12.2 / G-19）', () => {
+  function mountViewerSheet(node: MobileNodeActionNode) {
+    return mount(MobileNodeActionSheet, { props: { node }, ...TELEPORT_STUB })
+  }
+  it("context: 'viewer' ⇒ 无「重命名」「多选」，其余照常", () => {
+    const w = mountViewerSheet({ id: 'n1', type: 'image', data: { url: 'x.png' }, context: 'viewer' })
+    // 断言渲染出来的动作键（html() 含注释文本，不能用字面量 contains）
+    const keys = w.findAll('[data-action]').map((x) => x.attributes('data-action'))
+    expect(keys).not.toContain('rename')
+    expect(keys).not.toContain('multi-select')
+    expect(keys).toContain('edit')
+    expect(keys).toContain('reference')
+    expect(keys).toContain('delete')
+    w.unmount()
+  })
+  it("viewer 子集回填一级后不超上限（canvas 全集 9 − 2 = 7 ⇒ 一级 5 + 二级 2）", () => {
+    const w = mountViewerSheet({ id: 'n1', type: 'image', data: { url: 'x.png' }, context: 'viewer' })
+    // 一级动作项 = primaryItems（≤5），「更多」存在 ⇒ 二级仍有项
+    expect(w.find('[data-action="more"]').exists()).toBe(true)
     w.unmount()
   })
 })

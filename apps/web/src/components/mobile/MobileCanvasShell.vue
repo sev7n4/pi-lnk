@@ -524,6 +524,7 @@ onUnmounted(() => stopMobileTaskPolling())
     :type="viewerNode.type"
     :data="viewerNode.data"
     :bottom-actions="viewerBottomActions"
+    :menu-open="mobileActionNode?.context === 'viewer'"
     @close="props.onViewerClose"
     @annotate="props.onViewerAnnotate"
     @edit-save="

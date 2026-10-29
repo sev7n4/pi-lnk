@@ -16,6 +16,12 @@ export interface MobileNodeActionNode {
   multiSelectActive?: boolean
   /** 该节点当前是否已在多选选区内（「加入」还是「移出」） */
   multiSelectSelected?: boolean
+  /**
+   * 规格 v1.5 §4.12.2（拍板项 O）：Menu 上下文——
+   * `'viewer'` = 查看器内长按唤起（同一浮层同一门控，剔除多选 / 重命名）。
+   * 缺省 = `'canvas'`（画布长按，全集）。
+   */
+  context?: 'canvas' | 'viewer'
 }
 
 /**
@@ -58,8 +64,8 @@ const multiSelectLabel = computed(() => {
   return props.node.multiSelectSelected ? '移出多选' : '加入多选'
 })
 
-/** 一级 / 二级分层（单一真源：`mobileNodeActionPolicy`） */
-const tiers = computed(() => resolveMobileNodeMenuTiers(props.node))
+/** 一级 / 二级分层（单一真源：`mobileNodeActionPolicy`；context 透传 = viewer 子集） */
+const tiers = computed(() => resolveMobileNodeMenuTiers(props.node, props.node.context))
 
 /** 是否已展开二级「更多」 */
 const showMore = ref(false)

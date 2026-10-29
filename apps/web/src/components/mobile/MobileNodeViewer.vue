@@ -55,8 +55,13 @@ const props = withDefaults(
      * ⭐ 如 confirmed 态的「改词」—— ⛔ 不放右上角（那是低频区）。
      */
     bottomActions?: Array<{ key: string; label: string; variant?: 'primary' | 'danger' }>
+    /**
+     * 规格 v1.5 §4.12.2（拍板项 O）：长按唤起的 Menu 是否打开中。
+     * 打开时轻暂停媒体；关闭时恢复此前播放态（仅在播才恢复）。
+     */
+    menuOpen?: boolean
   }>(),
-  { bottomActions: () => [] },
+  { bottomActions: () => [], menuOpen: false },
 )
 
 const emit = defineEmits<{
@@ -117,7 +122,74 @@ onBeforeUnmount(() => {
   if (ttsEndHandler && typeof window !== 'undefined' && window.speechSynthesis) {
     window.speechSynthesis.removeEventListener('end', ttsEndHandler)
   }
+  cancelLongPress()
 })
+
+/* ── 长按唤起同源 Menu（规格 v1.5 §4.12.2 拍板项 O / G-19）─────────────────
+ * 「⋯」按钮退役：长按媒体任意处 = 与画布长按同一 Menu（同一浮层、同一门控，
+ * 仅 context='viewer' 裁剪子集）。唤起时媒体轻暂停（pause 不复位），
+ * Menu 关闭（menuOpen true→false）恢复此前播放态。
+ * ⭐ 手势仲裁：标注态 / 编辑态 / 文本类型（长按留给拖选）/ 多指 / 位移>10px
+ *   一律取消；长按触发后本次触控不得再触发 chrome 点按切换（suppressNextTap）。 */
+const LONG_PRESS_MS = 500
+const LONG_PRESS_MOVE_PX = 10
+let lpTimer: number | null = null
+let lpStart: { x: number; y: number } | null = null
+const suppressNextTap = ref(false)
+const wasPlayingBeforeMenu = ref(false)
+
+function onBodyTouchStart(e: TouchEvent) {
+  if (props.type === 'text') return
+  if (annotating.value || editing.value || props.menuOpen) return
+  if (e.touches.length !== 1) return
+  const t = e.touches[0]!
+  lpStart = { x: t.clientX, y: t.clientY }
+  lpTimer = window.setTimeout(fireLongPress, LONG_PRESS_MS)
+}
+
+function fireLongPress() {
+  lpTimer = null
+  lpStart = null
+  suppressNextTap.value = true
+  if (props.type === 'video' && videoRef.value && !videoRef.value.paused) {
+    videoRef.value.pause()
+    wasPlayingBeforeMenu.value = true
+  }
+  if (props.type === 'audio' && audioRef.value && !audioRef.value.paused) {
+    audioRef.value.pause()
+    wasPlayingBeforeMenu.value = true
+  }
+  emit('more')
+}
+
+function onBodyTouchMove(e: TouchEvent) {
+  if (!lpTimer || !lpStart) return
+  const t = e.touches[0]
+  if (!t) return
+  if (Math.hypot(t.clientX - lpStart.x, t.clientY - lpStart.y) > LONG_PRESS_MOVE_PX) cancelLongPress()
+}
+
+function cancelLongPress() {
+  if (lpTimer !== null) {
+    window.clearTimeout(lpTimer)
+    lpTimer = null
+  }
+  lpStart = null
+}
+
+function onBodyTouchEnd() {
+  cancelLongPress()
+}
+
+watch(
+  () => props.menuOpen,
+  (open) => {
+    if (open || !wasPlayingBeforeMenu.value) return
+    wasPlayingBeforeMenu.value = false
+    if (props.type === 'video') void videoRef.value?.play().catch(() => {})
+    if (props.type === 'audio') void audioRef.value?.play().catch(() => {})
+  },
+)
 
 /**
  * 查看器底部主栏动作：外部注入的 bottomActions + 文本节点的「朗读 / 停止」。
@@ -710,30 +782,25 @@ defineExpose({ videoRef })
       </svg>
     </button>
     <!--
-      右上「⋯」= 操作全集（§4.6 · §4.11.6）
-      ⭐ 与画布长按**同一个 Menu 浮层**（同源同容器，避免双入口分裂）。
-      ⛔ 顶部只放**低频**（退出 / 更多）—— 高频的「改词」在底部主栏。
-      ⛔ 内联 SVG（禁文本字符 ⋯，§4.11.5）。
+      规格 v1.5 §4.12.2（拍板项 O）：「⋯」按钮退役——长按媒体唤起同源 Menu
+      （CanvasPage.openMobileNodeMenuFromViewer → 与画布长按同一浮层，仅 context 裁剪）。
+      右上仅 X 一枚（G-19）。
     -->
-    <button
-      class="viewer-more"
-      type="button"
-      aria-label="更多操作"
-      data-testid="mobile-viewer-more"
-      @click="emit('more')"
-    >
-      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-        <path d="M6 12h.01M12 12h.01M18 12h.01" stroke-linecap="round" />
-      </svg>
-    </button>
-
     <!--
       ⭐ 2026-10-27 真机回归③④结构性修复：媒体区收进 `.viewer-body`（flex:1 +
       position:relative），底部主栏改**文档流**（原 absolute bottom:0 把同位钉底的
       圈选 / 倍速 / 音频控制条全部盖住——音频播/停/拖/圈选与视频倍速「不可用」的根因）。
       圈选 / 倍速的 absolute 锚点随之变为 body 底部 ⇒ 恒在主栏上方，互不遮挡。
+      v1.5：长按手势挂本容器（媒体区），测试锚 mobile-viewer-body。
     -->
-    <div class="viewer-body">
+    <div
+      class="viewer-body"
+      data-testid="mobile-viewer-body"
+      @touchstart.passive="onBodyTouchStart"
+      @touchmove.passive="onBodyTouchMove"
+      @touchend="onBodyTouchEnd"
+      @touchcancel="onBodyTouchEnd"
+    >
     <!--
       标注入口（L1 · §4.3）：**显式进入**标注态（⛔ 不做隐式双击手势 ——
       单指拖动已是媒体滚动/缩放，隐式手势在移动端极易误触）。
@@ -990,29 +1057,7 @@ defineExpose({ videoRef })
   background: var(--lnk-pressed-overlay);
 }
 
-/* 右上「⋯」（44px 触控目标，§4.11.6） */
-.viewer-more {
-  position: absolute;
-  top: calc(env(safe-area-inset-top) + var(--lnk-space-2));
-  right: calc(var(--lnk-space-2) + var(--lnk-touch-target) + var(--lnk-space-1));
-  z-index: 3;
-  display: inline-flex;
-  width: var(--lnk-touch-target);
-  height: var(--lnk-touch-target);
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: var(--lnk-radius-md);
-  background: var(--lnk-surface-overlay);
-  color: var(--lnk-text-primary);
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.viewer-more:active {
-  background: var(--lnk-pressed-overlay);
-}
+/* 右上「⋯」已退役（规格 v1.5 O：长按媒体唤起同源 Menu，G-19） */
 
 /* 底部主栏：高频动作恒在拇指区（§4.11.6）。
    ⭐ 回归③④：文档流（原 absolute bottom:0 z-3 覆盖同区按钮群）——

@@ -2648,6 +2648,8 @@ const mobileActionNode = ref<{
    *  `enterMultiSelectMode` 的累加语义配套（2026-10-21 走查的判据不能丢）。 */
   multiSelectActive?: boolean
   multiSelectSelected?: boolean
+  /** 规格 v1.5 §4.12.2：Menu 上下文——viewer = 查看器内长按（裁剪子集） */
+  context?: 'canvas' | 'viewer'
 } | null>(null)
 const mobileEditorNode = ref<EditableFlowNode | null>(null)
 
@@ -2910,7 +2912,9 @@ provide(MOBILE_NODE_OPEN_EDITOR_KEY, (node: { id?: string; type: 'image' | 'vide
 function openMobileNodeMenuFromViewer() {
   const node = mobileViewerNode.value
   if (!node?.id) return
-  mobileActionNode.value = { id: node.id, type: node.type, data: node.data }
+  // 规格 v1.5 §4.12.2（拍板项 O）：context='viewer' ⇒ 同一浮层、viewer 裁剪子集
+  // （mobileNodeActionPolicy 剔除多选 / 重命名）。menuOpen 由 shell 从 context 派生。
+  mobileActionNode.value = { id: node.id, type: node.type, data: node.data, context: 'viewer' }
 }
 
 /**

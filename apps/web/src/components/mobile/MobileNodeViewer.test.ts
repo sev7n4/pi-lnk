@@ -817,3 +817,86 @@ describe('MobileNodeViewer text·html 分支（规格 S5）', () => {
     w.unmount()
   })
 })
+
+describe('长按唤起同源 Menu（v1.5 O / G-19）', () => {
+  type ViewerProps = InstanceType<typeof MobileNodeViewer>['$props']
+  function mountViewer(props: ViewerProps) {
+    return mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props })
+  }
+
+  it('模板不再有「⋯」按钮', () => {
+    const w = mountViewer({ type: 'image', data: { url: 'x.png' } })
+    expect(w.find('[data-testid="mobile-viewer-more"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('长按媒体 500ms ⇒ emit more 且视频轻暂停', async () => {
+    vi.useFakeTimers()
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {})
+    try {
+      const w = mountViewer({ type: 'video', data: { url: 'x.mp4' } })
+      // jsdom 视频 paused 恒 true ⇒ 伪造「在播」态（fireLongPress 只暂停在播媒体）
+      const video = w.find('video').element as HTMLVideoElement
+      Object.defineProperty(video, 'paused', { get: () => false, configurable: true })
+      await w.find('[data-testid="mobile-viewer-body"]').trigger('touchstart', { touches: [{ clientX: 10, clientY: 10 }] })
+      await vi.advanceTimersByTimeAsync(500)
+      expect(w.emitted('more')).toHaveLength(1)
+      expect(pause).toHaveBeenCalled()
+    } finally {
+      pause.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('位移超 10px 取消长按；touchend 也取消', async () => {
+    vi.useFakeTimers()
+    try {
+      const w = mountViewer({ type: 'image', data: { url: 'x.png' } })
+      const body = w.find('[data-testid="mobile-viewer-body"]')
+      await body.trigger('touchstart', { touches: [{ clientX: 10, clientY: 10 }] })
+      await body.trigger('touchmove', { touches: [{ clientX: 60, clientY: 10 }] })
+      await vi.advanceTimersByTimeAsync(600)
+      expect(w.emitted('more')).toBeUndefined()
+      // touchend 后再按满 500ms 也不弹（上一个手势已被 move 取消，此处验证 end 不重挂计时器）
+      await body.trigger('touchstart', { touches: [{ clientX: 10, clientY: 10 }] })
+      await body.trigger('touchend', { touches: [] })
+      await vi.advanceTimersByTimeAsync(600)
+      expect(w.emitted('more')).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('文本类型长按不弹 Menu（长按保留给拖选）', async () => {
+    vi.useFakeTimers()
+    try {
+      const w = mountViewer({ type: 'text', data: { content: '长文'.repeat(80) } })
+      await w.find('[data-testid="mobile-viewer-body"]').trigger('touchstart', { touches: [{ clientX: 1, clientY: 1 }] })
+      await vi.advanceTimersByTimeAsync(500)
+      expect(w.emitted('more')).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('menuOpen false→true→false：此前在播 ⇒ 恢复播放', async () => {
+    vi.useFakeTimers()
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined)
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {})
+    try {
+      const w = mountViewer({ type: 'video', data: { url: 'x.mp4' } })
+      const video = w.find('video').element as HTMLVideoElement
+      Object.defineProperty(video, 'paused', { get: () => false, configurable: true })
+      await w.find('[data-testid="mobile-viewer-body"]').trigger('touchstart', { touches: [{ clientX: 10, clientY: 10 }] })
+      await vi.advanceTimersByTimeAsync(500)
+      expect(w.emitted('more')).toHaveLength(1)
+      await w.setProps({ menuOpen: true })
+      await w.setProps({ menuOpen: false })
+      expect(play).toHaveBeenCalled()
+    } finally {
+      play.mockRestore()
+      pause.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+})
