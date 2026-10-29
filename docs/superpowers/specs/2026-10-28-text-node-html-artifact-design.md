@@ -16,6 +16,7 @@
 - v4（2026-10-28）：**WorkBuddy 最佳实践原文纳入**（用户拍板「照抄」）——新增 §14 附录：`show_widget`/`widget_guidelines` 一手原文摘录（会话内取证）、照抄/改写/弃用三档逐条对照（含理由）、`skills/html-craft/SKILL.md` 全文草案（实施照此落盘，不自行撰写）、`set_node_text` / `create_nodes_batch` 工具描述改写全文（现状原文 → 定稿全文）。§2.1 P6 / §9 #14 指向 §14。
 - v4.1（2026-10-28，SDD 执行期）：§14.4 frontmatter description 改 `>-` 折叠块标量——runtime parseSimpleYaml 不解析多行 plain scalar，截断导致路由索引丢失强制加载句与不适用边界（评审发现，loader 零改动纪律保持）。
 - v4.2（2026-10-29，final review）：§5.4 srcdoc 组装改 DOCTYPE 感知——meta CSP 前置于 DOCTYPE 会使文档落入 quirks mode（布局保真受损），有 DOCTYPE 时插于其后、无则前置；守卫测试同步。
+- v4.3（2026-10-29，CI 修复）：§14.4 撤改读类工具点名（A1 红线：延迟集工具不得被下发资产按名点名）——改写为「先 tool_search 搜『画布』加载读类工具」+ 能力描述，沿用 2026-10-06 四 skill 点名撤改先例；verify-tool-tiering 随 CI 复验。
 
 > 一句话：**HTML 是文本节点的一种内容格式（`data.format:'html'`）加一种沙箱渲染视图**——不新增节点类型、不新增工具、不动 vendor、不动 DB；agent 经现有 `set_node_text` 直写 HTML 源码，前端按 format 分支进 sandbox iframe 预览。
 
@@ -301,8 +302,9 @@ description: >-
 ## 何时使用（出口选择，先读这段再动手）
 
 1. 画布结构化数据可视化（总览图/流程图/时间线卡片）→ HTML 卡片 + mermaid / echarts
-   （CDN 白名单内）。数据来源 get_canvas_layout 仅含 id/type/title/position；要节点正文
-   先 get_node 显式读取；**取不到的字段一律不写、不编造**。
+   （CDN 白名单内）。读数据前先 tool_search 搜「画布」加载读类工具：布局工具仅含
+   id/type/title/position；要节点正文用节点详情读取工具显式读取；
+   **取不到的字段一律不写、不编造**。
 2. 纯文案 / 说明 → markdown 文本节点，不出 html。
 3. 自由布局 / 交互原型 / 表单 / 带脚本的演示页 → format:'html' 自由生成（本规范全文管这个口）。
 

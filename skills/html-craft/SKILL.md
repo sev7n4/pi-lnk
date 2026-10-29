@@ -12,8 +12,9 @@ description: >-
 ## 何时使用（出口选择，先读这段再动手）
 
 1. 画布结构化数据可视化（总览图/流程图/时间线卡片）→ HTML 卡片 + mermaid / echarts
-   （CDN 白名单内）。数据来源 get_canvas_layout 仅含 id/type/title/position；要节点正文
-   先 get_node 显式读取；**取不到的字段一律不写、不编造**。
+   （CDN 白名单内）。读数据前先 tool_search 搜「画布」加载读类工具：布局工具仅含
+   id/type/title/position；要节点正文用节点详情读取工具显式读取；
+   **取不到的字段一律不写、不编造**。
 2. 纯文案 / 说明 → markdown 文本节点，不出 html。
 3. 自由布局 / 交互原型 / 表单 / 带脚本的演示页 → format:'html' 自由生成（本规范全文管这个口）。
 
