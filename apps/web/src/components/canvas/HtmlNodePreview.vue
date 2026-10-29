@@ -27,9 +27,20 @@ const tab = ref<'preview' | 'source'>('preview')
 const draft = ref('')
 
 const degraded = computed(() => props.content.trim() === '')
-const srcdoc = computed(() =>
-  degraded.value ? '' : `<meta http-equiv="Content-Security-Policy" content="${HTML_NODE_CSP}">${props.content}`,
-)
+
+const CSP_META = `<meta http-equiv="Content-Security-Policy" content="${HTML_NODE_CSP}">`
+/**
+ * srcdoc 组装（§5.4，DOCTYPE 感知）：meta CSP 若前置于 DOCTYPE，文档首 token 非
+ * `<!DOCTYPE>` ⇒ 落入 quirks mode（百分比高度 / 行高 / 盒模型全变，布局保真受损）。
+ * 有 DOCTYPE 时插于其声明行之后（<html> 之前），无则前置——两种路径均保证
+ * DOCTYPE 是文档第一个 token 且 meta 先于任何可执行内容生效。
+ */
+function buildSrcdoc(content: string): string {
+  const m = /^\s*<!doctype\s+html[^>]*>/i.exec(content)
+  if (!m) return `${CSP_META}${content}`
+  return `${content.slice(0, m[0].length)}\n${CSP_META}${content.slice(m[0].length)}`
+}
+const srcdoc = computed(() => (degraded.value ? '' : buildSrcdoc(props.content)))
 
 function openSource() {
   draft.value = props.content

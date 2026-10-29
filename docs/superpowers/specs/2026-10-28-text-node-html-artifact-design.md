@@ -15,6 +15,7 @@
 - v3（2026-10-28）：规格评审细化（防实施偏差），全部回代码核实——① zod schema 是文档位非闸门位（`SetNodeContentRequestSchema` 全仓无消费方，校验真身 = typebox 枚举 + DTO `@IsIn`，§5.3/§5.4 改写）；② create 链路字段映射三处口径不一致（工具 `type` → body `targetType`，`title ?? prompt`；端点名 `/agent/internal/add-nodes-batch`；`BatchNodeItemDto` :98），format 插入点精确到 4 处（§5.3）；③ 移动端接线点从「实施时定位」落为 `MobileNodeViewer.vue`（text 分支，v3 实证其 props 契约）+ `MobileNodeEditorSheet`（§6 S5 / §9 #13）；④ 新增 §5.4 HtmlNodePreview 组件契约（readonly prop + emit save，禁直接 inject patch——CanvasNodeText onSave 注释里的既有覆盖陷阱）；⑤ 旁路系统验证清单（duplicate/workflowExchange 等 data 整包拷贝，format 自动随行，§4.11）；⑥ S9 数据边界（`get_canvas_layout` 仅 `{id,type,title,position}`，读正文须 get_node，防编造进 skill 内容清单）；⑦ 外链图片必裂（CSP img-src 无远程域）⇒ html-craft 强约束「图片一律 data URI/SVG/CSS」；⑧ 沙箱 modals 未授予 ⇒ alert/confirm 静默失效，skill 写「用行内提示」。
 - v4（2026-10-28）：**WorkBuddy 最佳实践原文纳入**（用户拍板「照抄」）——新增 §14 附录：`show_widget`/`widget_guidelines` 一手原文摘录（会话内取证）、照抄/改写/弃用三档逐条对照（含理由）、`skills/html-craft/SKILL.md` 全文草案（实施照此落盘，不自行撰写）、`set_node_text` / `create_nodes_batch` 工具描述改写全文（现状原文 → 定稿全文）。§2.1 P6 / §9 #14 指向 §14。
 - v4.1（2026-10-28，SDD 执行期）：§14.4 frontmatter description 改 `>-` 折叠块标量——runtime parseSimpleYaml 不解析多行 plain scalar，截断导致路由索引丢失强制加载句与不适用边界（评审发现，loader 零改动纪律保持）。
+- v4.2（2026-10-29，final review）：§5.4 srcdoc 组装改 DOCTYPE 感知——meta CSP 前置于 DOCTYPE 会使文档落入 quirks mode（布局保真受损），有 DOCTYPE 时插于其后、无则前置；守卫测试同步。
 
 > 一句话：**HTML 是文本节点的一种内容格式（`data.format:'html'`）加一种沙箱渲染视图**——不新增节点类型、不新增工具、不动 vendor、不动 DB；agent 经现有 `set_node_text` 直写 HTML 源码，前端按 format 分支进 sandbox iframe 预览。
 
@@ -155,7 +156,7 @@ emits:  save(payload: { content: string; format: 'html' })  // 源码 tab 保存
         close()                                             // 浮层退出（移动端含下滑关闭）
 ```
 
-- **iframe 组装顺序（srcdoc）**：`<meta http-equiv="Content-Security-Policy" content="…">` 置于文档**最前**（meta CSP 不覆盖 frame-ancestors 等少数指令，本场景无影响），后接用户 HTML 原文，不做任何改写/净化。
+- **iframe 组装顺序（srcdoc，v4.2 DOCTYPE 感知）**：meta CSP 不得前置于 `<!DOCTYPE>`——DOCTYPE 非文档首 token 会落入 quirks mode（百分比高度/行高/盒模型解析全变，布局保真受损）。有 DOCTYPE（`^\s*<!doctype\s+html` 大小写不敏感）时 meta 插于其声明行之后（`<html>` 之前）；无 DOCTYPE 时前置——两种路径均保证 DOCTYPE 为首 token 且 meta 先于任何可执行内容生效，其余不做任何改写/净化。
 - **保存通路（⚠️ 既有陷阱）**：`CanvasNodeText.onSave` 注释明示——`updateNodeData` 只写 Vue Flow 内部 store，会被下一次页面 patch 的旧数据**覆盖**。因此 HtmlNodePreview **禁直接 inject `CANVAS_NODE_PATCH_KEY`**：一律 `emit('save')` 由宿主决定通路——PC 宿主 `CanvasNodeText` 走 `patchCanvasNode(nodeId, { content, format })`；移动端宿主 `MobileNodeViewer` 由 shell 层传入保存回调。
 - **readonly=true 时**：隐藏源码编辑与保存（CanvasReadonlyPage / ReplayPage 无 patch 通道，走 updateNodeData fallback = 静默假写，必须关死）。
 - **降级（§4.8）**：iframe `onerror` / 空白检测 → 源码 `<pre>`，态内提示，不抛错。

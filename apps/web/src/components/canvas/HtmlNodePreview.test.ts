@@ -18,15 +18,22 @@ describe('HtmlNodePreview 沙箱契约（规格 §4.3/§10 行为级守卫）', 
       expect(sb).not.toContain(banned)
     }
   })
-  it('srcdoc 首部为 meta CSP 且串与定稿一致', () => {
+  it('srcdoc 组装 DOCTYPE 感知：DOCTYPE 保持首 token（防 quirks），CSP 仍先于内容生效', () => {
     expect(HTML_NODE_CSP).toBe(
       "default-src 'none'; script-src 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src data: blob:; connect-src 'none'",
     )
+    const cspMeta = `<meta http-equiv="Content-Security-Policy" content="${HTML_NODE_CSP}">`
+    // (a) 有 DOCTYPE：DOCTYPE 是文档第一个 token，meta CSP 插于其声明行之后（§5.4 v4.2）
     const w = mount(HtmlNodePreview, { props: { content: SAMPLE } })
     const doc = w.find('iframe').attributes('srcdoc') ?? ''
-    const cspIdx = doc.indexOf(HTML_NODE_CSP)
-    expect(cspIdx).toBeGreaterThanOrEqual(0)
-    expect(doc.indexOf('<!DOCTYPE')).toBeGreaterThan(cspIdx) // CSP 置最前（§5.4）
+    expect(doc.trimStart().indexOf('<!DOCTYPE')).toBe(0)
+    expect(doc.indexOf(cspMeta)).toBeGreaterThan(doc.indexOf('<!DOCTYPE'))
+    expect(doc.indexOf('<h1>hi</h1>')).toBeGreaterThan(doc.indexOf(cspMeta))
+    // (b) 无 DOCTYPE：meta CSP 前置（既有行为保留）
+    const w2 = mount(HtmlNodePreview, { props: { content: '<p>fragment</p>' } })
+    const doc2 = w2.find('iframe').attributes('srcdoc') ?? ''
+    expect(doc2.indexOf(cspMeta)).toBe(0)
+    expect(doc2.indexOf('<p>fragment</p>')).toBeGreaterThan(0)
   })
   it('默认预览态；切源码后保存 emit save 且 payload 带 format:"html"', async () => {
     const w = mount(HtmlNodePreview, { props: { content: SAMPLE } })
