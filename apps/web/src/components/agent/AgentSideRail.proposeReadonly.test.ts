@@ -72,16 +72,6 @@ async function mountRail(extraProps: Record<string, unknown> = {}) {
   return w
 }
 
-/** 旧双源残留置位：证明状态行/浮卡都不再读它们（浮卡已下线的回归锁）。 */
-function seedLegacyMirrors() {
-  const agent = useAgentStore()
-  agent.blockingWait = {
-    toolName: 'propose_generation',
-    callId: 'call-1',
-    nodeId: 'node-1',
-  } as never
-}
-
 /** 单一真相端到端种子：流式 assistant 消息 + waiting_user 事件 ⇒ 时间线 proposal part。 */
 function seedTimelineProposal() {
   const agent = useAgentStore()
@@ -109,9 +99,8 @@ describe('根治规格：propose 等待的单一真相 = 时间线 proposal part
     vi.unstubAllGlobals()
   })
 
-  it('对话流外浮卡已下线：blockingWait 置位也不出 propose-wait-hint（决策点回归对话流+画布）', async () => {
+  it('对话流外浮卡已下线：propose-wait-* 选择器不再存在于 DOM（决策点回归对话流+画布）', async () => {
     const w = await mountRail({ mobileCanvasView: true })
-    seedLegacyMirrors()
     await flushPromises()
 
     expect(w.find('[data-testid="propose-wait-hint"]').exists()).toBe(false)
@@ -122,7 +111,6 @@ describe('根治规格：propose 等待的单一真相 = 时间线 proposal part
 
   it('纯对话视图（桌面）同样无浮卡（下线不分形态）', async () => {
     const w = await mountRail({ mobileCanvasView: false })
-    seedLegacyMirrors()
     await flushPromises()
 
     expect(w.find('[data-testid="propose-wait-hint"]').exists()).toBe(false)

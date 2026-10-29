@@ -51,7 +51,7 @@ export function isDockGenerateBusy(status: unknown): boolean {
 /**
  * ADR-0011（2026-10-19）：propose 待确认阻塞态。它**不在** NODE_GENERATION_STATUS
  * 枚举里——不是生成态，而是「agent 已提议、等待用户在画布节点上确认/取消」的阻塞态
- * （由 propose 流程经 update_node 写入，见 proposeWaitActions.ts）。
+ * （由 propose 流程经 update_node 写入，经 useCanvasActions.mergeNodeData 守卫落位）。
  */
 export const NODE_PENDING_CONFIRM_STATUS = 'pending_confirm'
 

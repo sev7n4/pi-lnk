@@ -9,11 +9,6 @@
 
 const flags = new Map<string, boolean>([
   ['selection_batch_generate', true], // SB-D16 默认 off → 2026-09-23 拍板维持 on（见文件头）
-  // P1（agent-turn-timeline-design §5-P1）：TurnTimeline 模型层。
-  // 2026-10-13 默认 off 起灰度（`?feature=turn_timeline` 本地开启）；
-  // 2026-10-14 随 #405 部署取证通过**转正默认 on**（时间线成为唯一渲染路径）。
-  // 紧急关停 = 改此处一行 + 发版（同 selection_batch_generate 的 kill switch 约定）。
-  ['turn_timeline', true],
 ])
 
 export function isFeatureOn(key: string): boolean {

@@ -122,19 +122,6 @@ export function resolveWaitingFromTimeline(parts?: TimelinePart[]): boolean {
   )
 }
 
-/**
- * @deprecated 由 resolveWaitingFromTimeline 取代（根治规格）——保留以兼容旧调用方。
- */
-export function resolveWaiting(input: {
-  isStreaming: boolean
-  proposePendingConfirm: boolean
-  blockingWait?: { toolName?: string } | null
-}): boolean {
-  if (!input.isStreaming) return false
-  if (input.blockingWait) return true
-  return input.proposePendingConfirm
-}
-
 /** error → 人话（来源：SSE error 事件 data / 请求异常；禁用 JSON 工具摘要）。 */
 export function failureReason(err: unknown): string {
   const status = (err as { status?: number } | null)?.status

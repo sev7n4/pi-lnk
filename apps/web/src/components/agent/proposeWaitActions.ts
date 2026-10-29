@@ -1,18 +1,19 @@
 /**
- * 阻塞等待 propose 琥珀卡的动作守卫（纯函数，2026-10-01；2026-10-06 扩显式确认与本地同步）。
+ * 阻塞等待 propose 琥珀卡的动作守卫（纯函数，2026-10-01；2026-10-06 扩显式确认）。
  *
  * 取消语义：琥珀卡「取消」= 拒绝该节点的生成提议（clear-propose → 节点回 draft，
  * runtime draft 稳定性轮询判 rejected → run 恢复继续对话），绝不是中止整个 run
  * —— 后者是 composer「停止」按钮的语义。
  *
  * 确认语义（2026-10-06，生产事故 cmus6ha64001dk601lzsymqfa）：
- * 阻塞 propose 期间 `update_node{pending_confirm}` 只随 tool result 下发（要等等待结束），
- * 本地节点因此一直是 stale draft；期间**任何** saveCanvas（点生成时的 flush / 拖节点 /
- * 改参数 / 别的节点出图完成）都会用它整份覆盖 SSOT 的待确认，runtime 的 draft 轮询
- * 遂误判「用户取消了生成确认」。两条修复都落在这里：
- * - `shouldSyncProposePending`：等待开始即把本地节点同步成 pending_confirm（消除 stale）；
- * - `resolveProposeConfirmCallId`：确认走**显式** /answers（registry answered），
- *   不再依赖 SSOT 时序推断 —— 与仓库铁律「状态担保 = 确定性事件」一致。
+ * 确认/取消都走**显式** /answers（registry answered / decline），不依赖 SSOT 时序
+ * 推断 —— 与仓库铁律「状态担保 = 确定性事件」一致。
+ *
+ * 根治规格（2026-10-28）：等待态单一真相 = 时间线 proposal part，`wait` 入参即
+ * `store.pendingProposal`。旧的「等待开始本地同步 pending_confirm + PUT 载荷强制
+ * 声明」（shouldSyncProposePending / forcePendingConfirmInPayload）随其 emit
+ * （propose-wait-start/end）一并下线——节点 pending_confirm 由服务端 update_node
+ * 经 useCanvasActions.mergeNodeData 守卫落位，不再有前端并行镜像。
  */
 
 export type ProposeWaitLike = { toolName?: string; callId?: string | null; nodeId?: string } | null
@@ -24,25 +25,10 @@ export function resolveProposeCancelNodeId(wait: ProposeWaitLike): string | null
   return id ? id : null
 }
 
-/** 允许被同步成 pending_confirm 的本地状态：只有草稿态才是那份 stale 值。 */
-const SYNCABLE_STATUSES = new Set(['', 'draft'])
-
-/**
- * L2：该本地状态是否应同步成 pending_confirm。
- *
- * ⚠️ 只覆盖 draft/无状态 —— 已 in-flight（generating / fallback_pending）或终态
- * （completed / error / failed）一律不动，语义与 `useCanvasActions` 的
- * STALE_BLOCKED_STATUSES 守卫互为镜像（那边防 stale pending_confirm 覆盖在途节点，
- * 这边防 stale draft 覆盖 SSOT 的待确认）。
- */
-export function shouldSyncProposePending(status: unknown): boolean {
-  return SYNCABLE_STATUSES.has(String(status ?? ''))
-}
-
 /**
  * L1：本节点是否有可显式确认的 propose 等待；有则返回 callId（POST /answers 的依据）。
  *
- * 无等待 / 不是 propose / 等待属于别的节点 / 没有 callId（blocking 关闭的旧路径）一律 null，
+ * 无等待 / 不是 propose / 等待属于别的节点 / 没有 callId（旧路径）一律 null，
  * 调用方据此退回「画布生成 + 轮询兜底」。
  */
 export function resolveProposeConfirmCallId(
@@ -71,25 +57,4 @@ export function resolveProposeCancelCallId(wait: ProposeWaitLike): string | null
   if (!wait || wait.toolName !== 'propose_generation') return null
   const callId = typeof wait.callId === 'string' ? wait.callId.trim() : ''
   return callId ? callId : null
-}
-
-/**
- * P0-C（2026-10-13 事故 cmv51vwpu0008p801hxaxcf8m）：propose 等待期 PUT 载荷守卫。
- *
- * 整份替换语义下「剥离 status」等于删除字段——undefined 同样是一次状态变化；
- * 「不覆盖 SSOT」的唯一正确形态是**强制声明当前真值 pending_confirm**：
- * 等待期的服务端真值就是 pending_confirm（propose 服务端写入），本地无论 stale 成
- * 什么终态，PUT 载荷都不得把它带出去盖写 SSOT。
- * 服务端还有 P0-B 状态转移守卫兜底（sessions.service），本函数是第二道防线。
- */
-export function forcePendingConfirmInPayload(
-  canvasData: { nodes?: Array<{ id?: string; data?: Record<string, unknown> }> },
-  waitingNodeId: string | null,
-): void {
-  if (!waitingNodeId || !Array.isArray(canvasData.nodes)) return
-  for (const node of canvasData.nodes) {
-    if (node && node.id === waitingNodeId) {
-      node.data = { ...(node.data ?? {}), status: 'pending_confirm' }
-    }
-  }
 }

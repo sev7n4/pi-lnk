@@ -17,6 +17,7 @@
 import { computed, shallowReactive } from 'vue'
 import DockTypeIcon from '@/components/canvas/dock-studio/shared/DockTypeIcon.vue'
 import CanvasLocateButton from '@/components/shared/CanvasLocateButton.vue'
+import AskUserCard from '@/components/agent/AskUserCard.vue'
 import { presentToolStep } from '@/components/agent/toolPresentation'
 import { useDisclosure } from '@/components/agent/useDisclosure'
 import type { TimelinePart, ThinkingPart } from '@/components/agent/turnTimeline'
@@ -40,6 +41,9 @@ const emit = defineEmits<{
   /** 根治规格（2026-10-28）：对话流内联 proposal 卡的确认 / 取消（取代对话流外浮卡）。 */
   confirmProposal: [nodeId: string]
   cancelProposal: [nodeId: string]
+  /** 根治规格（2026-10-28）：对话流内联 question 卡的提交 / 取消（取代组件级 pendingAskUser ref）。 */
+  askSubmit: [callId: string, payload: { answers: Record<string, string[]>; skipped?: string[] }]
+  askCancel: [callId: string]
 }>()
 
 const VIDEO_URL_RE = /\.(mp4|webm|mov)(\?|$)/i
@@ -122,6 +126,15 @@ function onConfirmProposal(nodeId?: string) {
 }
 function onCancelProposal(nodeId?: string) {
   if (nodeId) emit('cancelProposal', nodeId)
+}
+function onAskSubmit(
+  part: Extract<TimelinePart, { kind: 'question' }>,
+  payload: { answers: Record<string, string[]>; skipped?: string[] },
+) {
+  if (part.callId) emit('askSubmit', part.callId, payload)
+}
+function onAskCancel(part: Extract<TimelinePart, { kind: 'question' }>) {
+  if (part.callId) emit('askCancel', part.callId)
 }
 
 /** 流式中：最后一个「streaming 文本块」尾部显示光标，对齐旧正文的 ▊。 */
@@ -388,6 +401,26 @@ const rootClass = computed(() =>
             @click="onCancelProposal(part.nodeId)"
           >取消</button>
         </div>
+      </div>
+
+      <!-- question（根治规格 2026-10-28）：ask_user 等待态单一真相的内联决策点——题面 / 选项 /
+           多选 / 其他 / 提交 / 取消都在对话流里（取代组件级 pendingAskUser ref 驱动的对话流外卡）。
+           状态行与对话流内联卡读同一 part。令牌纪律同 proposal 分支：一律 --lnk-* 语义令牌。
+           pending_answer 才出可操作卡；已作答/已跳过读只读小结，不重复渲染可点选项（与 proposal 分支同构）。 -->
+      <div
+        v-else-if="part.kind === 'question'"
+        class="rounded border border-[var(--lnk-border-default)] px-2 py-1.5"
+      >
+        <AskUserCard
+          v-if="part.status === 'pending_answer'"
+          :questions="part.questions"
+          @submit="onAskSubmit(part, $event)"
+          @cancel="onAskCancel(part)"
+        />
+        <p
+          v-else
+          class="text-[10px] text-[var(--lnk-text-muted)]"
+        >{{ part.status === 'answered' ? '已回答' : '已跳过' }}</p>
       </div>
 
       <!-- notice -->

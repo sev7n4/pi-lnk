@@ -44,15 +44,19 @@ describe('AgentSideRail — 滚动上下文唯一（治理 2/2 终局结构）',
     const iScroll = rail.indexOf('agent-chat-scroll')
     // 根治规格 2026-10-28：propose 浮卡下线，锚点换成同处系统层的状态行（等待/收口播报）
     const iWait = rail.indexOf('data-testid="turn-status-line"')
-    const iAsk = rail.indexOf('<AskUserCard')
     const iInput = rail.indexOf('class="agent-input-area')
+    // 根治规格 2026-10-28：ask_user 卡迁至对话流内联 question part（AgentTurnTimeline），
+    // 不再是对话流外的 composer 直接子节点；卡片仍在主滚动流内的时间线组件里。
+    const iAskInTimeline = timeline.indexOf('<AskUserCard')
+    const iAskInRail = rail.indexOf('<AskUserCard')
     expect(iScroll).toBeGreaterThan(-1)
     expect(iWait).toBeGreaterThan(-1)
-    expect(iAsk).toBeGreaterThan(-1)
     expect(iInput).toBeGreaterThan(-1)
+    expect(iAskInTimeline, 'ask_user 卡必须在对话流内联时间线组件里渲染').toBeGreaterThan(-1)
+    expect(iAskInRail, 'ask_user 卡不得再作为 composer 直接子节点（对话流外）').toBe(-1)
     expect(
-      iScroll < iWait && iWait < iInput && iAsk < iInput,
-      `模板顺序必须 主滚动容器(${iScroll}) < 状态行(${iWait})/ask卡(${iAsk}) < 输入区(${iInput})——对话内容不得落回 dock`,
+      iScroll < iWait && iWait < iInput,
+      `模板顺序必须 主滚动容器(${iScroll}) < 状态行(${iWait}) < 输入区(${iInput})——对话内容不得落回 dock`,
     ).toBe(true)
   })
 

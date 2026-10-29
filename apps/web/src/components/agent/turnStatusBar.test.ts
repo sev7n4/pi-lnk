@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { turnStatusLine, resolveWaiting, resolveWaitingFromTimeline, failureReason } from '@/components/agent/turnStatusBar'
+import { turnStatusLine, resolveWaitingFromTimeline, failureReason } from '@/components/agent/turnStatusBar'
 import { createTurnTimeline, applyTimelineEvent, type TimelinePart } from '@/components/agent/turnTimeline'
 
 /** 从事件流构造 parts（复用模型层 reducer，避免手写 part 假数据漂移）。 */
@@ -41,48 +41,6 @@ describe('turnStatusLine（P1 状态行）', () => {
     expect(
       turnStatusLine({ isStreaming: true, turnStartedAt: t0, now: t0 + 5000, waiting: true, waitingTool: 'ask_user' }),
     ).toEqual({ text: '等待你确认', mode: 'waiting' })
-  })
-})
-
-describe('resolveWaiting（P1 waiting 收紧）', () => {
-  it('propose pending_confirm 一票通过', () => {
-    expect(resolveWaiting({ isStreaming: true, proposePendingConfirm: true })).toBe(true)
-  })
-  it('非流式恒 false；两个信号都缺席恒 false', () => {
-    expect(resolveWaiting({ isStreaming: false, proposePendingConfirm: true })).toBe(false)
-    expect(resolveWaiting({ isStreaming: true, proposePendingConfirm: false })).toBe(false)
-  })
-  it('阻塞等待一票通过：等待开始即收口，不等 tool_result（2026-10-01）', () => {
-    expect(
-      resolveWaiting({
-        isStreaming: true,
-        proposePendingConfirm: false, // 阻塞模式下等待期恒 false —— 正是旧判据失效的场景
-        blockingWait: { toolName: 'propose_generation' },
-      }),
-    ).toBe(true)
-    expect(
-      resolveWaiting({
-        isStreaming: true,
-        proposePendingConfirm: false,
-        blockingWait: { toolName: 'ask_user' },
-      }),
-    ).toBe(true)
-  })
-  it('blockingWait 为空 / 非流式 → 不误判（回归旧语义）', () => {
-    expect(
-      resolveWaiting({
-        isStreaming: true,
-        proposePendingConfirm: false,
-        blockingWait: null,
-      }),
-    ).toBe(false)
-    expect(
-      resolveWaiting({
-        isStreaming: false,
-        proposePendingConfirm: false,
-        blockingWait: { toolName: 'propose_generation' },
-      }),
-    ).toBe(false)
   })
 })
 

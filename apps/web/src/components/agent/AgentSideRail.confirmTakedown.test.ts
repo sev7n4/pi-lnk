@@ -101,8 +101,8 @@ async function mountRail() {
 
 /**
  * 根治规格（2026-10-28）：propose 等待的 seed 复刻生产 `waiting_user` handler——
- * **同一拍**置位 store 镜像（blockingWait，cancelProposeForNode/confirmProposeWait 的
- * callId 来源）与时间线 proposal part（内联卡的渲染来源）。只 seed 一边 = 假场景。
+ * 时间线 proposal part（内联卡渲染来源 + cancelProposeForNode/confirmProposeWait 的
+ * callId 唯一来源）。等待态单一真相 = 时间线，无并行 store 镜像。
  */
 function seedProposeWait(opts: { callId?: string; nodeId?: string } = {}) {
   const agent = useAgentStore()
@@ -119,11 +119,6 @@ function seedProposeWait(opts: { callId?: string; nodeId?: string } = {}) {
     callId: opts.callId,
     nodeId: opts.nodeId,
   })
-  agent.blockingWait = {
-    toolName: 'propose_generation',
-    callId: opts.callId,
-    nodeId: opts.nodeId,
-  } as never
 }
 
 /** 内联 proposal 卡的取消按钮（对话流内决策点，取代对话流外浮卡）。 */
@@ -233,7 +228,7 @@ describe('② propose「取消」走显式 decline（回归锁）', () => {
     expect(w.emitted('clearProposeGeneration')).toEqual([['node-1']])
   })
 
-  it('callId 缺席（blocking 关闭的旧等待）不再发 decline，但仍要收敛画布', async () => {
+  it('callId 缺席（时间线 part 无 callId 即无需 decline）不再发 decline，但仍要收敛画布', async () => {
     const w = await mountRail()
     seedProposeWait({ nodeId: 'node-9' })
     await flushPromises()
