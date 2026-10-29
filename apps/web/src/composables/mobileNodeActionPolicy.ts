@@ -27,6 +27,12 @@ export const MOBILE_NODE_SECONDARY_ACTION_KEYS: readonly MobileNodeActionKey[] =
 ]
 
 /**
+ * Menu 上下文（规格 v1.5 §4.12.2 拍板项 O）：
+ * `canvas` = 画布长按（全集）；`viewer` = 查看器内长按（剔除多选 / 重命名）。
+ */
+export type MobileNodeMenuContext = 'canvas' | 'viewer'
+
+/**
  * 移动端长按 **Menu** 的可用操作集（规格 §5.1 总门控表 + §4.4 频率分层）。
  *
  * ⭐ 单一真源：Menu 的渲染与页面层的分发都消费这一个函数，不各写一遍
@@ -34,12 +40,15 @@ export const MOBILE_NODE_SECONDARY_ACTION_KEYS: readonly MobileNodeActionKey[] =
  *
  * 顺序即 UI 顺序：`edit` 置顶（高频主操作）→ 中频平铺 → `delete` 置底（破坏性）。
  */
-export function resolveMobileNodeActions(node: {
-  /** 仅作透传用（本函数不消费 id）⇒ 可选，与 `resolveMobileNodeState` 同风格 */
-  id?: string
-  type: string
-  data?: Record<string, unknown> | null
-}): MobileNodeActionKey[] {
+export function resolveMobileNodeActions(
+  node: {
+    /** 仅作透传用（本函数不消费 id）⇒ 可选，与 `resolveMobileNodeState` 同风格 */
+    id?: string
+    type: string
+    data?: Record<string, unknown> | null
+  },
+  context: MobileNodeMenuContext = 'canvas',
+): MobileNodeActionKey[] {
   const state = resolveMobileNodeState({ type: node.type, data: node.data })
   // 有产物才允许「产物类」操作（副本 / 存库 / 本地）
   const hasContent = state === 'confirmed' || state === 'pending' || state === 'error'
@@ -60,6 +69,11 @@ export function resolveMobileNodeActions(node: {
   keys.push('multi-select')
   // 生成中不删（中断一个已消耗积分的任务）—— 规格 §6.4 / 拍板项 B1
   if (state !== 'generating') keys.push('delete')
+  // 规格 v1.5 §4.12.2（拍板项 O）：查看器是单节点全屏，无批量 / 画布态语义
+  // ⇒ 剔除「多选」与「重命名」。同一套操作定义按上下文过滤，不新建第二套（G-19）。
+  if (context === 'viewer') {
+    return keys.filter((k) => k !== 'multi-select' && k !== 'rename')
+  }
   return keys
 }
 
@@ -69,12 +83,15 @@ export function resolveMobileNodeActions(node: {
  * ⭐ 两级并集恒等于全集（不丢操作）—— 门控与分层是**两个正交维度**：
  *   门控决定「能不能做」，分层决定「放第几层」。
  */
-export function resolveMobileNodeMenuTiers(node: {
-  id?: string
-  type: string
-  data?: Record<string, unknown> | null
-}): { primary: MobileNodeActionKey[]; more: MobileNodeActionKey[] } {
-  const all = resolveMobileNodeActions(node)
+export function resolveMobileNodeMenuTiers(
+  node: {
+    id?: string
+    type: string
+    data?: Record<string, unknown> | null
+  },
+  context: MobileNodeMenuContext = 'canvas',
+): { primary: MobileNodeActionKey[]; more: MobileNodeActionKey[] } {
+  const all = resolveMobileNodeActions(node, context)
   const secondary = new Set<MobileNodeActionKey>(MOBILE_NODE_SECONDARY_ACTION_KEYS)
   let primary = all.filter((k) => !secondary.has(k))
   let more = all.filter((k) => secondary.has(k))
