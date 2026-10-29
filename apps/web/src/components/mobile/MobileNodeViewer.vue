@@ -77,8 +77,8 @@ const emit = defineEmits<{
   (e: 'edit-save', prompt: string): void
   /** 右上「⋯」= 操作全集（打开与长按同一个 Menu，§4.6 同源同容器） */
   (e: 'more'): void
-  /** 底部主栏动作被点击（key 透传） */
-  (e: 'bottom-action', key: string): void
+  /** 底部主栏动作被点击（key 透传；音频 edit 携带 mediaTime——v1.5 Q at mm:ss 链路起点） */
+  (e: 'bottom-action', key: string, meta?: { mediaTime?: number }): void
 }>()
 
 /** 文本阅读器朗读（规格 §6.2「可朗读、可停」）：朗读状态本地维护，退出即停 */
@@ -273,8 +273,10 @@ const resolvedBottomActions = computed(() => {
   // ⭐ 入口统一（真机反馈①）：非文本节点且壳层未带 annotate 动作时，
   //   注入 [圈选] 进工具栏（与改词同几何等宽胶囊；原浮动圆钮退役）。
   //   pending 节点壳层已带【批注】⇒ 不重复注入。
+  //   v1.5 Q（§4.12.8）：音频不注入圈选——波形圈选判伪功能，改走 at mm:ss 时间戳。
   const hasAnnotate = base.some((a) => a.key === 'annotate')
-  const needsAnnotate = props.type !== 'text' && !showReviewLayer.value && !hasAnnotate
+  const needsAnnotate =
+    props.type !== 'text' && props.type !== 'audio' && !showReviewLayer.value && !hasAnnotate
   const actions: Array<{ key: string; label: string; variant?: 'primary' | 'danger' }> = needsAnnotate
     ? [{ key: 'annotate', label: '圈选' }, ...base]
     : [...base]
@@ -316,7 +318,12 @@ function onBottomAction(key: string) {
     emit('edit-save', editText.value.trim())
     return
   }
-  emit('bottom-action', key)
+  // v1.5 Q：音频 edit 携带 mediaTime（当前播放时刻）⇒ 页面层预填编辑器意见 at mm:ss
+  const meta =
+    key === 'edit' && props.type === 'audio' && Number.isFinite(audioRef.value?.currentTime ?? NaN)
+      ? { mediaTime: audioRef.value!.currentTime }
+      : undefined
+  emit('bottom-action', key, meta)
 }
 
 /* ── 标注态（L1：只有一支笔 —— 手指自由圈选；共享 useInkOverlay）──────────
@@ -342,12 +349,26 @@ const ink = useInkOverlay({
 const editing = ref(false)
 const editText = ref('')
 
-/** 进入标注态（§17-③：底栏【批注】1 步进入） */
+/** 进入标注态（§17-③：底栏【批注】1 步进入）。
+ * v1.5 Q（G-23）：视频先暂停再记当前帧时刻 ⇒ 胶囊草稿自动前缀「第 m:ss 帧：」。 */
 function enterAnnotate() {
   annotating.value = true
   ink.reset()
   capsuleVisible.value = false
+  if (props.type === 'video' && videoRef.value) {
+    videoRef.value.pause()
+    annotateTime.value = videoRef.value.currentTime
+  }
 }
+
+/** 视频标注时刻（圈选时的当前帧；非视频恒 0） */
+const annotateTime = ref(0)
+/** G-23：胶囊草稿自动前缀（仅视频；可删改）。 */
+const capsuleDraftPrefix = computed(() =>
+  props.type === 'video'
+    ? `第 ${formatMediaDuration(annotateTime.value) ?? '0:00'} 帧：`
+    : '',
+)
 
 /** 退出标注态（放弃：清标记收胶囊） */
 function exitAnnotate() {
@@ -402,7 +423,7 @@ async function onCapsuleAnchor(payload: { text: string }) {
  * image/video：经 `mapMarksToImageSpace` 做 contain + W-5 zoom 逆映射；
  * 审核层：底图按 reviewRef 的 clientWidth/Height 重绘 ⇒ 与 ink 画布同为
  * viewer-body 尺寸，天然 1:1（历史上未漂移的真因）。
- * audio：波形底图是合成画布，无同构内容元素可映射 ⇒ 返回 null（诚实降级）。
+ * audio/text：无底图（v1.5 Q 音频不圈选；文本走文字引用）⇒ 返回 null（诚实降级）。
  */
 function mapMarksForCompose(): AnnotateMark[] | null {
   if (showReviewLayer.value) {
@@ -463,30 +484,7 @@ async function captureBaseImage(): Promise<{ image: CanvasImageSource; width: nu
     ctx.drawImage(video, 0, 0, w, h)
     return { image: c, width: w, height: h }
   }
-  if (type === 'audio') {
-    // 底图 = 波形图（§4.3）：显示组件是 SVG 不可 drawImage ⇒ 用同一 peaks
-    // 真源画一份 canvas。⭐ 评审 I1：**只认真实 peaks**（waveSource==='real'）——
-    // 占位波形是确定性假数据（nodeId 种子），跨域无 CORS / 文件过大时把它合成进
-    // 标注图 = 给 agent 一张与音频无关的假波形，违反「诚实降级，不静默失败」。
-    if (waveSource.value !== 'real') return null
-    const p = wavePeaks.value
-    if (!p.length || !p.some((v) => v > 0)) return null
-    const barW = 4
-    const gap = 2
-    const h = 160
-    const w = Math.max(320, p.length * (barW + gap))
-    const c = document.createElement('canvas')
-    c.width = w
-    c.height = h
-    const ctx = c.getContext('2d')
-    if (!ctx) return null
-    ctx.fillStyle = 'rgba(110, 110, 110, 0.9)'
-    p.forEach((peak, i) => {
-      const bh = Math.max(2, peak * (h - 8))
-      ctx.fillRect(i * (barW + gap), (h - bh) / 2, barW, bh)
-    })
-    return { image: c, width: w, height: h }
-  }
+  // v1.5 Q（§4.12.8）：音频波形底图分支删除——音频不圈选（none），不会走到这里。
   // 图片：⛔ 必须**同源化**后再 drawImage（否则 canvas 被污染 ⇒ toBlob 抛错）
   const url = String((props.data as Record<string, unknown> | undefined)?.url ?? '')
   if (!url) return null
@@ -922,9 +920,14 @@ defineExpose({ videoRef })
     />
     <div v-else-if="type === 'text'" ref="readerRef" class="viewer-reader">{{ data?.content }}</div>
 
-    <!-- §17-③ 胶囊意见框：首笔落定即弹（in-viewer 内联浮条，可继续补画） -->
+    <!-- §17-③ 胶囊意见框：首笔落定即弹（in-viewer 内联浮条，可继续补画）；
+         v1.5 Q：视频标注草稿自动前缀「第 m:ss 帧：」（可删改）。
+         ⭐ v-if 外提 = 弹出即新实例（text 以 draftPrefix 初始化）——
+         规避 Teleport stub / fragment diff 下的多实例与 watch 时序坑。 -->
     <MobileAnnotationCapsule
+      v-if="capsuleVisible"
       :visible="capsuleVisible"
+      :draft-prefix="capsuleDraftPrefix"
       @anchor="onCapsuleAnchor"
       @dismiss="capsuleVisible = false"
     />

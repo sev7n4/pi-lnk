@@ -158,8 +158,8 @@ const props = defineProps<{
   onViewerClose: () => void
   /** 右上「⋯」= 打开与长按同一个 Menu（同源同容器，§4.6） */
   onViewerMore: () => void
-  /** 查看器底部主栏动作（如「改词」，§4.11.6 高频下沉） */
-  onViewerBottomAction: (key: string) => void
+  /** 查看器底部主栏动作（如「改词」，§4.11.6 高频下沉；音频 edit 携带 meta.mediaTime——v1.5 Q） */
+  onViewerBottomAction: (key: string, meta?: { mediaTime?: number }) => void
   /** D8/L1/M1 + §17 v2：查看器标注锚带回（带标记整图 blob 或降级 + 胶囊意见） */
   onViewerAnnotate: (payload: { imageBlob?: Blob; degraded: boolean; text?: string }) => void
   /** §17-④（拍板②）：编辑态保存 ⇒ 页面层覆盖磁贴提示词（不触发生成、不带回 composer） */
@@ -218,6 +218,8 @@ export interface MobileEditorContext {
   refs: NodeRef[]
   mentions: MentionOption[]
   generating: boolean
+  /** 意见预填（v1.5 Q：音频改词 meta.mediaTime ⇒「at mm:ss」） */
+  initialOpinion?: string
 }
 
 const auth = useAuthStore()
@@ -502,6 +504,7 @@ onUnmounted(() => stopMobileTaskPolling())
     :refs="mobileEditor.refs"
     :mentions="mobileEditor.mentions"
     :generating="mobileEditor.generating"
+    :initial-opinion="mobileEditor.initialOpinion"
     @close="props.onNodeEditorClose"
     @patch="props.onNodeEditorPatch"
     @send-to-agent="props.onNodeEditorSendToAgent"

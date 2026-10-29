@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 
 /**
  * 批注态胶囊意见框（规格 §17-③ / §9 #46；2026-10-28 真机反馈③ 重设计）。
@@ -19,8 +19,10 @@ const props = withDefaults(
     visible: boolean
     /** 截图上传中（⯈ 合成图要先上传才能进引用，契约拒 blob） */
     uploading?: boolean
+    /** 草稿前缀（v1.5 Q / G-23：视频 =「第 m:ss 帧：」；可删改） */
+    draftPrefix?: string
   }>(),
-  { uploading: false },
+  { uploading: false, draftPrefix: '' },
 )
 
 const emit = defineEmits<{
@@ -28,14 +30,7 @@ const emit = defineEmits<{
   (e: 'dismiss'): void
 }>()
 
-const text = ref('')
-
-watch(
-  () => props.visible,
-  (v) => {
-    if (v) text.value = ''
-  },
-)
+const text = ref(props.draftPrefix)
 
 function anchor() {
   if (props.uploading) return

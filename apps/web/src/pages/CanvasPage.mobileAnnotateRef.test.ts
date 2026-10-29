@@ -109,4 +109,9 @@ describe('查看器底部主栏死分支退役（§17 v2）', () => {
     expect(fn).toContain("key === 'edit'")
     expect(fn).toContain('openMobileNodeEditor')
   })
+
+  it('edit meta.mediaTime ⇒ 预填编辑器意见 at mm:ss（v1.5 Q 音频链路终点）', () => {
+    expect(fn).toContain('mediaTime')
+    expect(fn).toContain('mobileEditorInitialOpinion')
+  })
 })

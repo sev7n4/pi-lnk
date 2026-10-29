@@ -29,6 +29,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
 import { applyActionsToFlow, extrasForCanvasSave, flowToCanvasData } from '@/composables/useCanvasActions'
 import { patchDiffers, pickInflightRecords, shouldPollNode } from '@/utils/generationPollScope'
+import { formatMediaDuration } from '@/utils/mediaInfoFormat'
 import { shouldBlockCanvasOverwrite, type CanvasLoadState } from './canvas/canvasLoadGuard'
 import { createViewportRestorer, createViewportTracker } from '@/composables/useCanvasViewport'
 import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
@@ -2652,6 +2653,8 @@ const mobileActionNode = ref<{
   context?: 'canvas' | 'viewer'
 } | null>(null)
 const mobileEditorNode = ref<EditableFlowNode | null>(null)
+/** v1.5 Q：编辑器意见预填（音频改词经 viewer meta.mediaTime ⇒「at mm:ss」；关闭即清防串味） */
+const mobileEditorInitialOpinion = ref('')
 
 provide(MOBILE_NODE_ACTION_REQUEST_KEY, (node: { id: string; type: string; data?: any }) => {
   mobileActionNode.value = {
@@ -2684,6 +2687,7 @@ const mobileEditor = computed(() => {
     refs: mobileEditorRefs.value,
     mentions: buildMentionOptions(mobileEditorRefs.value, nodes.value),
     generating: isNodeGenerating(String((node.data as Record<string, unknown>)?.status ?? '')),
+    initialOpinion: mobileEditorInitialOpinion.value || undefined,
   }
 })
 
@@ -2817,6 +2821,7 @@ function nodeTitleOf(node: { id?: string; type: string; data?: any }): string {
 
 function closeMobileNodeEditor() {
   mobileEditorNode.value = null
+  mobileEditorInitialOpinion.value = ''
 }
 
 function applyMobileEditorPatch(patch: Record<string, unknown>) {
@@ -2905,10 +2910,15 @@ function openMobileNodeMenuFromViewer() {
  * `edit`（改词 sheet）——`pending-confirm` / `pending-cancel` 死分支退役
  * （审核层决策 = 批注锚 decline 结算 / 编辑保存回画布再确认）。
  */
-function handleMobileViewerBottomAction(key: string) {
+function handleMobileViewerBottomAction(key: string, meta?: { mediaTime?: number }) {
   const node = mobileViewerNode.value
   if (!node?.id) return
   if (key === 'edit') {
+    // v1.5 Q（§4.12.8）：音频改词自动带入「at mm:ss」（圈住的时刻说不清，时间戳说得清）
+    mobileEditorInitialOpinion.value =
+      meta && Number.isFinite(meta.mediaTime)
+        ? `at ${formatMediaDuration(meta.mediaTime) ?? '0:00'}`
+        : ''
     closeMobileViewer()
     openMobileNodeEditor(node.id)
   }

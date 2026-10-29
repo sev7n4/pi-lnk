@@ -85,12 +85,9 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
     }
   })
 
-  it('audio: 有圈选入口（底图 = 波形图，§4.3）', async () => {
+  it('audio: 无圈选入口（v1.5 Q：波形圈选判伪功能退役，改走 at mm:ss）', () => {
     const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'audio', data: { url: 'x.mp3' } } })
-    const btn = w.find('[data-testid="mobile-viewer-bottom-annotate"]')
-    expect(btn.exists()).toBe(true)
-    await btn.trigger('click')
-    expect(w.find('[data-testid="mobile-viewer-ink"]').isVisible()).toBe(true)
+    expect(w.find('[data-testid="mobile-viewer-bottom-annotate"]').exists()).toBe(false)
     w.unmount()
   })
 
@@ -282,12 +279,9 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
       aud.unmount()
     })
 
-    it('静态契约：音频标注底图只认真实 peaks（评审 I1，占位波形必须降级）', () => {
+    it('静态契约：音频波形标注底图分支已随 Q 退役（v1.5 §4.12.8，captureBaseImage 无 audio 分支）', () => {
       const src = readFileSync(join(HERE, 'MobileNodeViewer.vue'), 'utf-8')
-      const scriptStart = src.indexOf("if (type === 'audio')")
-      const scriptEnd = src.indexOf('// 图片：', scriptStart)
-      const audioBranch = src.slice(scriptStart, scriptEnd)
-      expect(audioBranch).toContain("waveSource.value !== 'real'")
+      expect(src).not.toContain("if (type === 'audio')")
     })
 
     it('静态契约：磁贴音频 preload=metadata（评审 I7，iOS 时长唯一来源）', () => {
@@ -985,6 +979,66 @@ describe('提示词摘要条退役（v1.5 P / G-21）', () => {
   it('pending 审核内容层保留（决策需要全文，非 G-21 管辖）', () => {
     const w = mountViewer({ type: 'image', data: { status: 'pending_confirm', prompt: '一只猫' } })
     expect(w.find('[data-testid="mobile-viewer-review"]').exists()).toBe(true)
+    w.unmount()
+  })
+})
+
+describe('指向形态随媒介（v1.5 Q / G-22 / G-23）', () => {
+  type ViewerProps = InstanceType<typeof MobileNodeViewer>['$props']
+  function mountViewer(props: ViewerProps) {
+    return mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props })
+  }
+
+  it('音频底栏不注入圈选（G-22：波形圈选判伪功能，改走 at mm:ss 时间戳）', () => {
+    const w = mountViewer({ type: 'audio', data: { url: 'a.mp3', status: 'completed' } })
+    const keys = w.findAll('[data-testid^="mobile-viewer-bottom-"]').map((x) => x.attributes('data-action'))
+    expect(keys).not.toContain('annotate')
+    w.unmount()
+  })
+
+  it('视频进入标注态 ⇒ 胶囊草稿自动前缀「第 0:42 帧：」（G-23，可删改）', async () => {
+    const w = mountViewer({ type: 'video', data: { url: 'v.mp4' } })
+    ;(w.find('video').element as HTMLVideoElement).currentTime = 42
+    await w.get('[data-testid="mobile-viewer-bottom-annotate"]').trigger('click')
+    const ink = w.get('[data-testid="mobile-viewer-ink"]')
+    await firePointer(ink.element, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 })
+    await firePointer(ink.element, 'pointerup', { pointerId: 1 })
+    expect(w.find('[data-testid="mobile-annotation-capsule"]').exists()).toBe(true)
+    expect(
+      (w.get('[data-testid="mobile-annotation-capsule-input"]').element as HTMLInputElement).value,
+    ).toMatch(/^第 0:42 帧：/)
+    w.unmount()
+  })
+
+  it('图片/文本标注态草稿无前缀（前缀仅视频）', async () => {
+    const w = mountViewer({ type: 'image', data: { url: 'x.png' } })
+    await w.get('[data-testid="mobile-viewer-bottom-annotate"]').trigger('click')
+    const ink = w.get('[data-testid="mobile-viewer-ink"]')
+    await firePointer(ink.element, 'pointerdown', { pointerId: 1, clientX: 10, clientY: 10 })
+    await firePointer(ink.element, 'pointerup', { pointerId: 1 })
+    expect(
+      (w.get('[data-testid="mobile-annotation-capsule-input"]').element as HTMLInputElement).value,
+    ).toBe('')
+    w.unmount()
+  })
+
+  it('音频点改词 ⇒ bottom-action 携带 mediaTime（at mm:ss 链路起点）', async () => {
+    const w = mountViewer({
+      type: 'audio',
+      data: { url: 'a.mp3', status: 'completed' },
+      bottomActions: [{ key: 'edit', label: '改词' }],
+    })
+    ;(w.find('audio').element as HTMLAudioElement).currentTime = 7.4
+    await w.get('[data-testid="mobile-viewer-bottom-edit"]').trigger('click')
+    expect(w.emitted('bottom-action')![0]).toEqual(['edit', { mediaTime: 7.4 }])
+    w.unmount()
+  })
+
+  it('非音频点改词 ⇒ bottom-action 不携带 meta', async () => {
+    const w = mountViewer({ type: 'image', data: { url: 'x.png' }, bottomActions: [{ key: 'edit', label: '改词' }] })
+    await w.get('[data-testid="mobile-viewer-bottom-edit"]').trigger('click')
+    // meta = undefined（Vue emitted 会记录显式实参 undefined）
+    expect(w.emitted('bottom-action')![0]).toEqual(['edit', undefined])
     w.unmount()
   })
 })
