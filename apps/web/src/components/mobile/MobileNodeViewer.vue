@@ -842,16 +842,15 @@ defineExpose({ videoRef })
     </div>
     <!-- S5：text 分支——format:'html' ⇒ embedded 沙箱预览面（HtmlNodePreview embedded
          自带 iframe 沙箱与 CSP；退出/触控/reduced-motion 契约全部归 viewer 本体）；
-         无 format ⇒ 既有纯文本阅读器路径不变（G3）。 -->
-    <template v-else-if="type === 'text'">
-      <HtmlNodePreview
-        v-if="isHtmlNode"
-        class="viewer-reader viewer-reader--html"
-        :content="String(data?.content ?? '')"
-        embedded
-      />
-      <div v-else ref="readerRef" class="viewer-reader">{{ data?.content }}</div>
-    </template>
+         无 format ⇒ 既有纯文本阅读器路径不变（G3）。扁平 v-else-if 链：不引入嵌套
+         <template>（design-token 守卫按首个闭合标签切片，嵌套会截断 Teleport 校验）。 -->
+    <HtmlNodePreview
+      v-else-if="type === 'text' && isHtmlNode"
+      class="viewer-reader viewer-reader--html"
+      :content="String(data?.content ?? '')"
+      embedded
+    />
+    <div v-else-if="type === 'text'" ref="readerRef" class="viewer-reader">{{ data?.content }}</div>
 
     <!-- §17-③ 胶囊意见框：首笔落定即弹（in-viewer 内联浮条，可继续补画） -->
     <MobileAnnotationCapsule
