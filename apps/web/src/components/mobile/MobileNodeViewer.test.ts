@@ -861,13 +861,19 @@ describe('长按唤起同源 Menu（v1.5 O / G-19）', () => {
     }
   })
 
-  it('文本类型长按不弹 Menu（长按保留给拖选）', async () => {
+  it('文本/音频类型长按不弹 Menu（文本长按留给拖选；音频 §4.12.2 手势冲突）', async () => {
     vi.useFakeTimers()
     try {
       const w = mountViewer({ type: 'text', data: { content: '长文'.repeat(80) } })
       await w.find('[data-testid="mobile-viewer-body"]').trigger('touchstart', { touches: [{ clientX: 1, clientY: 1 }] })
       await vi.advanceTimersByTimeAsync(500)
       expect(w.emitted('more')).toBeUndefined()
+      w.unmount()
+      const aud = mountViewer({ type: 'audio', data: { url: 'x.mp3' } })
+      await aud.find('[data-testid="mobile-viewer-body"]').trigger('touchstart', { touches: [{ clientX: 1, clientY: 1 }] })
+      await vi.advanceTimersByTimeAsync(500)
+      expect(aud.emitted('more')).toBeUndefined()
+      aud.unmount()
     } finally {
       vi.useRealTimers()
     }

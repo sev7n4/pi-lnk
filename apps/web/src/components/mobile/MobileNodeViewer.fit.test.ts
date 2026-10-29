@@ -32,10 +32,11 @@ describe('MobileNodeViewer 全屏查看器样式（fit）', () => {
     expect(css).toMatch(/\.viewer-media\s*\{[^}]*object-fit:\s*contain/)
   })
 
-  it('右上 X ≥44px 触控热区（D2：左上 ‹ 已删，改为右上角 X 内联 SVG）', () => {
-    const css = styleBlock(SRC)
-    expect(css).toMatch(/\.viewer-close\s*\{[^}]*width:\s*var\(--lnk-touch-target\)/)
-    expect(css).toMatch(/\.viewer-close\s*\{[^}]*height:\s*var\(--lnk-touch-target\)/)
+  it('右上 X ≥44px 触控热区（v1.5 P：X 迁 MobileViewerChrome 的 .mv-chrome-close）', () => {
+    const chromeSrc = readFileSync(join(HERE, 'MobileViewerChrome.vue'), 'utf8')
+    const css = styleBlock(chromeSrc)
+    expect(css).toMatch(/\.mv-chrome-close\s*\{[^}]*width:\s*var\(--lnk-touch-target\)/)
+    expect(css).toMatch(/\.mv-chrome-close\s*\{[^}]*height:\s*var\(--lnk-touch-target\)/)
   })
 
   it('⛔ 禁文本字符当图标（§4.11.5）：不得再出现左上 ‹', () => {

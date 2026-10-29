@@ -128,7 +128,8 @@ onBeforeUnmount(() => {
  * 「⋯」按钮退役：长按媒体任意处 = 与画布长按同一 Menu（同一浮层、同一门控，
  * 仅 context='viewer' 裁剪子集）。唤起时媒体轻暂停（pause 不复位），
  * Menu 关闭（menuOpen true→false）恢复此前播放态。
- * ⭐ 手势仲裁：标注态 / 编辑态 / 文本类型（长按留给拖选）/ 多指 / 位移>10px
+ * ⭐ 手势仲裁：标注态 / 编辑态 / 文本类型（长按留给拖选）/ 音频类型（§4.12.2：
+ *   波形/进度拖动手势冲突且无内容类操作诉求）/ 多指 / 位移>10px
  *   一律取消；长按触发后本次触控不得再触发 chrome 点按切换（suppressNextTap）。 */
 const LONG_PRESS_MS = 500
 const LONG_PRESS_MOVE_PX = 10
@@ -138,7 +139,8 @@ const suppressNextTap = ref(false)
 const wasPlayingBeforeMenu = ref(false)
 
 function onBodyTouchStart(e: TouchEvent) {
-  if (props.type === 'text') return
+  // 文本（长按留给拖选）/ 音频（§4.12.2：不挂 Menu，波形与进度拖动手势冲突）一律早退
+  if (props.type === 'text' || props.type === 'audio') return
   if (annotating.value || editing.value || props.menuOpen) return
   if (e.touches.length !== 1) return
   const t = e.touches[0]!
@@ -152,10 +154,6 @@ function fireLongPress() {
   suppressNextTap.value = true
   if (props.type === 'video' && videoRef.value && !videoRef.value.paused) {
     videoRef.value.pause()
-    wasPlayingBeforeMenu.value = true
-  }
-  if (props.type === 'audio' && audioRef.value && !audioRef.value.paused) {
-    audioRef.value.pause()
     wasPlayingBeforeMenu.value = true
   }
   emit('more')
