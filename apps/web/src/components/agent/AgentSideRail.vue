@@ -4633,12 +4633,10 @@ defineExpose({
                railHiddenByTab，三次漏登、每次都要真机截图才发现，失败模式静默）。
                ⚠️ 新增系统层卡片必须放进本容器：进层即默认安全（画布视图藏）；需要露头的
                显式加白名单类，漏放行 = 立刻可见的功能缺失，而非看不见的 bug。
-               白名单两类：
-                 canvas-always        已随对话流外浮卡下线退役（2026-10-28 根治规格：
-                                      propose 决策点 = 时间线内联卡 + 画布节点内联面）
-                 canvas-with-composer 跟随 composer 可见性（ask_user 卡：窗态显、imm/dock 收起）
-                                      ——pending 期间 composer 自由文本一律按 answer 提交
-                                      （spec §5.3），输入面与阻塞问题永不分离。 -->
+               白名单类均已随对话流外卡下线退役：canvas-always（2026-10-28，浮卡 →
+               时间线内联 proposal）/ canvas-with-composer（2026-10-29，对话流外 ask 卡
+               → 时间线内联 question part，跟随 chat-wrap 可见性）。
+               ⚠️ 新增常显卡须重新立白名单类 + 守卫测试。 -->
           <div class="agent-system-layer">
             <!-- 根治规格（2026-10-28）：对话流外浮卡已移除——「提议生成」决策点改为时间线内联
                  proposal part（见 AgentTurnTimeline.vue），与画布节点 ProposeConfirmOverlay、底部状态行
@@ -5396,19 +5394,15 @@ defineExpose({
  * 每次都要真机截图才发现。现翻转默认值：
  *   容器在画布视图默认 display:none —— 新卡片进层即安全；
  *   需要露头的显式加白名单类，漏放行的代价是「立刻可见的功能缺失」。
- * 白名单两类（特异性均压过容器规则）：
+ * 白名单类均已随对话流外卡下线退役（特异性曾压过容器规则）：
  *   canvas-always        已随对话流外浮卡下线退役（2026-10-28 根治规格：propose 决策点
  *                         = 时间线内联卡 + 画布节点内联面，画布视图无需再放行浮卡）。
+ *   canvas-with-composer 已随对话流外 ask 卡下线退役（2026-10-29：ask 题面收敛进时间线
+ *                         question part，跟随 chat-wrap 可见性，无需独立放行）。
  *                         ⚠️ 勿复活：往系统层加新常显卡须重新立白名单类 + 守卫测试。
- *   canvas-with-composer 跟随 composer：ask_user 卡（阻塞交互面）。窗态显——
- *                         pending 期间 composer 自由文本一律按 answer 提交（spec §5.3），
- *                         输入面与阻塞问题永不分离；imm / studio-dock 随 composer 收起。
  * 播报式 chrome（收口状态行 / 取消回执卡）不放行：画布视图全藏（#496/#516 行为不变）。 */
 .agent-panel-mobile-dock.is-canvas-view .agent-system-layer {
   display: none;
-}
-.agent-panel-mobile-dock.is-canvas-view:not(.is-canvas-imm):not(.has-studio-dock) .agent-system-layer > .canvas-with-composer {
-  display: block;
 }
 
 /* ---- 右边缘拖拉调宽（侧栏翻到左侧后，手柄贴其右缘邻接画布） ---- */
