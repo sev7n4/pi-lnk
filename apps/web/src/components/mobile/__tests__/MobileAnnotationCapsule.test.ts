@@ -35,12 +35,16 @@ describe('MobileAnnotationCapsule（§17-③ 胶囊意见框）', () => {
     expect(w.emitted('anchor')).toBeUndefined()
   })
 
-  it('重新弹出时清空上次文字（防上一次意见误带回）', async () => {
-    const w = mount(MobileAnnotationCapsule, { props: { visible: true } })
-    await w.find('[data-testid="mobile-annotation-capsule-input"]').setValue('旧意见')
-    await w.setProps({ visible: false })
-    await w.setProps({ visible: true })
-    expect((w.find('[data-testid="mobile-annotation-capsule-input"]').element as HTMLInputElement).value).toBe('')
+  it('重新弹出时清空上次文字（防上一次意见误带回；v1.5 Q：清空为实例级——消费方 v-if 重建实例，挂载即重置）', async () => {
+    // 胶囊契约改为「实例生命周期 = 一次弹出会话」（挂载初始化 text=draftPrefix）：
+    // 同实例 visible 翻转不再清空；消费方（MobileNodeViewer）用 v-if 重建实例实现重置。
+    // ⭐ 禁回退成 watch(visible) 清空——Teleport stub 多实例 diff 下 watch 时序不可靠（G-23 踩坑实录）。
+    const first = mount(MobileAnnotationCapsule, { props: { visible: true } })
+    await first.find('[data-testid="mobile-annotation-capsule-input"]').setValue('旧意见')
+    first.unmount()
+    const second = mount(MobileAnnotationCapsule, { props: { visible: true } })
+    expect((second.find('[data-testid="mobile-annotation-capsule-input"]').element as HTMLInputElement).value).toBe('')
+    second.unmount()
   })
 
   it('v2 单行胶囊：输入框内回车 = 提交（⯈ 无需伸手点锚）', async () => {
