@@ -33,7 +33,8 @@ describe('MobileTopBar 对话/画布同构（三页顶栏重构）', () => {
     expect(topBar).not.toContain('data-testid="mobile-topbar-menu"')
     expect(topBar).not.toContain('bar-menu')
     expect(topBar).not.toContain('menu-anchor')
-    expect(topBar).not.toContain('项目菜单')
+    // 叙述词断言走剥注释文本——迁移记录写在头部注释里是规范（CI #641 实证）。
+    expect(code).not.toContain('项目菜单')
     // 菜单项与导出二级一并退场（有效性配对：顶栏仍有 返回/⤢ 真实入口，见上）
     expect(code).not.toContain('发布作品')
     expect(code).not.toContain('导入工作流')
