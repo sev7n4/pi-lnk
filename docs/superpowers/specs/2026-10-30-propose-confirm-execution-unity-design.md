@@ -224,6 +224,7 @@ flowchart TD
 > 方法：规格 §9 文件级清单 ↔ PR #640 实际改动（squash `27b06658`）逐项回代码对账（`git show 27b06658:<path>`），
 > 追问充分性与遗漏。结论：**核心链路（P0-1/P0-4 与 runtime/web 锚点换源主体）按规格落地；
 > 发现 1 个行为级残留缺口（F1）与 2 个低危偏差（F2/F3），均不影响「执行入口 == 1」不变量。**
+> **F1 已修复（2026-10-31，PR #645 squash `9e19614b`，web-only 部署 + chunk 字面量取证）；F2 登记 P1 打磨；F3 文档滞后已在本节修订。**
 
 ### 14.1 §9 清单对账
 
@@ -233,7 +234,7 @@ flowchart TD
 | 6/7 | canvas-write 确认即启动派发（image/video 走 start 系、text/audio 走 run 系）+ 4 用例 | ✅；派发键用 `base.summary.type`（等效于 §5.3「返回值追加 nodeType」） |
 | 8 | `deriveProposeConfirmAnchor` / `shouldStartPolling` 纯函数 + 单测 | ✅ |
 | 9 | CanvasPage：删自起与 patch draft / 轮询 watcher / 锚点双源 | ✅（`proposeConfirmNode` 走双源；`handleNodeGenerate` part 锚活跃时 return） |
-| 10 | ProposeConfirmOverlay 锚点 prop 化 | ⚠️ **未改该文件**——移动端门控剥离已由父组件 `v-if="proposeConfirmNode && !isMobileLayout"` 承接，但组件内 `visible` 仍单点读 `node.data.status === 'pending_confirm'` ⇒ 见 F1 |
+| 10 | ProposeConfirmOverlay 锚点 prop 化 | ✅ **已补（PR #645）**——`visible` 改 `proposeWaiting ∥ status` 双源，CanvasPage 传 part 锚判定，契约用例钉死 draft+part 锚渲染 |
 | 11 | 移动端磁贴确认条 | ✅ 确认/取消入口 = `MobileNodeStatusBar`（v1.5 批次 2 既定形态，emit 链复用，本组件零请求）；`pendingNodes` 已并入 part 锚定节点（等待期按钮可用） |
 | 12 | NodePendingPrompt 门控接 anchor | ✅ `proposeWaiting` prop（part ∥ status） |
 | 13 | AgentSideRail 流断门控 | ✅①（P0-5 中性文案）；⚠️② `/answers` deduped/404 → part 翻终态未单独实现 ⇒ 见 F2 |
@@ -244,7 +245,7 @@ flowchart TD
 
 **F1（行为级残留，中危）：PC 节点内联确认面（ProposeConfirmOverlay）在「part 已到、节点 status 仍 draft」窗口不可见。**
 根因：等待期 `update_node{pending_confirm}` 随 tool_result 迟到（Bug A 本体未改下发时机，P0-2 靠锚点换源绕开）——磁贴/状态栏/NodePendingPrompt 都改成了 part ∥ status 双源，唯独 overlay 的 `visible` 仍是 status 单点。该窗口内 PC 用户确认路径收窄为「对话内联卡确认」（内联卡本身 part 锚定、等待期可见，功能可达但画布确认面缺席，与规格目标 2 不符）。S1 的 PC 侧走查预计会暴露。
-裁决：登记为 **P0.1 小包**（overlay `visible` 接锚点 prop 或改读 `deriveProposeConfirmAnchor`，单文件 + 1 契约用例），建议与真机走查同批执行，不阻塞走查启动。
+裁决：登记为 **P0.1 小包**——**已执行**（PR #645，overlay `visible` 接 `proposeWaiting` prop，CanvasPage 复用双源 computed 传参，契约用例钉死；本地 overlay 6/6 + CI 三项绿 + web-only 部署 + 生产 chunk `proposeWaiting` 字面量命中）。
 
 **F2（低危偏差）：`confirmProposeWait` 对 deduped/404 只静默返回 bool，未做「part 翻终态 + 状态对账」。**
 影响有限：part 终态兜底由 tool_result confirmed / SSE 回放承担；deduped 本身不产生错误 UI。登记为 P1 打磨项，不另开包。
