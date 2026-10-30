@@ -94,6 +94,18 @@ describe('ProposeConfirmOverlay（ADR-0011 T1 节点内联确认面）', () => {
     empty.unmount()
   })
 
+  it('P0.1 part 锚：proposeWaiting=true 时 draft 节点也渲染（等待期 status 迟到不吞确认面）', () => {
+    // §14 F1：等待期 update_node{pending_confirm} 随 tool_result 迟到 ⇒ status 仍 draft。
+    // host 已按 deriveProposeConfirmAnchor 双源选出节点；part 锚定命中必须立即可见。
+    const wrapper = mountOverlay({
+      node: { id: 'n1', data: { status: 'draft' } },
+      proposeWaiting: true,
+    })
+    expect(wrapper.find('[data-testid="propose-confirm-overlay"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="propose-confirm-confirm"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
   it('默认锚节点上方（above）；顶部空间不足翻转为下方（below）', async () => {
     // minY=100 ⇒ aboveTop = 100-40-8 = 52 ≥ 8 ⇒ above，top=52px
     const above = mountOverlay()
