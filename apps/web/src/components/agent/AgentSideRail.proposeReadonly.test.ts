@@ -144,7 +144,12 @@ describe('根治规格：propose 等待的单一真相 = 时间线 proposal part
     agent.trackWaitingUser({ status: 'resolved', toolName: 'propose_generation' })
     await flushPromises()
 
-    expect(w.find('[data-testid="turn-status-line"]').exists()).toBe(false)
+    // 2026-10-31 收敛：长条 composer-status-line 下线后，running 态不再被隐藏——
+    // resolved 后回合仍在流式，状态行切回 running 文案（「生成回复中 · Ns」）而非消失。
+    // 本测不变式：等待文案与「确认生成」按钮**同步解除**（无 desync）。
+    const line = w.find('[data-testid="turn-status-line"]')
+    expect(line.exists()).toBe(true)
+    expect(line.text()).not.toContain('等待你在画布上确认生成')
     expect(w.findAll('button').map((b) => b.text())).not.toContain('确认生成')
   })
 })
