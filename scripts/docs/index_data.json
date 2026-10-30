@@ -1,8 +1,8 @@
 {
- "total": 421,
+ "total": 422,
  "by_status": {
   "living": 145,
-  "frozen": 267,
+  "frozen": 268,
   "superseded": 9
  },
  "by_topic": {
@@ -13,7 +13,7 @@
   "agent-ux": 32,
   "image-editor": 30,
   "tool-runtime": 25,
-  "planning": 18,
+  "planning": 19,
   "account-auth": 18,
   "workflow-exchange": 18,
   "ui-interaction": 15,
@@ -27,7 +27,7 @@
   "2026-07": 41,
   "2026-08": 79,
   "2026-09": 155,
-  "2026-10": 146
+  "2026-10": 147
  },
  "items": [
   {
@@ -1901,6 +1901,15 @@
    "status": "frozen",
    "reason": "文内标注已实现/已交付",
    "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-31-p1-root-cure-roadmap-design.md",
+   "name": "2026-10-31-p1-root-cure-roadmap-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "planning"
   },
   {
    "path": "docs/superpowers/plans/2026-07-09-neowow-workflow.md",

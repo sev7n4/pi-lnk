@@ -1,6 +1,6 @@
 # superpowers 文档索引
 
-> 全部 **421 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
+> 全部 **422 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
 > **文档正文未改动** —— 本索引只做导航与状态标注。
 
 ## 怎么用这份索引
@@ -14,7 +14,7 @@
 | 状态 | 份数 | 含义 |
 |---|---|---|
 | 🟢 living | 145 | 仍在演进，改动前先看这份 |
-| 🔒 frozen | 267 | 内容已定稿或功能已落地，作为历史依据 |
+| 🔒 frozen | 268 | 内容已定稿或功能已落地，作为历史依据 |
 | ⛔ superseded | 9 | 已被后续决策取代，勿再参考 |
 
 ## 主题分布
@@ -28,7 +28,7 @@
 | Agent 交互与可见性 | 32 | 15 |
 | 图片编辑器与精修台 | 30 | 5 |
 | 工具与运行时内核 | 25 | 6 |
-| 规划与执行计划 | 18 | 5 |
+| 规划与执行计划 | 19 | 5 |
 | 账号/登录/会员 | 18 | 4 |
 | 工作流导入导出 | 18 | 4 |
 | UI 交互细节 | 15 | 8 |
@@ -467,7 +467,7 @@
 
 </details>
 
-### 规划与执行计划（18 份）
+### 规划与执行计划（19 份）
 
 <details><summary>🟢 living · 5 份</summary>
 
@@ -479,8 +479,9 @@
 
 </details>
 
-<details><summary>🔒 frozen · 12 份</summary>
+<details><summary>🔒 frozen · 13 份</summary>
 
+- `docs/superpowers/specs/2026-10-31-p1-root-cure-roadmap-design.md` ★design
 - `docs/superpowers/plans/2026-10-10-plan-gate.md`
 - `docs/superpowers/specs/2026-10-10-plan-gate-design.md` ★design
 - `docs/superpowers/plans/2026-09-16-agent-atomic-phase-2d3.md`
