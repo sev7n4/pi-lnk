@@ -1,6 +1,8 @@
 // 规格 §6.2 / §6.3（mobile-web-three-page-topbar-redesign）：对话/画布顶栏同构——
-// ‹ 返回创作空间 + 项目名(§6.4) + ⋯；画布额外 ⤢ 适应画布。去掉 open-drawer / go-home /
+// ‹ 返回创作空间 + 项目名(§6.4)；画布额外 ⤢ 适应画布。去掉 open-drawer / go-home /
 // new-chat / open-history / 品牌字标回城等冗余回城与入口。
+// ⚠️ 2026-10-30：⋯ 项目菜单（发布/导出/导入/任务）整体移除——项目级操作不属于
+// 对话/画布页签顶栏，入口后续统一重新规划（规格 v5）。
 // 静态契约（jsdom 不计算样式；同 CanvasPage.mobileChromeHygiene.test.ts 模式）。
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -18,14 +20,33 @@ function stripComments(s: string): string {
 describe('MobileTopBar 对话/画布同构（三页顶栏重构）', () => {
   const code = stripComments(topBar)
 
-  it('返回 + 项目名 + ⋯ 三件齐备（chat / canvas 共用）', () => {
+  it('返回 + 项目名齐备（chat / canvas 共用）', () => {
     expect(code).toContain('data-testid="mobile-topbar-back"')
     expect(code).toContain('data-testid="mobile-topbar-project-name"')
-    expect(code).toContain('data-testid="mobile-topbar-menu"')
     // 返回簇文案 = 创作空间
     expect(code).toContain('返回创作空间')
     // 项目名走 props（由壳层透传 sessionTitle）
     expect(code).toContain('projectName: string')
+  })
+
+  it('2026-10-30 收敛：⋯ 项目菜单整体移除（chat + canvas 均不挂菜单）', () => {
+    expect(topBar).not.toContain('data-testid="mobile-topbar-menu"')
+    expect(topBar).not.toContain('bar-menu')
+    expect(topBar).not.toContain('menu-anchor')
+    expect(topBar).not.toContain('项目菜单')
+    // 菜单项与导出二级一并退场（有效性配对：顶栏仍有 返回/⤢ 真实入口，见上）
+    expect(code).not.toContain('发布作品')
+    expect(code).not.toContain('导入工作流')
+    expect(code).not.toContain('导出工作流')
+    expect(code).not.toContain('轻量包（不含媒体）')
+    // 对应 emits / props 一并下线，防死接线残留
+    expect(code).not.toContain('publish: []')
+    expect(code).not.toContain("'import-workflow': []")
+    expect(code).not.toContain("'export-workflow': []")
+    expect(code).not.toContain("'export-workflow-light': []")
+    expect(code).not.toContain("'open-tasks': []")
+    expect(code).not.toContain('taskActiveCount')
+    expect(code).not.toContain('hasTaskHistory')
   })
 
   it('画布分支额外 ⤢ 适应画布（桥接 VueFlow fitView）', () => {

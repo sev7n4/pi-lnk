@@ -1,6 +1,6 @@
-// MobileTopBar 画布态 ⋯ 菜单任务动态项（2026-10-19 D-2 入口收敛）：
-// 无任务不出现；运行中/排队带计数；点按 emit open-tasks；对话页签永不出现。
-// 触控契约（菜单项 44px / bar-btn 隐形热区）走静态断言。
+// MobileTopBar 顶栏结构契约（原「⋯ 菜单任务动态项」测试；2026-10-30 ⋯ 菜单整体移除）：
+// ⚠️ 2026-10-30 用户裁决：⋯ 项目菜单（发布/导出/导入/任务，chat+canvas 共用）整体移除，
+// 入口后续统一重新规划（规格 v5）——本文件转而锁定「菜单退场 + 返回/⤢ 仍可达 + 触控契约」。
 import { describe, expect, it, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
@@ -28,14 +28,13 @@ beforeEach(() => {
 })
 
 // 规格 §6.2/§6.3（mobile-web-three-page-topbar-redesign）：对话/画布顶栏同构——
-// ‹ 返回创作空间（go-gallery）+ 项目名 + ⋯；画布额外 ⤢。品牌字标回城 / 新对话 / 历史
+// ‹ 返回创作空间（go-gallery）+ 项目名；画布额外 ⤢。品牌字标回城 / 新对话 / 历史
 // 等冗余回城与入口已退役（单一返回路径 + ADR-0015 单对话模型）。
 describe('MobileTopBar：对话/画布同构（规格 §6.2/§6.3）', () => {
-  it('对话页签：单一返回路径 ‹ 返回创作空间（go-gallery）+ 项目名 + ⋯；无品牌字标 / 无「新对话」', async () => {
+  it('对话页签：单一返回路径 ‹ 返回创作空间（go-gallery）+ 项目名；无品牌字标 / 无「新对话」', async () => {
     const wrapper = mountBar({ tab: 'chat' })
     expect(q('[data-testid="mobile-topbar-back"]')).not.toBeNull()
     expect(q('[data-testid="mobile-topbar-project-name"]')).not.toBeNull()
-    expect(q('[data-testid="mobile-topbar-menu"]')).not.toBeNull()
     // 品牌字标回城已退役（只剩单一返回路径）
     expect(q('[data-testid="mobile-topbar-brand"]')).toBeNull()
     // 新对话入口已退役（ADR-0015 单对话模型；建/切对话收口到创作空间与移动端顶栏）
@@ -64,47 +63,36 @@ describe('MobileTopBar：对话/画布同构（规格 §6.2/§6.3）', () => {
   })
 })
 
-describe('MobileTopBar：⋯ 菜单任务动态项（PR2）', () => {
-  it('无任务记录 → 菜单项不出现', async () => {
-    const wrapper = mountBar({ hasTaskHistory: false, taskActiveCount: 0 })
-    q('.bar-btn[aria-label="项目菜单"]')!.click()
-    await flushPromises()
-    expect(q('[data-testid="bar-menu-task"]')).toBeNull()
-    wrapper.unmount()
+describe('MobileTopBar：⋯ 项目菜单整体移除（2026-10-30）', () => {
+  it('菜单按钮与菜单体退场（chat / canvas 均不挂菜单）', async () => {
+    const chat = mountBar({ tab: 'chat' })
+    expect(q('[data-testid="mobile-topbar-menu"]')).toBeNull()
+    expect(q('.bar-menu')).toBeNull()
+    chat.unmount()
+    const canvas = mountBar({ tab: 'canvas' })
+    expect(q('[data-testid="mobile-topbar-menu"]')).toBeNull()
+    expect(q('.bar-menu')).toBeNull()
+    canvas.unmount()
   })
 
-  it('有任务 + 运行中 2 → 「任务（2）」，点按 emit open-tasks', async () => {
-    const wrapper = mountBar({ hasTaskHistory: true, taskActiveCount: 2 })
-    q('.bar-btn[aria-label="项目菜单"]')!.click()
+  it('项目操作项与任务动态项文案零命中；emits/props 一并下线', async () => {
+    const wrapper = mountBar({ tab: 'canvas', hasTaskHistory: true, taskActiveCount: 2 })
     await flushPromises()
-    const item = q('[data-testid="bar-menu-task"]')
-    expect(item).not.toBeNull()
-    expect(item!.textContent).toContain('任务（2）')
-    item!.click()
-    await flushPromises()
-    expect(wrapper.emitted('open-tasks')).toHaveLength(1)
+    expect(document.body.textContent).not.toContain('发布作品')
+    expect(document.body.textContent).not.toContain('导入工作流')
+    expect(document.body.textContent).not.toContain('导出工作流')
+    expect(wrapper.emitted('open-tasks')).toBeUndefined()
     wrapper.unmount()
-  })
-
-  it('仅有历史无运行中 → 纯「任务」文案（仍可达，不成死角）', async () => {
-    const wrapper = mountBar({ hasTaskHistory: true, taskActiveCount: 0 })
-    q('.bar-btn[aria-label="项目菜单"]')!.click()
-    await flushPromises()
-    const item = q('[data-testid="bar-menu-task"]')
-    expect(item!.textContent?.trim()).toBe('任务')
-    wrapper.unmount()
-  })
-
-  it('对话页签：即使有任务也不出现（任务语义只属画布）', async () => {
-    const wrapper = mountBar({ tab: 'chat', hasTaskHistory: true, taskActiveCount: 3 })
-    await flushPromises()
-    expect(q('[data-testid="bar-menu-task"]')).toBeNull()
-    wrapper.unmount()
-  })
-
-  it('触控契约：菜单项 min-height 44px；bar-btn 隐形热区 inset:-5px', () => {
     const sfc = readFileSync(join(here, 'MobileTopBar.vue'), 'utf8')
-    expect(sfc).toMatch(/\.bar-menu-item\s*\{[^}]*min-height:\s*var\(--lnk-touch-target\)/)
+    expect(sfc).not.toContain('bar-menu-task')
+    expect(sfc).not.toContain('bar-menu-export')
+    expect(sfc).not.toContain('taskActiveCount')
+    expect(sfc).not.toContain('hasTaskHistory')
+    expect(sfc).not.toContain("'open-tasks': []")
+  })
+
+  it('触控契约：bar-btn 隐形热区 inset:-5px（返回/⤢ 沿用同一钮型）', () => {
+    const sfc = readFileSync(join(here, 'MobileTopBar.vue'), 'utf8')
     expect(sfc).toMatch(/\.bar-btn::after\s*\{[^}]*inset:\s*-5px/)
   })
 })

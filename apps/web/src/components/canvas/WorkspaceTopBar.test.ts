@@ -1,6 +1,8 @@
 // 规格 §6.8（mobile-web-three-page-topbar-redesign）：WEB 工作台统一顶栏。
-// ① WorkspaceTopBar 结构：‹ 返回创作空间 + 项目名(§6.4) + 发现/主题/账号/⋯
+// ① WorkspaceTopBar 结构：‹ 返回创作空间 + 项目名(§6.4) + 发现/主题/账号
 //    （v3 §13.4：「我的」撤除——与头像下拉「我的主页」重复，头像即个人枢纽）；
+//    ⚠️ 2026-10-30：右上「...」项目操作菜单（保存画布/发布作品/导入导出工作流）
+//    整体移除（用户裁决），入口后续统一重新规划；
 // ② AgentSideRail 头部已退役「新对话 / 历史」入口（ADR-0015 统一单对话模型），
 //    仅保留浮动窗口切换与「收起助手」。
 // 静态契约（jsdom 不计算样式；同 CanvasPage.mobileChromeHygiene.test.ts 模式）。
@@ -20,11 +22,10 @@ function stripComments(s: string): string {
 }
 
 describe('WorkspaceTopBar（WEB 工作台顶栏）', () => {
-  it('结构：‹ 返回创作空间 + 项目名 + 发现/主题/账号/⋯（v3：无「我的」）', () => {
+  it('结构：‹ 返回创作空间 + 项目名 + 发现/主题/账号（v3：无「我的」）', () => {
     expect(topBar).toContain('data-testid="workspace-back"')
     expect(topBar).toContain('data-testid="workspace-project-name"')
     expect(topBar).toContain('data-testid="workspace-discover"') // 发现 → /community（画廊不加发现的拍板下，顶栏是 PC 唯一可达点）
-    expect(topBar).toContain('data-testid="workspace-menu"') // ⋯ 项目菜单
     // v3 §13.4/D1：「我的」撤除（语义由 AccountChrome→AccountUserMenu「我的主页」承载）
     expect(topBar).not.toContain('data-testid="workspace-mine"')
     expect(stripComments(topBar)).not.toContain("to=\"/profile\"")
@@ -33,6 +34,24 @@ describe('WorkspaceTopBar（WEB 工作台顶栏）', () => {
     expect(topBar).toContain('<AccountChrome')
     // 返回簇文案 = 创作空间
     expect(topBar).toContain('创作空间')
+  })
+
+  it('2026-10-30 收敛：⋯ 项目操作菜单整体移除（保存/发布/导入/导出 不再由顶栏承载）', () => {
+    const block = stripComments(topBar)
+    // 菜单与全部菜单项退场（防空集假绿：有效性配对见上——顶栏仍有 发现/主题/账号 真实入口）
+    expect(topBar).not.toContain('data-testid="workspace-menu"')
+    expect(block).not.toContain('保存画布')
+    expect(block).not.toContain('发布作品')
+    expect(block).not.toContain('导入工作流')
+    expect(block).not.toContain('导出工作流')
+    expect(block).not.toContain('轻量包（不含媒体）')
+    // 对应 emits 一并下线，防死 emit 残留
+    expect(block).not.toContain('save: []')
+    expect(block).not.toContain('publish: []')
+    expect(block).not.toContain("'import-workflow': []")
+    expect(block).not.toContain("'export-workflow': []")
+    expect(block).not.toContain("'export-workflow-light': []")
+    expect(block).not.toContain('menuOpen')
   })
 
   it('§13.5（真机走查四轮）：封条彻底退役——栏体透明、材质/blur 全去', () => {
@@ -53,15 +72,6 @@ describe('WorkspaceTopBar（WEB 工作台顶栏）', () => {
     expect(block).toContain('var(--lnk-text-secondary')
     expect(block).toContain('text-overflow: ellipsis')
     expect(block).toContain('pointer-events: none')
-  })
-
-  it('菜单含发布 / 导出（含轻量包二级）/ 导入，与移动端同构', () => {
-    const block = stripComments(topBar)
-    expect(block).toContain('保存画布')
-    expect(block).toContain('发布作品')
-    expect(block).toContain('导入工作流')
-    expect(block).toContain('导出工作流')
-    expect(block).toContain('轻量包（不含媒体）')
   })
 })
 

@@ -1,17 +1,18 @@
 <script setup lang="ts">
 /**
  * WEB 工作台统一顶栏（规格 §6.8）：画布路由顶部整页栏，替代原 CanvasFloatingChrome
- * （可编辑 title + 返回 + 保存/发布/导入/导出）与右上漂浮簇（ThemeToggle + AccountChrome）。
+ * （可编辑 title + 返回）与右上漂浮簇（ThemeToggle + AccountChrome）。
  * 职责：左 ‹ 返回创作空间；居中页题注「画布·「项目名称」」（§13.5 v2：细体小字、
- * 次级灰、截断）；右簇 发现/主题/账号/⋯（v3 §13.4：「我的」撤除，头像下拉全权承载个人枢纽）。
+ * 次级灰、截断）；右簇 发现/主题/账号（v3 §13.4：「我的」撤除，头像下拉全权承载个人枢纽）。
  * 项目名是上下文而非操作（§13.5 起居中题注语义），与移动端 MobileTopBar 同构。
  * §13.5（2026-10-28 真机走查四轮）：材质横带（封条）彻底退役，栏体透明。
+ * 2026-10-30 用户裁决：右上「...」项目操作菜单（保存画布/发布作品/导入导出工作流，
+ * 含轻量包二级）整体移除——项目级操作不属于常驻顶栏，入口后续统一重新规划
+ * （三页顶栏重构规格 §6.8 v5）。
  */
-import { ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import ThemeToggle from '@/components/layout/ThemeToggle.vue'
 import AccountChrome from '@/components/account/AccountChrome.vue'
-import { useClickOutside } from '@/composables/useClickOutside'
 
 defineProps<{
   /** 当前项目名（规格 §6.4） */
@@ -21,39 +22,7 @@ defineProps<{
 const emit = defineEmits<{
   /** ‹ 返回创作空间（/canvases） */
   'go-gallery': []
-  /** 手动保存画布（桌面无自动保存入口时的兜底） */
-  save: []
-  publish: []
-  'import-workflow': []
-  'export-workflow': []
-  /** 导出二级——轻量包（不含媒体） */
-  'export-workflow-light': []
 }>()
-
-const menuOpen = ref(false)
-const exportOpen = ref(false)
-const menuRef = ref<HTMLElement | null>(null)
-
-useClickOutside(menuRef, () => {
-  menuOpen.value = false
-  exportOpen.value = false
-})
-
-function closeMenu() {
-  menuOpen.value = false
-  exportOpen.value = false
-}
-
-function onMenuItem(
-  action: 'save' | 'publish' | 'import' | 'export' | 'export-light',
-) {
-  closeMenu()
-  if (action === 'save') emit('save')
-  else if (action === 'publish') emit('publish')
-  else if (action === 'import') emit('import-workflow')
-  else if (action === 'export') emit('export-workflow')
-  else emit('export-workflow-light')
-}
 </script>
 
 <template>
@@ -81,7 +50,8 @@ function onMenuItem(
       data-testid="workspace-project-name"
     >画布·「{{ projectName }}」</span>
 
-    <!-- 右簇：发现/主题/账号/⋯（§13.4/D1：「我的」撤除——与头像下拉（我的主页）重复） -->
+    <!-- 右簇：发现/主题/账号（§13.4/D1：「我的」撤除——与头像下拉（我的主页）重复；
+         ⋯ 项目菜单 2026-10-30 整体移除，入口重规划） -->
     <div class="wkb-right">
       <RouterLink
         to="/community"
@@ -92,52 +62,6 @@ function onMenuItem(
       </RouterLink>
       <ThemeToggle class="wkb-icon" />
       <AccountChrome />
-      <div ref="menuRef" class="wkb-menu-anchor">
-        <button
-          type="button"
-          class="wkb-icon"
-          data-testid="workspace-menu"
-          aria-label="项目菜单"
-          @click.stop="menuOpen = !menuOpen"
-        >
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <circle cx="6" cy="12" r="1.8" />
-            <circle cx="12" cy="12" r="1.8" />
-            <circle cx="18" cy="12" r="1.8" />
-          </svg>
-        </button>
-        <div v-if="menuOpen" class="wkb-menu" @click.stop>
-          <button type="button" class="wkb-menu-item" @click="onMenuItem('save')">
-            保存画布
-          </button>
-          <button type="button" class="wkb-menu-item" @click="onMenuItem('publish')">
-            发布作品
-          </button>
-          <button
-            type="button"
-            class="wkb-menu-item wkb-menu-parent"
-            data-testid="wkb-export"
-            :aria-expanded="exportOpen"
-            @click.stop="exportOpen = !exportOpen"
-          >
-            <span>导出工作流</span>
-            <svg class="wkb-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
-            </svg>
-          </button>
-          <div v-if="exportOpen" class="wkb-menu-sub" data-testid="wkb-export-sub">
-            <button type="button" class="wkb-menu-item" @click="onMenuItem('export')">
-              完整工作流包
-            </button>
-            <button type="button" class="wkb-menu-item" @click="onMenuItem('export-light')">
-              轻量包（不含媒体）
-            </button>
-          </div>
-          <button type="button" class="wkb-menu-item" @click="onMenuItem('import')">
-            导入工作流
-          </button>
-        </div>
-      </div>
     </div>
   </header>
 </template>
@@ -255,61 +179,5 @@ function onMenuItem(
 .wkb-icon svg {
   width: 18px;
   height: 18px;
-}
-
-.wkb-menu-anchor {
-  position: relative;
-}
-
-.wkb-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 10;
-  min-width: 150px;
-  padding: 4px 0;
-  border-radius: 12px;
-  background: var(--lnk-surface-raised);
-  border: 0.5px solid var(--lnk-border-subtle, rgba(0,0,0,0.1));
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-}
-
-.wkb-menu-item {
-  display: block;
-  width: 100%;
-  min-height: 40px;
-  padding: 0 14px;
-  border: none;
-  background: transparent;
-  color: var(--lnk-text-primary);
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.wkb-menu-item:hover {
-  background: var(--lnk-hover, rgba(0, 0, 0, 0.05));
-}
-
-.wkb-menu-parent {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.wkb-menu-sub {
-  margin: 2px 0 2px 10px;
-  padding-left: 6px;
-  border-left: 1px solid var(--lnk-border-subtle, rgba(0,0,0,0.1));
-}
-
-.wkb-chevron {
-  width: 14px;
-  height:14px;
-  flex: none;
-  color: var(--lnk-text-muted);
 }
 </style>

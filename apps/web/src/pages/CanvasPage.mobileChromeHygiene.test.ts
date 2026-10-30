@@ -1,7 +1,7 @@
 // 移动端画布视觉与卫生（2026-10-20 PR4 / I-8 / V-1；2026-10-21 chrome 减法裁决更新）：
 // ① 视口控件 = 单枚 ⤢ 适应画布（缩放±/%、小地图入口已裁——双指捏合覆盖缩放、小地图低频）；
-// ② 自动保存状态行 = 静默成功只报异常（失败红胶囊可点重试），顶栏 ⋯ 菜单无「保存画布」；
-// ③ ⋯ 菜单按频次重排 + 导出带二级（轻量包）；
+// ② 自动保存状态行 = 静默成功只报异常（失败红胶囊可点重试）；
+// ③ ⚠️ 2026-10-30：顶栏 ⋯ 项目菜单（发布/导出/导入/任务）整体移除，入口重规划（规格 v5）；
 // ④ 三个零引用死代码文件确已删除。
 // jsdom 不计算样式 ⇒ 令牌与尺寸走源码静态契约（同 hitTarget.test.ts 模式）。
 import { readFileSync, existsSync } from 'node:fs'
@@ -64,10 +64,12 @@ describe('PR4 视觉与卫生（移动端画布）', () => {
     const topBarCode = stripComments(topBar)
     expect(topBarCode).not.toContain('保存画布')
     expect(topBarCode).not.toMatch(/action === 'save'/)
-    // 有效性配对：菜单里确实还有其它项（防空集假绿）
-    expect(topBarCode).toContain('发布作品')
-    // 只扫壳层内 MobileTopBar 开标签本身——跨标签的非贪婪匹配会命中后面别的组件（PC
-    // CanvasFloatingChrome 仍有 @save），那是另一个组件的合法接线。
+    // ⚠️ 2026-10-30：⋯ 菜单整体移除 ⇒ 发布作品 同步退场（原有效性配对随之翻转）
+    expect(topBarCode).not.toContain('发布作品')
+    // 有效性配对：顶栏仍有真实入口（‹ 返回 + 画布页 ⤢ 适应画布）
+    expect(topBarCode).toContain('data-testid="mobile-topbar-back"')
+    expect(topBarCode).toContain('data-testid="mobile-topbar-fit"')
+    // 只扫壳层内 MobileTopBar 开标签本身——跨标签的非贪婪匹配会命中后面别的组件。
     const topBarTag = stripComments(shell).match(/<MobileTopBar[\s\S]*?\/>/)?.[0] ?? ''
     expect(topBarTag, '必须能定位 MobileTopBar 开标签').toContain('MobileTopBar')
     expect(topBarTag).not.toContain('@save=')
@@ -89,26 +91,28 @@ describe('PR4 视觉与卫生（移动端画布）', () => {
     const topBarCode = stripComments(topBar)
     expect(topBarCode).not.toContain('bar-points')
     expect(topBarCode).not.toContain('pointsText')
-    // 有效性配对：顶栏仍有真实入口（对话页新建卡 / 画布页 ⋯ 菜单）
-    expect(topBarCode).toContain('create-card--bar')
-    expect(topBarCode).toContain('data-testid="mobile-topbar-menu"')
+    // 有效性配对：顶栏仍有真实入口（‹ 返回创作空间 + 画布页 ⤢；⋯ 菜单 2026-10-30 移除）
+    expect(topBarCode).toContain('data-testid="mobile-topbar-back"')
+    expect(topBarCode).toContain('data-testid="mobile-topbar-fit"')
   })
 
-  it('⋯ 菜单按频次重排 + 导出二级（完整包 / 轻量包）', () => {
-    const menu = stripComments(topBar).match(/<div v-if="menuOpen"[\s\S]*?<\/div>\s*<\/div>/)?.[0] ?? ''
-    expect(menu).toContain('发布作品')
-    expect(menu).toContain('导入工作流')
+  it('⋯ 项目菜单整体移除（2026-10-30）：菜单体/菜单项/导出二级/壳层接线全退场', () => {
+    expect(topBar).not.toContain('data-testid="mobile-topbar-menu"')
+    const topBarCode = stripComments(topBar)
+    expect(topBarCode).not.toContain('bar-menu')
+    expect(topBarCode).not.toContain('menuOpen')
+    expect(topBarCode).not.toContain('发布作品')
+    expect(topBarCode).not.toContain('导入工作流')
+    expect(topBarCode).not.toContain('导出工作流')
+    expect(topBarCode).not.toContain('轻量包（不含媒体）')
+    // 壳层对 ⋯ 菜单的接线一并下线（防死 emit 残留）
+    expect(stripComments(shell)).not.toContain(`@export-workflow-light=`)
+    expect(stripComments(shell)).not.toContain(`@publish=`)
+    expect(stripComments(shell)).not.toContain(`@import-workflow=`)
+    expect(stripComments(shell)).not.toContain(`:task-active-count=`)
+    expect(stripComments(shell)).not.toContain(`:has-task-history=`)
     // 分镜板已随 #494 分镜节点下线而退役（StoryboardDialog 删除）⇒ 不得留死入口
-    expect(menu).not.toContain('分镜板')
-    expect(stripComments(topBar)).not.toContain('storyboard')
-    expect(menu).toContain('data-testid="bar-menu-export"')
-    expect(menu).toContain('bar-menu-export-sub')
-    expect(menu).toContain('轻量包（不含媒体）')
-    // 顺序：发布 → 导出 → 导入
-    expect(menu.indexOf('发布作品')).toBeLessThan(menu.indexOf('bar-menu-export"'))
-    expect(menu.indexOf('bar-menu-export"')).toBeLessThan(menu.indexOf('导入工作流'))
-    // 接线：轻量包走 onExportPack([], 'lightweight')（PR5 迁入 MobileCanvasShell）
-    expect(shell).toContain(`@export-workflow-light="onExportPack([], 'lightweight')"`)
+    expect(topBarCode).not.toContain('storyboard')
   })
 
   it('三个零引用死代码文件已删除', () => {
