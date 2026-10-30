@@ -97,7 +97,7 @@ export interface AgentStreamMessage {
  * 真相是「后端 JSON 字段可能为 null」——这是比shared 声明更宽的运行时事实。
  * 用 Omit 先摘掉原声明再重写，冲突消失，类型恢复可用。
  */
-type PersistedAgentMessage = Omit<AgentChatMessage, 'metadata' | 'linkedOutputs'> & {
+export type PersistedAgentMessage = Omit<AgentChatMessage, 'metadata' | 'linkedOutputs'> & {
   linkedOutputs?: string | null
   metadata?: string | null
 }
@@ -788,67 +788,93 @@ export const useAgentStore = defineStore('agent', () => {
   function loadHistory(history: PersistedAgentMessage[]) {
     // P2 T7：重放通道含 turn_settled 回合 → 余额刷新一次（live 通道在 trackTurnSettled 触发；
     // 此处兜页面刷新/历史加载后 AccountPointsPill 与最近一次结算不同步的场景）。
-    let historyHasSettled = false
-    messages.value = history.map((persisted) => {
-      const meta = parseMessageMetadata(persisted.metadata)
-      if (meta?.executionEvents?.some((e) => e?.type === 'turn_settled')) {
-        historyHasSettled = true
-      }
-      let executionTrace = restoreExecutionTrace(meta)
-      if (!executionTrace && meta?.executionEvents?.length) {
-        executionTrace = replayExecutionTraceEvents(meta.executionEvents)
-      }
-      // P1（agent-turn-timeline-design §5-P1 双源接入·历史）：flag 开启时由有序
-      // executionEvents 重放出 TurnTimeline；bodyText 取自 persisted.content（历史无
-      // text_delta，用正文补一个 done 文本块，避免时间线缺正文）。flag 关闭时不构建。
-      let timeline: TurnTimeline | undefined
-      if (meta?.executionEvents?.length) {
-        // TURN-IDENTITY PR3：`partial` 是服务端判定的「账本不完整」（本流没捕获到
-        // run 起点）⇒ 重放时置顶一条缺口标注，不让残缺过程冒充完整过程。
-        // D2（multi-device Task 2）：`truncated` 是「尾部未捕获」（本流没等到 agent_end，
-        // pi 侧那轮仍在跑）⇒ 方向与 partial 相反，**分别**标注，不混用。
-        timeline = replayTimelineEvents(meta.executionEvents, persisted.content, {
-          partial: meta.partial === true,
-          truncated: meta.truncated === true,
-        })
-      }
-      // svg_card 刷新恢复（spec §4.6 第 3 跳）：卡片随 canvas_command 落在
-      // metadata.executionEvents 里（服务端 buildTurnMetadata 不写 metadata.presentation），
-      // 刷新后从这里重放出与实时路径同形的 envelope，交给与 setPresentation 同一个挂载点。
-      //
-      // ⚠️ 与 trace 分支的 `!executionTrace &&` 门不同：这里**无条件**重放。
-      // 那道门是「executionTrace 快照优先、事件序列兜底」，而 presentation 只有
-      // 事件序列这一条来源（无快照可优先）；加门会让「带 trace 快照的老消息丢卡片」。
-      // 重放是纯函数、不碰 store，同 tick 内完成，无时序竞态。
-      //
-      // role 门与 `setPresentation` 对齐（那条只写最后一条 assistant 消息）：
-      // 卡片是助手轮次的产出，挂在 user 消息上没有对应语义。
-      // ⚠️ **A 方案优先级（2026-07）**：node_graph 优先、svg_card 降级。
-      // 双写期两条载荷都在事件流里（后端 presentResultDual），
-      // `??` 的左偏决定了"有 node_graph 就用它，没有才回落静态 SVG"。
-      // 后端停止发 node_graph 时会自动回落，无需改前端。
-      const replayedCard =
-        persisted.role === 'assistant' && meta?.executionEvents?.length
-          ? (replayNodeGraphPresentation(meta.executionEvents)
-            ?? replaySvgCardPresentation(meta.executionEvents))
-          : undefined
-      const presentation =
-        meta?.presentation && typeof meta.presentation === 'object'
-          ? (meta.presentation as unknown as AgentPresentationEnvelope)
-          : replayedCard
-      return {
-        id: persisted.id,
-        role: persisted.role as 'user' | 'assistant',
-        content: persisted.content,
-        attachments: parseAttachments(persisted.attachments),
-        linkedOutputs: parseLinkedOutputs(persisted.linkedOutputs),
-        canvasActions: parsePersistedToolCalls(persisted.toolCalls),
-        executionTrace,
-        presentation,
-        timeline,
-      }
-    })
+    const historyHasSettled = history.some((persisted) =>
+      parseMessageMetadata(persisted.metadata)?.executionEvents?.some((e) => e?.type === 'turn_settled'),
+    )
+    messages.value = history.map(mapPersistedToMessage)
     if (historyHasSettled) void useAuthStore().refreshPoints()
+  }
+
+  /**
+   * persisted 原始行 → 视图消息的统一映射器（H1-a 修复轮抽出）：
+   * `loadHistory`（首载整体重建）与 `prependHistory`（翻页只补头部）共用，
+   * 保证两条入口产出的消息同形（executionTrace/timeline/presentation 重放一致）。
+   * ⚠️ 视图消息**不可回灌**本映射器：映射会把 metadata 字符串解析成结构化字段后丢弃原值，
+   * 回灌即丢任务卡/时间线——这正是审查 Important-1 禁止整体重建的部分原因。
+   */
+  function mapPersistedToMessage(persisted: PersistedAgentMessage) {
+    const meta = parseMessageMetadata(persisted.metadata)
+    let executionTrace = restoreExecutionTrace(meta)
+    if (!executionTrace && meta?.executionEvents?.length) {
+      executionTrace = replayExecutionTraceEvents(meta.executionEvents)
+    }
+    // P1（agent-turn-timeline-design §5-P1 双源接入·历史）：flag 开启时由有序
+    // executionEvents 重放出 TurnTimeline；bodyText 取自 persisted.content（历史无
+    // text_delta，用正文补一个 done 文本块，避免时间线缺正文）。flag 关闭时不构建。
+    let timeline: TurnTimeline | undefined
+    if (meta?.executionEvents?.length) {
+      // TURN-IDENTITY PR3：`partial` 是服务端判定的「账本不完整」（本流没捕获到
+      // run 起点）⇒ 重放时置顶一条缺口标注，不让残缺过程冒充完整过程。
+      // D2（multi-device Task 2）：`truncated` 是「尾部未捕获」（本流没等到 agent_end，
+      // pi 侧那轮仍在跑）⇒ 方向与 partial 相反，**分别**标注，不混用。
+      timeline = replayTimelineEvents(meta.executionEvents, persisted.content, {
+        partial: meta.partial === true,
+        truncated: meta.truncated === true,
+      })
+    }
+    // svg_card 刷新恢复（spec §4.6 第 3 跳）：卡片随 canvas_command 落在
+    // metadata.executionEvents 里（服务端 buildTurnMetadata 不写 metadata.presentation），
+    // 刷新后从这里重放出与实时路径同形的 envelope，交给与 setPresentation 同一个挂载点。
+    //
+    // ⚠️ 与 trace 分支的 `!executionTrace &&` 门不同：这里**无条件**重放。
+    // 那道门是「executionTrace 快照优先、事件序列兜底」，而 presentation 只有
+    // 事件序列这一条来源（无快照可优先）；加门会让「带 trace 快照的老消息丢卡片」。
+    // 重放是纯函数、不碰 store，同 tick 内完成，无时序竞态。
+    //
+    // role 门与 `setPresentation` 对齐（那条只写最后一条 assistant 消息）：
+    // 卡片是助手轮次的产出，挂在 user 消息上没有对应语义。
+    // ⚠️ **A 方案优先级（2026-07）**：node_graph 优先、svg_card 降级。
+    // 双写期两条载荷都在事件流里（后端 presentResultDual），
+    // `??` 的左偏决定了"有 node_graph 就用它，没有才回落静态 SVG"。
+    // 后端停止发 node_graph 时会自动回落，无需改前端。
+    const replayedCard =
+      persisted.role === 'assistant' && meta?.executionEvents?.length
+        ? (replayNodeGraphPresentation(meta.executionEvents)
+          ?? replaySvgCardPresentation(meta.executionEvents))
+        : undefined
+    const presentation =
+      meta?.presentation && typeof meta.presentation === 'object'
+        ? (meta.presentation as unknown as AgentPresentationEnvelope)
+        : replayedCard
+    return {
+      id: persisted.id,
+      role: persisted.role as 'user' | 'assistant',
+      content: persisted.content,
+      attachments: parseAttachments(persisted.attachments),
+      linkedOutputs: parseLinkedOutputs(persisted.linkedOutputs),
+      canvasActions: parsePersistedToolCalls(persisted.toolCalls),
+      executionTrace,
+      presentation,
+      timeline,
+    }
+  }
+
+  /**
+   * H1-a 修复轮（审查 Important-1）：向前翻页只把更早行 **prepend 到列表头部**，
+   * 不整体重建——会话内新发出、未回写 historyRows 窗口的尾部轮次（含流式进行中的
+   * assistant 消息）原样保留；按 id 去重保证重复点击/重叠页幂等。
+   * 语义：窗口行（asc）∪ 会话尾部行，天然保持 asc 全序（更早行必然都旧于尾部行）。
+   */
+  function prependHistory(history: PersistedAgentMessage[]) {
+    const known = new Set(messages.value.map((m) => m.id))
+    const fresh = history.filter((persisted) => !known.has(persisted.id))
+    if (!fresh.length) return
+    messages.value = [...fresh.map(mapPersistedToMessage), ...messages.value]
+    // P2 T7 同款兜底：更早分页里也可能有 turn_settled 回合。
+    const freshHasSettled = fresh.some((persisted) =>
+      parseMessageMetadata(persisted.metadata)?.executionEvents?.some((e) => e?.type === 'turn_settled'),
+    )
+    if (freshHasSettled) void useAuthStore().refreshPoints()
   }
 
   /** P1 状态行：SSE error 事件 / 请求异常时置位本回合失败态（新回合由 addUserMessage 重置）。 */
@@ -920,6 +946,7 @@ export const useAgentStore = defineStore('agent', () => {
     resolveQuestionPart,
     finishStreaming,
     loadHistory,
+    prependHistory,
     clear,
   }
 })

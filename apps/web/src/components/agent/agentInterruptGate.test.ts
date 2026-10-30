@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import * as gateModule from './agentInterruptGate'
 import {
@@ -127,5 +130,36 @@ describe('确认卡片机制已下线（不得复活）', () => {
         'isRunCancelledState',
       ]),
     )
+  })
+})
+
+/**
+ * K4 反向守卫（F1，审查 2026-10-29）：机器载荷清单单源是 `@lnkpi/shared`
+ * 的 `machinePayloads`，本文件不得再持有清单字面量副本。
+ *
+ * 判据对**源码文本**（strip 注释后）扫描——导出键集合判不出「字面量复制回本文件」，
+ * 而裸字符串扫描会被本文件的说明性注释命中（假红），也会被注释里的一句提及放过
+ * （假绿），故必须先 stripComments 再断言。
+ */
+describe('K4 反向守卫：清单字面量不得回流本文件', () => {
+  // stripComments 惯例同 SignatureHero.test.ts：`://` 不被当行注释吞掉。
+  const stripComments = (src: string) =>
+    src
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:\w])\/\/.*$/gm, '$1')
+
+  // ⚠️ fileURLToPath 必须收字符串而非 URL 对象（既有坑，见 SignatureHero.test.ts）。
+  const HERE = dirname(fileURLToPath(import.meta.url))
+
+  const gateSource = stripComments(
+    readFileSync(join(HERE, 'agentInterruptGate.ts'), 'utf8'),
+  )
+
+  it('清单改由 @lnkpi/shared import（strip 注释后仍须命中真实 import 语句）', () => {
+    expect(gateSource).toContain('@lnkpi/shared')
+  })
+
+  it('不含清单字面量反例（__new_task__）——复制回任何一条即先红', () => {
+    expect(gateSource).not.toContain('__new_task__')
   })
 })

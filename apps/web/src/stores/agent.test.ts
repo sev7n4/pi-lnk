@@ -126,6 +126,37 @@ describe('useAgentStore', () => {
       }),
     )
   })
+
+  // H1-a 修复轮（审查 Important-1）：prependHistory 只补头部、不整体重建——
+  // 会话内新发出、未回写 historyRows 窗口的尾部轮次必须原样保留；按 id 去重保证幂等。
+  it('prependHistory 保留尾部会话新增行并按 id 去重', () => {
+    const store = useAgentStore()
+    const persistedRow = (id: string, content: string) =>
+      ({
+        id,
+        sessionId: 'session-1',
+        role: 'user',
+        content,
+        createdAt: '2026-08-07T00:00:00.000Z',
+      }) satisfies PersistedAgentMessage
+
+    // 首载窗口：msg-50 / msg-51（asc）
+    store.loadHistory([persistedRow('msg-50', '窗口行 50'), persistedRow('msg-51', '窗口行 51')])
+    // 会话内新增（走实时通道，本地 id 与 persisted id 不同源）
+    store.addUserMessage('会话内新发的消息')
+    const tailCount = store.messages.length // 3（含流式新增的尾部行）
+
+    // 翻页拿到更早行 + 一条与窗口重叠的行（msg-50 重复出现也不得重复渲染）
+    store.prependHistory([persistedRow('msg-49', '更早行 49'), persistedRow('msg-50', '窗口行 50 重复')])
+
+    expect(store.messages).toHaveLength(tailCount + 1)
+    expect(store.messages.slice(0, 3).map((m) => m.id)).toEqual(['msg-49', 'msg-50', 'msg-51'])
+    // 尾部（会话内新增）原样保留，未被重建抹掉
+    expect(store.messages.at(-1)).toEqual(expect.objectContaining({ content: '会话内新发的消息' }))
+    // 幂等：重复 prepend 同一批行，列表不变
+    store.prependHistory([persistedRow('msg-49', '更早行 49')])
+    expect(store.messages).toHaveLength(tailCount + 1)
+  })
 })
 
 describe('canvas_action 流内实时上屏（2026-10-01）', () => {

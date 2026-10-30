@@ -1,12 +1,12 @@
 {
- "total": 419,
+ "total": 421,
  "by_status": {
   "living": 145,
-  "frozen": 266,
-  "superseded": 8
+  "frozen": 267,
+  "superseded": 9
  },
  "by_topic": {
-  "other": 85,
+  "other": 87,
   "canvas-tool": 73,
   "generation-pipeline": 40,
   "canvas-product": 34,
@@ -27,7 +27,7 @@
   "2026-07": 41,
   "2026-08": 79,
   "2026-09": 155,
-  "2026-10": 144
+  "2026-10": 146
  },
  "items": [
   {
@@ -1837,6 +1837,15 @@
    "kind": "spec",
    "status": "living",
    "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-28-agent-history-recovery-h0-h1-design.md",
+   "name": "2026-10-28-agent-history-recovery-h0-h1-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "superseded",
+   "reason": "文内标注已废弃/被取代",
    "topic": "other"
   },
   {
@@ -3763,6 +3772,15 @@
    "kind": "plan",
    "status": "frozen",
    "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-28-agent-history-recovery-h0-h1.md",
+   "name": "2026-10-28-agent-history-recovery-h0-h1.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
    "topic": "other"
   },
   {

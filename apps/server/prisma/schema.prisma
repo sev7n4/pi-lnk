@@ -393,6 +393,13 @@ model AgentThread {
    * 解析失败回落 undefined（**宁可不注入，也不投坏数据**）。
    */
   turnState String?
+  /**
+   * H0-b（规格 2026-10-28 §7.1）：legacy 归并标记。归并迁移把 id != sessionId 的
+   * 孤儿线程行置值后，listThreads 过滤之（前端不可见、数据保留供审计）。
+   * ⚠️ ADR-0015 Phase 2（T2/T4）实施时：parentThreadId 落地后，归档谓词须收窄为
+   * 「id != sessionId 且 parentThreadId IS NULL」，活跃叶子派生必须排除已归档行。
+   */
+  archivedAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   messages  AgentMessage[]

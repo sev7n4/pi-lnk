@@ -28,6 +28,7 @@ import {
   buildSelectionDigest,
 } from '@lnkpi/shared'
 import { buildSidebarBlock } from './pi-runtime/sidebar-block'
+import { decodeCursor, paginateVisibleRows } from './messages-cursor'
 import { MaterialService } from '../canvas/material.service'
 import { ZodError } from 'zod'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
@@ -282,17 +283,30 @@ export class AgentService {
     }
   }
 
-  async getMessages(sessionId: string, threadId: string, limit = 100) {
+  async getMessages(sessionId: string, threadId: string, before?: string, limit?: number) {
     if (!sessionId?.trim() || !threadId?.trim()) {
       throw new BadRequestException('sessionId and threadId are required')
     }
+    const take = Math.min(Math.max(limit ?? 100, 1), 200)
+    const cursor = before ? decodeCursor(before) : null
     const rows = await this.prisma.agentMessage.findMany({
-      where: { sessionId, threadId },
-      orderBy: { createdAt: 'desc' },
-      take: limit,
+      where: {
+        sessionId,
+        threadId,
+        ...(cursor
+          ? {
+              OR: [
+                { createdAt: { lt: cursor.createdAt } },
+                { createdAt: cursor.createdAt, id: { lt: cursor.id } },
+              ],
+            }
+          : {}),
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      // overfetch 给 superseded 过滤留余量（D13：过滤不得发生在 take 之后）；
+      // supersededBy 真列化（规格 §12，随 Task 7 seq 收口）后退役。
+      take: take * 2,
     })
-    // Task 14（repair-duplicate-turns.ts）历史重复回合软标记：被取代的 assistant
-    // 行（metadata.supersededBy 非空）不再返回，由 owner 行承载展示，避免重复气泡。
     const visible = rows.filter((r) => {
       if (r.role !== 'assistant') return true
       let supersededBy: unknown
@@ -305,18 +319,30 @@ export class AgentService {
       }
       return !supersededBy
     })
-    return visible.reverse()
+    // rawCount = DB 原始行数（过滤前）：overfetch 窗口 (take*2) 被打满时保守判定有下一页，
+    // 避免 superseded 重负载线程误判 hasMore=false 截断历史（审查 P1）。
+    return paginateVisibleRows(visible, take, rows.length)
   }
 
   async listThreads(sessionId: string) {
     if (!sessionId?.trim()) {
       throw new BadRequestException('sessionId is required')
     }
-    return this.prisma.agentThread.findMany({
-      where: { sessionId },
-      orderBy: { updatedAt: 'desc' },
-      take: 50,
-    })
+    // H1-b（规格 §5.2）：messageCount 随 threads 一次带回，bootstrap 不再为计数全量下载消息（D3）
+    const [threads, counts] = await Promise.all([
+      this.prisma.agentThread.findMany({
+        where: { sessionId }, // 不得过滤 archivedAt（Task 4 守卫：归档行透出供 H0-c 禁用态）
+        orderBy: { updatedAt: 'desc' },
+        take: 50,
+      }),
+      this.prisma.agentMessage.groupBy({
+        by: ['threadId'],
+        where: { sessionId },
+        _count: { _all: true },
+      }),
+    ])
+    const countByThread = new Map(counts.map((c) => [c.threadId, c._count._all]))
+    return threads.map((t) => ({ ...t, messageCount: countByThread.get(t.id) ?? 0 }))
   }
 
   async upsertAgentThread(input: { id: string; sessionId: string; title?: string }) {
@@ -1080,18 +1106,9 @@ export class AgentService {
   }
 
   /**
-   * W12: 重连时的 checkpoint 相位。
-   *
-   * 老 LangGraph runtime 已退役，checkpoint 概念随它一起消失（pi-runtime 无此状态），
-   * 所以恒为 null——与「查不到」等价，前端按无状态处理。
-   * 端点保留：前端 `AgentSideRail.vue` 重连时仍会调 `/api/agent/thread-state`，
-   * 删端点会让它 404。将来若 pi 侧补恢复态，从这里接回即可。
+   * H1-c（规格 2026-10-28 §5.2）：checkpoint 相位读取方法已随 thread-state
+   * 死端点一并退役删除（恒返 null，无存活消费方）。
    */
-  async getThreadState(_threadId: string): Promise<null> {
-    return null
-  }
-
-  /** 同 getThreadState：checkpoint 历史随老 LangGraph runtime 一起退役，恒 null。 */
   async getThreadTimeline(_threadId: string): Promise<null> {
     return null
   }

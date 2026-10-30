@@ -6,8 +6,8 @@
  * 2026-10-06 大清理：本文件原先叫「interrupt gate」，其中承载确认卡片
  * （gate 相位 → chipSet → 确认 / 取消按钮）与产品视觉门控（方案 / 镜头 / 交付选型）
  * 的大半代码已整体删除 —— 那些 UI 的触发源（`interrupt` 事件、`done` 事件、
- * `GET /agent/thread-state` 回灌）在 pi 链路上都没有生产者
- * （thread-state 恒返 null，见 `AgentSideRail.refreshThreadCheckpoint`），属不可达死代码。
+ * checkpoint 状态端点回灌——该端点已随 H1-c 整体退役）在 pi 链路上都没有生产者，
+ * 属不可达死代码。
  *
  * 保留下来的只有三件事：
  *   1. `isRunCancelledState` —— `run_cancelled` 的终态判定，仍在用；
@@ -41,26 +41,21 @@ export interface ProductVisualMacroScheme {
 /**
  * 旧门控流程的机器载荷前缀：**只用于过滤历史消息**，已无产出方。
  *
- * 历史对话里用户气泡可能整段是这些 JSON（点击旧版方案/交付确认按钮时发出的载荷），
+ * 历史对话里用户气泡可能整段是这些载荷（点击旧版方案/交付确认按钮时发出的载荷），
  * 不滤掉就会裸露给用户看，因此字符串常量必须保留。
+ *
+ * H1-e（K4）：清单收敛到 `@lnkpi/shared` 的 `machinePayloads` 单源，本文件
+ * 不再持有清单字面量，只保留 web 渲染策略（filterMachinePayloadLines）。
  */
-const MACHINE_PAYLOAD_PREFIXES = [
-  '__scheme_decision__',
-  '__macro_scheme_decision__',
-  '__delivery_decision__',
-  '__new_task__',
-] as const
+import { lineHasMachinePayload } from '@lnkpi/shared'
+
+export { lineHasMachinePayload }
 
 const INTERNAL_QA_ERROR_SNIPPETS = [
   '识图模型返回格式异常',
   'vision_format_error',
   'format_error',
 ] as const
-
-function lineHasMachinePayload(line: string): boolean {
-  const trimmed = line.trimStart().replace(/^["']+|["']+$/g, '')
-  return MACHINE_PAYLOAD_PREFIXES.some((prefix) => trimmed.startsWith(prefix))
-}
 
 function filterMachinePayloadLines(content: string): string {
   return content

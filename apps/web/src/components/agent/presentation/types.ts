@@ -1,4 +1,4 @@
-/** Product visual v2 presentation envelope (runtime SSE / thread-state). */
+/** Product visual v2 presentation envelope (runtime SSE / 历史 message metadata). */
 
 export interface AgentPresentationStepper {
   current: string
