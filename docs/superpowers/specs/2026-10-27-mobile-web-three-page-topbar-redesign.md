@@ -1,6 +1,6 @@
 # 三页顶栏统一重构设计规格（移动端 + WEB）
 
-状态：设计已定稿（v2 · 2026-10-27 · 用户拍板移动端 + WEB 纳入 · **待开发**）
+状态：设计已定稿（v5 · 2026-10-30 · ⋯ 项目菜单整体收敛；v2/#626 起已实施上线）
 前置：
 - **ADR-0015「多端统一单对话」**（1 项目 = 1 对话 + 1 画布，只暴露 1 个对话）——本规格依此移除对话页「新对话 / 历史对话」入口。
 - **门面收敛与续作面统一规格**（`2026-10-26-project-gallery-consolidation-design.md`，已实施）——其 G3 已要求「对话页顶部 = ‹ 返回创作首页 + 项目名」；本规格在 G3 基础上**把同一规则延伸到画布视图与 WEB 工作台**，并修订其 §6.5（见 §3）。
@@ -10,6 +10,9 @@
 **修订记录**：
 - v1（2026-10-27）：用户基于真机三页截图拍板。核心 = 统一三页导航语言为三层、每层单一返回；对话/画布补「项目名（次级静默 + 截断）」；画布补回顶栏；创作空间（画廊）做极简栏、去常驻搜索框/管理/账户 chrome。
 - v2（2026-10-27）：用户基于 WEB 端两张截图拍板「WEB 一并纳入统一优化收口」。新增 P5/P6（WEB 创作空间裸栏 + WEB 工作台统一顶栏）；**自审修订一处关键坑**——原 §6.1「CanvasesPage 自写极简栏、不复用 AppHeader」会与全站常驻 `AppHeader` 形成「双栏叠加」，改为「`AppHeader` 按路由渲染裸栏（移动+WEB 统一），`CanvasesPage` 去除自写顶栏、仅留一行标题」；项目名样式 §6.4 扩至 WEB 工作台；新增 §6.7/§6.8、G7–G9、V11–V13、WEB 文件清单与 §12 自审。
+- v3（2026-10-28）：上线观感回访四项收口（§13）；真机走查封条终撤 + 居中题注 + 对话页顶栏可见性回归修复（§14）。
+- v4（2026-10-28 晚）：见 §14（与上行同日两轮，编号顺延）。
+- v5（2026-10-30）：用户基于 WEB 画布右上「...」弹卡截图拍板**画布页右上「...」项目菜单整体收敛**——WEB `WorkspaceTopBar` 右簇 `⋯`（保存画布/发布作品/导入/导出/轻量包二级）与移动端 `MobileTopBar` 的 `⋯`（chat+canvas 共用：任务动态项/发布/导出二级/导入）**全部移除**。项目操作（发布/导出/导入/保存）入口**整体撤销、后续统一重新规划**，不在任何顶栏/菜单承载；移动端任务计数轮询随 ⋯ 徽标失去消费方一并退役（任务进展仍经 `MobileNodeStatusBar` 聚合状态栏常驻可见）；发布对话框与工作流导入 file input 机械保留 dormant 等待新入口。同步刷新 G2/G5/G8/P2/P3/P6/§6.2/§6.3/§6.4/§6.8/V4/V6/V12/§9-3/§9-7/§9-10，并登记 §15。
 
 分支约定：实现走 feature 分支 + PR + squash merge（superpowers 纪律）。
 
@@ -27,13 +30,13 @@
 | # | 目标 | 验收 |
 |---|---|---|
 | G1 | **导航语言统一**：三页（移动+WEB）共用一套返回语义（品牌页 → 创作空间 → 项目工作区），每层只有一条返回路径 | 创作空间顶栏 logo→品牌页；对话/画布顶栏 ‹→创作空间；无「抽屉回创作首页 + 品牌回品牌页」双路线并存 |
-| G2 | **画布视图补回顶栏**（推翻 gallery 规格 §6.5 旧决策）：含 ‹ 返回创作空间 + 项目名 + ⤢ + ⋯，消除「进画布即迷路」的导航死路 | 画布页可见顶栏；点 ‹ 回到创作空间；⤢ 仍可用；原浮动 ⤢ 按钮不再单独出现 |
+| G2 | **画布视图补回顶栏**（推翻 gallery 规格 §6.5 旧决策）：含 ‹ 返回创作空间 + 项目名 + ⤢（v5：⋯ 菜单移除），消除「进画布即迷路」的导航死路 | 画布页可见顶栏；点 ‹ 回到创作空间；⤢ 仍可用；原浮动 ⤢ 按钮不再单独出现；画布右上无「...」项目菜单（v5） |
 | G3 | **项目名可见且次级**：对话/画布顶栏显示当前项目名，但用次级静默样式、超长截断，不抢视觉 | 项目名颜色=次级灰、字重 500、超长显示 `…`；视觉权重低于 ‹ 返回 |
 | G4 | **创作空间极简化**：极简栏（左 logo→品牌页，右 🔍+＋），移除大 H1/副标题/主题切换/积分/头像/常驻搜索框/管理 链接 | 创作空间顶栏仅 logo+🔍+＋；无底部四页签；点击 ＋ 走既有建项目流程 |
-| G5 | **对话页去冗余入口**：移除「新对话 / 历史对话 / 抽屉 / 品牌」四块，仅留 ‹ 返回创作空间 + 项目名 + ⋯ 项目菜单 | 对话页顶栏无 新对话/历史/抽屉/品牌；⋯ 承载 发布/导出/导入/任务 |
+| G5 | **对话页去冗余入口**：移除「新对话 / 历史对话 / 抽屉 / 品牌」四块（v5：⋯ 项目菜单同撤），仅留 ‹ 返回创作空间 + 项目名 | 对话页顶栏无 新对话/历史/抽屉/品牌/⋯（发布/导出/导入/任务 均属项目/画布级，不放对话页） |
 | G6 | **语义不混**：画廊 ＋ = 建项目；画布左下 ＋ = 加节点（二者不在同一页，互不混淆） | 创作空间仅顶栏 ＋ 一个建项目入口；画布内建节点走其既有 FAB，不在顶栏再加 ＋ |
 | G7 | **WEB 创作空间（画廊）裸栏**：`AppHeader` 按路由渲染，`/canvases` 仅 logo + 🔍 + ＋，去掉 创作/发现/主题/账号；`CanvasesPage` 去除自写顶栏，仅留一行「创作空间 · N 个」标题 + 网格 | WEB `/canvases`：AppHeader 无 创作/发现/主题/账号；页面无 h1/新建/管理 自写栏；仅 logo+🔍+＋ 单栏 |
-| G8 | **WEB 工作台（对话+画布同屏）统一顶栏**：左 ‹ 返回创作空间 + 项目名（复用 §6.4）；右 发现/我的/主题/账号/⋯；删除画布右上漂浮簇与聊天栏 新对话/历史 | WEB 画布路由可见统一顶栏；无漂浮 ThemeToggle/AccountChrome；聊天栏头部无 新对话/历史 |
+| G8 | **WEB 工作台（对话+画布同屏）统一顶栏**：左 ‹ 返回创作空间 + 项目名（复用 §6.4）；右 发现/主题/账号（v3 §13.4 撤「我的」；v5 撤 ⋯）；删除画布右上漂浮簇与聊天栏 新对话/历史 | WEB 画布路由可见统一顶栏；无漂浮 ThemeToggle/AccountChrome；聊天栏头部无 新对话/历史；顶栏无「...」项目菜单（v5） |
 | G9 | **三端 IA 一致**：画廊无导航词、不挂全局/底部导航词；项目名次级静默截断；每层单一返回；WEB 与移动端为「同一层、不同形态」 | 画廊裸栏（移动/ WEB 同构）；发现/我的 在工作台可见（移动=底部页签 / WEB=顶栏右簇），无功能退化 |
 
 ## 2. 范围
@@ -41,11 +44,11 @@
 ### 2.1 本规格做
 
 - **P1 创作空间顶栏重构**（`AppHeader.vue` 路由条件 + `CanvasesPage.vue`）：`AppHeader` 在 `/canvases` 渲染裸栏（logo + 🔍 + ＋）；`CanvasesPage` 移除自写大标题栏，仅留一行标题 + 网格。
-- **P2 对话页顶栏重构**（`MobileTopBar.vue` chat 分支）：移除 抽屉/品牌/新对话/历史，改 ‹ 返回创作空间 + 项目名 + ⋯。
-- **P3 画布页顶栏重构**（`MobileTopBar.vue` canvas 分支 + `MobileCanvasShell.vue` + `CanvasPage.vue`）：补 ‹ 返回创作空间 + 项目名；⤢ 从浮动钮上提至顶栏右侧；移除 `MobileCanvasTopControls` 浮动实例。
+- **P2 对话页顶栏重构**（`MobileTopBar.vue` chat 分支）：移除 抽屉/品牌/新对话/历史，改 ‹ 返回创作空间 + 项目名（**不挂 ⋯ 菜单**——发布/导出/导入/任务 全属项目/画布级，对话页零菜单项，v5）。
+- **P3 画布页顶栏重构**（`MobileTopBar.vue` canvas 分支 + `MobileCanvasShell.vue` + `CanvasPage.vue`）：补 ‹ 返回创作空间 + 项目名；⤢ 从浮动钮上提至顶栏右侧（v5：canvas 右区仅剩 ⤢，⋯ 菜单移除）；移除 `MobileCanvasTopControls` 浮动实例。
 - **P4 项目名贯通**：`sessionTitle`（CanvasPage 真源）经壳层 prop 传入 `MobileTopBar` 渲染（含 §6.4 次级样式）。
 - **P5 WEB 创作空间裸栏**（`AppHeader.vue` 路由条件：`/canvases` → 裸栏；`/workflow` 与其他路由维持现状；画布路由维持不渲染）：与 P1 共用 `AppHeader` 改造，移动+WEB 统一单栏。
-- **P6 WEB 工作台统一顶栏**（新增 `WorkspaceTopBar.vue` + `CanvasPage.vue` + `AgentSideRail.vue`）：`CanvasPage` 画布路由挂 `WorkspaceTopBar`（‹ 返回创作空间 + 项目名 + 发现/我的/主题/账号/⋯），删除右上漂浮簇；聊天栏头部移除 新对话/历史、保留 收起(×)。
+- **P6 WEB 工作台统一顶栏**（新增 `WorkspaceTopBar.vue` + `CanvasPage.vue` + `AgentSideRail.vue`）：`CanvasPage` 画布路由挂 `WorkspaceTopBar`（‹ 返回创作空间 + 项目名 + 发现/主题/账号，**不挂 ⋯ 项目菜单**，v5；v3 §13.4 撤「我的」），删除右上漂浮簇；聊天栏头部移除 新对话/历史、保留 收起(×)。
 
 ### 2.2 明确不做（登记 §10，不隐性扩范围）
 
@@ -114,17 +117,16 @@
 - **删除**：`≡` 抽屉（`open-drawer`）、`墨鱼π` 品牌（`go-home`）、`新对话` 卡（`new-chat`）、`🕘` 历史（`open-history`）四块全部移除。
 - **左（新增）**：`‹ 返回创作空间`——chevron(`<`) + 文案「创作空间」，整块可点 → emit `go-gallery` → `router.push('/canvases')`。文案用主色 `--lnk-text-primary`、字重 500，是栏内主操作。
 - **项目名（新增，prop `projectName`）**：紧跟返回簇之后，样式见 §6.4（次级灰、截断）。
-- **右（新增）**：`⋯` 项目菜单，承载 发布作品 / 导出工作流（含轻量包二级）/ 导入工作流 / 任务（有任务才显示），沿用现有 `bar-menu` 与 `showTaskItem` 逻辑（原仅 canvas 分支有，现 chat/canvas 共用）。
+- **右（v5：空）**：⚠️ 2026-10-30 用户裁决：⋯ 项目菜单（发布作品 / 导出工作流含轻量包二级 / 导入工作流 / 任务）整体移除——项目级操作从职责边界上不属于「对话」，对话页右区**为空**，不渲染 `menu-anchor` / `bar-menu`。入口后续统一重新规划（§15）。
 - 顶栏高度、`is-chat` 左对齐布局保留。
 
 ### 6.3 画布页（`MobileTopBar.vue` tab='canvas' + 壳层/页面桥接 · 移动端）
 
-- **补回顶栏**：原 canvas 分支仅渲染 `⋯` 菜单、且画布视口另有浮动 ⤢，顶栏近乎空。**现 canvas 分支与 chat 同构**：左 `‹ 返回创作空间` + 项目名，右 `⤢` + `⋯`。
+- **补回顶栏**：原 canvas 分支仅渲染 `⋯` 菜单、且画布视口另有浮动 ⤢，顶栏近乎空。**现 canvas 分支与 chat 同构**：左 `‹ 返回创作空间` + 项目名，右 `⤢`（v5：仅此一枚）。
 - **左**：同 §6.2 的 `‹ 返回创作空间` + 项目名。
-- **右（两枚）**：
-  - `⤢` 适应画布：从 `MobileCanvasTopControls` 浮动钮**上提**至顶栏右侧（位于 ⋯ 左侧）。点击 → emit `fit-view` → 经壳层桥接调用 `useVueFlow().fitView({ padding:0.2, duration:200 })`（必须在 VueFlow 上下文内，故由 `CanvasPage` 持有并下发）。
-  - `⋯` 项目菜单：同 §6.2（发布/导出/导入/任务）。
-- **移除**：`MobileCanvasTopControls` 在移动端的浮动实例（其 `fitView` 逻辑上提，组件标识待清理，无桌面用途则删除）。
+- **右（一枚）**：
+  - `⤢` 适应画布：从 `MobileCanvasTopControls` 浮动钮**上提**至顶栏右侧。点击 → emit `fit-view` → 经壳层桥接调用 `useVueFlow().fitView({ padding:0.2, duration:200 })`（必须在 VueFlow 上下文内，故由 `CanvasPage` 持有并下发）。
+- **移除**：`MobileCanvasTopControls` 在移动端的浮动实例（其 `fitView` 逻辑上提，组件标识待清理，无桌面用途则删除）；⚠️ v5（2026-10-30）：`⋯` 项目菜单（chat+canvas 共用）整体移除——对应 emits（`publish` / `import-workflow` / `export-workflow` / `export-workflow-light` / `open-tasks`）、任务动态项 props（`taskActiveCount` / `hasTaskHistory`）与壳层任务计数轮询一并下线；任务进展仍经 `MobileNodeStatusBar` 聚合状态栏常驻可见（其 open-tasks 入口保留，打开任务 sheet）。
 - 画布内容区、左下 `＋` 加节点 FAB 均不动（语义=加节点，与顶栏 ＋ 建项目不混，符合 G6）。
 
 ### 6.4 项目名称统一样式规约（用户硬约束，移动+WEB 通用）
@@ -155,7 +157,7 @@
   }
   ```
 - **非交互**：项目名是纯文本 `span`（非按钮），不绑定点击；整条返回簇（chevron + 「创作空间」）才是可点按钮。
-- **视觉权重排序**：`‹ 返回创作空间`（主色，主操作）> `⋯` 菜单 / `发现`/`我的` > `项目名`（次级灰，静默）。
+- **视觉权重排序**：`‹ 返回创作空间`（主色，主操作）> `⤢` / `发现`/`主题`/`账号` > `项目名`（次级灰，静默）。（v5：画布页右上「...」项目菜单已整体移除，不再参与权重排序。）
 
 ### 6.5 底部四页签规则（移动端工作区）
 
@@ -196,9 +198,9 @@ flowchart LR
 
 > WEB 画布路由 `isImmersiveCanvas` ⇒ `AppHeader` 不渲染，此前只剩画布内漂浮簇（`ThemeToggle + AccountChrome`）+ 聊天栏头部 新对话/历史 —— 即「进画布即迷路」的 WEB 版死路。本规格补统一顶栏。
 
-- **新增组件 `WorkspaceTopBar.vue`**（与移动端 `MobileTopBar` 共用「返回 + 项目名 + ⋯」语义，但 WEB 形态为**顶部整页栏**）：
-  - **左**：`‹ 返回创作空间`（`chevron + 创作空间`，emit `go-gallery` → `router.push('/canvases')`）+ **项目名**（prop `projectName`，样式复用 §6.4：次级灰、15px、截断）。
-  - **右簇（显式常驻，与移动端底部页签可见性对等）**：`发现`（→ `/community`）、`我的`（→ 账户/个人页）、`ThemeToggle`、`AccountChrome`、`⋯` 项目菜单（发布/导出/导入/任务）。
+- **新增组件 `WorkspaceTopBar.vue`**（与移动端 `MobileTopBar` 共用「‹ 返回创作空间 + 项目名」语义，但 WEB 形态为**顶部整页栏**，不含项目 `⋯` 菜单，v5）：
+  - **左**：`‹ 返回创作空间`（`chevron + 创作空间`，emit `go-gallery` → `router.push('/canvases')`）+ **项目名**（prop `projectName`，居中题注形态见 §14-D2）。
+  - **右簇（显式常驻，与移动端底部页签可见性对等）**：`发现`（→ `/community`）、`ThemeToggle`、`AccountChrome`。（v3 §13.4 撤「我的」；v5 撤 `⋯` 项目菜单——保存画布/发布作品/导入/导出/轻量包二级整体移除，入口后续统一重新规划，见 §15。）
 - **`CanvasPage.vue`（WEB 分支）**：
   - 画布路由顶部挂载 `WorkspaceTopBar`，传入 `:project-name="sessionTitle"`（已是真源）。
   - **删除**画布右上漂浮簇（`ThemeToggle + AccountChrome` 浮动实例），改由 `WorkspaceTopBar` 右簇承载。
@@ -223,15 +225,15 @@ flowchart LR
 | V1 | 创作空间顶栏仅含 logo(左) + 🔍 + ＋(右)（移动+WEB） | grep/视觉：`h1`/`返回主页`/`管理`/`主题`/`积分`/`头像` 在 `/canvases` 零命中；`AppHeader` 创作/发现/ThemeToggle/AccountChrome 在 `/canvases` 不渲染 |
 | V2 | 创作空间点击 ＋ → 走建项目流程（登录守卫 + 20s 超时） | 点击 `gallery-create` 触发 `useProjectWorkspace().create` |
 | V3 | 创作空间 🔍 → 就地展开搜索，复用 `sessionSearch`（`gallerySearchOpen` 共享） | 点击 `gallery-search-toggle` 出现搜索输入且绑定 `sessionSearch` |
-| V4 | 对话页顶栏无 新对话/历史/抽屉/品牌 四块 | grep：`mobile-topbar-brand`/`new-chat`/`open-history`/`open-drawer` 在 chat 分支零命中 |
+| V4 | 对话页顶栏无 新对话/历史/抽屉/品牌 四块；chat 与 canvas 分支均零 `menu-anchor`/`bar-menu`（v5：⋯ 菜单整体移除） | grep：`mobile-topbar-brand`/`new-chat`/`open-history`/`open-drawer` 在 chat 分支零命中；chat 与 canvas 分支 `menu-anchor`/`bar-menu`/`mobile-topbar-menu` 均不渲染；canvas 分支含 `⤢` 但无项目菜单 |
 | V5 | 对话页显示 ‹ 返回创作空间 + 项目名；点 ‹ → `/canvases` | `mobile-topbar-back` 存在且 `projectName` 文本=sessionTitle |
-| V6 | 画布页显示顶栏（‹ + 项目名 + ⤢ + ⋯），无浮动 ⤢ | `MobileCanvasTopControls` 浮动实例移除；`mobile-topbar-fit` 存在 |
+| V6 | 画布页显示顶栏（‹ + 项目名 + ⤢），无浮动 ⤢、无右上「...」项目菜单（v5） | `MobileCanvasTopControls` 浮动实例移除；`mobile-topbar-fit` 存在；canvas 分支 `menu-anchor`/`bar-menu` 不渲染 |
 | V7 | 项目名字色=次级灰、字重 500、超长截断为 `…` | 样式断言 + 长名（如「agent 模特换装工作流…」）渲染为截断 |
 | V8 | 画布 ⤢ 功能等价原浮动钮（fitView） | 点 `mobile-topbar-fit` 视口适应 |
 | V9 | 底部四页签仅在工作区内（移动）；创作空间无底部栏/无全局导航词 | 视觉/结构确认 |
 | V10 | 跨规格一致：gallery §6.5 已标注被本规格取代 | gallery 规格 §6.5 行加修订注 |
 | V11 | WEB `/canvases`：AppHeader 仅 logo+🔍+＋（创作/发现/主题/账号 零命中）；`CanvasesPage` 无自写标题栏（h1/新建/管理 零命中） | grep + 结构：单栏裸栏、标题仅「创作空间 · N 个」一行 |
-| V12 | WEB 工作台顶栏含 ‹ 返回创作空间 + 项目名(§6.4) + 发现/主题/账号/⋯（**v3 修订**：「我的」撤除，§13.4）；画布页无漂浮 ThemeToggle/AccountChrome 簇 | 结构：`WorkspaceTopBar` 存在且渲染；漂浮簇 DOM 移除 |
+| V12 | WEB 工作台顶栏含 ‹ 返回创作空间 + 项目名(§6.4/§14-D2) + 发现/主题/账号（v3 §13.4 撤「我的」；v5 撤 ⋯）；画布页无漂浮 ThemeToggle/AccountChrome 簇 | 结构：`WorkspaceTopBar` 存在且渲染、无 `workspace-menu`/发布/导出/导入/保存 接线；漂浮簇 DOM 移除 |
 | V13 | WEB 聊天栏头部无 新对话/历史 按钮；收起(×) 保留 | grep：`AgentSideRail` 头部 `new-chat`/`open-history` 零命中；`collapse` 保留 |
 
 ## 9. 文件级改动清单（实施照此，避免偏差）
@@ -252,9 +254,9 @@ flowchart LR
 
 3. **`apps/web/src/components/mobile/MobileTopBar.vue`**（P2/P3 · 移动端对话/画布）
    - 删除 chat 分支：`open-drawer`(≡)、`go-home`(墨鱼π)、`new-chat`(新对话)、`open-history`(🕘) 四块 DOM 与对应 emit/文案。
-   - chat 分支新增：左 `‹ 返回创作空间`（`emit('go-gallery')`）+ `projectName` span（§6.4 样式）+ 右 `⋯` 菜单（复用 canvas 现有 `bar-menu` + `showTaskItem`）。
-   - canvas 分支新增：左 `‹ 返回创作空间` + `projectName`；右新增 `⤢`（`emit('fit-view')`）置于 `⋯` 前。
-   - 新增 props：`projectName: string`；新增 emits：`go-gallery`、`fit-view`；移除 emits：`go-home`、`open-drawer`、`new-chat`、`open-history`。
+   - chat 分支新增：左 `‹ 返回创作空间`（`emit('go-gallery')`）+ `projectName`（居中题注，§14-D2）；**右区不挂 `⋯` 菜单**（v5：发布/导出/导入/任务 全部移除，chat/canvas 零菜单项）。chat 分支不渲染 `menu-anchor`/`bar-menu`。
+   - canvas 分支新增：左 `‹ 返回创作空间` + `projectName`；右仅 `⤢`（`emit('fit-view')`），**不挂 `⋯` 项目菜单**（v5）。
+   - 新增 props：`projectName: string`；新增 emits：`go-gallery`、`fit-view`；移除 emits：`go-home`、`open-drawer`、`new-chat`、`open-history`，及 v5 移除 `publish`、`import-workflow`、`export-workflow`、`export-workflow-light`、`open-tasks` 与 props `taskActiveCount`、`hasTaskHistory`。
    - 顶栏高度、`--lnk-topbar-h`、毛玻璃/边线样式不变。
    - 新增 testid：`mobile-topbar-back`、`mobile-topbar-project-name`、`mobile-topbar-fit`。
 
@@ -271,10 +273,10 @@ flowchart LR
    - 移动端不再渲染其浮动 ⤢；组件标记待清理（无桌面用途则删除）。
 
 7. **`apps/web/src/components/canvas/WorkspaceTopBar.vue`**（P6 · **新增**）
-   - WEB 工作台整页顶栏：左 `‹ 返回创作空间` + `projectName`(§6.4)；右簇 `发现`/`我的`/`ThemeToggle`/`AccountChrome`/`⋯`。（**v3 修订**：`我的` 撤除入头像下拉，§13.4/D1。）
-   - props：`projectName: string`；emits：`go-gallery`。
-   - `发现`→`/community`、`我的`→账户页、`⋯`→项目菜单（发布/导出/导入/任务）。
-   - 视觉与 `AppHeader` 同族（高度、毛玻璃、边线）。
+   - WEB 工作台整页顶栏：左 `‹ 返回创作空间` + `projectName`(§14-D2 居中题注)；右簇 `发现`/`ThemeToggle`/`AccountChrome`。（v3 §13.4：`我的` 撤除入头像下拉；v5：`⋯` 项目菜单整体移除。）
+   - props：`projectName: string`；emits：`go-gallery`（v5：`save`/`publish`/`import-workflow`/`export-workflow`/`export-workflow-light` 全部下线）。
+   - `发现`→`/community`；项目操作（发布/导出/导入/保存）**不在本组件**、亦不在任何画布上下文 `⋯`（v5 整体移除、入口后续重规划，见 §15）。
+   - 视觉与 `AppHeader` 同族（高度、边线；§14-D1 起栏体透明）。
 
 8. **`apps/web/src/components/agent/AgentSideRail.vue`**（P6 · 聊天栏头部减法）
    - 删除头部「新对话(＋)」「历史(🕘)」按钮（按 ADR-0015）。
@@ -284,10 +286,11 @@ flowchart LR
    - 在 `useProjectWorkspace` 或轻量 UI store 新增 `gallerySearchOpen` ref，`AppHeader`(🔍) 与 `CanvasesPage`(搜索输入) 共享。
 
 10. **测试**
-    - `MobileTopBar.chat.test.ts` / `MobileTopBar.taskMenu.test.ts`：移除 抽屉/品牌/新对话/历史 断言；新增 `mobile-topbar-back`(go-gallery)、`mobile-topbar-project-name`(=sessionTitle、截断)、`mobile-topbar-menu` 断言。
-    - `CanvasPage.mobileChromeHygiene.test.ts` 等：校验 chat/canvas 顶栏呈现 ‹ 返回创作空间 + 项目名；canvas 顶栏含 ⤢；移动端无浮动 ⤢。
+    - `MobileTopBar.chat.test.ts` / `MobileTopBar.taskMenu.test.ts`：移除 抽屉/品牌/新对话/历史 断言；新增 `mobile-topbar-back`(go-gallery)、`mobile-topbar-project-name`(=sessionTitle、截断) 断言；**v5：断言 chat/canvas 分支不渲染 `menu-anchor`/`bar-menu`/`mobile-topbar-menu`（顶栏零菜单）**。
+    - `CanvasPage.mobileChromeHygiene.test.ts` 等：校验 chat/canvas 顶栏呈现 ‹ 返回创作空间 + 项目名；canvas 顶栏含 ⤢；移动端无浮动 ⤢；v5：壳层零 `@publish`/`@import-workflow`/`@export-workflow*`/`:task-active-count` 接线、零任务轮询。
     - `CanvasesPage.test.ts`：校验 WEB+移动端均仅 logo+🔍+＋ 单栏；点 ＋ 触发 `create`；🔍 展开搜索；大标题/返回主页/管理 零命中；`AppHeader` 在 `/canvases` 无 创作/发现/主题/账号。
-    - `WorkspaceTopBar.test.ts`（新增）：校验 ‹ 返回创作空间 + 项目名(§6.4) + 发现/我的/主题/账号/⋯；`AgentSideRail` 头部无 新对话/历史。
+    - `WorkspaceTopBar.test.ts`：校验 ‹ 返回创作空间 + 项目名(§14-D2) + 发现/主题/账号；**v5：`workspace-menu`/发布/导出/导入/保存 全部零命中（顶栏零项目菜单）**；`AgentSideRail` 头部无 新对话/历史。
+    - `CanvasDeclutter.structure.test.ts`：v5 断言 CanvasPage 无 `@import-workflow`/`@export-workflow*`/`@publish`/`@save` 的「...」入口接线。
 
 ## 10. 明确不做（与 §2.2 呼应）
 
@@ -441,3 +444,15 @@ iOS 范式（scroll-edge appearance）：导航栏默认融入内容，仅当内
 2. `components/canvas/WorkspaceTopBar.vue`：栏体透明（去 bg+blur）；左置项目名 → 居中题注 `wkb-page-title`（testid `workspace-project-name` 保留）。
 3. `components/agent/AgentSideRail.vue`：`.agent-panel-mobile-dock` z `70 → 30`（根因修复）。
 4. 测试：`MobileTopBar.redesign.test.ts`（V21/V22）、`WorkspaceTopBar.test.ts`（V21/V22）、`design-token.test.ts`（D3 守卫）。
+
+## 15. 追加迭代 v5（2026-10-30 · ⋯ 项目菜单整体收敛，入口后续重新规划）
+
+> 背景：用户在 WEB 画布页看到右上 `...` 弹卡（保存画布 / 发布作品 / 导入导出工作流），
+> 与此前对话页 ⋯ 收敛（§6.2）同一职责边界原则拍板：**项目/画布级操作不属于对话/画布
+> 页签的常驻顶栏**——移动端与 WEB 一并整体移除，入口位置后续统一重新规划。
+
+- E1 **WEB**：`WorkspaceTopBar` 右簇 `⋯`（保存画布/发布作品/导入/导出 + 轻量包二级）整体移除；emits `save`/`publish`/`import-workflow`/`export-workflow`/`export-workflow-light` 下线。
+- E2 **移动端**：`MobileTopBar` 的 `⋯`（chat+canvas 共用：任务动态项/发布/导出二级/导入）整体移除；emits 与 `taskActiveCount`/`hasTaskHistory` props 下线；壳层任务计数轮询（`loadMobileTaskCount` 等与 `sessionId` prop）随 ⋯ 徽标失去消费方一并退役。
+- E3 **任务可达性保留**：任务进展经 `MobileNodeStatusBar` 聚合状态栏常驻可见，其 open-tasks 入口保留（打开 `MobileTaskSheet`）——`MobileTaskSheet` 及其 locate/retry 处理链**不**随 ⋯ 移除。
+- E4 **机械 dormant**：`CanvasPage` 的发布对话框（`PublishNeoTVDialog`/`showPublish`）与工作流导入 file input（`workflowImportInputRef`/`onWorkflowImportSelected`）保留但无触发入口；`openPublish`/`openWorkflowImportPicker` 函数删除（`handleExportPack` 仍被 `AgentSideRail` 消费，保留）。
+- E5 **验收**：V4/V6/V12 已翻述为「零菜单」判据；守卫测试 `CanvasDeclutter.structure` / `CanvasPage.mobileChromeHygiene` / `mobileEntryWiring` / `MobileTopBar.redesign` / `MobileTopBar.taskMenu` / `WorkspaceTopBar` 全部落「已移除」断言（防回潮棘轮）。

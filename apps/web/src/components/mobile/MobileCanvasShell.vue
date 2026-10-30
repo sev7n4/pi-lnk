@@ -18,10 +18,8 @@
  *
  * 本壳层自身只在 CanvasPage 的 `v-if="isMobileLayout"` 下渲染，内部不再判断断点。
  */
-import { computed, onUnmounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
-import { studioApi } from '@/services/studio-api'
-import type { GenerationRecord } from '@/services/studio-api'
 import type { MobileAppTab } from './MobileTabBar.vue'
 import type { DockNodeType } from '@/components/canvas/NodePanelDock.vue'
 import type { CanvasAssetItem } from '@/components/canvas/CanvasAssetPanel.vue'
@@ -109,8 +107,6 @@ const props = defineProps<{
   selectionBatch: unknown
   multiSelectCanUngroup: boolean
   multiSelectGroupColorKey: string | null
-  /** 任务轮询 */
-  sessionId: string
   /** ＋FAB 隐藏（沉浸画布） */
   canvasChromeHidden: boolean
   /** 移动端 studio dock 已展开（用户 tap 把手）——dock 面板占满画布底部，
@@ -126,9 +122,6 @@ const props = defineProps<{
   /** ── 共享动作（CanvasPage 核心逻辑）── */
   onTabChange: (tab: MobileAppTab) => void
   onSave: () => void
-  onPublish: () => void
-  onImportWorkflow: () => void
-  onExportPack: (ids: string[], mode: 'full_package' | 'lightweight') => void
   agentActions: MobileShellAgentActions
   dockAdd: (type: DockNodeType) => void
   assetApply: (asset: CanvasAssetItem) => void
@@ -277,44 +270,8 @@ function onMobileTaskRetry(nodeId: string) {
   showMobileTaskSheet.value = false
 }
 
-/** 任务轮询（顶栏 ⋯ 动态项徽标）：进入画布页签启动、离开停止 */
-const TASK_ACTIVE_STATUSES = new Set([
-  'pending',
-  'generating',
-  'fallback_pending',
-  'processing',
-  'running',
-])
-const mobileTaskActiveCount = ref(0)
-const mobileTaskHasHistory = ref(false)
-let mobileTaskPollTimer: ReturnType<typeof setInterval> | null = null
-
-async function loadMobileTaskCount() {
-  if (!props.sessionId) {
-    mobileTaskActiveCount.value = 0
-    mobileTaskHasHistory.value = false
-    return
-  }
-  try {
-    const { data } = await studioApi.listGenerations({ sessionId: props.sessionId })
-    const records: GenerationRecord[] = data.data ?? []
-    mobileTaskActiveCount.value = records.filter((r) => TASK_ACTIVE_STATUSES.has(r.status)).length
-    mobileTaskHasHistory.value = records.length > 0
-  } catch {
-    /* 计数失败不打扰画布：保持旧值，下个轮询周期重试 */
-  }
-}
-function startMobileTaskPolling() {
-  stopMobileTaskPolling()
-  void loadMobileTaskCount()
-  mobileTaskPollTimer = setInterval(() => void loadMobileTaskCount(), 15_000)
-}
-function stopMobileTaskPolling() {
-  if (mobileTaskPollTimer) {
-    clearInterval(mobileTaskPollTimer)
-    mobileTaskPollTimer = null
-  }
-}
+/** 任务轮询（原顶栏 ⋯ 动态项徽标）：2026-10-30 ⋯ 菜单整体移除后徽标失去消费方，
+ *  轮询随之退役——任务进展经 MobileNodeStatusBar 聚合状态栏常驻可见（真源仍在页面层）。 */
 
 /**
  * R3-T4：底部带互斥判据——有节点任务状态（生成中 / 待确认）时，
@@ -323,15 +280,6 @@ function stopMobileTaskPolling() {
  */
 const hasNodeTaskState = computed(
   () => props.nodeGeneratingCount > 0 || props.nodePendingNodes.length > 0,
-)
-
-watch(
-  [() => props.mobileAppTab, () => props.sessionId],
-  ([tab]) => {
-    if (tab === 'canvas') startMobileTaskPolling()
-    else stopMobileTaskPolling()
-  },
-  { immediate: true },
 )
 
 /** 登录态变化：未登录收回到对话页签并关账号面板（移动端落点纪律） */
@@ -344,30 +292,23 @@ watch(
     }
   },
 )
-
-onUnmounted(() => stopMobileTaskPolling())
 </script>
 
 <template>
   <!-- 移动端应用骨架（IA v3）：顶栏三区 + 底部四页签 + 发现/我的两页 + 账号二级面板
        + 自动保存状态行 + ＋FAB + 新建/任务 sheet + 多选动作条。
        本壳层由 CanvasPage 的 `v-if="isMobileLayout"` 包裹，内部不再判断断点。 -->
-  <!-- 移动端顶栏（对话 + 画布 共用，规格 §6.2/§6.3）：‹ 返回创作空间 + 项目名 + ⋯；
-       画布分支额外带 ⤢ 适应画布。⭐ 取代生命周期规格 §16-①「画布页签不渲染顶栏卡片」：
-       §16-① 让画布页签完全不渲染顶栏 ⇒ 用户实测「进画布即迷路」（缺项目名/返回），
-       本规格（2026-10-27 三页顶栏统一重构，后裁）改与 chat 同构常驻渲染。 -->
+  <!-- 移动端顶栏（对话 + 画布 共用，规格 §6.2/§6.3）：‹ 返回创作空间 + 项目名；
+       画布分支额外带 ⤢ 适应画布。⚠️ 2026-10-30：⋯ 项目菜单整体移除（发布/导出/导入/
+       任务 入口后续统一重规划），顶栏不再挂任务徽标轮询。⭐ 取代生命周期规格
+       §16-①「画布页签不渲染顶栏卡片」：§16-① 让画布页签完全不渲染顶栏 ⇒ 用户实测
+       「进画布即迷路」（缺项目名/返回），本规格（2026-10-27 三页顶栏统一重构，后裁）
+       改与 chat 同构常驻渲染。 -->
   <MobileTopBar
     :tab="mobileAppTab"
     :project-name="projectName"
-    :task-active-count="mobileTaskActiveCount"
-    :has-task-history="mobileTaskHasHistory"
     @go-gallery="agentActions.goGallery"
     @fit-view="agentActions.fitView"
-    @publish="onPublish"
-    @import-workflow="onImportWorkflow"
-    @export-workflow="onExportPack([], 'full_package')"
-    @export-workflow-light="onExportPack([], 'lightweight')"
-    @open-tasks="showMobileTaskSheet = true"
   />
   <!-- 2026-10-21：自动保存状态行——静默成功只报异常（失败红胶囊可点重试，保存中仅呼吸点）；
        多选态不出（与动作条抢位）。

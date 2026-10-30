@@ -2,7 +2,8 @@
 // ① 移动端摘除 NodePanelDock（竖轨）——PC 分支不受影响（!isMobileLayout 与既有
 //    !canvasChromeHidden 串联，语义 = 两条件同时满足才渲染，PC 行为逐字不变）；
 // ② ＋FAB 只在画布页签 + chrome 未隐藏时出现，呼吸态与空画布联动；
-// ③ MobileTopBar 收到任务动态项数据并接线 open-tasks；
+// ③ ⚠️ 2026-10-30：MobileTopBar ⋯ 项目菜单整体移除 ⇒ 任务动态项数据接线与
+//    任务计数轮询随之退役；任务入口由 MobileNodeStatusBar 聚合状态栏承接（open-tasks）；
 // ④ 新建/任务 sheet 的创建/资产/定位/重试全部复用既有处理器（handleDockAdd 等）。
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -72,20 +73,27 @@ describe('mobile create-entry convergence wiring (PR2)', () => {
     expect(handlers).toContain('props.historyRetry(nodeId)')
   })
 
-  it('MobileTopBar 任务动态项数据接线', () => {
-    // PR5（D-9）：任务动态项数据接线随 MobileTopBar 迁入 MobileCanvasShell
-    expect(shell).toContain(':task-active-count="mobileTaskActiveCount"')
-    expect(shell).toContain(':has-task-history="mobileTaskHasHistory"')
+  it('MobileTopBar 接线仅剩 tab/项目名/返回/⤢（⋯ 菜单接线 2026-10-30 退役）', () => {
+    const topBarTag = stripComments(shell).match(/<MobileTopBar[\s\S]*?\/>/)?.[0] ?? ''
+    expect(topBarTag, '必须能定位 MobileTopBar 开标签').toContain('<MobileTopBar')
+    expect(topBarTag).toContain(':project-name="projectName"')
+    expect(topBarTag).toContain('@go-gallery="agentActions.goGallery"')
+    expect(topBarTag).toContain('@fit-view="agentActions.fitView"')
+    // ⋯ 菜单接线退场（防死 emit 残留）
+    expect(topBarTag).not.toContain(':task-active-count=')
+    expect(topBarTag).not.toContain(':has-task-history=')
+    expect(topBarTag).not.toContain('@publish=')
+    expect(topBarTag).not.toContain('@import-workflow=')
+    expect(topBarTag).not.toContain('@export-workflow')
+    // 任务入口承接：MobileNodeStatusBar 仍接线 open-tasks（聚合状态栏，非 ⋯ 菜单）
     expect(shell).toContain('@open-tasks="showMobileTaskSheet = true"')
   })
 
-  it('任务计数轮询：画布页签才跑，卸载即停', () => {
-    // PR5（D-9）：轮询逻辑迁入 MobileCanvasShell
-    expect(shell).toContain('function loadMobileTaskCount')
-    expect(shell).toContain('function startMobileTaskPolling')
-    expect(shell).toContain('function stopMobileTaskPolling')
-    expect(shell).toMatch(/onUnmounted\([\s\S]*?stopMobileTaskPolling\(\)/)
-    expect(shell).toContain('studioApi.listGenerations({ sessionId: props.sessionId })')
+  it('任务计数轮询退役（⋯ 徽标失去消费方；任务进展走 MobileNodeStatusBar）', () => {
+    expect(shell).not.toContain('function loadMobileTaskCount')
+    expect(shell).not.toContain('startMobileTaskPolling')
+    expect(shell).not.toContain('stopMobileTaskPolling')
+    expect(shell).not.toContain('studioApi.listGenerations')
   })
 
   it('IA v4：发现页不再有「资料库」行，资产库改由画布页 composer 附件卡直达', () => {

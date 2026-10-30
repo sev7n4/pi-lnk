@@ -3500,10 +3500,6 @@ async function handleExportPack(
   })
 }
 
-function openWorkflowImportPicker() {
-  workflowImportInputRef.value?.click()
-}
-
 async function onWorkflowImportSelected(event: Event) {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
@@ -5125,13 +5121,8 @@ function handleMobileNodeRename(nodeId: string, title: string) {
   closeMobileNodeAction()
 }
 
-function openPublish() {
-  if (!auth.isLoggedIn) {
-    auth.openLogin()
-    return
-  }
-  showPublish.value = true
-}
+// 2026-10-30：openPublish / openWorkflowImportPicker 随画布「...」项目菜单整体移除
+// （发布/导入/导出入口后续统一重新规划）；发布对话框与导入 file input 机械保留 dormant。
 
 async function hydrateCompositionRunGroupFromSession() {
   try {
@@ -5992,10 +5983,6 @@ onUnmounted(() => {
           v-if="!canvasChromeHidden && !isMobileLayout"
           :project-name="sessionTitle"
           @go-gallery="backToCreationHome"
-          @save="saveCanvas"
-          @publish="openPublish"
-          @import-workflow="openWorkflowImportPicker"
-          @export-workflow="handleExportPack([], 'full_package')"
         />
 
         <!-- 2026-10-26 规格收敛 v2（D7）：PC 项目面板已退场（切换项目 = 返回创作首页）。 -->
@@ -6396,16 +6383,12 @@ onUnmounted(() => {
       :selection-batch="selectionBatchProp"
       :multi-select-can-ungroup="multiSelectCanUngroup"
       :multi-select-group-color-key="multiSelectGroupColorKey"
-      :session-id="sessionId"
       :canvas-chrome-hidden="canvasChromeHidden"
       :dock-expanded="mobileDockExpanded"
       :composer-visible="mobileCanvasComposerVisible"
       :canvas-view-visible="mobileCanvasView"
       :on-tab-change="onMobileTabChange"
       :on-save="saveCanvas"
-      :on-publish="openPublish"
-      :on-import-workflow="openWorkflowImportPicker"
-      :on-export-pack="handleExportPack"
       :agent-actions="agentRailActions"
       :project-name="sessionTitle"
       :dock-add="handleDockAdd"

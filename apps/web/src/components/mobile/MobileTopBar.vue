@@ -1,8 +1,7 @@
 <script setup lang="ts">
 /** 移动端应用骨架 · 顶栏（2026-10-19 IA v3.2 对话驱动叙事；2026-10-23 IA v4）：
- * 【对话】页签 = [≡ 左上·项目抽屉] [墨鱼π 字标＝回工作台 hero] [+ 新对话] [🕘 历史对话]（右侧）；
- * 【画布】页签 = [⋯ 项目管理菜单（任务动态项：有任务才出现；PR4 起按频次重排，
- *   「保存画布」移除改自动保存状态行，导出带二级）]；
+ * 【对话】页签 = [‹ 返回创作空间]（右簇空；⋯ 项目菜单 2026-10-30 整体移除，入口重规划）；
+ * 【画布】页签 = [‹ 返回创作空间] [⤢ 适应画布]（右簇仅此一枚；⋯ 项目菜单同日移除）；
  * 【发现】【我的】= 透明占位（保持 --lnk-topbar-h 高度一致，不放任何入口）。
  * 2026-10-19 用户裁决：顶栏「未命名画布」标题输入整体移除——对话驱动叙事下
  * 顶栏不放画布名；项目重命名入口在抽屉项目卡片菜单。
@@ -18,18 +17,16 @@
  * 2026-10-28 真机走查四轮（规格 §13.5）：① 画布页签去封条（材质横带退役，
  * is-canvas-bare）；② 居中页题注「对话·「项目名称」」/「画布·「项目名称」」
  * （细体 12px 次级灰，取代左置 15px 项目名，§6.4 v2）；③ 对话页顶栏被
- * 对话面板（裸 z:70）反盖的回归在 AgentSideRail 侧修（面板降到 chrome 之下）。 */
-import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { useClickOutside } from '@/composables/useClickOutside'
+ * 对话面板（裸 z:70）反盖的回归在 AgentSideRail 侧修（面板降到 chrome 之下）。
+ * 2026-10-30 用户裁决：⋯ 项目菜单（发布/导出/导入/任务，chat+canvas 共用）
+ * 整体移除——项目级操作不属于对话/画布页签顶栏，入口后续统一重新规划
+ * （三页顶栏重构规格 §6.2/§6.3/§6.8 v5）。 */
+import { computed, onMounted, onUnmounted } from 'vue'
 
 const props = defineProps<{
   tab: 'chat' | 'canvas' | 'discover' | 'mine'
   /** 当前项目名（规格 §6.4：次级灰、15px、超长截断、非交互） */
   projectName: string
-  /** 画布页签：运行中/排队中的任务数（顶栏 ⋯ 动态项徽标） */
-  taskActiveCount?: number
-  /** 画布页签：是否存在任何任务记录（无任务时动态项不出现） */
-  hasTaskHistory?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -37,17 +34,7 @@ const emit = defineEmits<{
   'go-gallery': []
   /** 规格 §6.3：⤢ 适应画布（canvas 分支，经壳层桥接到 VueFlow fitView） */
   'fit-view': []
-  publish: []
-  'import-workflow': []
-  'export-workflow': []
-  /** PR4：导出二级——轻量包（不含媒体） */
-  'export-workflow-light': []
-  'open-tasks': []
 }>()
-
-const menuOpen = ref(false)
-const exportOpen = ref(false)
-const menuRef = ref<HTMLElement | null>(null)
 
 const isGhost = computed(() => props.tab === 'discover' || props.tab === 'mine')
 
@@ -63,34 +50,6 @@ const pageTitle = computed(() => {
   const label = props.tab === 'canvas' ? '画布' : '对话'
   return `${label}·「${props.projectName}」`
 })
-
-/** 任务动态项（D-2 入口收敛）：有任务才出现；运行中/排队带计数徽标 */
-const showTaskItem = computed(() => props.tab === 'canvas' && props.hasTaskHistory === true)
-const taskItemLabel = computed(() =>
-  props.taskActiveCount && props.taskActiveCount > 0 ? `任务（${props.taskActiveCount}）` : '任务',
-)
-
-function closeMenu() {
-  menuOpen.value = false
-  exportOpen.value = false
-}
-
-useClickOutside(menuRef, closeMenu)
-
-function toggleMenu() {
-  menuOpen.value = !menuOpen.value
-  if (!menuOpen.value) exportOpen.value = false
-}
-
-function onMenuItem(action: 'publish' | 'import' | 'export' | 'export-light' | 'task') {
-  menuOpen.value = false
-  exportOpen.value = false
-  if (action === 'publish') emit('publish')
-  else if (action === 'import') emit('import-workflow')
-  else if (action === 'export') emit('export-workflow')
-  else if (action === 'export-light') emit('export-workflow-light')
-  else emit('open-tasks')
-}
 
 onMounted(() => {
   document.documentElement.style.setProperty(
@@ -139,7 +98,7 @@ onUnmounted(() => {
 
       <!-- 右侧工具簇 -->
       <div class="bar-actions">
-        <!-- 画布：⤢ 适应画布（位于 ⋯ 前；规格 §6.3，经壳层桥接 VueFlow fitView） -->
+        <!-- 画布：⤢ 适应画布（规格 §6.3，经壳层桥接 VueFlow fitView） -->
         <button
           v-if="props.tab === 'canvas'"
           type="button"
@@ -152,56 +111,6 @@ onUnmounted(() => {
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
           </svg>
         </button>
-
-        <!-- ⋯ 项目菜单（chat + canvas 共用；原仅 canvas，规格 §6.2/§6.3） -->
-        <div v-if="props.tab === 'chat' || props.tab === 'canvas'" ref="menuRef" class="menu-anchor">
-          <button
-            type="button"
-            class="bar-btn"
-            data-testid="mobile-topbar-menu"
-            aria-label="项目菜单"
-            @click.stop="toggleMenu"
-          >
-            <svg viewBox="0 0 24 24" fill="currentColor">
-              <circle cx="6" cy="12" r="1.8" />
-              <circle cx="12" cy="12" r="1.8" />
-              <circle cx="18" cy="12" r="1.8" />
-            </svg>
-          </button>
-          <div v-if="menuOpen" class="bar-menu" @click.stop>
-            <!-- 任务（D-2）：从竖轨移入的动态项，有任务才出现 -->
-            <button
-              v-if="showTaskItem"
-              type="button"
-              class="bar-menu-item"
-              data-testid="bar-menu-task"
-              @click="onMenuItem('task')"
-            >
-              {{ taskItemLabel }}
-            </button>
-            <!-- PR4（设计 §4.1）：按移动频次重排 ——发布 / 分镜 / 导出（默认完整包，
-                 轻量与媒体清单进二级）/ 导入；「保存画布」移除（移动端本就是自动保存，
-                 状态行 MobileSaveStatus 如实告知，点按仍可手动存）。 -->
-            <button type="button" class="bar-menu-item" @click="onMenuItem('publish')">发布作品</button>
-            <button
-              type="button"
-              class="bar-menu-item bar-menu-item--parent"
-              data-testid="bar-menu-export"
-              :aria-expanded="exportOpen"
-              @click.stop="exportOpen = !exportOpen"
-            >
-              <span>导出工作流</span>
-              <svg class="bar-menu-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
-              </svg>
-            </button>
-            <div v-if="exportOpen" class="bar-menu-sub" data-testid="bar-menu-export-sub">
-              <button type="button" class="bar-menu-item" @click="onMenuItem('export')">完整工作流包</button>
-              <button type="button" class="bar-menu-item" @click="onMenuItem('export-light')">轻量包（不含媒体）</button>
-            </div>
-            <button type="button" class="bar-menu-item" @click="onMenuItem('import')">导入工作流</button>
-          </div>
-        </div>
       </div>
     </header>
   </Teleport>
@@ -406,58 +315,5 @@ onUnmounted(() => {
 .bar-btn svg {
   width: 19px;
   height: 19px;
-}
-
-.menu-anchor {
-  position: relative;
-}
-
-.bar-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 10;
-  min-width: 140px;
-  padding: 4px 0;
-  border-radius: 12px;
-  background: var(--lnk-surface-raised);
-  border: 0.5px solid var(--lnk-border-subtle);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-}
-
-.bar-menu-item {
-  display: flex;
-  width: 100%;
-  min-height: var(--lnk-touch-target);
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--lnk-space-2);
-  padding: 0 14px;
-  border: none;
-  background: transparent;
-  color: var(--lnk-text-primary);
-  font-size: var(--lnk-text-xs, 12px);
-  text-align: left;
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
-/* 导出二级：缩进 + 左侧细线，视觉上从属于父项（PR4） */
-.bar-menu-sub {
-  margin: 2px 0 2px 10px;
-  padding-left: 6px;
-  border-left: 1px solid var(--lnk-border-subtle);
-}
-
-.bar-menu-chevron {
-  width: 14px;
-  height: 14px;
-  flex: none;
-  color: var(--lnk-text-muted);
-}
-
-.bar-menu-item:active {
-  background: color-mix(in srgb, var(--lnk-text-primary) 8%, transparent);
 }
 </style>
