@@ -3,8 +3,10 @@ import type { CanvasAction, CanvasData } from '@lnkpi/shared'
 import {
   applyActionsToFlow,
   canvasDataToFlow,
+  deriveProposeConfirmAnchor,
   extrasForCanvasSave,
   flowToCanvasData,
+  shouldStartPolling,
   type FlowEdge,
   type FlowNode,
 } from './useCanvasActions'
@@ -236,5 +238,36 @@ describe('SP-C：canvasData 序列化透传可选 viewport（N1/N2）', () => {
     expect(withVp.viewport).toEqual({ x: 1, y: 2, zoom: 0.5 })
     const without = extrasForCanvasSave({ groups: [] })
     expect('viewport' in without).toBe(false)
+  })
+})
+
+// ── P0-2 / P0-1（规格 2026-10-30-propose-confirm-execution-unity §8）──────────
+describe('deriveProposeConfirmAnchor：等待可见性锚点唯一判定', () => {
+  it('part 锚优先：等待NodeId 存在即 part（即便 status 还是 draft——2026-10-29 事故窗口期）', () => {
+    expect(deriveProposeConfirmAnchor('n1', 'draft')).toBe('part')
+    expect(deriveProposeConfirmAnchor('n1', undefined)).toBe('part')
+  })
+  it('无 part 时退化 status 锚：pending_confirm → status', () => {
+    expect(deriveProposeConfirmAnchor(null, 'pending_confirm')).toBe('status')
+    expect(deriveProposeConfirmAnchor(undefined, 'pending_confirm')).toBe('status')
+  })
+  it('两者皆无 → none（不渲染确认面）', () => {
+    expect(deriveProposeConfirmAnchor(null, 'draft')).toBe('none')
+    expect(deriveProposeConfirmAnchor(null, 'generating')).toBe('none')
+    expect(deriveProposeConfirmAnchor('', 'pending_confirm')).toBe('status')
+  })
+})
+
+describe('shouldStartPolling：服务端启动生成的轮询挂载去重判据', () => {
+  const base = { status: 'generating', generationRecordId: 'rec-1' }
+  it('generating + recordId + 不在轮询中 → true', () => {
+    expect(shouldStartPolling(base, null)).toBe(true)
+    expect(shouldStartPolling(base, 'rec-old')).toBe(true)
+  })
+  it('已在轮询同一 record / 非 generating / 缺 recordId → false', () => {
+    expect(shouldStartPolling(base, 'rec-1')).toBe(false)
+    expect(shouldStartPolling({ ...base, status: 'completed' }, null)).toBe(false)
+    expect(shouldStartPolling({ status: 'generating' }, null)).toBe(false)
+    expect(shouldStartPolling(null, null)).toBe(false)
   })
 })

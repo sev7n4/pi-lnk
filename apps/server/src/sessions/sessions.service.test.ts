@@ -61,7 +61,7 @@ describe('SessionsService.create —— 新建画布不种提示词节点（spec
 // ── update：pending_confirm 状态转移守卫（2026-10-13 虚假确认事故 cmv51vwpu0008p801hxaxcf8m）──
 // 浏览器整份 PUT 无权把服务端 pending_confirm 翻成旧终态（completed/error/failed）：
 // 那是 10-12 事故的直接成因（stale 全量盖写 → runtime 轮询误读为已确认）。合法出口只有
-// {pending_confirm, draft, generating}；违规**字段级**保留服务端值，其余字段照常落库，不 409。
+// {pending_confirm, generating}（2026-10-30 P0-4 收紧：draft 出口随「前端自起生成」一并退役）；违规**字段级**保留服务端值，其余字段照常落库，不 409。
 describe('SessionsService.update —— pending_confirm 状态转移守卫', () => {
   const prev = JSON.stringify({
     nodes: [
@@ -127,13 +127,13 @@ describe('SessionsService.update —— pending_confirm 状态转移守卫', () 
     expect(written.nodes[0].data.generationRecordId).toBe('rec-1')
   })
 
-  it('draft 放行（clear-propose 落 draft）', async () => {
+  it('P0-4 收紧：客户端把 pending_confirm 写回 draft → 字段级丢弃，status 保留 pending_confirm（取消走 decline 内部通道，不经浏览器 PUT）', async () => {
     const { update, moduleRef } = makeUpdateService()
     const svc = (await moduleRef.compile()).get(SessionsService)
     await svc.update('s1', 'u1', {
       canvasData: { nodes: [{ id: 'n1', type: 'image', position: { x: 0, y: 0 }, data: { status: 'draft' } }], edges: [] },
     })
-    expect(JSON.parse(update.mock.calls[0][0].data.canvasData as string).nodes[0].data.status).toBe('draft')
+    expect(JSON.parse(update.mock.calls[0][0].data.canvasData as string).nodes[0].data.status).toBe('pending_confirm')
   })
 
   it('非 pending_confirm 节点不受守卫影响（n2 completed → draft 自由）', async () => {

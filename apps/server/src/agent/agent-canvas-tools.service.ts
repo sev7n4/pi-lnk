@@ -1233,6 +1233,8 @@ export class AgentCanvasToolsService {
       imageAspect?: string
       imageResolution?: string
       videoSettings?: unknown
+      /** P0-1（规格 2026-10-30 §5）：确认即启动的 run-audio 需要 kind；随 summary 一次带回，免二次 get-node。 */
+      audioKind?: string
     } = {
       type: String(node.type),
       promptPreview,
@@ -1242,6 +1244,7 @@ export class AgentCanvasToolsService {
     if (typeof data.videoModel === 'string' && data.videoModel) summary.videoModel = data.videoModel
     if (typeof data.textModel === 'string' && data.textModel) summary.textModel = data.textModel
     if (typeof data.audioModel === 'string' && data.audioModel) summary.audioModel = data.audioModel
+    if (typeof data.audioKind === 'string' && data.audioKind) summary.audioKind = data.audioKind
     if (typeof data.imageAspect === 'string' && data.imageAspect) summary.imageAspect = data.imageAspect
     if (typeof data.imageResolution === 'string' && data.imageResolution) {
       summary.imageResolution = data.imageResolution
@@ -1814,10 +1817,35 @@ export class AgentCanvasToolsService {
     status: string
     actions: CanvasAction[]
     used: ImageGenUsedParams
+    /** P0-1 幂等直返（已有活跃 record）时为 true；首次启动缺省 false。 */
+    deduped?: boolean
   }> {
     const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
     const node = canvas.nodes.find((n) => n.id === input.nodeId)
     if (!node) throw new NotFoundException('节点不存在')
+
+    // P0-1 幂等（规格 2026-10-30-propose-confirm-execution-unity §4.2）：确认即启动后，
+    // 重复到达的启动请求（双击 / 重连重放 / 旧缓存前端叠加自起）不得产生第二个活跃
+    // record。锚点 = SSOT 真值：start 成功写入 status=generating + generationRecordId
+    // 后即视为「已有活跃启动」，直接返回现有 recordId（与 /answers 的 {ok,deduped} 幂等同形）。
+    if (
+      node.data?.status === 'generating' &&
+      typeof node.data?.generationRecordId === 'string' &&
+      node.data.generationRecordId
+    ) {
+      return {
+        generationRecordId: node.data.generationRecordId,
+        status: 'generating',
+        actions: [],
+        deduped: true,
+        used: {
+          model: pickString(node.data?.imageModel, undefined),
+          aspectRatio: pickString(node.data?.imageAspect, '16:9'),
+          resolution: pickString(node.data?.imageResolution, '1K'),
+          count: clampImageGenCount(node.data?.imageCount ?? 1),
+        },
+      }
+    }
 
     const prompt = String(node.data?.prompt ?? node.data?.content ?? '').trim()
     if (!prompt) throw new NotFoundException('节点缺少 prompt')
@@ -2029,10 +2057,24 @@ export class AgentCanvasToolsService {
     sessionId: string
     userId: string
     nodeId: string
-  }): Promise<{ generationRecordId: string; status: string; actions: CanvasAction[] }> {
+  }): Promise<{ generationRecordId: string; status: string; actions: CanvasAction[]; deduped?: boolean }> {
     const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
     const node = canvas.nodes.find((n) => n.id === input.nodeId)
     if (!node) throw new NotFoundException('节点不存在')
+
+    // P0-1 幂等（同 startImageGeneration）：确认即启动后重复请求不产生第二个活跃 record。
+    if (
+      node.data?.status === 'generating' &&
+      typeof node.data?.generationRecordId === 'string' &&
+      node.data.generationRecordId
+    ) {
+      return {
+        generationRecordId: node.data.generationRecordId,
+        status: 'generating',
+        actions: [],
+        deduped: true,
+      }
+    }
 
     const prefs = await this.loadAccountGenPrefs(input.userId)
     const request = resolveCanonicalVideoRequest({

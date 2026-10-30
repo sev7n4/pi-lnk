@@ -27,7 +27,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
-import { applyActionsToFlow, extrasForCanvasSave, flowToCanvasData } from '@/composables/useCanvasActions'
+import { applyActionsToFlow, deriveProposeConfirmAnchor, extrasForCanvasSave, flowToCanvasData, shouldStartPolling } from '@/composables/useCanvasActions'
 import { patchDiffers, pickInflightRecords, shouldPollNode } from '@/utils/generationPollScope'
 import { formatMediaDuration } from '@/utils/mediaInfoFormat'
 import { shouldBlockCanvasOverwrite, type CanvasLoadState } from './canvas/canvasLoadGuard'
@@ -724,6 +724,26 @@ function startPollingForGeneratingRecords() {
   if (tasks.length) generationPolling.start(tasks)
 }
 
+// ⭐ P0-1 配套（规格 2026-10-30-propose-confirm-execution-unity §5.3）：服务端启动的
+// 生成（runtime 确认即启动）经 SSE canvas_action / node_status 把 generating +
+// generationRecordId 写上节点——这里补一个长活监听，让这类 record 也挂进既有
+// useGenerationPolling 终态轮询（此前只有前端自起路径 generateForNode 会挂载）。
+// 判据走 shouldStartPolling 纯函数（generating + recordId 才扫），拖拽/视口不触发。
+const generationPollSignature = computed(() =>
+  nodes.value
+    .map((n) => {
+      const d = (n.data || {}) as Record<string, unknown>
+      return `${n.id}:${String(d.status ?? '')}:${String(d.generationRecordId ?? '')}`
+    })
+    .join('|'),
+)
+watch(generationPollSignature, () => {
+  const hasInflight = nodes.value.some((n) =>
+    shouldStartPolling((n.data || {}) as { status?: unknown; generationRecordId?: unknown }, null),
+  )
+  if (hasInflight) startPollingForGeneratingRecords()
+})
+
 const editorNode = computed((): EditableFlowNode | null => {
   if (multiSelectedIds.value.length !== 1) return null
   // 多选模式（D-4）：S2/S3 互斥——多选态不弹单节点 dock
@@ -798,15 +818,23 @@ const canvasChromeHidden = computed(() =>
  * （选中节点是「查看 / 编辑」语义，与「待确认」是两件事）。至多一个（propose 阻塞期
  * 一次只有一笔等待），find 取首个防御性兜底。与 selectionActionBarNode 天然互斥
  * （后者要求 url 非空，待确认节点还没有产物）。编辑浮层 / 精修 / 宫格工作台打开时让位。
+ *
+ * ⭐ P0-2 锚点换源（规格 2026-10-30-propose-confirm-execution-unity §4.3）：判定走
+ * `deriveProposeConfirmAnchor`——proposal part（waiting_user 事件，第一真相）∥ 节点
+ * status 双源 OR。等待期 update_node{pending_confirm} 随 tool_result 迟到 ⇒ 此前节点
+ * 恒 draft、确认面消失（2026-10-29 生产事故）；part 锚在事件到达瞬间即可见。
  */
+const proposeWaitNodeId = computed(() => useAgentStore().pendingProposal?.nodeId ?? null)
 const proposeConfirmNode = computed((): EditableFlowNode | null => {
   if (refinePanelNode.value || gridSlicePanelNode.value) return null
   if (nodeCropNodeId.value || nodeOutpaintNodeId.value || nodeInpaintNodeId.value || nodeElementEditNodeId.value) {
     return null
   }
-  const found = (nodes.value as EditableFlowNode[]).find((n) =>
-    isPendingConfirmNode(n as { data?: { status?: unknown } | undefined }),
-  )
+  const waitId = proposeWaitNodeId.value
+  const found = (nodes.value as EditableFlowNode[]).find((n) => {
+    const status = (n as { data?: { status?: unknown } | undefined }).data?.status
+    return deriveProposeConfirmAnchor(waitId && waitId === n.id ? waitId : null, status) !== 'none'
+  })
   return found ?? null
 })
 
@@ -4559,6 +4587,15 @@ async function handleNodeGenerate() {
   // L1：若本节点正卡在 propose 等待，先显式确认（registry answered）——不依赖 SSOT 时序，
   // 避免「flush 写回 stale draft → runtime 轮询误判取消」（2026-10-06 生产事故）。
   void agentRailRef.value?.confirmProposeWait?.(node.id)
+  // P0-1（规格 2026-10-30 §5）：等待期点 dock 生成 = 确认动作本身——生成由服务端启动
+  // （runtime answered → start-*/run-*），前端不再自起 generateForNode，杜绝双执行者。
+  // 仅 part 锚（活跃等待）时收口；status 残留（等待已超时/重启丢失）落不到 part ⇒
+  // 继续走下方手动生成路径（旧逃生口保留，不被 P0-4 守卫阻塞——studio 直生不经画布 PUT）。
+  const proposeWaitId = useAgentStore().pendingProposal?.nodeId ?? null
+  if (proposeWaitId && proposeWaitId === node.id) {
+    await debouncedNodePatch.flush()
+    return
+  }
   await debouncedNodePatch.flush()
   const fresh = editorNode.value
   if (!fresh) return
@@ -4598,17 +4635,20 @@ async function handleNodeGenerate() {
   await generateForNode(fresh)
 }
 
-/** Phase 2b/2c.1: agent propose confirm → same path as dock / retry by nodeId. */
+/**
+ * Phase 2b/2c.1（修订 P0-1，规格 2026-10-30-propose-confirm-execution-unity §5）：
+ * agent propose 确认 = 只发确认意图（confirmProposeWait → POST /answers）。
+ * 生成由 runtime 在 registry answered 后直调 Nest start 与 run 系端点启动（执行权收编
+ * 服务端，幂等）——前端不再是生成执行者：2026-10-29 生产事故中内联卡确认只 POST
+ * /answers、无人启动生成 ⇒ 空轮询 13 分钟。状态随服务端 SSOT 复制到达（SSE
+ * canvas_action / node_status / generationPolling watcher），本地不再 patch draft
+ * （P0-4 收紧后该 patch 会被服务端字段级回写 pending_confirm）。
+ */
 async function handleAgentGenerateNode(nodeId: string) {
   const node = nodes.value.find((n) => n.id === nodeId)
   if (!node) return
   // L1：与 dock 生成同一条显式确认路径（画布确认原子入口）
   void agentRailRef.value?.confirmProposeWait?.(nodeId)
-  // Phase 2c.1: leave pending_confirm as soon as confirm/dock generate starts.
-  if ((node.data as Record<string, unknown> | undefined)?.status === 'pending_confirm') {
-    patchNodeData(nodeId, { status: NODE_GENERATION_STATUS.draft })
-  }
-  await generateForNode(node as EditableFlowNode)
 }
 
 /**
@@ -4627,8 +4667,8 @@ async function handleProposeConfirmCancel(nodeId: string, note?: string) {
  * `summarizeMobileNodeTasks`，与磁贴 / 徽标同源于 `resolveMobileNodeState`）。
  * ⭐ 只给「数量 + 最早起始时间」——**不假造进度百分比**（全仓无生成进度字段）。
  */
-const mobileNodeTaskSummary = computed(() =>
-  summarizeMobileNodeTasks(
+const mobileNodeTaskSummary = computed(() => {
+  const summary = summarizeMobileNodeTasks(
     nodes.value.map((n) => {
       const data = (n.data ?? {}) as Record<string, unknown>
       return {
@@ -4638,8 +4678,22 @@ const mobileNodeTaskSummary = computed(() =>
         title: typeof data.title === 'string' ? data.title : undefined,
       }
     }),
-  ),
-)
+  )
+  // ⭐ P0-2（规格 2026-10-30-propose-confirm-execution-unity §4.3）：等待期节点 status
+  // 恒 draft（update_node{pending_confirm} 随 tool_result 迟到）⇒ 节点状态摘要看不见
+  // 「待确认」。并入 proposal part（waiting_user 事件，第一真相）锚定的节点——
+  // MobileNodeStatusBar 的确认/拒绝入口在等待期即可用（2026-10-29 生产事故面）。
+  const waitId = useAgentStore().pendingProposal?.nodeId
+  if (waitId && !summary.pendingNodes.some((p) => p.id === waitId)) {
+    const node = nodes.value.find((n) => n.id === waitId)
+    const nodeData = (node?.data ?? {}) as Record<string, unknown>
+    summary.pendingNodes.unshift({
+      id: waitId,
+      title: typeof nodeData.title === 'string' ? nodeData.title : undefined,
+    })
+  }
+  return summary
+})
 
 /** 聚合条的计时：按最早起始时间算已耗时（1s 一跳，仅在有生成中时跑）。 */
 const mobileNodeTaskElapsed = ref('')

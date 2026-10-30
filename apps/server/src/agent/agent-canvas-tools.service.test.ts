@@ -1060,6 +1060,45 @@ describe('AgentCanvasToolsService', () => {
     )
   })
 
+  it('P0-1 幂等：节点已在 generating 且带 recordId → 直返现有 record，不再创建第二个 record', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'img-1',
+          type: 'image',
+          position: { x: 0, y: 0 },
+          data: {
+            prompt: '洁具白底图',
+            status: 'generating',
+            generationRecordId: 'rec-active-1',
+          },
+        },
+      ],
+      edges: [],
+    }
+    const res = await svc.startImageGeneration({ sessionId: 's1', userId: 'u1', nodeId: 'img-1' })
+    expect(res.generationRecordId).toBe('rec-active-1')
+    expect(res.status).toBe('generating')
+    expect(res.deduped).toBe(true)
+    expect(generateImage).not.toHaveBeenCalled()
+  })
+
+  it('P0-1 幂等：status generating 但缺 recordId（历史脏态）→ 不短路，照常走启动', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'img-1',
+          type: 'image',
+          position: { x: 0, y: 0 },
+          data: { prompt: '洁具白底图', status: 'generating' },
+        },
+      ],
+      edges: [],
+    }
+    await svc.startImageGeneration({ sessionId: 's1', userId: 'u1', nodeId: 'img-1' })
+    expect(generateImage).toHaveBeenCalled()
+  })
+
   it('runImageGeneration prefers node image fields over account defaults', async () => {
     canvas = {
       nodes: [

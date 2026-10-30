@@ -15,6 +15,7 @@ import { useNodeWaveform } from '@/composables/useNodeWaveform'
 import { resolveMobileNodeState } from '@/composables/mobileNodeState'
 import { formatElapsed } from '@/components/canvas/nodeTaskChrome'
 import NodePendingPrompt from '@/components/canvas/NodePendingPrompt.vue'
+import { isPartAnchoredNode } from '@/composables/useProposeAnchor'
 import { mediaInfoLine } from '@/utils/mediaInfoFormat'
 import { getNeoNodeMeta } from '@/components/canvas/neoNodeMeta'
 import { useNodeMediaInfoFooter } from '@/composables/useNodeMediaInfoFooter'
@@ -179,9 +180,20 @@ const proposeParams = computed(() => {
  *   （避免「角标：待确认 + chip：待确认」两处重复标识）。
  */
 const showPropose = computed(() => {
-  if (state.value !== 'pending') return false
+  // P0-2（规格 2026-10-30 §4.3）：等待期节点 status 恒 draft（update_node 随 tool_result
+  // 迟到）⇒ state 非 pending；proposal part（waiting_user 事件，第一真相）锚定的节点
+  // 同样视为提议卡可见——2026-10-29 生产事故里磁贴提议内容就此消失。
+  // isPartAnchoredNode 内部 catch 无 pinia 的测试环境（退化为 false = 旧行为）。
+  const partAnchored = isPartAnchoredNode(props.id)
+  if (state.value !== 'pending' && !partAnchored) return false
   return String(props.data?.prompt ?? '').trim().length > 0
 })
+
+/**
+ * P0-2：part 锚（等待期）下 NodePendingPrompt 自身 status 门控会挡住渲染（status 仍是
+ * draft）——与 showPropose 同判据把「强制可见」传下去。
+ */
+const proposeWaiting = computed(() => state.value !== 'pending' && isPartAnchoredNode(props.id))
 
 /**
  * 有产物判据（G1，§4.7 表「有旧产物」列的单一真源）：媒体看 url、文本看 content。
@@ -614,6 +626,7 @@ function handleTextTap() {
         :prompt="data?.prompt"
         :label="data?.label"
         :status="data?.status"
+        :propose-waiting="proposeWaiting"
         hide-hint
       />
       <p v-if="proposeParams" class="mobile-node-params" data-testid="mobile-node-params">

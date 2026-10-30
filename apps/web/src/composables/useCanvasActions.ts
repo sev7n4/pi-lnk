@@ -239,3 +239,38 @@ export function extrasForCanvasSave(input: {
   if (input.viewport) extras.viewport = input.viewport
   return extras
 }
+
+/**
+ * P0-2 等待可见性锚点判定（规格 2026-10-30-propose-confirm-execution-unity §4.3，
+ * 唯一判定来源）：
+ *
+ * - `'part'`：服务端 `waiting_user` 事件收敛的 proposal part 仍 pending（第一真相）
+ *   —— 覆盖「update_node{pending_confirm} 随 tool_result 迟到」的整个窗口期
+ *   （2026-10-29 生产事故：等待期节点恒 draft ⇒ 确认面 / 磁贴提议内容全部消失）。
+ * - `'status'`：节点 status 已是 pending_confirm（服务端状态复制到达后的稳态）。
+ * - `'none'`：两者皆无（无等待，不渲染确认面）。
+ */
+export function deriveProposeConfirmAnchor(
+  waitingNodeId: string | null | undefined,
+  nodeStatus: unknown,
+): 'part' | 'status' | 'none' {
+  if (typeof waitingNodeId === 'string' && waitingNodeId) return 'part'
+  if (String(nodeStatus ?? '') === 'pending_confirm') return 'status'
+  return 'none'
+}
+
+/**
+ * P0-1 配套（规格 §5.3）：服务端启动的生成（runtime 确认即启动）会把
+ * generationRecordId 写上节点 SSOT；前端对该 record 启动轮询的去重判据——
+ * 只有「generating + 有 recordId + 不是已在轮询的那条」才需要挂载轮询。
+ */
+export function shouldStartPolling(
+  nodeData: { status?: unknown; generationRecordId?: unknown } | null | undefined,
+  activeRecordId: string | null | undefined,
+): boolean {
+  if (!nodeData) return false
+  if (String(nodeData.status ?? '') !== 'generating') return false
+  const recordId = typeof nodeData.generationRecordId === 'string' ? nodeData.generationRecordId : ''
+  if (!recordId) return false
+  return recordId !== activeRecordId
+}
