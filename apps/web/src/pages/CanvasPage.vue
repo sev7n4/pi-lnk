@@ -2723,6 +2723,30 @@ function openMobileNodeEditor(nodeId: string) {
   mobileEditorNode.value = node ?? null
 }
 
+// 问题③：文本节点**原生编辑器**（编辑生成内容 / 产物校正，非提示词）—— 本地保存，不绕 agent
+const mobileTextEditorNode = ref<EditableFlowNode | null>(null)
+const mobileTextEditor = computed(() =>
+  mobileTextEditorNode.value ? { node: mobileTextEditorNode.value } : null,
+)
+function openMobileTextEditor(nodeId: string) {
+  const node = findNodeById(nodeId)
+  mobileTextEditorNode.value = node ?? null
+}
+function closeMobileTextEditor() {
+  mobileTextEditorNode.value = null
+}
+/** 本地保存文本节点内容（产物校正）；内容无变化则不打扰落库 */
+function handleMobileTextEditorSave(payload: { content: string }) {
+  const node = mobileTextEditorNode.value
+  if (!node) return
+  const nextContent = payload.content
+  if (nextContent && nextContent !== String((node.data as Record<string, unknown>)?.content ?? '')) {
+    patchNodeData(node.id, { content: nextContent })
+    persistUserEdit()
+  }
+  closeMobileTextEditor()
+}
+
 function closeMobileNodeAction() {
   mobileActionNode.value = null
 }
@@ -2934,8 +2958,10 @@ function openMobileNodeMenuFromViewer() {
  * 查看器底部主栏动作（§4.11.6 高频下沉）。
  * §17 v2（2026-10-27）：pending 节点的 `annotate` / `edit` 在 viewer 内消化
  * （批注态 / 编辑态沿用原 viewer，不跳新页）⇒ 页面层只剩非 pending 的
- * `edit`（改词 sheet）——`pending-confirm` / `pending-cancel` 死分支退役
+ * `edit`——`pending-confirm` / `pending-cancel` 死分支退役
  * （审核层决策 = 批注锚 decline 结算 / 编辑保存回画布再确认）。
+ * 问题③：'edit' 分流——文本节点 ⇒ 原生文本编辑器（校正生成内容，本地保存，
+ * 不绕 agent）；媒体节点 ⇒ 轻量编辑器（改词 + 意见 → 发给 agent，模式①）。
  */
 function handleMobileViewerBottomAction(key: string, meta?: { mediaTime?: number }) {
   const node = mobileViewerNode.value
@@ -2947,7 +2973,11 @@ function handleMobileViewerBottomAction(key: string, meta?: { mediaTime?: number
         ? `at ${formatMediaDuration(meta.mediaTime) ?? '0:00'}`
         : ''
     closeMobileViewer()
-    openMobileNodeEditor(node.id)
+    // 文本节点 ⇒ 原生文本编辑器（校正生成内容）；媒体节点 ⇒ 提示词编辑器（改词重生成）。
+    // #636 边界：format:'html' 产物不裸编辑源码 ⇒ 保留 agent 改词流。
+    const format = String((node.data as Record<string, unknown> | undefined)?.format ?? 'plain')
+    if (node.type === 'text' && format !== 'html') openMobileTextEditor(node.id)
+    else openMobileNodeEditor(node.id)
   }
 }
 
@@ -6407,6 +6437,9 @@ onUnmounted(() => {
       :on-node-editor-close="closeMobileNodeEditor"
       :on-node-editor-patch="applyMobileEditorPatch"
       :on-node-editor-send-to-agent="handleMobileNodeSendToAgent"
+      :mobile-text-editor="mobileTextEditor"
+      :on-text-editor-close="closeMobileTextEditor"
+      :on-text-editor-save="handleMobileTextEditorSave"
       :on-viewer-annotate="handleMobileAnnotateAnchor"
       :on-viewer-more="openMobileNodeMenuFromViewer"
       :on-viewer-bottom-action="handleMobileViewerBottomAction"

@@ -1,9 +1,9 @@
 <script lang="ts">
-/** chrome 动作项（viewer 侧映射：edit→pencil / annotate→marker / tts→speaker） */
+/** chrome 动作项（viewer 侧映射：edit→pencil / annotate→marker / tts→speaker|stop） */
 export interface MobileViewerChromeAction {
   key: string
   label: string
-  icon: 'pencil' | 'marker' | 'speaker'
+  icon: 'pencil' | 'marker' | 'speaker' | 'stop'
 }
 </script>
 
@@ -101,6 +101,20 @@ const emit = defineEmits<{
       >
         <ellipse cx="12" cy="14" rx="8" ry="5.5" />
         <path d="M18.5 3.5l2 2-6.5 6.5-2.8.8.8-2.8Z" />
+      </svg>
+      <svg
+        v-else-if="a.icon === 'stop'"
+        viewBox="0 0 24 24"
+        width="22"
+        height="22"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        aria-hidden="true"
+      >
+        <rect x="6.5" y="6.5" width="11" height="11" rx="2.5" />
       </svg>
       <svg
         v-else

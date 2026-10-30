@@ -53,9 +53,15 @@ const props = withDefaults(
     }
     /**
      * 底部主栏动作（§4.11.6 可达性：高频操作放下方拇指区，顶部只放低频退出类）。
-     * ⭐ 如 confirmed 态的「改词」—— ⛔ 不放右上角（那是低频区）。
+     * ⭐ 如 confirmed 态的「编辑」—— ⛔ 不放右上角（那是低频区）。
+     * `icon` 走苹果风内联 SVG（24 网格 + stroke 2 + 圆头），与全站图标纪律一致。
      */
-    bottomActions?: Array<{ key: string; label: string; variant?: 'primary' | 'danger' }>
+    bottomActions?: Array<{
+      key: string
+      label: string
+      variant?: 'primary' | 'danger'
+      icon?: 'pencil' | 'speaker' | 'stop'
+    }>
     /**
      * 规格 v1.5 §4.12.2（拍板项 O）：长按唤起的 Menu 是否打开中。
      * 打开时轻暂停媒体；关闭时恢复此前播放态（仅在播才恢复）。
@@ -236,12 +242,15 @@ const reviewParams = computed(() => {
  * 标注态/编辑态为任务模式，不参与 chrome 切换。 */
 const chromeVisible = ref(true)
 
-/** 底栏动作 → chrome 迷你项（图标映射 §4.12.6；key 契约不变） */
+/** 底栏动作 → chrome 迷你项（图标映射 §4.12.6；key 契约不变）。
+ *  问题③：action 自带 icon（pencil/speaker/stop）优先生效——朗读停止态切 stop。 */
 const chromeActions = computed<MobileViewerChromeAction[]>(() =>
   resolvedBottomActions.value.map((a) => ({
     key: a.key,
     label: a.label,
-    icon: a.key === 'annotate' ? 'marker' : a.key === 'tts' ? 'speaker' : 'pencil',
+    icon:
+      a.icon ??
+      (a.key === 'annotate' ? 'marker' : a.key === 'tts' ? 'speaker' : 'pencil'),
   })),
 )
 
@@ -275,7 +284,12 @@ const resolvedBottomActions = computed(() => {
   const hasAnnotate = base.some((a) => a.key === 'annotate')
   const needsAnnotate =
     props.type !== 'text' && props.type !== 'audio' && !showReviewLayer.value && !hasAnnotate
-  const actions: Array<{ key: string; label: string; variant?: 'primary' | 'danger' }> = needsAnnotate
+  const actions: Array<{
+    key: string
+    label: string
+    variant?: 'primary' | 'danger'
+    icon?: 'pencil' | 'speaker' | 'stop'
+  }> = needsAnnotate
     ? [{ key: 'annotate', label: '圈选' }, ...base]
     : [...base]
   const isText = props.type === 'text'
@@ -283,7 +297,11 @@ const resolvedBottomActions = computed(() => {
   const rawContent = String(nodeData.value.content ?? '')
   const hasText = Boolean((isHtmlNode.value ? stripHtmlTags(rawContent) : rawContent).trim())
   if (isText && hasText && !isPendingNode.value) {
-    actions.push({ key: 'tts', label: ttsSpeaking.value ? '停止' : '朗读' })
+    actions.push({
+      key: 'tts',
+      label: ttsSpeaking.value ? '停止' : '朗读',
+      icon: ttsSpeaking.value ? 'stop' : 'speaker',
+    })
   }
   return actions
 })

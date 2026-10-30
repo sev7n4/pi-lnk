@@ -82,6 +82,10 @@ function baseProps(overrides: Record<string, unknown> = {}) {
     onViewerEditSave: vi.fn(),
     onNodeEditorClose: vi.fn(),
     onNodeEditorPatch: vi.fn(),
+    // 问题③：文本节点原生编辑器
+    mobileTextEditor: null,
+    onTextEditorClose: vi.fn(),
+    onTextEditorSave: vi.fn(),
     viewerNode: null,
     onViewerClose: vi.fn(),
     // R3-T4：壳层聚合状态栏（默认无任务态）
@@ -283,10 +287,11 @@ describe('MobileCanvasShell 审核层底栏两键（§17 v2 · 拍板①）', ()
       attachTo: document.body,
     })
     const labels = w.findAll('.mv-chrome-item').map((b) => b.text())
+    // 问题③：文本节点「编辑」= 校正生成内容（pencil）；媒体节点才是「改词」。
     // text 节点合法追加「朗读」（viewer 内消化），审核层两键不得泄漏
-    expect(labels).toContain('改词')
+    expect(labels).toContain('编辑')
+    expect(labels).not.toContain('改词')
     expect(labels).not.toContain('批注')
-    expect(labels).not.toContain('编辑')
     w.unmount()
   })
 
@@ -386,6 +391,55 @@ describe('MobileCanvasShell §16 真机走查二轮（2026-10-27）', () => {
       global: { stubs: { teleport: true } },
     })
     expect(w.findComponent({ name: 'MobileTopBar' }).exists()).toBe(true)
+    w.unmount()
+  })
+})
+
+describe('MobileCanvasShell 文本节点原生编辑器（问题③）', () => {
+  it('mobileTextEditor 设置 → 渲染文本编辑器（非提示词编辑器）', () => {
+    const w = mount(MobileCanvasShell, {
+      props: baseProps({
+        mobileTextEditor: {
+          node: { id: 'n1', type: 'text', data: { content: '原文' } },
+        } as unknown as { node: EditableFlowNode },
+      }),
+      attachTo: document.body,
+    })
+    expect(w.findComponent({ name: 'MobileNodeTextEditorSheet' }).exists()).toBe(true)
+    expect(w.findComponent({ name: 'MobileNodeEditorSheet' }).exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('文本编辑器保存 → onTextEditorSave 回传内容（本地校正）', async () => {
+    const onTextEditorSave = vi.fn()
+    const w = mount(MobileCanvasShell, {
+      props: baseProps({
+        mobileTextEditor: {
+          node: { id: 'n1', type: 'text', data: { content: '原文' } },
+        } as unknown as { node: EditableFlowNode },
+        onTextEditorSave,
+      }),
+      attachTo: document.body,
+    })
+    await w.find('[data-testid="mobile-text-editor-area"]').setValue('改后的文本')
+    await w.find('[data-testid="mobile-text-editor-save"]').trigger('click')
+    expect(onTextEditorSave).toHaveBeenCalledWith({ content: '改后的文本' })
+    w.unmount()
+  })
+
+  it('文本编辑器关闭 → onTextEditorClose', async () => {
+    const onTextEditorClose = vi.fn()
+    const w = mount(MobileCanvasShell, {
+      props: baseProps({
+        mobileTextEditor: {
+          node: { id: 'n1', type: 'text', data: { content: '原文' } },
+        } as unknown as { node: EditableFlowNode },
+        onTextEditorClose,
+      }),
+      attachTo: document.body,
+    })
+    await w.find('[data-testid="mobile-text-editor-close"]').trigger('click')
+    expect(onTextEditorClose).toHaveBeenCalled()
     w.unmount()
   })
 })

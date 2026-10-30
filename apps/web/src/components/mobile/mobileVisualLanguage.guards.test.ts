@@ -65,6 +65,7 @@ describe('跨端视觉与组件哲学守卫（§4.11）', () => {
       'MobileNodeViewer.vue': '全屏**媒体查看器**（灯箱/逐帧/全屏阅读）—— §4.11.8 豁免类①',
       'MobileReadingSurface.vue': '共享**全屏文本阅读面**（§4.8.1）—— §4.11.8 豁免类②',
       'MobileNodeEditorSheet.vue': '全屏**表单**（长提示词需整屏输入面；MobileSheet 是 62vh 选择型）—— §4.11.8 豁免类③',
+      'MobileNodeTextEditorSheet.vue': '全屏**表单**（文本产物校正原生编辑器，需整屏输入面弹手机键盘；MobileSheet 是 62vh 选择型）—— §4.11.8 豁免类③（与 MobileNodeEditorSheet 同类，2026-10-30）',
       'ProfilePane.vue': '全屏**资料面板**（既有能力）—— §4.11.8 豁免类④',
       'DiscoverPane.vue': '全屏**发现面板**（既有能力）—— §4.11.8 豁免类④',
       'MobileCanvasShell.vue': '内含 `.mobile-account-pane` 全屏「我的」面板（既有能力）—— §4.11.8 豁免类④',
