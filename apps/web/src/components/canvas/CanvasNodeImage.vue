@@ -6,6 +6,7 @@ import NodeStatusInfoButton from '@/components/canvas/NodeStatusInfoButton.vue'
 import { resolveImageNodeDisplaySize } from '@/components/canvas/mediaNodeDisplaySize'
 import MediaInfoSummary from '@/components/media/MediaInfoSummary.vue'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
+import { isPartAnchoredNode } from '@/composables/useProposeAnchor'
 import { resolveMediaUrl } from '@/services/api-base'
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
@@ -35,6 +36,8 @@ const props = defineProps<{
   }
 }>()
 
+// P0-2：等待期（proposal part 锚定）提议摘要强制可见（status 尚未到达，规格 2026-10-30 §4.3）。
+const proposeWaiting = computed(() => isPartAnchoredNode(props.id))
 const editor = useCanvasEditorStore()
 const route = useRoute()
 const { openInspector } = useMediaInspector()
@@ -188,7 +191,7 @@ function openMediaInspector(e?: Event) {
         <div class="neo-placeholder-content">
           <!-- ADR-0011 决定 1：待确认态渲染提示词摘要（dock 已对该态门控，摘要必须回到节点本体）。
                其余状态维持「上传 / 等待生成」占位。 -->
-          <NodePendingPrompt :prompt="data.prompt" :label="data.label" :status="data.status" />
+          <NodePendingPrompt :prompt="data.prompt" :label="data.label" :status="data.status" :propose-waiting="proposeWaiting" />
           <template v-if="!isPendingConfirm">
             <button
               v-if="data.status !== 'generating' && data.status !== 'uploading'"

@@ -2,6 +2,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createCanvasWriteTools } from "./canvas-write.js";
+import type { NestClient } from "./nest-client.js";
 import type { LnkpiToolContext } from "./types.js";
 
 type Recorded = { path: string; body: Record<string, unknown> };
@@ -467,15 +468,38 @@ type PollRead = string | { status: string; generationRecordId?: string; generati
  */
 function fakeNestClient(
 	pollReads: PollRead[],
-	opts: { getNodeThrows?: boolean; failFirst?: number; snapshotRecordId?: string; snapshotStartedAt?: string } = {},
+	opts: {
+		getNodeThrows?: boolean;
+		failFirst?: number;
+		snapshotRecordId?: string;
+		snapshotStartedAt?: string;
+		/** P0-1：propose-generation 返回的 summary（节点类型派发生成端点用）。 */
+		proposeSummary?: Record<string, unknown>;
+		/** P0-1：start 与 run 系启动端点抛错（模拟服务端启动失败）。 */
+		startThrows?: boolean;
+		/** P0-1：run-text-generation 的返回（默认 {ok:true}）。 */
+		runTextResult?: Record<string, unknown>;
+	} = {},
 ) {
 	let i = 0;
 	let called = 0;
 	let snapshotDone = false;
 	const stats = { getNodeCalls: 0 };
-	return {
+	const posts: Array<{ path: string; body: unknown }> = [];
+	const fake = {
 		stats,
-		post: async (path: string) => {
+		posts,
+		post: async (path: string, body?: unknown, _opts?: { signal?: AbortSignal }) => {
+			posts.push({ path, body });
+			if (opts.startThrows && /\/agent\/internal\/(start-(image|video)-generation|run-(text|audio)-generation)$/.test(path)) {
+				throw new NestToolError("nest http 500: boom", "http", 500);
+			}
+			if (path === "/agent/internal/propose-generation") {
+				return { ok: true, ...(opts.proposeSummary ? { summary: opts.proposeSummary } : {}) };
+			}
+			if (path === "/agent/internal/run-text-generation" && opts.runTextResult) {
+				return opts.runTextResult;
+			}
 			if (path === "/agent/internal/get-node") {
 				stats.getNodeCalls++;
 				if (!snapshotDone) {
@@ -498,7 +522,10 @@ function fakeNestClient(
 			}
 			return { ok: true }; // propose-generation 等
 		},
-	} as never;
+	};
+	// 带类型的交叉断言：既满足 createCanvasWriteTools 的 NestClient 形参，
+	// 又暴露 stats/posts 供断言读取（CI tsc 会编译测试文件，`as never` 会把成员收窄成 never）。
+	return fake as unknown as NestClient & { stats: { getNodeCalls: number }; posts: typeof posts };
 }
 
 describe("propose_generation 阻塞确认（B-2）", () => {
@@ -1057,6 +1084,98 @@ describe("canvas-write: apply_sidebar_attachments 平台填充对账文案（RB-
 
 // ── propose_generation 结算归因回调（P2，spec 2026-10-13 §2）────────────────
 // 一次 propose 恰好一条观测：race 收敛单点（等待结算）与早退路径（nonblocking）互斥不双计。
+// ── P0-1 确认即启动（规格 2026-10-30-propose-confirm-execution-unity §5）──────────
+// 2026-10-29 生产事故根因回归锁：确认（answered）后**必须**由 runtime 直调服务端
+// 生成端点——此前内联卡只 POST /answers、前端不再自起，runtime 空轮询 13 分钟等一个
+// 自己没启动的任务（GenerationRecord 零行，模型却被喂「生成仍在进行」）。
+describe("propose_generation 确认即启动（P0-1）", () => {
+	/** 轮询式等待（registry 挂载），超时即抛错防用例假绿。 */
+	async function waitFor(cond: () => boolean, timeoutMs = 1000): Promise<void> {
+		const start = Date.now();
+		while (!cond()) {
+			if (Date.now() - start > timeoutMs) throw new Error("waitFor timeout");
+			await new Promise((r) => setTimeout(r, 2));
+		}
+	}
+
+	it("answered → runtime 直调 start-image-generation（执行权收编服务端，body 三字段）", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient(["pending_confirm"]);
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const pending = run(propose, { node_id: "n1" });
+		await waitFor(() => reg.hasPending("s1"));
+		reg.answer("s1", "tc1", {});
+		await pending;
+		const start = client.posts.find((p) => p.path === "/agent/internal/start-image-generation");
+		assert.ok(start, "start-image-generation 未被调用");
+		assert.deepEqual(start.body, { sessionId: "s1", userId: "u1", nodeId: "n1" });
+	});
+
+	it("summary.type=video → 派发 start-video-generation", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient(["pending_confirm"], { proposeSummary: { type: "video" } });
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const pending = run(propose, { node_id: "n1" });
+		await waitFor(() => reg.hasPending("s1"));
+		reg.answer("s1", "tc1", {});
+		await pending;
+		assert.ok(
+			client.posts.some((p) => p.path === "/agent/internal/start-video-generation"),
+			"start-video-generation 未被调用",
+		);
+	});
+
+	it("text 节点：run-text-generation 持至终态 → 直接采用，不再轮询等待", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient(["pending_confirm"], {
+			proposeSummary: { type: "text" },
+			runTextResult: { status: "completed" },
+		});
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5, genTerminalWaitMs: 40 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const pending = run(propose, { node_id: "n1" });
+		await waitFor(() => reg.hasPending("s1"));
+		reg.answer("s1", "tc1", {});
+		const result = await pending;
+		const details = result.details as { generation?: { status: string } };
+		assert.equal(details.generation?.status, "completed");
+		assert.ok(client.posts.some((p) => p.path === "/agent/internal/run-text-generation"));
+		const text = String((result.content as Array<{ text: string }>)[0].text);
+		assert.match(text, /生成已完成/);
+	});
+
+	it("启动失败（start 抛 500）→ fail 信号 + 明说未启动，绝不装「生成中」", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient(["pending_confirm"], { startThrows: true });
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const pending = run(propose, { node_id: "n1" });
+		await waitFor(() => reg.hasPending("s1"));
+		reg.answer("s1", "tc1", {});
+		const result = await pending;
+		const details = result.details as {
+			ok?: boolean;
+			started?: boolean;
+			confirmed?: boolean;
+			_signal?: { status?: string; errorCode?: string };
+		};
+		assert.equal(details.ok, false);
+		assert.equal(details.started, false);
+		assert.equal(details.confirmed, true);
+		assert.equal(details._signal?.errorCode, "generation_start_failed");
+		const text = String((result.content as Array<{ text: string }>)[0].text);
+		assert.match(text, /启动生成失败/);
+		assert.match(text, /不要声称正在出图/);
+		assert.doesNotMatch(text, /生成仍在进行/);
+	});
+});
+
 describe("propose_generation 结算归因回调（P2）", () => {
 	it("无 registry（旧行为早退）→ onProposeOutcome(nonblocking, false) 且结果逐字节旧行为", async () => {
 		const client = fakeNestClient(["pending_confirm"]);

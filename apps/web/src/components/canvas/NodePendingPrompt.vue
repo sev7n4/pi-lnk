@@ -32,10 +32,23 @@ const props = defineProps<{
    *   在 PC 改文案时会露出不相关内容，且 jsdom 不计算 scoped 样式（测不到）。
    */
   hideHint?: boolean
+  /**
+   * P0-2（规格 2026-10-30-propose-confirm-execution-unity §4.3）：part 锚强制可见。
+   *
+   * 等待期节点 status 恒 draft（update_node{pending_confirm} 随 tool_result 迟到，
+   * 2026-10-29 生产事故），仅按 status 门控会让提议 prompt 在磁贴上消失。调用方
+   * 传「该节点被 proposal part（waiting_user 事件）锚定」的真值即可在等待期渲染。
+   * 缺省 false ⇒ 旧行为逐字节不变。
+   */
+  proposeWaiting?: boolean
 }>()
 
 const text = computed(() => String(props.prompt ?? '').trim())
-const visible = computed(() => String(props.status ?? '') === NODE_PENDING_CONFIRM_STATUS && text.value.length > 0)
+const visible = computed(
+  () =>
+    (props.proposeWaiting === true || String(props.status ?? '') === NODE_PENDING_CONFIRM_STATUS) &&
+    text.value.length > 0,
+)
 const labelText = computed(() => String(props.label ?? '').trim())
 </script>
 

@@ -718,6 +718,70 @@ export function createCanvasWriteTools(
 						},
 					};
 				}
+				// ⭐ P0-1 确认即启动（规格 2026-10-30-propose-confirm-execution-unity §5）：
+				// 执行权收编服务端。confirmed（answered / 画布自起兜底）后由 runtime 直调 Nest
+				// **既有**内部生成端点（与 run_* 工具同一执行入口，不新增端点）。2026-10-29 生产
+				// 事故根因即「确认后无人启动生成」——内联卡只 POST /answers，前端又已不再自起，
+				// runtime 空轮询 13 分钟等一个自己没启动的任务。启动失败必须如实报错（fail 信号），
+				// 绝不装「生成中」。
+				let runTerminal: GenerationTerminalOutcome | undefined;
+				try {
+					// 节点类型取 propose-generation 返回的 summary（Nest 侧已算好，不二次 get-node
+					// ——二次读会吃掉测试与生产的轮询序列，summary.type 是既有字段）。
+					const baseInfo = (base ?? null) as { summary?: { type?: unknown; audioKind?: unknown } } | null;
+					const nodeType = String(baseInfo?.summary?.type ?? "image");
+					if (nodeType === "text" || nodeType === "audio") {
+						// run-* 持至终态才返（服务端已写 SSOT 终态），无需再走下方轮询等待。
+						const res = (await client.post(
+							nodeType === "text"
+								? "/agent/internal/run-text-generation"
+								: "/agent/internal/run-audio-generation",
+							{
+								sessionId: tc.sessionId,
+								userId: tc.userId,
+								nodeId: p.node_id,
+								...(nodeType === "audio" && typeof baseInfo?.summary?.audioKind === "string"
+									? { kind: baseInfo.summary.audioKind }
+									: {}),
+							},
+							{ signal: context?.abortSignal ?? undefined },
+						)) as { status?: unknown; url?: unknown };
+						const s = String(res?.status ?? "");
+						runTerminal =
+							s === "completed"
+								? { status: "completed", url: typeof res?.url === "string" ? res.url : undefined }
+								: { status: "failed", error: `生成未完成（${s || "unknown"}），请查看节点错误信息` };
+					} else {
+						// image / video（未知类型回落 image）：start-* 即返 record，终态走下方既有等待。
+						await client.post(
+							nodeType === "video"
+								? "/agent/internal/start-video-generation"
+								: "/agent/internal/start-image-generation",
+							{ sessionId: tc.sessionId, userId: tc.userId, nodeId: p.node_id },
+						);
+					}
+				} catch (err) {
+					// 用户中止（composer 停止）≠ 启动失败：保持上游 abort 语义（与等待臂同形）。
+					context?.abortSignal?.throwIfAborted();
+					const detail = err instanceof Error ? err.message : "unknown";
+					return {
+						content: [{
+							type: "text",
+							text: JSON.stringify({
+								ok: false,
+								confirmed: true,
+								started: false,
+								message: `生成确认已收到，但服务端启动生成失败：${detail}。请如实告知用户生成未能启动，不要声称正在出图；可建议用户在画布节点上手动生成，或稍后重新确认。`,
+							}),
+						}],
+						details: {
+							ok: false,
+							confirmed: true,
+							started: false,
+							_signal: { status: "failed", retryable: true, errorCode: "generation_start_failed" },
+						},
+					};
+				}
 				// ⭐ 2026-10-18 回合挂住等终态（上游对齐）：确认（answered / 画布自起生成）只证明
 			// 「生成已启动」。此处继续持有工具 promise 轮询至生成终态并把结果交还模型——
 			// SSE 不提前关，node_status 终态在回合内流出，前端产物行翻 done 不再依赖回合后的
@@ -725,6 +789,11 @@ export function createCanvasWriteTools(
 			// 超限/中止按 timeout 收尾（生成继续在 Nest 侧跑，前端画布对账兜底），行为可回退：
 			// PI_RUNTIME_GEN_TERMINAL_WAIT_MS 极小值即近似旧行为。
 			const capMs = opts.genTerminalWaitMs ?? genTerminalWaitMs();
+			let genOutcome: GenerationTerminalOutcome;
+			if (runTerminal) {
+				// text / audio（P0-1）：run-* 已持至终态并写 SSOT，直接采用，不再轮询。
+				genOutcome = runTerminal;
+			} else {
 			// 等待期登记（2026-10-18 上游对齐）：notify-generation 通报据此抑制——
 			// 本工具自己会把终态交还模型，重复通报只会多啰嗦一轮。finally 必解绑。
 			let unregisterWait: (() => void) | undefined;
@@ -733,7 +802,6 @@ export function createCanvasWriteTools(
 			} catch {
 				/* 登记是纯观测面 */
 			}
-			let genOutcome: GenerationTerminalOutcome;
 			try {
 				genOutcome = await waitForGenerationTerminal(
 					client,
@@ -756,6 +824,7 @@ export function createCanvasWriteTools(
 				} catch {
 					/* 解绑同理 */
 				}
+			}
 			}
 			const withActions = withWriteSignal(base, 1);
 			const genMessage =

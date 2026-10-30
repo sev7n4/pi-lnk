@@ -72,8 +72,16 @@ export class SessionsService {
     return this.formatSession(session)
   }
 
-  /** pending_confirm 的合法客户端出口（显式确认 patch 序列 + clear-propose）；终态一律无权直达。 */
-  private static readonly PENDING_CONFIRM_CLIENT_EXITS = new Set(['pending_confirm', 'draft', 'generating'])
+  /**
+   * pending_confirm 的合法客户端出口（2026-10-30 P0-4 收紧，规格
+   * 2026-10-30-propose-confirm-execution-unity §7）：确认后由服务端自起生成
+   * （generating 由内部链路写入），客户端 PUT 不再需要写 draft——旧放行是给
+   * 「前端确认后自起生成」让路的历史残留，正是 2026-10-29 生产事故（画布页 3s
+   * 自动整份 PUT 反复把 pending_confirm 盖回 draft）的权限面。取消语义走
+   * /answers decline → clear-propose 内部通道（persist），不经本守卫。
+   * 终态一律无权直达；违规**字段级**保留服务端值（其余字段照常落库，不 409 整单）。
+   */
+  private static readonly PENDING_CONFIRM_CLIENT_EXITS = new Set(['pending_confirm', 'generating'])
 
   /**
    * 2026-10-13 虚假确认事故（cmv51vwpu0008p801hxaxcf8m）：浏览器整份 PUT 把

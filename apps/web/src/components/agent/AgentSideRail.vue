@@ -2753,23 +2753,32 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
     if ((err as Error)?.name === 'AbortError') {
       // 用户主动取消：不报、不弹卡
     } else {
-      const cls = classifyRequestError(err)
-      agent.markTurnError(err)
-      // 气泡只留一行人话摘要，原始技术文案（如 `TypeError: network error`）不再透出
-      agent.appendText(`\n\n⚠️ 生成失败 · ${cls.human}`)
-      lastTurnFailed.value = true
-      // 分流进 dock 三色卡片（单一出口）：连接级=黄卡+重试，业务级=红卡+重试
-      dockNotice.pushNotice({
-        id: REQUEST_FAILED_ID,
-        tone: cls.kind === 'network' ? 'warning' : 'error',
-        title: cls.kind === 'network' ? '网络连接中断' : '生成失败',
-        message:
-          cls.kind === 'network'
-            ? '生成进度已自动保存，可点「重试」继续。'
-            : cls.human,
-        action: { label: '重试', onClick: () => void retryLastTurn() },
-        ttl: 0,
-      })
+      // ⭐ P0-5（规格 2026-10-30-propose-confirm-execution-unity §4.1 判据 3）：turn 终态
+      // 判定来源 = 服务端事件，不是连接状态。等待挂起期（proposal/question part 仍
+      // pending）主流断开 ≠ turn 失败——服务端 run 活着，等待态已由 timeline part 单一
+      // 真相呈现，重连后 lastEventId 回放对账。2026-10-29 生产事故：用户点「定位」切画布
+      // → SSE 断开 → 被标「生成失败 · 网络连接不稳定」（服务端实际 13 分钟后正常 settled）。
+      if (agent.pendingProposal || agent.pendingQuestion) {
+        agent.appendText('\n\n⚠️ 连接已断开；你的确认仍在等待中，恢复网络后自动继续，无需重复操作。')
+      } else {
+        const cls = classifyRequestError(err)
+        agent.markTurnError(err)
+        // 气泡只留一行人话摘要，原始技术文案（如 `TypeError: network error`）不再透出
+        agent.appendText(`\n\n⚠️ 生成失败 · ${cls.human}`)
+        lastTurnFailed.value = true
+        // 分流进 dock 三色卡片（单一出口）：连接级=黄卡+重试，业务级=红卡+重试
+        dockNotice.pushNotice({
+          id: REQUEST_FAILED_ID,
+          tone: cls.kind === 'network' ? 'warning' : 'error',
+          title: cls.kind === 'network' ? '网络连接中断' : '生成失败',
+          message:
+            cls.kind === 'network'
+              ? '生成进度已自动保存，可点「重试」继续。'
+              : cls.human,
+          action: { label: '重试', onClick: () => void retryLastTurn() },
+          ttl: 0,
+        })
+      }
     }
   } finally {
     agentStream.stop()

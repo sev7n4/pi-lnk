@@ -11,6 +11,7 @@ import { useNodeMediaUpload } from '@/composables/useNodeMediaUpload'
 import { useNodeMediaInfoFooter } from '@/composables/useNodeMediaInfoFooter'
 import { useMediaInspector, type NodeMediaInfoSummary } from '@/composables/useMediaInspector'
 import { NODE_GENERATION_STATUS, NODE_PENDING_CONFIRM_STATUS } from '@/constants/dockStudio'
+import { isPartAnchoredNode } from '@/composables/useProposeAnchor'
 import { downloadMediaFile, isUpstreamMediaUrl, mediaDownloadName, UPSTREAM_MEDIA_DOWNLOAD_HINT } from '@/composables/useCanvasMedia'
 import { saveAssetToLibrary } from '@/composables/useAssetLibrary'
 import { nodePlaceholderText } from '@/utils/incompleteNode'
@@ -34,6 +35,8 @@ const props = defineProps<{
 }>()
 
 const route = useRoute()
+// P0-2：等待期（proposal part 锚定）提议摘要强制可见（status 尚未到达，规格 2026-10-30 §4.3）。
+const proposeWaiting = computed(() => isPartAnchoredNode(props.id))
 const sessionId = computed(() => route.params.sessionId as string | undefined)
 const taskId = computed(
   () =>
@@ -213,7 +216,7 @@ function openMediaInspector(e?: Event) {
       >
         <div class="neo-placeholder-content">
           <!-- ADR-0011 决定 1：待确认态渲染提示词摘要（dock 已对该态门控） -->
-          <NodePendingPrompt :prompt="data.prompt" :label="data.label" :status="data.status" />
+          <NodePendingPrompt :prompt="data.prompt" :label="data.label" :status="data.status" :propose-waiting="proposeWaiting" />
           <template v-if="!isPendingConfirm">
             <button
               v-if="data.status !== 'generating' && data.status !== 'uploading'"
