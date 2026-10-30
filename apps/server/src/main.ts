@@ -5,6 +5,7 @@ import { NestExpressApplication } from '@nestjs/platform-express'
 import { join } from 'path'
 import { AppModule } from './app.module'
 import { isOriginAllowed, parseCorsOrigins } from './cors.util'
+import { NoCacheInterceptor } from './common/no-cache.interceptor'
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule)
@@ -28,6 +29,8 @@ async function bootstrap() {
     credentials: true,
   })
   app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }))
+  // H0-a（规格 2026-10-28 §5.1）：动态 GET 统一 no-store，缓存策略服务端收口（K1）
+  app.useGlobalInterceptors(new NoCacheInterceptor())
 
   const port = process.env.PORT || 3001
   await app.listen(port)

@@ -1242,14 +1242,11 @@ const runMemoryInjection = async (items: unknown[], tag: string): Promise<string
     expect(pi.deleteSession).not.toHaveBeenCalled()
   })
 
-  it('退役后 getThreadState 恒 null——checkpoint 概念随老 LangGraph runtime 一起移除', async () => {
+  it('getThreadState 已随 H1-c 退役（thread-state 死端点清除，D20 不许半死）', async () => {
     process.env.PI_RUNTIME_MODE = 'active'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
-    const piSpy = vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(stubPiClient([]))
 
-    expect(await service.getThreadState('t1')).toBeNull()
-    // 端点只是保留给前端重连用，实现里不再有任何下游调用
-    expect(piSpy).not.toHaveBeenCalled()
+    expect((service as unknown as Record<string, unknown>).getThreadState).toBeUndefined()
   })
 
   it('退役后 getThreadTimeline 同样恒 null', async () => {

@@ -66,6 +66,9 @@ export * from './videoGeneration/minimaxH3Reference'
 export * from './imagePromptingGuide'
 export * from './gridSlice'
 
+// 机器载荷清单（K4 单一来源，H1-e）：web 渲染面过滤用，见 machinePayloads.ts 文档。
+export * from './machinePayloads'
+
 export type GenerationType = 'text' | 'image' | 'video'
 
 /**

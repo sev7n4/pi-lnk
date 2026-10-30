@@ -18,6 +18,7 @@ function makeMessages(sessionId: string, threadId: string, count: number) {
 
 describe('AgentService messages & threads', () => {
   const agentMessageFindMany = vi.fn()
+  const agentMessageGroupBy = vi.fn()
   const agentMessageCreate = vi.fn()
   const agentThreadFindMany = vi.fn()
   const agentThreadFindUnique = vi.fn()
@@ -53,6 +54,7 @@ describe('AgentService messages & threads', () => {
         agentMessage: {
           create: agentMessageCreate,
           findMany: agentMessageFindMany,
+          groupBy: agentMessageGroupBy,
         },
         agentThread: {
           findMany: agentThreadFindMany,
@@ -105,12 +107,12 @@ describe('AgentService messages & threads', () => {
       return desc.slice(0, args.take)
     })
 
-    const rows = await service.getMessages('s1', 's1:abc', 100)
+    const { page: rows } = await service.getMessages('s1', 's1:abc', undefined, 100)
 
     expect(agentMessageFindMany).toHaveBeenCalledWith({
       where: { sessionId: 's1', threadId: 's1:abc' },
-      orderBy: { createdAt: 'desc' },
-      take: 100,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: 200,
     })
     expect(rows).toHaveLength(100)
     expect(rows[0].content).toBe('msg-21')
@@ -148,7 +150,7 @@ describe('AgentService messages & threads', () => {
     // 模拟 DB 的 desc 返回顺序（新→旧）
     agentMessageFindMany.mockResolvedValue([owner, shadow, userMsg])
 
-    const rows = await service.getMessages('s1', 's1:abc', 100)
+    const { page: rows } = await service.getMessages('s1', 's1:abc', undefined, 100)
 
     // user 行 + owner 行返回；被软标记的 shadow 不返回
     expect(rows.map((r) => r.id)).toEqual(['u1', 'owner1'])
@@ -166,16 +168,17 @@ describe('AgentService messages & threads', () => {
     }
     agentMessageFindMany.mockResolvedValue([broken])
 
-    const rows = await service.getMessages('s1', 's1:abc', 100)
+    const { page: rows } = await service.getMessages('s1', 's1:abc', undefined, 100)
     expect(rows.map((r) => r.id)).toEqual(['b1'])
   })
 
-  it('listThreads orders by updatedAt desc and takes 50', async () => {
+  it('listThreads orders by updatedAt desc, takes 50, and returns messageCount per thread (H1-b)', async () => {
     const threads = [
       { id: 's1:a', sessionId: 's1', title: 'A', updatedAt: new Date('2026-01-03') },
       { id: 's1:b', sessionId: 's1', title: 'B', updatedAt: new Date('2026-01-02') },
     ]
     agentThreadFindMany.mockResolvedValue(threads)
+    agentMessageGroupBy.mockResolvedValue([{ threadId: 's1:a', _count: { _all: 5 } }])
 
     const rows = await service.listThreads('s1')
 
@@ -184,7 +187,16 @@ describe('AgentService messages & threads', () => {
       orderBy: { updatedAt: 'desc' },
       take: 50,
     })
-    expect(rows).toEqual(threads)
+    expect(agentMessageGroupBy).toHaveBeenCalledWith({
+      by: ['threadId'],
+      where: { sessionId: 's1' },
+      _count: { _all: true },
+    })
+    // H1-b：messageCount 随行带回；无消息行（含归档分支）计数为 0
+    expect(rows).toEqual([
+      { ...threads[0], messageCount: 5 },
+      { ...threads[1], messageCount: 0 },
+    ])
   })
 
   it('upsertAgentThread slices title to 40 chars and defaults empty to 新对话', async () => {

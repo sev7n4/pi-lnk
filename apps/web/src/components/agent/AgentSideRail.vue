@@ -31,6 +31,7 @@ import { buildTurnReceipt } from './composer/turnReceipt'
 import { acceptedHint, cancelOutcomeHint, parseQueueDelivery } from '@/components/agent/queueDelivery'
 import type { QueueCancelOutcome } from '@/components/agent/queueDelivery'
 import type { AgentStreamMessage } from '@/stores/agent'
+import type { PersistedAgentMessage } from '@/stores/agent'
 import {
   cancelAgentRun,
   cancelledCalloutTextFromProgress,
@@ -86,15 +87,13 @@ import {
   persistForkedThreadId,
   resolveBootstrapThreadId,
   checkRuntimeHealthViaNest,
-  fetchThreadStateSafe,
   RUNTIME_UNREACHABLE_SNIPPET,
   RECONCILE_MAX_POLLS,
   shouldKeepReconciling,
-  shouldInjectUnreachableSnippet,
 } from '@/components/agent/streamRecovery'
 // 注：shouldPollRuntimeHealth（streamRecovery.ts）已无 SideRail 调用方——P1#11 重连改造后
-// 旧 reconcile 唯一消费点被 thread-state 终态判定替代。函数 + 测试保留以备未来手动重连或
-// 别处复用；本期只删 SideRail 死 import（I-3 fix）。
+// 旧 reconcile 唯一消费点被轮询终态判定替代（该状态读取又随 H1-c 退役，现为按上限兜底）。
+// 函数 + 测试保留以备未来手动重连或别处复用；本期只删 SideRail 死 import（I-3 fix）。
 import ForceChoiceDialog, { type ForceChoiceKind } from '@/components/agent/ForceChoiceDialog.vue'
 import { classifyRequestError, isNetworkError } from '@/components/agent/networkFault'
 import { useNetworkNotice } from '@/composables/useNetworkNotice'
@@ -133,12 +132,13 @@ import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
 import { useUtteranceRotation } from '@/composables/useUtteranceRotation'
 import { shouldShowModelChip } from './composer/modelSkillDedup'
 import { barShape } from './composer/mobileBarLayout'
+import { sanitizeHistoryMessages } from './historySanitize'
 import { classifyGesture } from './composer/holdGesture'
 import UniversalModelSelector from '@/components/canvas/UniversalModelSelector.vue'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
 import { formatDuration as formatTraceDuration } from '@/components/agent/executionStepLabels'
 import { turnSettledText, turnSummaryLine } from '@/components/agent/executionTraceReducer'
-import { formatSessionTime, lastThreadStorageKey } from '@/utils/formatSessionTime'
+import { formatSessionTime } from '@/utils/formatSessionTime'
 import { randomId } from '@/utils/randomId'
 import { submitAnswers } from '@/components/agent/agentAnswers'
 import { failureReason, resolveWaitingFromTimeline, turnStatusLine } from '@/components/agent/turnStatusBar'
@@ -152,6 +152,10 @@ interface AgentThreadRow {
   title: string
   updatedAt: string
   createdAt: string
+  /** H0-c：迁移置非空 ⇒ 历史面板渲染禁用态（legacy 线程即将合并到主对话） */
+  archivedAt?: string | null
+  /** H1-b：服务端 groupBy 随 threads 行带回的计数（bootstrap 不再全量下载消息为数数，D3） */
+  messageCount?: number
 }
 
 const props = defineProps<{
@@ -1599,18 +1603,30 @@ useClickOutside(historyRef, () => {
   historyOpen.value = false
 })
 
-async function fetchThreads(): Promise<AgentThreadRow[]> {
+async function fetchThreads(): Promise<AgentThreadRow[] | null> {
   try {
     const res = await fetch(
       apiUrl(`/api/agent/chat/threads?sessionId=${encodeURIComponent(props.sessionId)}`),
+      // 禁缓存（2026-10-28 生产取证）：端点带 ETag 无 Cache-Control，刷新/切回时浏览器
+      // 带条件头重校验 ⇒ 304 空体 ⇒ 本函数把「读取失败」如实上报成空列表 ⇒ 对话抽屉「暂无对话记录」。
+      { cache: 'no-store' },
     )
+    if (!res.ok) return null
     const json = await res.json()
     const rows = (json.data ?? []) as AgentThreadRow[]
     threads.value = rows
     return rows
   } catch {
-    return []
+    return null // fail-open（K3/D3）：null ≠ 空数组，bootstrap 不得清 fork key（H0-d 重试卡兜底展示）
   }
+}
+
+/** H0-c（规格 §2/§5.2 谓词解耦）：归档行（迁移置 archivedAt）渲染禁用态，停止「点了没反应」。
+ *  谓词必须是 archivedAt 而非 id 比较——在役 fork（重跑）分支 id 同为 sessionId:后缀 复合键。
+ *  合并迁移注（2026-10-29）：PC 侧栏历史入口已随 ADR-0015 删除，现消费方为移动端对话历史面板。
+ */
+function isArchivedThread(thread: AgentThreadRow): boolean {
+  return thread.archivedAt != null
 }
 
 async function selectThread(threadId: string) {
@@ -1647,25 +1663,9 @@ async function bootstrapThread() {
   clearComposer()
   agent.clear()
   taskProgress.value = emptyTaskProgress()
-  const cached = localStorage.getItem(lastThreadStorageKey(props.sessionId))
   const list = await fetchThreads()
-  agentThreadId.value = await resolveBootstrapThreadId(props.sessionId, {
-    cachedThreadId: cached,
-    threads: list,
-    messageCountFor: async (threadId) => {
-      try {
-        const res = await fetch(
-          apiUrl(
-            `/api/agent/chat/user/messages?sessionId=${encodeURIComponent(props.sessionId)}&threadId=${encodeURIComponent(threadId)}`,
-          ),
-        )
-        const json = await res.json()
-        return Array.isArray(json.data) ? json.data.length : 0
-      } catch {
-        return 0
-      }
-    },
-  })
+  threads.value = list ?? threads.value
+  agentThreadId.value = await resolveBootstrapThreadId(props.sessionId, { threads: list })
   persistActiveThreadId(props.sessionId, agentThreadId.value)
   await loadHistory()
   void refreshThreadCheckpoint()
@@ -1861,32 +1861,15 @@ function syncCancelledFromThreadState(
 }
 
 /**
- * 重连时拉一次 thread-state（`GET /api/agent/thread-state`，Nest 侧 `getThreadState`
- * **恒返 null** —— 老 LangGraph checkpoint 随 runtime 2026-09-27 退役一起消失）。
+ * 重连/切换线程时的终态对账。
  *
- * 保留这次调用是刻意的：端点仍在（删掉会让前端 404），返回恒空 ⇒ 只可能同步
- * 「运行已停止」这一项；原先把 `productVisualPlan` / `shotManifest` / `macroSchemes` /
- * gate 相位等一堆 LangGraph 时代的门控状态从这里回灌的分支，已随门控 UI 一起删除
- * （2026-10-06）。
+ * H1-c（规格 2026-10-28 §5.2）：thread-state 读取已退役（恒返 null 的死端点连同前端
+ * 调用一并删除）。恒 null 下只可能同步「运行已停止」这一项 ⇒ 与退役前生产现状
+ * （端点恒返 null）行为一致，仅做一次状态复位。
+ * 终态判定待 H3 seq 游标窗重接 turnState（规格 §12）。
  */
 async function refreshThreadCheckpoint() {
-  try {
-    const token = localStorage.getItem('token')
-    const res = await fetch(
-      apiUrl(`/api/agent/thread-state?threadId=${encodeURIComponent(agentThreadId.value)}`),
-      { headers: { Authorization: `Bearer ${token}` } },
-    )
-    const json = (await res.json()) as {
-      data?: {
-        phase?: string | null
-        runCancelled?: boolean | null
-        presentation?: AgentPresentationEnvelope | null
-      } | null
-    }
-    syncCancelledFromThreadState(json.data)
-  } catch {
-    // ignore — checkpoint hint is best-effort
-  }
+  syncCancelledFromThreadState(null)
 }
 
 /** P1#5/#7：assistant message metadata JSON 安全解析（畸形返回 undefined）。 */
@@ -1906,35 +1889,105 @@ function resolveCanvasNodeUrl(nodeId: string): string | undefined {
   return typeof url === 'string' && url ? url : undefined
 }
 
+/** H0-d（规格 §2/K3）：历史加载失败必须 fail-visible + 可重入，禁止 toast+空白（验收 S1）。 */
+type HistoryLoadState = 'idle' | 'loading' | 'failed'
+const historyLoadState = ref<HistoryLoadState>('idle')
+// H1-d（规格 §8）：历史行 metadata 畸形被 sanitize 降级保留时显式标注（D15：与「本来就没有过程」可区分）
+const degradedHistory = ref(false)
+
+// H1-a（规格 §5.2）：历史分页游标状态。historyRows 是「已加载全量窗口」（asc，最早在前），
+// 翻页只 prepend 更早行、不整体重建（整体重建会抹掉窗口外的尾部轮次）。
+const historyRows = ref<PersistedAgentMessage[]>([])
+const historyCursor = ref<string | null>(null)
+const historyHasMore = ref(false)
+const historyLoadingOlder = ref(false)
+
 async function loadHistory() {
   agent.clear()
   taskProgress.value = emptyTaskProgress()
+  // H1-a 修复轮（审查 Minor-2）：起点**同步**清零分页游标状态——跨线程残留会在
+  // 「切线程 + 首载失败 + 点翻页」时拿 A 线程游标查 B 线程；同步清零还关闭了
+  // 首载在途期点翻页的竞态窗口（成功路径随后回填，失败路径保持 null/false）。
+  historyRows.value = []
+  historyCursor.value = null
+  historyHasMore.value = false
+  // H1-d 终审修复（#2）：降级横幅同步清零——否则 A 线程降级标注残留到
+  // 后续空历史/加载失败线程，构成用户可见误报。
+  degradedHistory.value = false
+  historyLoadState.value = 'loading'
   try {
     const res = await fetch(
       apiUrl(
         `/api/agent/chat/user/messages?sessionId=${encodeURIComponent(props.sessionId)}&threadId=${encodeURIComponent(agentThreadId.value)}`,
       ),
+      // ⛔ 禁缓存（2026-10-28 生产事故）：端点带 ETag 无 Cache-Control ⇒ 刷新/切回画布时
+      // 浏览器带 If-None-Match 重校验 ⇒ 304 空体 ⇒ `res.ok` false（或 json() 抛错）⇒
+      // 走到告警分支，`agent.clear()` 之后历史不再回填 ⇒ **对话页整页空白**。
+      // 同文件 `reconcileLatestAssistant` 有同款修复。
+      { cache: 'no-store' },
     )
     if (!res.ok) {
       ElMessage.warning('对话历史加载失败，请检查网络后刷新')
+      historyLoadState.value = 'failed'
       return
     }
     const json = await res.json()
+    // H1-a（规格 §5.2）：服务端权威分页字段（K5）
+    historyRows.value = (json.data ?? []) as PersistedAgentMessage[]
+    historyHasMore.value = json.hasMore === true
+    historyCursor.value = json.nextCursor ?? null
     if (json.data?.length) {
-      agent.loadHistory(json.data)
+      // H1-d（规格 §2）：渲染前净化；hasUserAfter 仍读原始 msgs（机器载荷 user 行也算「之后有用户」，防重复弹卡）
+      const sanitized = sanitizeHistoryMessages(historyRows.value)
+      degradedHistory.value = sanitized.degradedIds.size > 0
+      agent.loadHistory(sanitized.rows)
       // P1#5：最后一回合若有 task 事件（plan 标记派生），恢复任务卡进度
-      const msgs = json.data as Array<{ role: string; metadata?: string }>
-      const lastAssistantMsg = [...msgs].reverse().find((m) => m.role === 'assistant')
+      const msgs = json.data as Array<{ role: string; content?: string; metadata?: string }>
+      // H1-d（§8④）：恢复锚点 = 最后一条非空 assistant（空行 metadata 会污染任务卡/ask_user 恢复）
+      const lastAssistantMsg = [...msgs].reverse().find((m) => m.role === 'assistant' && m.content?.trim())
       const meta = parseMessageMetadataSafe(lastAssistantMsg?.metadata)
       const seeded = seedTaskProgressFromEvents(meta?.executionEvents ?? [])
       if (seeded) taskProgress.value = seeded
       // P1#7 待答卡恢复：已由 `replayTimelineEvents`（上方 loadHistory 重建 timeline）从
       // `ask_user` 事件收敛出 question part 单一真相接管——无需再回填组件级 ref。
     }
+    historyLoadState.value = 'idle'
   } catch {
     ElMessage.warning('对话历史加载失败，请检查网络后刷新')
+    historyLoadState.value = 'failed'
   }
   scrollToBottom(true)
+}
+
+/** H1-a（规格 §5.2/验收 S5）：loadOlder 向前翻页取更早消息；只 prepend、不整体重建。 */
+async function loadOlder() {
+  if (!historyCursor.value || historyLoadingOlder.value) return
+  historyLoadingOlder.value = true
+  try {
+    const res = await fetch(
+      apiUrl(
+        `/api/agent/chat/user/messages?sessionId=${encodeURIComponent(props.sessionId)}&threadId=${encodeURIComponent(agentThreadId.value)}&before=${encodeURIComponent(historyCursor.value)}`,
+      ),
+      { cache: 'no-store' },
+    )
+    if (!res.ok) return
+    const json = await res.json()
+    // H1-d 修复轮（P3）：更早分页同样走净化边界——首载 loadHistory 已 sanitize，
+    // 翻页若不净化会漏出 __new_task__ 机器载荷气泡 / 空 assistant 行，与首载渲染不一致。
+    // 净化只改渲染视图（DB 原文不动，见 historySanitize.ts 顶部约定），prepend 安全。
+    const older = sanitizeHistoryMessages((json.data ?? []) as PersistedAgentMessage[]).rows
+    historyRows.value = [...older, ...historyRows.value]
+    historyHasMore.value = json.hasMore === true
+    historyCursor.value = json.nextCursor ?? null
+    // H1-a 修复轮（审查 Important-1）：只 prepend 更早行、**不整体重建**——
+    // 整体重建（loadHistory 全量替换）会把会话内新发出、未回写窗口的尾部
+    // 轮次（含流式进行中）从视图抹掉（复现：长对话 → 发消息 → 点「加载更早消息」）。
+    agent.prependHistory(older)
+  } catch {
+    // 翻页失败保持现场：按钮仍在，可再点（K3）
+  } finally {
+    historyLoadingOlder.value = false
+  }
 }
 
 
@@ -3147,22 +3200,11 @@ async function reconnectStream() {
       return
     }
 
-    const token = localStorage.getItem('token')
-    const res = await fetch(
-      apiUrl(`/api/agent/thread-state?threadId=${encodeURIComponent(agentThreadId.value)}`),
-      { headers: { Authorization: `Bearer ${token}` } },
-    )
-    const json = (await res.json()) as {
-      data?: {
-        phase?: string | null
-        runCancelled?: boolean | null
-        finished?: boolean
-        presentation?: AgentPresentationEnvelope | null
-      } | null
-    }
-    // 2026-10-06：LangGraph 时代的门控回灌（gate 相位 / 方案 / 镜头 / 交付选型）已随
-    // 确认型卡片一起删除。thread-state 端点仍在但恒返 null，这里只同步「运行已停止」。
-    const cancelled = syncCancelledFromThreadState(json.data)
+    // H1-c（规格 2026-10-28 §5.2）：thread-state 请求已随死端点退役。恒 null 下
+    // `syncCancelledFromThreadState` 只可能同步「运行已停止」这一项（现状分支保留）；
+    // 「已停止 / 已完成」的区分判据改为 runs/events 实时状态 + 消息 metadata 终态
+    // （既有 P1#11 判据），终态判定待 H3 seq 游标窗重接 turnState（规格 §12）。
+    syncCancelledFromThreadState(null)
 
     if (agent.isStreaming) {
       agent.finishStreaming()
@@ -3171,14 +3213,7 @@ async function reconnectStream() {
     await reconcileLatestAssistant()
     emit('turnComplete')
 
-    // PHASE_LABELS 已随 P2#10 退役：pi 链路 thread-state 不携带 LangGraph phase，
-    // 恢复提示不再插值阶段名（pi 路径下 label 恒为「未知」）
-    recoveredPhaseHint.value =
-      cancelled
-        ? '服务已恢复。上一轮已停止，可发起新任务。'
-        : json.data?.finished
-        ? '服务已恢复。上一轮已完成，可继续新的指令。'
-        : '服务已恢复。上一轮尚未完成，请继续操作。'
+    recoveredPhaseHint.value = '服务已恢复。上一轮尚未完成，请继续操作。'
     pollTasksFromProgress()
   } catch {
     recoveredPhaseHint.value = '重连失败，请稍后再试'
@@ -3189,9 +3224,14 @@ async function reconnectStream() {
 }
 
 /**
- * 流结束后用 DB 历史补齐最终文案。P1#11：以 thread-state 回合终态替代文本 snippet 匹配。
+ * 流结束后用 DB 历史补齐最终文案。
  *
- * @param maxPolls 终态轮询次数上限（默认 `RECONCILE_MAX_POLLS`）。
+ * H1-c（规格 2026-10-28 §5.2）：原 P1#11 的 thread-state 回合终态轮询已随死端点退役
+ * （恒 null 下生产行为本就是「轮到上限」），现在按上限轮询权威历史。
+ * 终态判定待 H3 seq 游标窗重接 turnState（规格 §12）——届时以 runs/events 实时状态 +
+ * 消息 metadata 终态为判据。
+ *
+ * @param maxPolls 轮询次数上限（默认 `RECONCILE_MAX_POLLS`）。
  *   旁观端传 `0`：那一轮在**另一端**已经跑完（收到 done 才走到这里），
  *   没必要再等终态，拉一次权威历史纠正漏帧即可（多端场景下一等就是几分钟的睡循环）。
  */
@@ -3201,7 +3241,7 @@ async function reconcileLatestAssistant(maxPolls = RECONCILE_MAX_POLLS) {
       apiUrl(
         `/api/agent/chat/user/messages?sessionId=${encodeURIComponent(props.sessionId)}&threadId=${encodeURIComponent(agentThreadId.value)}`,
       ),
-      // 同 thread-state：禁缓存，避免 304 空体让 res.json() 抛错、静默中断回查
+      // 禁缓存：避免 304 空体让 res.json() 抛错、静默中断回查
       { cache: 'no-store' },
     )
     const json = await res.json()
@@ -3220,31 +3260,8 @@ async function reconcileLatestAssistant(maxPolls = RECONCILE_MAX_POLLS) {
 
   try {
     await pull()
-    // 终态判定：finished → 停；未完成 → 每次拉取前先查 thread-state，上限 36×5s 兜底
-    // I-2 修复：thread-state 连续读取失败达阈值（≈15s）→ 注入不可达告警并 break，
-    // 避免旧 reconcile 删除后失去 pi-runtime 宕机的可见反馈。
-    // 2026-10-01 修正：达阈值后**先做一次真实健康探测**再决定是否告警——
-    // 状态读取失败（304/抖动/单次 5xx）不等于 runtime 不可达，探测健康就必须闭嘴。
-    let consecutiveNulls = 0
     for (let i = 0; i < maxPolls; i++) {
-      const read = await fetchThreadStateSafe(agentThreadId.value)
-      if (read.ok) {
-        consecutiveNulls = 0
-      } else {
-        consecutiveNulls++
-      }
-      if (shouldInjectUnreachableSnippet(consecutiveNulls)) {
-        const health = await checkRuntimeHealthViaNest()
-        if (shouldInjectUnreachableSnippet(consecutiveNulls, health)) {
-          const last = agent.messages[agent.messages.length - 1]
-          if (last?.role === 'assistant' && !last.content.includes(RUNTIME_UNREACHABLE_SNIPPET)) {
-            last.content += `\n\n⚠️ ${RUNTIME_UNREACHABLE_SNIPPET}，已保存进度。请点击下方「重连」继续。`
-            scrollToBottom()
-          }
-        }
-        break
-      }
-      if (!shouldKeepReconciling(read.ok ? read.state : null, i)) break
+      if (!shouldKeepReconciling(null, i)) break
       await new Promise((r) => setTimeout(r, 5_000))
       await pull()
       scrollToBottom()
@@ -4030,9 +4047,10 @@ defineExpose({
               type="button"
               class="thread-history-item"
               :class="{ 'is-current': thread.id === agentThreadId }"
+              :disabled="isArchivedThread(thread)"
               @click="selectThread(thread.id); closeThreadHistory()"
             >
-              <span class="block truncate text-xs font-medium">{{ thread.title }}</span>
+              <span class="block truncate text-xs font-medium">{{ thread.title }}{{ isArchivedThread(thread) ? '（已归档 · 即将合并到主对话）' : '' }}</span>
               <span class="block text-[10px] opacity-60">{{ formatSessionTime(thread.updatedAt) }}</span>
             </button>
             <p v-if="!threads.length" class="session-drawer__empty">暂无对话记录</p>
@@ -4211,6 +4229,29 @@ defineExpose({
                 </button>
               </div>
             </div>
+            <div
+              v-if="historyLoadState === 'failed'"
+              class="mx-3 my-2 flex items-center justify-between rounded-lg border px-3 py-2"
+              :style="{ borderColor: 'var(--lnk-border-subtle)', background: 'var(--lnk-surface-raised)' }"
+            >
+              <span class="text-xs" :style="{ color: 'var(--lnk-text-muted)' }">对话历史加载失败</span>
+              <button
+                type="button"
+                class="text-xs font-medium"
+                :style="{ color: 'var(--lnk-accent)' }"
+                @click="loadHistory()"
+              >重试</button>
+            </div>
+            <!-- H1-d（D15）：历史行 metadata 畸形被降级保留时显式标注（与「本来就没有过程」可区分） -->
+            <p v-if="degradedHistory" class="mx-3 my-1 text-xs" :style="{ color: 'var(--lnk-text-muted)' }">部分历史行的过程数据缺失，已降级显示</p>
+            <button
+              v-if="historyHasMore"
+              type="button"
+              class="mx-auto my-2 block rounded-full border px-3 py-1 text-xs"
+              :disabled="historyLoadingOlder"
+              :style="{ borderColor: 'var(--lnk-border-subtle)', color: 'var(--lnk-text-muted)' }"
+              @click="loadOlder()"
+            >{{ historyLoadingOlder ? '加载中…' : '加载更早消息' }}</button>
             <div
               v-for="msg in agent.messages"
               :key="msg.id"
@@ -4613,7 +4654,7 @@ defineExpose({
               侧栏门控/确认卡已全量下线（2026-10-06 决策）：以下旧分支被删除 ——
               retake 提示、图片质检门、宏观方案卡、方案多选卡、定稿交付卡、shot/topo/copy
               确认行。判据是它们**没有任何生产者**：老 LangGraph runtime 2026-09-27 退役，
-              `GET /agent/thread-state` 恒返 null（agent.service.ts「checkpoint 随它一起消失」），
+              checkpoint 状态端点恒返 null（后随 H1-c 整体退役），
               runtime/Nest 都不再发 `interrupt` / `done` 门控事件。
               确认入口收敛为两处：**画布节点「生成」按钮**（propose 阻塞等待）与**直接输入文字**。
             -->

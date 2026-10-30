@@ -12,7 +12,7 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common'
-import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsObject, IsOptional, IsString, ValidateNested } from 'class-validator'
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsObject, IsOptional, IsString, Max, Min, ValidateNested } from 'class-validator'
 import { Type } from 'class-transformer'
 import type { Request, Response } from 'express'
 import { AuthGuard } from '../auth/auth.guard'
@@ -212,12 +212,30 @@ class ListAgentThreadsQueryDto {
   sessionId!: string
 }
 
-class GetAgentMessagesQueryDto {
+// export：供管道级测试（agent.controller.messages-dto.test.ts）以真实 ValidationPipe 验证
+export class GetAgentMessagesQueryDto {
   @IsString()
   sessionId!: string
 
   @IsString()
   threadId!: string
+
+  @IsOptional()
+  @IsString()
+  before?: string
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(200)
+  // HTTP query 恒为 string，全局 ValidationPipe 未开 enableImplicitConversion ⇒
+  // 无 @Type 时 ?limit=50 进 @IsInt 即 400（审查 #1）。与 promotionCandidates 手动
+  // parseInt 同源问题，此处用 class-transformer 收口；service 侧仍钳制 1..200。
+  // HTTP query 恒为 string，全局 ValidationPipe 未开 enableImplicitConversion ⇒
+  // 无 @Type 时 ?limit=50 进 @IsInt 即 400（审查 #1，管道级测试已钉死红/绿）。
+  // 同源问题 precedent：promotionCandidates 手动 parseInt；service 侧仍钳制 1..200。
+  @Type(() => Number)
+  limit?: number
 }
 
 /** M6b：抑制标记请求体。reason 选填（缺省 'unspecified'，仅供排障追溯）。 */
@@ -255,8 +273,9 @@ export class AgentController {
 
   @Get('chat/user/messages')
   async getMessages(@Query() query: GetAgentMessagesQueryDto) {
-    const data = await this.agentService.getMessages(query.sessionId, query.threadId)
-    return { code: 0, message: 'ok', data }
+    const result = await this.agentService.getMessages(query.sessionId, query.threadId, query.before, query.limit)
+    // data 形状与排序不变（asc，向后兼容）；hasMore/nextCursor 服务端权威输出（K5）
+    return { code: 0, message: 'ok', data: result.page, hasMore: result.hasMore, nextCursor: result.nextCursor }
   }
 
   /** 前端心跳：探 pi-runtime 是否可达（老 agent-runtime 已退役）。 */
@@ -371,15 +390,11 @@ export class AgentController {
     return { code: 0, message: 'ok', data }
   }
 
-  /** W12: 重连时的 checkpoint 相位。老 LangGraph runtime 已退役 → 恒 null（端点保留给前端）。 */
-  @Get('thread-state')
-  @UseGuards(AuthGuard)
-  async threadState(
-    @Query('threadId') threadId: string,
-  ) {
-    const data = await this.agentService.getThreadState(threadId)
-    return { code: 0, message: 'ok', data }
-  }
+  /**
+   * H1-c（规格 2026-10-28 §5.2）：checkpoint 相位读取端点已退役删除——老 LangGraph
+   * checkpoint 随 runtime 2026-09-27 消失后该端点恒返 null，属死端点；前端 3 处调用
+   * 已一并清除（不许半死）。
+   */
 
   /** W27: 相位时间线。同 thread-state：checkpoint 历史随老 runtime 退役 → 恒 null。 */
   @Get('thread-timeline')

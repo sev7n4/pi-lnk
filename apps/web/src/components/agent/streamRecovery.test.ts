@@ -3,18 +3,15 @@ import { describe, expect, it, vi, afterEach } from 'vitest'
 import {
   buildIdempotencyKey,
   createAgentThreadId,
+  getForkedThreadId,
   randomThreadSuffix,
   resolveBootstrapThreadId,
   persistActiveThreadId,
   persistForkedThreadId,
-  lastForkedThreadStorageKey,
   shouldPollRuntimeHealth,
   checkRuntimeHealthViaNest,
   isStreamStale,
   shouldKeepReconciling,
-  shouldInjectUnreachableSnippet,
-  fetchThreadStateSafe,
-  RECONCILE_NULL_THRESHOLD,
   STREAM_STALE_MS,
 } from './streamRecovery'
 import { lastThreadStorageKey } from '@/utils/formatSessionTime'
@@ -37,85 +34,77 @@ vi.mock('@/services/api-base', () => ({
  *   · falls back to first non-empty thread when cached…  ⇒ INV-3 兜底（缓存空了就找有消息的）
  *   · creates new thread when nothing has messages       ⇒ 唯一允许新建 thread 的场景（真空项目）
  */
-describe('resolveBootstrapThreadId（多端共享对话）', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals()
+function stubLocalStorage() {
+  const store = new Map<string, string>()
+  vi.stubGlobal('localStorage', {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => void store.set(k, v),
+    removeItem: (k: string) => void store.delete(k),
   })
+  return store
+}
 
-  it('始终收敛到确定式共享 threadId（= sessionId），忽略缓存与历史列表', async () => {
-    const store: Record<string, string> = {}
-    vi.stubGlobal('localStorage', {
-      setItem: (k: string, v: string) => {
-        store[k] = v
-      },
-      getItem: (k: string) => store[k] ?? null,
-    })
-    const id = await resolveBootstrapThreadId('sess1', {
-      cachedThreadId: 'sess1:cached',
-      threads: [{ id: 'sess1:other' }],
-      messageCountFor: async () => 0,
-    })
-    expect(id).toBe('sess1')
-  })
+// H1-b / D3：bootstrap 不再全量下载 user/messages 只为数数（S6 契约）
+it('messageCountFor 已退役（D3：bootstrap 不再全量下载计数）', async () => {
+  expect((await import('./streamRecovery') as Record<string, unknown>).messageCountFor).toBeUndefined()
 })
 
-describe('resolveBootstrapThreadId（③ 重跑分支线程恢复）', () => {
+// H1-c（规格 2026-10-28 §5.2）：thread-state 死端点退役，导出面收窄（D20 不许半死）
+it('fetchThreadStateSafe 已退役（H1-c：死端点清除，D20 不许半死）', async () => {
+  const mod = (await import('./streamRecovery')) as Record<string, unknown>
+  expect(mod.fetchThreadStateSafe).toBeUndefined()
+})
+
+it('ThreadStateRead 已退役（H1-c：类型随安全拉取一并删除）', async () => {
+  const src = await import('node:fs').then((fs) =>
+    fs.readFileSync(new URL('./streamRecovery.ts', import.meta.url), 'utf8'),
+  )
+  expect(src).not.toContain('ThreadStateRead')
+})
+
+it('I-2 thread-state 不可达判定随 H1-c 一并退役（消费分支死代码清除）', async () => {
+  const mod = (await import('./streamRecovery')) as Record<string, unknown>
+  expect(mod.shouldInjectUnreachableSnippet).toBeUndefined()
+  expect(mod.RECONCILE_NULL_THRESHOLD).toBeUndefined()
+})
+
+describe('resolveBootstrapThreadId（H1-b：threads 行计数 + fail-open）', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
   })
 
-  it('无 fork key → 收敛到共享线程，即便 legacy 随机线程有消息也不恢复', async () => {
-    const store: Record<string, string> = {}
-    vi.stubGlobal('localStorage', {
-      setItem: (k: string, v: string) => {
-        store[k] = v
-      },
-      getItem: (k: string) => store[k] ?? null,
+  it('fork key 有消息（messageCount>0）⇒ 激活分支线程', async () => {
+    stubLocalStorage()
+    persistForkedThreadId('s1', 'branch_1')
+    const id = await resolveBootstrapThreadId('s1', {
+      threads: [{ id: 'branch_1', messageCount: 3 }, { id: 's1', messageCount: 9 }],
     })
-    const id = await resolveBootstrapThreadId('sess1', {
-      cachedThreadId: 'sess1:legacy-random',
-      threads: [{ id: 'sess1:legacy-random' }],
-      messageCountFor: async () => 5,
-    })
-    expect(id).toBe('sess1')
+    expect(id).toBe('branch_1')
   })
 
-  it('有 fork key 且分支线程有消息 → 恢复分支线程', async () => {
-    const store: Record<string, string> = {}
-    vi.stubGlobal('localStorage', {
-      setItem: (k: string, v: string) => {
-        store[k] = v
-      },
-      getItem: (k: string) => store[k] ?? null,
+  it('fork key 无消息 ⇒ 清 fork key 回落共享线程（原行为不变）', async () => {
+    stubLocalStorage()
+    persistForkedThreadId('s1', 'branch_1')
+    const id = await resolveBootstrapThreadId('s1', {
+      threads: [{ id: 's1', messageCount: 9 }],
     })
-    persistForkedThreadId('sess1', 'pi-fork-xyz')
-    const id = await resolveBootstrapThreadId('sess1', {
-      cachedThreadId: null,
-      threads: [],
-      messageCountFor: async (tid: string) => (tid === 'pi-fork-xyz' ? 3 : 0),
-    })
-    expect(id).toBe('pi-fork-xyz')
+    expect(id).toBe('s1')
+    expect(getForkedThreadId('s1')).toBeNull()
   })
 
-  it('有 fork key 但分支线程已空 → 清 fork key 并回落共享线程', async () => {
-    const store: Record<string, string> = {}
-    vi.stubGlobal('localStorage', {
-      setItem: (k: string, v: string) => {
-        store[k] = v
-      },
-      getItem: (k: string) => store[k] ?? null,
-      removeItem: (k: string) => {
-        delete store[k]
-      },
-    })
-    persistForkedThreadId('sess1', 'pi-fork-empty')
-    const id = await resolveBootstrapThreadId('sess1', {
-      cachedThreadId: null,
-      threads: [],
-      messageCountFor: async () => 0,
-    })
-    expect(id).toBe('sess1')
-    expect(store[lastForkedThreadStorageKey('sess1')]).toBeUndefined()
+  it('threads=null（拉取失败）⇒ fail-open：保留 fork key 现场不清（Review Focus #5 / K3）', async () => {
+    stubLocalStorage()
+    persistForkedThreadId('s1', 'branch_1')
+    const id = await resolveBootstrapThreadId('s1', { threads: null })
+    expect(id).toBe('branch_1')
+    expect(getForkedThreadId('s1')).toBe('branch_1')
+  })
+
+  it('threads=null 且无 fork key ⇒ 回落共享线程，同样不清任何 key', async () => {
+    stubLocalStorage()
+    const id = await resolveBootstrapThreadId('s1', { threads: null })
+    expect(id).toBe('s1')
+    expect(getForkedThreadId('s1')).toBeNull()
   })
 })
 
@@ -195,89 +184,20 @@ describe('shouldPollRuntimeHealth', () => {
   })
 })
 
-describe('shouldInjectUnreachableSnippet', () => {
-  // I-2 修复：reconcile 循环 thread-state 连续 null 达阈值 → 注入 RUNTIME_UNREACHABLE_SNIPPET 并 break
-  it('阈值之下不注入（仍可恢复）', () => {
-    expect(shouldInjectUnreachableSnippet(0)).toBe(false)
-    expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD - 1)).toBe(false)
-  })
+describe("shouldKeepReconciling（P1#11 重连判定；H1-c 后调用方恒传 null ⇒ 按上限兜底）", () => {
+  it("终态立即停止（保留语义：H3 重接 turnState 时复用）", () => {
+    expect(shouldKeepReconciling({ finished: true }, 0)).toBe(false);
+  });
 
-  it('达阈值或超过注入（未做健康探测 / 探测本身失败 → 无法确认健康）', () => {
-    expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD)).toBe(true)
-    expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD + 2)).toBe(true)
-    expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD, null)).toBe(true)
-  })
+  it("未完成且未达上限时继续轮询", () => {
+    expect(shouldKeepReconciling({ finished: false }, 3)).toBe(true);
+    expect(shouldKeepReconciling({ finished: false }, 36)).toBe(false);
+  });
 
-  // 2026-10-01 生产误报：thread-state 连续 3 次 304 空体 → 读取失败，但 runtime 其实健康、出图也成功了。
-  it('健康探测 ok → 即使连续读取失败也不注入（状态读取失败 ≠ 服务不可达）', () => {
-    expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD, { ok: true })).toBe(false)
-    expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD + 5, { ok: true })).toBe(false)
-  })
-
-  it('健康探测明确 not ok → 注入（pi-runtime 真宕机）', () => {
-    expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD, { ok: false })).toBe(true)
-  })
-
-  it('阈值之下即便探测失败也不注入', () => {
-    expect(shouldInjectUnreachableSnippet(RECONCILE_NULL_THRESHOLD - 1, { ok: false })).toBe(false)
-  })
-})
-
-describe('fetchThreadStateSafe', () => {
-  afterEach(() => {
-    vi.restoreAllMocks()
-    vi.unstubAllGlobals()
-  })
-
-  const stubToken = () => vi.stubGlobal('localStorage', { getItem: () => 'tok' })
-
-  it('200 → ok:true 并回传终态', async () => {
-    stubToken()
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ code: 0, data: { finished: true } }),
-    })
-    vi.stubGlobal('fetch', mockFetch)
-
-    const res = await fetchThreadStateSafe('sess:t1')
-    expect(res).toEqual({ ok: true, state: { finished: true } })
-  })
-
-  it('304 空体 → ok:false（不算成功，也不冒充宕机）', async () => {
-    stubToken()
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue({
-        ok: false,
-        status: 304,
-        json: () => Promise.reject(new SyntaxError('Unexpected end of JSON input')),
-      }),
-    )
-
-    expect(await fetchThreadStateSafe('sess:t1')).toEqual({ ok: false })
-  })
-
-  it('网络异常 → ok:false', async () => {
-    stubToken()
-    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network error')))
-    expect(await fetchThreadStateSafe('sess:t1')).toEqual({ ok: false })
-  })
-
-  it('请求带 cache:no-store（否则浏览器发 If-None-Match → 304 空体）', async () => {
-    stubToken()
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ code: 0, data: null }),
-    })
-    vi.stubGlobal('fetch', mockFetch)
-
-    await fetchThreadStateSafe('sess:t1')
-    expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining('/api/agent/thread-state?threadId=sess%3At1'),
-      expect.objectContaining({ cache: 'no-store' }),
-    )
-  })
-})
+  it("状态缺失（现生产恒 null）按上限兜底", () => {
+    expect(shouldKeepReconciling(null, 10)).toBe(true);
+  });
+});
 
 describe('isStreamStale', () => {
   it('returns true after STREAM_STALE_MS without activity', () => {
@@ -326,17 +246,3 @@ describe('checkRuntimeHealthViaNest', () => {
   })
 })
 
-describe("shouldKeepReconciling（P1#11 重连判定）", () => {
-  it("thread-state 终态立即停止", () => {
-    expect(shouldKeepReconciling({ finished: true }, 0)).toBe(false);
-  });
-
-  it("未完成且未达上限时继续轮询", () => {
-    expect(shouldKeepReconciling({ finished: false }, 3)).toBe(true);
-    expect(shouldKeepReconciling({ finished: false }, 36)).toBe(false);
-  });
-
-  it("thread-state 缺失按上限兜底", () => {
-    expect(shouldKeepReconciling(null, 10)).toBe(true);
-  });
-});
