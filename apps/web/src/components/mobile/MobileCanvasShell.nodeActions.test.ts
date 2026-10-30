@@ -80,12 +80,10 @@ function baseProps(overrides: Record<string, unknown> = {}) {
     onViewerBottomAction: vi.fn(),
     // §17-④（拍板②）：查看器编辑态保存 ⇒ 页面层覆盖磁贴提示词
     onViewerEditSave: vi.fn(),
+    // 问题③ v2：文本内容就地编辑保存（viewer 内消化）
+    onViewerContentSave: vi.fn(),
     onNodeEditorClose: vi.fn(),
     onNodeEditorPatch: vi.fn(),
-    // 问题③：文本节点原生编辑器
-    mobileTextEditor: null,
-    onTextEditorClose: vi.fn(),
-    onTextEditorSave: vi.fn(),
     viewerNode: null,
     onViewerClose: vi.fn(),
     // R3-T4：壳层聚合状态栏（默认无任务态）
@@ -395,51 +393,34 @@ describe('MobileCanvasShell §16 真机走查二轮（2026-10-27）', () => {
   })
 })
 
-describe('MobileCanvasShell 文本节点原生编辑器（问题③）', () => {
-  it('mobileTextEditor 设置 → 渲染文本编辑器（非提示词编辑器）', () => {
+describe('MobileCanvasShell 文本节点就地编辑（问题③ v2：viewer 内消化）', () => {
+  it('独立文本编辑器 sheet 退役：MobileNodeTextEditorSheet 不再被 shell 渲染', () => {
     const w = mount(MobileCanvasShell, {
       props: baseProps({
-        mobileTextEditor: {
-          node: { id: 'n1', type: 'text', data: { content: '原文' } },
-        } as unknown as { node: EditableFlowNode },
+        viewerNode: { id: 'n1', type: 'text', data: { content: '原文', status: 'confirmed' } },
       }),
+      global: { stubs: { teleport: true } },
       attachTo: document.body,
     })
-    expect(w.findComponent({ name: 'MobileNodeTextEditorSheet' }).exists()).toBe(true)
-    expect(w.findComponent({ name: 'MobileNodeEditorSheet' }).exists()).toBe(false)
+    expect(w.findComponent({ name: 'MobileNodeTextEditorSheet' }).exists()).toBe(false)
     w.unmount()
   })
 
-  it('文本编辑器保存 → onTextEditorSave 回传内容（本地校正）', async () => {
-    const onTextEditorSave = vi.fn()
+  it('viewer content-save（就地编辑保存）→ onViewerContentSave(nodeId, content)', async () => {
+    const onViewerContentSave = vi.fn()
     const w = mount(MobileCanvasShell, {
       props: baseProps({
-        mobileTextEditor: {
-          node: { id: 'n1', type: 'text', data: { content: '原文' } },
-        } as unknown as { node: EditableFlowNode },
-        onTextEditorSave,
+        viewerNode: { id: 'n1', type: 'text', data: { content: '原文', status: 'confirmed' } },
+        onViewerContentSave,
       }),
+      global: { stubs: { teleport: true } },
       attachTo: document.body,
     })
-    await w.find('[data-testid="mobile-text-editor-area"]').setValue('改后的文本')
-    await w.find('[data-testid="mobile-text-editor-save"]').trigger('click')
-    expect(onTextEditorSave).toHaveBeenCalledWith({ content: '改后的文本' })
-    w.unmount()
-  })
-
-  it('文本编辑器关闭 → onTextEditorClose', async () => {
-    const onTextEditorClose = vi.fn()
-    const w = mount(MobileCanvasShell, {
-      props: baseProps({
-        mobileTextEditor: {
-          node: { id: 'n1', type: 'text', data: { content: '原文' } },
-        } as unknown as { node: EditableFlowNode },
-        onTextEditorClose,
-      }),
-      attachTo: document.body,
-    })
-    await w.find('[data-testid="mobile-text-editor-close"]').trigger('click')
-    expect(onTextEditorClose).toHaveBeenCalled()
+    const viewer = w.findComponent({ name: 'MobileNodeViewer' })
+    expect(viewer.exists()).toBe(true)
+    viewer.vm.$emit('content-save', '改后的文本')
+    await w.vm.$nextTick()
+    expect(onViewerContentSave).toHaveBeenCalledWith('n1', '改后的文本')
     w.unmount()
   })
 })

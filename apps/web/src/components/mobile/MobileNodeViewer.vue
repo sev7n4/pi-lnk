@@ -81,6 +81,8 @@ const emit = defineEmits<{
   (e: 'annotate', payload: { imageBlob?: Blob; degraded: boolean; text?: string }): void
   /** §17-④：编辑态保存（就地改字）⇒ 壳层覆盖磁贴提示词（拍板②：回画布再确认） */
   (e: 'edit-save', prompt: string): void
+  /** 问题③ v2：confirmed 文本节点就地编辑保存 ⇒ 壳层 patchNodeData({content})（本地校正产物，不绕 agent） */
+  (e: 'content-save', content: string): void
   /** 右上「⋯」= 操作全集（打开与长按同一个 Menu，§4.6 同源同容器） */
   (e: 'more'): void
   /** 底部主栏动作被点击（key 透传；音频 edit 携带 mediaTime——v1.5 Q at mm:ss 链路起点） */
@@ -263,6 +265,11 @@ function onChromeAction(key: string) {
 }
 
 const resolvedBottomActions = computed(() => {
+  // 问题③ v2：编辑态底栏收敛为唯一动作【退出编辑】——对标圈选态【取消圈选】
+  // （HIG：模态任务期只保留任务内动作；朗读同步退场，保存语义 = 退出即落盘）。
+  if (contentEditing.value) {
+    return [{ key: 'content-exit', label: '退出编辑', icon: 'pencil' as const }]
+  }
   // §17-④：编辑态下底栏 = 取消/保存（就地改字，保存回画布覆盖磁贴——拍板②）
   if (editing.value) {
     return [
@@ -313,8 +320,25 @@ const resolvedBottomActions = computed(() => {
 function onBottomAction(key: string) {
   if (key === 'annotate') {
     editing.value = false
+    contentEditing.value = false
     if (annotating.value) exitAnnotate()
     else enterAnnotate()
+    return
+  }
+  // 问题③ v2：confirmed 文本节点【编辑】⇒ 就地进入编辑态（不弹 sheet、不关查看器；
+  // 朗读即停；html 产物不裸编辑源码 ⇒ 照旧上抛壳层走 agent 改词流）。
+  if (key === 'edit' && props.type === 'text' && !isPendingNode.value && !isHtmlNode.value) {
+    if (annotating.value) exitAnnotate()
+    if (ttsSpeaking.value) toggleReaderSpeak()
+    contentDraft.value = String(nodeData.value.content ?? '')
+    contentEditing.value = true
+    return
+  }
+  if (contentEditing.value && key === 'content-exit') {
+    contentEditing.value = false
+    const next = contentDraft.value
+    // 退出即保存：内容有变化才落盘（清空/未改不打扰），无独立保存按钮
+    if (next && next !== String(nodeData.value.content ?? '')) emit('content-save', next)
     return
   }
   if (key === 'edit' && isPendingNode.value) {
@@ -364,6 +388,13 @@ const ink = useInkOverlay({
 /** §17-④：编辑态（就地改字，沿用原 viewer，⛔ 不弹 sheet） */
 const editing = ref(false)
 const editText = ref('')
+
+/** 问题③ v2（2026-10-31 真机裁决）：confirmed 文本节点就地编辑态 ——
+ *  完全沿用全屏阅读面版式（.viewer-reader 同款 textarea：无盒、无边框、无标题、
+ *  无独立保存按钮——过度设计退役），只读 → 可编辑而已；
+ *  底栏【编辑】⇄【退出编辑】透明胶囊切换（对标圈选态【取消圈选】）。 */
+const contentEditing = ref(false)
+const contentDraft = ref('')
 
 /** 进入标注态（§17-③：底栏【批注】1 步进入）。
  * v1.5 Q（G-23）：视频先暂停再记当前帧时刻 ⇒ 胶囊草稿自动前缀「第 m:ss 帧：」。 */
@@ -651,6 +682,12 @@ const SWIPE_CLOSE_THRESHOLD = 100
 
 /** 统一退出入口：先停播放，再 emit close */
 function requestClose() {
+  // 问题③ v2：编辑态直接关闭 ⇒ 先落盘再退（备忘录式自动保存，不留静默丢失）
+  if (contentEditing.value) {
+    contentEditing.value = false
+    const next = contentDraft.value
+    if (next && next !== String(nodeData.value.content ?? '')) emit('content-save', next)
+  }
   videoRef.value?.pause()
   audioRef.value?.pause()
   tts.stop()
@@ -934,6 +971,15 @@ defineExpose({ videoRef })
       :content="String(data?.content ?? '')"
       embedded
     />
+    <!-- 问题③ v2：编辑态 = 同一阅读面版式的 textarea（无盒无边框无标题，
+         只读 → 可编辑而已；数据流 contentDraft → 退出/关闭时 content-save） -->
+    <textarea
+      v-else-if="type === 'text' && contentEditing"
+      v-model="contentDraft"
+      class="viewer-reader viewer-reader-edit"
+      data-testid="mobile-viewer-content-edit"
+      aria-label="编辑文本内容"
+    />
     <div v-else-if="type === 'text'" ref="readerRef" class="viewer-reader">{{ data?.content }}</div>
 
     <!-- §17-③ 胶囊意见框：首笔落定即弹（in-viewer 内联浮条，可继续补画）；
@@ -1062,6 +1108,21 @@ defineExpose({ videoRef })
   color: var(--lnk-text-primary);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* 问题③ v2：编辑态 textarea 复用 .viewer-reader 全部版式（字体/行高/颜色/内边距），
+   仅去掉输入控件默认皮肤——无盒、无边框、无标题，视觉与只读阅读面零差异。 */
+.viewer-reader-edit {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  width: 100%;
+  caret-color: var(--lnk-accent);
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 /* 音频波形查看器（D2 修订 2026-10-27）：波形居中 + 底部控制条 */
