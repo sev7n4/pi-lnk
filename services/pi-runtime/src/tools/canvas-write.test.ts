@@ -2,6 +2,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createCanvasWriteTools } from "./canvas-write.js";
+import type { NestClient } from "./nest-client.js";
 import type { LnkpiToolContext } from "./types.js";
 
 type Recorded = { path: string; body: Record<string, unknown> };
@@ -485,10 +486,10 @@ function fakeNestClient(
 	let snapshotDone = false;
 	const stats = { getNodeCalls: 0 };
 	const posts: Array<{ path: string; body: unknown }> = [];
-	return {
+	const fake = {
 		stats,
 		posts,
-		post: async (path: string, body?: unknown) => {
+		post: async (path: string, body?: unknown, _opts?: { signal?: AbortSignal }) => {
 			posts.push({ path, body });
 			if (opts.startThrows && /\/agent\/internal\/(start-(image|video)-generation|run-(text|audio)-generation)$/.test(path)) {
 				throw new NestToolError("nest http 500: boom", "http", 500);
@@ -521,7 +522,10 @@ function fakeNestClient(
 			}
 			return { ok: true }; // propose-generation 等
 		},
-	} as never;
+	};
+	// 带类型的交叉断言：既满足 createCanvasWriteTools 的 NestClient 形参，
+	// 又暴露 stats/posts 供断言读取（CI tsc 会编译测试文件，`as never` 会把成员收窄成 never）。
+	return fake as unknown as NestClient & { stats: { getNodeCalls: number }; posts: typeof posts };
 }
 
 describe("propose_generation 阻塞确认（B-2）", () => {
