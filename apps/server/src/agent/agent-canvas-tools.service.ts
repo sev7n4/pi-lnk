@@ -1839,7 +1839,11 @@ export class AgentCanvasToolsService {
         actions: [],
         deduped: true,
         used: {
-          model: pickString(node.data?.imageModel, undefined),
+          // pickString 的 fallback 形参是必选 string，这里 model 本就允许缺省
+          // （未显式解析时 undefined，不造值）——用条件展开而非 pickString(…, undefined)。
+          ...(typeof node.data?.imageModel === 'string' && node.data.imageModel.trim()
+            ? { model: node.data.imageModel }
+            : {}),
           aspectRatio: pickString(node.data?.imageAspect, '16:9'),
           resolution: pickString(node.data?.imageResolution, '1K'),
           count: clampImageGenCount(node.data?.imageCount ?? 1),
