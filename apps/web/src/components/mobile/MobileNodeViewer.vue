@@ -682,16 +682,17 @@ const SWIPE_CLOSE_THRESHOLD = 100
 
 /** 统一退出入口：先停播放，再 emit close */
 function requestClose() {
+  // G-3 退出即停：媒体先停（守卫钉死 pause 距函数头 ≤200 字符）
+  videoRef.value?.pause()
+  audioRef.value?.pause()
+  tts.stop()
+  ttsSpeaking.value = false
   // 问题③ v2：编辑态直接关闭 ⇒ 先落盘再退（备忘录式自动保存，不留静默丢失）
   if (contentEditing.value) {
     contentEditing.value = false
     const next = contentDraft.value
     if (next && next !== String(nodeData.value.content ?? '')) emit('content-save', next)
   }
-  videoRef.value?.pause()
-  audioRef.value?.pause()
-  tts.stop()
-  ttsSpeaking.value = false
   emit('close')
 }
 
