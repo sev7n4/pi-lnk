@@ -4,7 +4,7 @@
  *
  * 用法（按规格 §7.3「deploy → 跑校验」时序拆分三种模式）：
  *   DATABASE_URL=... npx tsx scripts/verify-thread-unify.ts --pre    # deploy 前人工跑：
- *       只跑 postPhase1OrphanThreads 前置断言 + I-1/I-2/I-3 碰撞与悬挂预检。
+ *       只跑 postPhase1OrphanThreads 前置断言 + I-1/I-2/I-3/I-3b 碰撞与悬挂预检。
  *   DATABASE_URL=... npx tsx scripts/verify-thread-unify.ts --post   # deploy 后跑：
  *       只跑 orphanMessages=0 / 未归档孤儿线程=0 / 消息总数打印（幂等判据）。
  *   DATABASE_URL=... npx tsx scripts/verify-thread-unify.ts          # 无参数 = 全量
@@ -52,10 +52,10 @@ async function main() {
       fail(`✗ 发现 ${postPhase1OrphanThreads} 条 Phase 1 上线后创建的孤儿线程——疑似在役 fork（重跑）活跃分支，禁止归并，转人工判定（规格 §7.2 边界）`)
     }
 
-    // ── 应用迁移前的唯一键/引用完整性预检（审查修复轮 1：I-1 / I-2 / I-3；P2 加固：I-1b）──
+    // ── 应用迁移前的唯一键/引用完整性预检（审查修复轮 1：I-1 / I-2 / I-3；P2 加固：I-1b；I-3 实证改版：I-3b）──
     // 只读判定，任一致命项非零即禁发迁移（生产 migrate deploy 中断 = 停发回滚）。
-    // I-1b 为信息级（步骤1 已放宽去重覆盖，不致命）。
-    const [dupRunIdGroups, orphanSharedRunIdCollisions, entryIdCrossConflicts, entryIdInternalDups, missingThreadSessions] = await Promise.all([
+    // I-1b / I-3 为信息级（迁移步1 放宽去重 / 步2.5 补建共享线程行各自覆盖，不致命）。
+    const [dupRunIdGroups, orphanSharedRunIdCollisions, entryIdCrossConflicts, entryIdInternalDups, missingThreadSessions, missingThreadAndSession] = await Promise.all([
       // 预检 I-1（致命）：孤儿侧 (sessionId, runId) 分组计数 >1 的分组数——两条不同孤儿线程的
       // 同键行（共享侧无同键行）会在步3 移动后同落共享线程，撞 @@unique([threadId, runId])
       //（schema.prisma:481）⇒ 生产 migrate deploy 中断。步1 已放宽到「同 (sessionId,runId) 删孤儿」，
@@ -71,12 +71,16 @@ async function main() {
       prisma.$queryRaw<[{ n: bigint }]>`SELECT COUNT(*) AS n FROM "AgentMessage" m WHERE m."threadId" != m."sessionId" AND m."entryId" IS NOT NULL AND EXISTS (SELECT 1 FROM "AgentMessage" s WHERE s."entryId" = m."entryId" AND s."threadId" = s."sessionId")`.then((r) => Number(r[0].n)),
       // 预检 I-2b：孤儿侧内部 entryId 重复行数——移动后互相撞 @@unique([entryId])。
       prisma.$queryRaw<[{ n: bigint }]>`SELECT COUNT(*) AS n FROM "AgentMessage" m WHERE m."threadId" != m."sessionId" AND m."entryId" IS NOT NULL AND EXISTS (SELECT 1 FROM "AgentMessage" d WHERE d."entryId" = m."entryId" AND d."threadId" != d."sessionId" AND d."id" != m."id")`.then((r) => Number(r[0].n)),
-      // 预检 I-3：有孤儿消息的每个 sessionId 必须存在 id=sessionId 的 AgentThread 行——
-      // 否则步3 SET threadId = sessionId 产出悬挂引用。
+      // 预检 I-3（信息，非致命）：有孤儿消息但缺 id=sessionId 的 AgentThread 行的会话数——
+      // 生产快照实证 187（=「193 会话历史不可达」主体）。迁移步 2.5 会补建这些共享线程行
+      //（title 借 Session.title，createdAt=最早孤儿消息时间），故非致命，仅作统计披露。
       prisma.$queryRaw<[{ n: bigint }]>`SELECT COUNT(*) AS n FROM (SELECT DISTINCT m."sessionId" AS sid FROM "AgentMessage" m WHERE m."threadId" != m."sessionId") o LEFT JOIN "AgentThread" t ON t."id" = o."sid" WHERE t."id" IS NULL`.then((r) => Number(r[0].n)),
+      // 预检 I-3b（致命）：缺线程行**且**缺 Session 行的会话数——步 2.5 的 INSERT … JOIN "Session"
+      // 会静默丢掉这些会话（FK 无对应行），随后步 3 移动产出悬挂引用。迁移无自愈路径 ⇒ 致命拦截。
+      prisma.$queryRaw<[{ n: bigint }]>`SELECT COUNT(*) AS n FROM (SELECT DISTINCT m."sessionId" AS sid FROM "AgentMessage" m WHERE m."threadId" != m."sessionId") o LEFT JOIN "AgentThread" t ON t."id" = o."sid" LEFT JOIN "Session" s ON s."id" = o."sid" WHERE t."id" IS NULL AND s."id" IS NULL`.then((r) => Number(r[0].n)),
     ])
 
-    console.log({ dupRunIdGroups, orphanSharedRunIdCollisions, entryIdCrossConflicts, entryIdInternalDups, missingThreadSessions })
+    console.log({ dupRunIdGroups, orphanSharedRunIdCollisions, entryIdCrossConflicts, entryIdInternalDups, missingThreadSessions, missingThreadAndSession })
 
     if (dupRunIdGroups !== 0) {
       fail(`✗ 预检 I-1 失败：孤儿侧 (sessionId, runId) 分组计数>1 的分组共 ${dupRunIdGroups} 组——迁移步3 移动后将撞 @@unique([threadId, runId])，禁止归并，转人工清理`)
@@ -89,7 +93,11 @@ async function main() {
       fail(`✗ 预检 I-2 失败：孤儿侧非空 entryId 冲突 ${entryIdCrossConflicts + entryIdInternalDups} 行（对非孤儿侧 ${entryIdCrossConflicts} + 孤儿内部重复 ${entryIdInternalDups}）——迁移步2 漏去重时步3 移动将撞 @@unique([entryId])，禁止归并，转人工清理`)
     }
     if (missingThreadSessions !== 0) {
-      fail(`✗ 预检 I-3 失败：有孤儿消息的 sessionId 中 ${missingThreadSessions} 个不存在 id=sessionId 的 AgentThread 行——迁移步3 移动将产出悬挂引用，禁止归并，转人工补行`)
+      // 信息级：迁移步 2.5 会补建这些共享线程行（生产快照实证 187），归并安全；仅披露。
+      console.warn(`⚠ 预检 I-3：${missingThreadSessions} 个会话有孤儿消息但缺 id=sessionId 的 AgentThread 行——将由迁移步 2.5 补建共享线程行，归并安全（非致命）`)
+    }
+    if (missingThreadAndSession !== 0) {
+      fail(`✗ 预检 I-3b 失败：${missingThreadAndSession} 个会话既缺 AgentThread 行又缺 Session 行——迁移步 2.5 的 INSERT…JOIN Session 会静默丢弃、步 3 移动产出悬挂引用，禁止归并，转人工清理`)
     }
   }
 
