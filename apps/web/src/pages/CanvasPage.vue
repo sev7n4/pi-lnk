@@ -6125,6 +6125,7 @@ onUnmounted(() => {
           <ProposeConfirmOverlay
             v-if="proposeConfirmNode && !isMobileLayout"
             :node="proposeConfirmNode"
+            :propose-waiting="proposeWaitNodeId != null && proposeConfirmNode.id === proposeWaitNodeId"
             @confirm="handleAgentGenerateNode"
             @cancel="handleProposeConfirmCancel"
             @edit="handleProposeConfirmEdit"

@@ -30,6 +30,14 @@ type ProposeConfirmNodeLike = {
 
 const props = defineProps<{
   node: ProposeConfirmNodeLike
+  /**
+   * P0.1（规格 2026-10-30-propose-confirm-execution-unity §14 F1）：part 锚。
+   * 等待期 `update_node{pending_confirm}` 随 tool_result 迟到 ⇒ 节点 status 仍是 draft，
+   * 仅凭 status 单点判定确认面不可见（2026-10-29 生产事故面在 PC overlay 的残留）。
+   * host（CanvasPage）已按 `deriveProposeConfirmAnchor` 双源选出节点；part 锚定命中时
+   * 本组件必须立即可见——与 NodePendingPrompt / MobileNodeTile 的 proposeWaiting 同款。
+   */
+  proposeWaiting?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -78,10 +86,15 @@ const layout = computed<{ anchor: 'above' | 'below'; x: number; y: number } | nu
   return { anchor: 'below', x, y: frame.bottomY * zoom + viewport.value.y }
 })
 
-/** 双重守卫：host 已按状态门控，组件自身不渲染非待确认态（防 prop 竞态残留）。 */
+/**
+ * 双重守卫：host 已按 `deriveProposeConfirmAnchor` 双源门控，组件自身不渲染非待确认态
+ * （防 prop 竞态残留）。P0.1：part 锚定（proposeWaiting）∥ status 双源——等待期 status
+ * 迟到为 draft 时确认面仍立即可见，不再依赖 tool_result 下发时机。
+ */
 const visible = computed(() => {
   const node = props.node
   if (!node?.id) return false
+  if (props.proposeWaiting === true) return true
   return String(node.data?.status ?? '') === NODE_PENDING_CONFIRM_STATUS
 })
 
