@@ -39,6 +39,7 @@ import MobileTaskSheet from './MobileTaskSheet.vue'
 import MobileMultiSelectBar from './MobileMultiSelectBar.vue'
 import MobileNodeActionSheet, { type MobileNodeActionNode } from './MobileNodeActionSheet.vue'
 import MobileNodeEditorSheet from './MobileNodeEditorSheet.vue'
+import MobileNodeTextEditorSheet from './MobileNodeTextEditorSheet.vue'
 import MobileNodeViewer from './MobileNodeViewer.vue'
 import MobileNodeCoachMark from './MobileNodeCoachMark.vue'
 import type { EditableFlowNode } from '@/composables/useSelectedNodeEditor'
@@ -135,6 +136,8 @@ const props = defineProps<{
   mobileActionNode: MobileNodeActionNode | null
   /** 移动端编辑 sheet 上下文（复用桌面 resolve 逻辑）：null = 未打开 */
   mobileEditor: MobileEditorContext | null
+  /** 移动端**文本节点原生编辑器**上下文（问题③：编辑生成内容，非提示词）；null = 未打开 */
+  mobileTextEditor: { node: EditableFlowNode } | null
   onNodeAction: (key: string, nodeId: string) => void
   /** R4-T3：移动端重命名（动作 sheet 内联输入提交） */
   onNodeRename: (nodeId: string, title: string) => void
@@ -146,12 +149,15 @@ const props = defineProps<{
    * —— ⛔ 不再有本地提交（生成权归 agent）与删除引用 emit（PC dock 专用契约已移除）。
    */
   onNodeEditorSendToAgent: (payload: { prompt: string; opinion: string }) => void
+  /** 问题③：文本节点原生编辑器的关闭 / 本地保存（产物校正，不绕 agent） */
+  onTextEditorClose: () => void
+  onTextEditorSave: (payload: { content: string }) => void
   /** 移动端全屏查看器（R1-T4/T6）：图灯箱/视频播放/音频波形/文本阅读器；null = 未打开 */
   viewerNode: { id?: string; type: 'image' | 'video' | 'audio' | 'text'; data?: any } | null
   onViewerClose: () => void
   /** 右上「⋯」= 打开与长按同一个 Menu（同源同容器，§4.6） */
   onViewerMore: () => void
-  /** 查看器底部主栏动作（如「改词」，§4.11.6 高频下沉；音频 edit 携带 meta.mediaTime——v1.5 Q） */
+  /** 查看器底部主栏动作（如文本节点「编辑」、媒体节点「改词」，§4.11.6 高频下沉；音频 edit 携带 meta.mediaTime——v1.5 Q） */
   onViewerBottomAction: (key: string, meta?: { mediaTime?: number }) => void
   /** D8/L1/M1 + §17 v2：查看器标注锚带回（带标记整图 blob 或降级 + 胶囊意见） */
   onViewerAnnotate: (payload: { imageBlob?: Blob; degraded: boolean; text?: string }) => void
@@ -184,11 +190,24 @@ const viewerBottomActions = computed(() => {
   const data = (node.data ?? {}) as Record<string, unknown>
   const status = String(data.status ?? '')
   const isPending = status === 'pending_confirm' || status === 'pending'
+  const isText = node.type === 'text'
   const hasContent =
-    node.type === 'text'
+    isText
       ? Boolean(String(data.content ?? '').trim())
       : Boolean(String(data.url ?? '').trim())
-  const actions: Array<{ key: string; label: string; variant?: 'primary' | 'danger' }> = []
+  // ⭐ 文本节点「编辑」= 校正生成内容（产物）⇒ 原生文本编辑器（MobileNodeTextEditorSheet）；
+  //   媒体节点「改词」= 改提示词重生成 ⇒ 提示词编辑器（MobileNodeEditorSheet）。
+  //   #636 边界：format:'html' 产物是结构化文档，裸 textarea 编辑源码既伤阅读
+  //   又易破坏 sandbox 渲染 ⇒ 保留 agent 改词流；plain/markdown 才走本地编辑。
+  const isEditableText = isText && String(data.format ?? 'plain') !== 'html'
+  const editLabel = isEditableText ? '编辑' : '改词'
+  const editIcon: 'pencil' | undefined = isEditableText ? 'pencil' : undefined
+  const actions: Array<{
+    key: string
+    label: string
+    variant?: 'primary' | 'danger'
+    icon?: 'pencil' | 'speaker' | 'stop'
+  }> = []
   if (isPending) {
     // §17 v2（拍板①，2026-10-27）：审核层底栏收敛为【批注】【编辑】两键 ——
     // 「拒绝/改词/确认」三键退役：无条件确认=编辑→保存→确认生成；无条件拒绝=
@@ -199,7 +218,7 @@ const viewerBottomActions = computed(() => {
     return actions
   }
   if (hasContent) {
-    actions.push({ key: 'edit', label: '改词', variant: 'primary' })
+    actions.push({ key: 'edit', label: editLabel, icon: editIcon, variant: 'primary' })
   }
   return actions
 })
@@ -449,6 +468,13 @@ watch(
     @close="props.onNodeEditorClose"
     @patch="props.onNodeEditorPatch"
     @send-to-agent="props.onNodeEditorSendToAgent"
+  />
+  <!-- 问题③：文本节点原生编辑器（编辑生成内容，非提示词；原生 textarea 弹系统键盘） -->
+  <MobileNodeTextEditorSheet
+    v-if="mobileTextEditor"
+    :node="mobileTextEditor.node"
+    @close="props.onTextEditorClose"
+    @save="props.onTextEditorSave"
   />
   <!-- R1-T4/T6：移动端全屏查看器（tap 图/视频/短文文本经注入键在此承接）。
        §17 v2：批注/编辑都在 viewer 内完成（胶囊意见框 + 就地改字）——
