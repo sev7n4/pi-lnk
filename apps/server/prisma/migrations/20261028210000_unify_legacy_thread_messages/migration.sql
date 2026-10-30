@@ -33,13 +33,33 @@ WHERE "threadId" != "sessionId"
       AND m2."createdAt" = "AgentMessage"."createdAt"
   );
 
+-- 第 2.5 步（生产 --pre 闸门 I-3 实证后补入，2026-10-30）：补建缺失的共享线程行。
+-- 生产快照实证：187 个会话有孤儿消息但**连 id=sessionId 的 AgentThread 行都不存在**
+--（=「193 会话历史不可达」的主体），不补行则步 3 移动产出悬挂 threadId 引用（I-3 拦截）。
+-- 自愈语义：title 借 Session.title（画布名，比默认「新对话」信息量大）；
+-- createdAt 取该会话最早孤儿消息时间（时序语义自然，Prisma SQLite DateTime=毫秒整数原值）；
+-- updatedAt 走 strftime ISO-8601（与步 4 archivedAt 同款先例）。同时间窗（< Phase1 上线时刻）
+-- 只补历史债；NOT EXISTS 守卫保证重跑零行（幂等）。
+INSERT INTO "AgentThread" ("id", "sessionId", "title", "createdAt", "updatedAt")
+SELECT DISTINCT m."sessionId", m."sessionId", COALESCE(NULLIF(s."title", ''), '新对话'),
+       (SELECT MIN(m2."createdAt") FROM "AgentMessage" m2
+         WHERE m2."sessionId" = m."sessionId" AND m2."threadId" != m2."sessionId"),
+       strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+FROM "AgentMessage" m
+JOIN "Session" s ON s."id" = m."sessionId"
+WHERE m."threadId" != m."sessionId"
+  AND m."createdAt" < '2026-10-26T13:32:00Z'
+  AND NOT EXISTS (SELECT 1 FROM "AgentThread" t WHERE t."id" = m."sessionId");
+
 -- 第 3 步：移动（createdAt 原值保留，时序天然不变）
 -- 纵深防御（审查 P2）：仅动 Phase 1 上线前的历史债（< 2026-10-26T13:32:00Z），
 -- 即便跳过 --pre 闸门也绝不碰在役 fork（重跑）分支——这是相比原「全量移动」的关键加固。
 -- 配合第 1 步放宽去重，孤儿/共享同 (sessionId,runId) 碰撞面已被步骤 1 消除，此处只移历史行。
+-- 再加 EXISTS 守卫（步 2.5 的兜底）：目标共享线程行不存在则不移动，绝不制造悬挂引用。
 UPDATE "AgentMessage" SET "threadId" = "sessionId"
 WHERE "threadId" != "sessionId"
-  AND "createdAt" < '2026-10-26T13:32:00Z';
+  AND "createdAt" < '2026-10-26T13:32:00Z'
+  AND EXISTS (SELECT 1 FROM "AgentThread" t WHERE t."id" = "AgentMessage"."sessionId");
 
 -- 第 4 步：归档孤儿线程行（保留供审计，含其 turnState）；strftime 产出 Prisma 兼容的 ISO-8601
 -- 纵深防御（审查 P2）：同样只归档 Phase 1 上线前的历史孤儿线程，绝不归档在役 fork 分支。
