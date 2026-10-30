@@ -2723,28 +2723,12 @@ function openMobileNodeEditor(nodeId: string) {
   mobileEditorNode.value = node ?? null
 }
 
-// 问题③：文本节点**原生编辑器**（编辑生成内容 / 产物校正，非提示词）—— 本地保存，不绕 agent
-const mobileTextEditorNode = ref<EditableFlowNode | null>(null)
-const mobileTextEditor = computed(() =>
-  mobileTextEditorNode.value ? { node: mobileTextEditorNode.value } : null,
-)
-function openMobileTextEditor(nodeId: string) {
-  const node = findNodeById(nodeId)
-  mobileTextEditorNode.value = node ?? null
-}
-function closeMobileTextEditor() {
-  mobileTextEditorNode.value = null
-}
-/** 本地保存文本节点内容（产物校正）；内容无变化则不打扰落库 */
-function handleMobileTextEditorSave(payload: { content: string }) {
-  const node = mobileTextEditorNode.value
-  if (!node) return
-  const nextContent = payload.content
-  if (nextContent && nextContent !== String((node.data as Record<string, unknown>)?.content ?? '')) {
-    patchNodeData(node.id, { content: nextContent })
-    persistUserEdit()
-  }
-  closeMobileTextEditor()
+// 问题③ v2：文本内容就地编辑保存（viewer 内消化，2026-10-31 真机裁决）⇒
+// patchNodeData({content}) + persistUserEdit —— 本地校正产物，不绕 agent
+function handleMobileViewerContentSave(nodeId: string, content: string) {
+  if (!content) return
+  patchNodeData(nodeId, { content })
+  persistUserEdit()
 }
 
 function closeMobileNodeAction() {
@@ -2973,11 +2957,9 @@ function handleMobileViewerBottomAction(key: string, meta?: { mediaTime?: number
         ? `at ${formatMediaDuration(meta.mediaTime) ?? '0:00'}`
         : ''
     closeMobileViewer()
-    // 文本节点 ⇒ 原生文本编辑器（校正生成内容）；媒体节点 ⇒ 提示词编辑器（改词重生成）。
-    // #636 边界：format:'html' 产物不裸编辑源码 ⇒ 保留 agent 改词流。
-    const format = String((node.data as Record<string, unknown> | undefined)?.format ?? 'plain')
-    if (node.type === 'text' && format !== 'html') openMobileTextEditor(node.id)
-    else openMobileNodeEditor(node.id)
+    // 问题③ v2：confirmed 文本节点编辑已在 viewer 内就地消化（不再上抛）；
+    // 能走到这里的 edit = 媒体节点改词 + html 文本节点改词 ⇒ 提示词编辑器。
+    openMobileNodeEditor(node.id)
   }
 }
 
@@ -6438,13 +6420,11 @@ onUnmounted(() => {
       :on-node-editor-close="closeMobileNodeEditor"
       :on-node-editor-patch="applyMobileEditorPatch"
       :on-node-editor-send-to-agent="handleMobileNodeSendToAgent"
-      :mobile-text-editor="mobileTextEditor"
-      :on-text-editor-close="closeMobileTextEditor"
-      :on-text-editor-save="handleMobileTextEditorSave"
       :on-viewer-annotate="handleMobileAnnotateAnchor"
       :on-viewer-more="openMobileNodeMenuFromViewer"
       :on-viewer-bottom-action="handleMobileViewerBottomAction"
       :on-viewer-edit-save="handleMobileViewerEditSave"
+      :on-viewer-content-save="handleMobileViewerContentSave"
       :on-node-editor-remove-ref="handleMobileNodeRemoveRef"
       :viewer-node="mobileViewerNode"
       :on-viewer-close="closeMobileViewer"

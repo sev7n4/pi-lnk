@@ -582,6 +582,61 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
   })
 })
 
+// ── 问题③ v2：confirmed 文本节点就地编辑（阅读面变编辑面，2026-10-31 真机裁决）──
+describe('MobileNodeViewer 文本就地编辑（问题③ v2）', () => {
+  const textProps = {
+    type: 'text' as const,
+    data: { content: '原文内容', status: 'confirmed' },
+    bottomActions: [{ key: 'edit', label: '编辑', icon: 'pencil' as const }],
+  }
+
+  it('【编辑】⇒ 阅读面就地变 textarea（同版式无盒），预填 content，不上抛 bottom-action', async () => {
+    const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: textProps })
+    expect(w.find('[data-testid="mobile-viewer-content-edit"]').exists()).toBe(false)
+    await w.get('[data-testid="mobile-viewer-bottom-edit"]').trigger('click')
+    const ta = w.get('[data-testid="mobile-viewer-content-edit"]')
+    expect((ta.element as HTMLTextAreaElement).value).toBe('原文内容')
+    expect(w.emitted('bottom-action')).toBeFalsy()
+    w.unmount()
+  })
+
+  it('编辑态底栏收敛为唯一动作【退出编辑】（朗读退场，对标取消圈选）', async () => {
+    const w = mount(MobileNodeViewer, {
+      global: { stubs: { teleport: true } },
+      props: {
+        ...textProps,
+        bottomActions: [
+          { key: 'edit', label: '编辑', icon: 'pencil' as const },
+          { key: 'tts', label: '朗读', icon: 'speaker' as const },
+        ],
+      },
+    })
+    await w.get('[data-testid="mobile-viewer-bottom-edit"]').trigger('click')
+    const labels = w.findAll('.mv-chrome-item').map((b) => b.text())
+    expect(labels).toEqual(['退出编辑'])
+    expect(w.find('[data-testid="mobile-viewer-bottom-tts"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('退出编辑且有改动 ⇒ emit content-save（本地校正产物）；只读阅读面回归', async () => {
+    const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: textProps })
+    await w.get('[data-testid="mobile-viewer-bottom-edit"]').trigger('click')
+    await w.get('[data-testid="mobile-viewer-content-edit"]').setValue('改后的文本')
+    await w.get('[data-testid="mobile-viewer-bottom-content-exit"]').trigger('click')
+    expect(w.emitted('content-save')).toEqual([['改后的文本']])
+    expect(w.find('[data-testid="mobile-viewer-content-edit"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('退出编辑但内容未变 ⇒ 不 emit content-save', async () => {
+    const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: textProps })
+    await w.get('[data-testid="mobile-viewer-bottom-edit"]').trigger('click')
+    await w.get('[data-testid="mobile-viewer-bottom-content-exit"]').trigger('click')
+    expect(w.emitted('content-save')).toBeFalsy()
+    w.unmount()
+  })
+})
+
 // ── W-5：图片双指缩放（拍板 I1 隐含底线，2026-10-27 S2 批次）──────────────────
 describe('图片双指缩放（W-5）', () => {
   function mountImage() {
