@@ -1,16 +1,16 @@
 {
- "total": 409,
+ "total": 419,
  "by_status": {
-  "living": 139,
-  "frozen": 262,
+  "living": 145,
+  "frozen": 266,
   "superseded": 8
  },
  "by_topic": {
-  "other": 82,
-  "canvas-tool": 67,
+  "other": 85,
+  "canvas-tool": 73,
   "generation-pipeline": 40,
   "canvas-product": 34,
-  "agent-ux": 31,
+  "agent-ux": 32,
   "image-editor": 30,
   "tool-runtime": 25,
   "planning": 18,
@@ -27,7 +27,7 @@
   "2026-07": 41,
   "2026-08": 79,
   "2026-09": 155,
-  "2026-10": 134
+  "2026-10": 144
  },
  "items": [
   {
@@ -1773,7 +1773,7 @@
    "month": "2026-10",
    "kind": "spec",
    "status": "living",
-   "reason": "2026-10 活跃主题（canvas-tool）",
+   "reason": "文内标注待实现/待评审/进行中",
    "topic": "canvas-tool"
   },
   {
@@ -1838,6 +1838,60 @@
    "status": "living",
    "reason": "文内标注待实现/待评审/进行中",
    "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-28-agent-wait-timeline-single-source-design.md",
+   "name": "2026-10-28-agent-wait-timeline-single-source-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-28-askuser-card-visual-refinement.md",
+   "name": "2026-10-28-askuser-card-visual-refinement.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-28-askuser-mobile-multi-question-redesign.md",
+   "name": "2026-10-28-askuser-mobile-multi-question-redesign.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-28-canvas-edge-remedy-loop-design.md",
+   "name": "2026-10-28-canvas-edge-remedy-loop-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "2026-10 活跃主题（canvas-tool）",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-28-text-node-html-artifact-design.md",
+   "name": "2026-10-28-text-node-html-artifact-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-10-30-propose-confirm-execution-unity-design.md",
+   "name": "2026-10-30-propose-confirm-execution-unity-design.md",
+   "month": "2026-10",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
   },
   {
    "path": "docs/superpowers/plans/2026-07-09-neowow-workflow.md",
@@ -3710,6 +3764,42 @@
    "status": "frozen",
    "reason": "文内标注已实现/已交付",
    "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-28-canvas-edge-remedy-loop.md",
+   "name": "2026-10-28-canvas-edge-remedy-loop.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-10 活跃主题（canvas-tool）",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-28-text-node-html-artifact.md",
+   "name": "2026-10-28-text-node-html-artifact.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-29-mobile-viewer-chrome-v15.md",
+   "name": "2026-10-29-mobile-viewer-chrome-v15.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-10 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-10-30-propose-confirm-execution-unity.md",
+   "name": "2026-10-30-propose-confirm-execution-unity.md",
+   "month": "2026-10",
+   "kind": "plan",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "canvas-tool"
   }
  ]
 }

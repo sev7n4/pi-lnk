@@ -1,6 +1,6 @@
 # propose 确认执行权归一（P0 止血包）设计规格
 
-状态：待评审（2026-10-30，起因：真机回归 thread `cmvtadc5w009ap901qxfpcelz` propose 全链路断裂）
+状态：**已上线**（2026-10-30，PR #640 squash `27b06658`；CI 三项全绿 + 生产取证：API `lnkpi-api:27b06658…` / runtime pod `pi-runtime:27b0665` 且 dist 特征串命中 / web chunk 含新等待文案字面量；真机 S1-S7 走查待做）。起因：真机回归 thread `cmvtadc5w009ap901qxfpcelz` propose 全链路断裂
 > 修订 v1.1（实施日裁决）：**P0-1 不新增端点**——Nest 已有 `start-image-generation` / `start-video-generation` / `run-text-generation` / `run-audio-generation` 内部端点（run_* 工具的执行面，参数装配/SSOT 写入/幂等锚点俱全），runtime 确认后直调即可，不重复造轮子。Nest 侧改动收敛为：start 系幂等守卫 + PUT 守卫收紧 + summary 补 audioKind。
 前置：
 - `docs/discussion/2026-10-29-propose-execution-ownership-architecture-review.md`（v1，推理留痕）

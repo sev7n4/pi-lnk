@@ -1,6 +1,6 @@
 # superpowers 文档索引
 
-> 全部 **409 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
+> 全部 **419 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
 > **文档正文未改动** —— 本索引只做导航与状态标注。
 
 ## 怎么用这份索引
@@ -13,19 +13,19 @@
 
 | 状态 | 份数 | 含义 |
 |---|---|---|
-| 🟢 living | 139 | 仍在演进，改动前先看这份 |
-| 🔒 frozen | 262 | 内容已定稿或功能已落地，作为历史依据 |
+| 🟢 living | 145 | 仍在演进，改动前先看这份 |
+| 🔒 frozen | 266 | 内容已定稿或功能已落地，作为历史依据 |
 | ⛔ superseded | 8 | 已被后续决策取代，勿再参考 |
 
 ## 主题分布
 
 | 主题 | 份数 | 其中 living |
 |---|---|---|
-| 其他 | 82 | 23 |
-| 画布工具与交互 | 67 | 28 |
+| 其他 | 85 | 24 |
+| 画布工具与交互 | 73 | 33 |
 | 生成管线（图像/视频/3D） | 40 | 9 |
 | 画布产品能力（原子/意图/neowow） | 34 | 8 |
-| Agent 交互与可见性 | 31 | 15 |
+| Agent 交互与可见性 | 32 | 15 |
 | 图片编辑器与精修台 | 30 | 5 |
 | 工具与运行时内核 | 25 | 6 |
 | 规划与执行计划 | 18 | 5 |
@@ -42,10 +42,11 @@
 
 ## 按主题浏览
 
-### 其他（82 份）
+### 其他（85 份）
 
-<details><summary>🟢 living · 23 份</summary>
+<details><summary>🟢 living · 24 份</summary>
 
+- `docs/superpowers/specs/2026-10-28-askuser-mobile-multi-question-redesign.md` ★design
 - `docs/superpowers/specs/2026-10-27-mobile-web-three-page-topbar-redesign.md` ★design
 - `docs/superpowers/specs/2026-10-26-unified-single-conversation-design.md` ★design
 - `docs/superpowers/plans/2026-10-23-sp-c-viewport-restore.md`
@@ -72,8 +73,10 @@
 
 </details>
 
-<details><summary>🔒 frozen · 58 份</summary>
+<details><summary>🔒 frozen · 60 份</summary>
 
+- `docs/superpowers/plans/2026-10-29-mobile-viewer-chrome-v15.md`
+- `docs/superpowers/specs/2026-10-28-askuser-card-visual-refinement.md` ★design
 - `docs/superpowers/plans/2026-10-27-project-gallery-consolidation-hotfix.md`
 - `docs/superpowers/plans/2026-10-27-mobile-web-three-page-topbar-redesign.md`
 - `docs/superpowers/plans/2026-10-27-mobile-proposal-annotation-flow.md`
@@ -141,10 +144,15 @@
 
 </details>
 
-### 画布工具与交互（67 份）
+### 画布工具与交互（73 份）
 
-<details><summary>🟢 living · 28 份</summary>
+<details><summary>🟢 living · 33 份</summary>
 
+- `docs/superpowers/plans/2026-10-30-propose-confirm-execution-unity.md`
+- `docs/superpowers/plans/2026-10-28-text-node-html-artifact.md`
+- `docs/superpowers/specs/2026-10-28-text-node-html-artifact-design.md` ★design
+- `docs/superpowers/plans/2026-10-28-canvas-edge-remedy-loop.md`
+- `docs/superpowers/specs/2026-10-28-canvas-edge-remedy-loop-design.md` ★design
 - `docs/superpowers/plans/2026-10-25-mobile-node-lifecycle.md`
 - `docs/superpowers/specs/2026-10-25-mobile-node-lifecycle-design.md` ★design
 - `docs/superpowers/plans/2026-10-20-group-native-node.md`
@@ -176,8 +184,9 @@
 
 </details>
 
-<details><summary>🔒 frozen · 38 份</summary>
+<details><summary>🔒 frozen · 39 份</summary>
 
+- `docs/superpowers/specs/2026-10-30-propose-confirm-execution-unity-design.md` ★design
 - `docs/superpowers/specs/2026-10-26-mobile-node-lifecycle-gap-audit-current.md` ★design
 - `docs/superpowers/specs/2026-10-25-mobile-node-lifecycle-audit-report.md` ★design
 - `docs/superpowers/plans/2026-10-23-mobile-node-refactor-r4.md`
@@ -328,7 +337,7 @@
 
 </details>
 
-### Agent 交互与可见性（31 份）
+### Agent 交互与可见性（32 份）
 
 <details><summary>🟢 living · 15 份</summary>
 
@@ -350,8 +359,9 @@
 
 </details>
 
-<details><summary>🔒 frozen · 15 份</summary>
+<details><summary>🔒 frozen · 16 份</summary>
 
+- `docs/superpowers/specs/2026-10-28-agent-wait-timeline-single-source-design.md` ★design
 - `docs/superpowers/plans/2026-10-14-sidebar-ref-bind-pr-d.md`
 - `docs/superpowers/plans/2026-10-14-sidebar-ref-bind-pr-c.md`
 - `docs/superpowers/plans/2026-10-14-sidebar-ref-bind-pr-b.md`
