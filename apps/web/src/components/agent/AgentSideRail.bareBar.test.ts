@@ -38,10 +38,11 @@ describe('mobile bare bar structure (P1-5)', () => {
     expect(tpl.indexOf('composer-bare-bar')).toBeLessThan(tpl.indexOf('aria-label="更多"'))
   })
   it('status line & interject options live ABOVE the bar (system layer)', () => {
-    // 存在性配对 + 顺序断言（状态行模板位置在 composer-bare-bar 之前）
-    expect(tpl).toContain('class="composer-status-line"')
+    // 2026-10-31：长条 composer-status-line 已下线，流式 running 态改由 turn-status-line
+    // （系统层，位于 composer-bare-bar 之前）统一承载。判据同步改为 turn-status-line。
+    expect(tpl).toContain('data-testid="turn-status-line"')
     expect(tpl).toContain('composer-bare-bar')
-    expect(tpl.indexOf('class="composer-status-line"')).toBeLessThan(tpl.indexOf('composer-bare-bar'))
+    expect(tpl.indexOf('data-testid="turn-status-line"')).toBeLessThan(tpl.indexOf('composer-bare-bar'))
   })
   it('history popover retired（ADR-0015 单对话 + 2026-10-27 三页顶栏重构 T5）', () => {
     // 有效性配对：popover 原地渲染的形态与向上展开规则都必须**整体退役**；
