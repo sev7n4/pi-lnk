@@ -490,6 +490,35 @@ export function extractCanvasCommands(event: PiRuntimeEvent): PiCanvasCommand[] 
 const NODE_TYPE_SET: ReadonlySet<string> = new Set(NODE_TYPES);
 
 export function extractCanvasActions(event: PiRuntimeEvent): CanvasAction[] {
+	// B-5 扩展（2026-10-31 蓝色小汽车生产实证）：propose 阻塞分支在 start-* 成功后经
+	// onUpdate 全量快照下发 started actions（generating + generationRecordId）——
+	// 生成中状态必须在确认→完成窗口内 live 到画布（此前 end-only 提取让该窗口零广播，
+	// 前端「待确认→空白」漂移；偶见「生成中」只是 SSOT 重载竞态）。形状对齐 B-6：
+	// partialResult.details.actions 与 canvasCommands 同通道不同键，天然不撞。
+	if (event.type === "tool_execution_update") {
+		const d = event.data as {
+			partialResult?: { details?: { actions?: unknown } };
+		};
+		const pending = d.partialResult?.details?.actions;
+		if (!Array.isArray(pending)) return [];
+		const out: CanvasAction[] = [];
+		for (const a of pending) {
+			const parsed = CanvasActionSchema.safeParse(a);
+			if (!parsed.success) {
+				piEventsLogger.warn(
+					`canvas_action update zod_drop issues=${parsed.error.issues.length} first=${parsed.error.issues[0]?.path.join(".")}`,
+				);
+				continue;
+			}
+			const nodeType = parsed.data.payload.nodeType;
+			if (nodeType !== undefined && !NODE_TYPE_SET.has(nodeType)) {
+				piEventsLogger.warn(`canvas_action update whitelist_drop nodeType=${nodeType}`);
+				continue;
+			}
+			out.push(parsed.data);
+		}
+		return out;
+	}
 	if (event.type !== "tool_execution_end") return [];
 	const d = event.data as {
 		isError?: boolean;
