@@ -5732,6 +5732,15 @@ function onMobileTabChange(tab: MobileAppTab) {
     // 页签点画布 = 门语义：纯画布满屏（composer/SSE 收起）
     mobileCanvasView.value = true
     mobileCanvasImm.value = true
+    // C3（2026-10-31 皮皮虾回合真机反馈）：切画布页签时若存在阻塞等待的提议节点，
+    // 自动定位一次（fitView + 定位闪烁）——用户此刻切画布的动机就是去找确认入口。
+    // focusNodeById 在已处画布视图时不改入口语义（保持本页签切换设定的满屏态）；
+    // 节点尚未上屏（canvas_action 在途）时不定位也不告警（focusNodeById 的 warning
+    // 只该给显式点击，这里静默跳过）。
+    const waitNodeId = useAgentStore().pendingProposal?.nodeId
+    if (waitNodeId && nodes.value.some((n) => n.id === waitNodeId)) {
+      void focusNodeById(waitNodeId)
+    }
   } else if (tab === 'chat') {
     mobileCanvasView.value = false
     mobileCanvasImm.value = false
