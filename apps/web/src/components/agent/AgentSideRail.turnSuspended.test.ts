@@ -51,9 +51,9 @@ describe('AgentSideRail turn_suspended 挂起契约（挂起 ≠ 断链）', () 
     ).not.toContain('appendText')
   })
 
-  it('turnStatus 的 isStreaming 基座必须并入挂起态（等待条/倒计时整个等待期存活）', () => {
-    const block = fnBlock('const turnStatus = computed(() =>')
-    expect(block, 'isStreaming 必须是 isStreaming ∥ mainTurnSuspended 并集').toContain(
+  it('liveTimeline 的 active 基座必须并入挂起态（钉底时间线整个等待期存活；2026-10-31 状态行退役后本处是唯一基座）', () => {
+    const block = fnBlock('const liveTimeline = computed(() =>')
+    expect(block, 'active 必须是 isStreaming ∥ mainTurnSuspended 并集').toContain(
       'agent.isStreaming || mainTurnSuspended.value',
     )
   })

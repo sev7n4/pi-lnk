@@ -389,7 +389,12 @@ const rootClass = computed(() =>
             class="ml-auto text-[10px] text-[var(--lnk-text-muted)]"
           >已确认</span>
         </div>
-        <p class="mt-0.5 text-[10px] text-[var(--lnk-text-secondary)]">
+        <!-- 2026-10-31 猴子回合 CI 钓出：等待提示此前不分状态恒显——已取消/已超时/已确认
+             的卡仍挂着「等待你在画布上确认生成」（与 #654 标签撒谎同族）。只 pending 才显示。 -->
+        <p
+          v-if="part.status === 'pending_confirm'"
+          class="mt-0.5 text-[10px] text-[var(--lnk-text-secondary)]"
+        >
           等待你在画布上确认生成，确认后继续输出
         </p>
         <div class="mt-1 flex items-center gap-1.5">

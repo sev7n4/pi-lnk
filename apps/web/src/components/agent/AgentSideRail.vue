@@ -137,13 +137,11 @@ import { classifyGesture } from './composer/holdGesture'
 import UniversalModelSelector from '@/components/canvas/UniversalModelSelector.vue'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
 import { formatDuration as formatTraceDuration } from '@/components/agent/executionStepLabels'
-import { turnSettledText, turnSummaryLine } from '@/components/agent/executionTraceReducer'
+import { turnSummaryLine } from '@/components/agent/executionTraceReducer'
 import { formatSessionTime } from '@/utils/formatSessionTime'
 import { randomId } from '@/utils/randomId'
 import { submitAnswers } from '@/components/agent/agentAnswers'
-import { failureReason, resolveWaitingFromTimeline, turnStatusLine } from '@/components/agent/turnStatusBar'
 import { hasActionableWait, hasBubbleContent, hasBubbleText } from '@/components/agent/bubbleVisibility'
-import { describeActivityFromTimeline } from '@/components/agent/activityLine'
 import { ElMessage } from 'element-plus'
 
 interface AgentThreadRow {
@@ -932,8 +930,8 @@ const liveTimeline = computed(() => {
   if (!last?.timeline) return null
   // ⭐ 2026-10-31 大章鱼回合实证：挂起回合（turn_suspended 后）isStreaming/last.streaming
   // 双双翻 false，但等待仍在进行——active 必须并入 mainTurnSuspended，否则钉底时间线
-  // （含 proposal 卡）在挂起瞬间卸载，等待期全程不可见（turnStatus 的 isStreaming
-  // 并集已修，本处是同一裁决的漏配点：判定必须与 turnStatus 基座一致）。
+  // （含 proposal 卡）在挂起瞬间卸载，等待期全程不可见（判定 = 回合进行中基座
+  // isStreaming ∪ mainTurnSuspended，与 all 消费方保持同一口径）。
   const active =
     agent.isStreaming || mainTurnSuspended.value || showTaskCard.value || Boolean(last.streaming)
   return active ? last.timeline : null
@@ -1086,84 +1084,6 @@ const agentStream = useAgentStream({
   },
 })
 
-const lastAssistantMessage = computed(() =>
-  [...agent.messages].reverse().find((m) => m.role === 'assistant'),
-)
-
-/* ---- P1 回合状态行：实时秒数 ticker + waiting 收口 + 失败态 ---- */
-const nowSec = ref(Date.now())
-let statusTicker: number | null = null
-watch(
-  () => agent.isStreaming,
-  (streaming) => {
-    if (streaming) {
-      nowSec.value = Date.now()
-      if (statusTicker === null) {
-        statusTicker = window.setInterval(() => {
-          nowSec.value = Date.now()
-        }, 1000)
-      }
-    } else if (statusTicker !== null) {
-      window.clearInterval(statusTicker)
-      statusTicker = null
-    }
-  },
-  { immediate: true },
-)
-onUnmounted(() => {
-  if (statusTicker !== null) window.clearInterval(statusTicker)
-})
-
-const turnStatus = computed(() => {
-  // 根治规格（2026-10-28）：等待态 + 执行态的「单一真相」= 时间线 parts。
-  // 状态行与对话流内联卡读同一份——结构性消除「状态行抢跑、对话卡滞后/缺失」。
-  const parts = liveTimeline.value?.parts
-  const waiting = resolveWaitingFromTimeline(parts)
-  const lastFailed = agent.turnError != null ? failureReason(agent.turnError) : undefined
-  // 「正在做什么」：从时间线 parts 派生（与对话流内联卡同源），不再直连 executionTrace.steps。
-  const traceActivity = describeActivityFromTimeline(parts)
-  // 等待文案来源：proposal part（propose）/ question part（ask），与内联卡同一 part。
-  const proposalPart = parts?.find(
-    (p): p is Extract<typeof p, { kind: 'proposal' }> =>
-      p.kind === 'proposal' && p.status === 'pending_confirm',
-  )
-  const questionPart = parts?.find(
-    (p): p is Extract<typeof p, { kind: 'question' }> =>
-      p.kind === 'question' && p.status === 'pending_answer',
-  )
-  const waitingTool = proposalPart ? 'propose_generation' : null
-  const waitingQuestion = questionPart
-    ? questionPart.questions[0]?.question ?? questionPart.title
-    : null
-  const waitingDeadline = proposalPart
-    ? proposalPart.startedAt + (proposalPart.timeoutMs ?? 300_000)
-    : questionPart
-      ? questionPart.startedAt + 300_000
-      : null
-  return turnStatusLine({
-    // turn_suspended（2026-10-31）：主流在等待边界挂起收尾后 isStreaming 翻 false，
-    // 但等待仍在进行 —— 挂起态计入「回合进行中」基座，等待条/倒计时不熄灭
-    // （waiting 分支在 turnStatusLine 内部优先于 running，挂起且无等待 part 时
-    // 也不会误显 running 计时：part 缺失则 waiting=false，此时挂起回合本就无进度可显）。
-    isStreaming: agent.isStreaming || mainTurnSuspended.value,
-    turnStartedAt: lastAssistantMessage.value?.executionTrace?.turnStartedAt,
-    now: nowSec.value,
-    waiting,
-    // P2：恢复中显示「会话恢复中」而非「上游响应超时」（waiting 优先级更高，见 turnStatusBar）
-    recovering: agent.recovering,
-    waitingTool,
-    waitingQuestion,
-    waitingDeadline,
-    activity: traceActivity,
-    // Q2：本回合实时预估积分（usage_delta 逐段覆盖；null 时状态行不拼预估尾巴）
-    estimatedCredits: agent.liveEstimatedCredits,
-    lastFailed,
-    // P2 T7：settled 收口态——文案与气泡摘要共用 reducer turnSettledText（单源），
-    // 状态行只切 mode（'settled'），不复制文案。failed 优先（error 路径 released 显示失败原因）。
-    settledText: turnSettledText(lastAssistantMessage.value?.executionTrace),
-  })
-})
-
 /**
  * IA v3.2（2026-10-20 修复）：发现/我的页签与对话回合无关——移动端整条 dock（含状态行）
  * 必须彻底隐藏。否则 Teleport 到 body 的容器（z 高于 App.vue 的 `main.z-10`）会盖住发现/我的页：
@@ -1174,23 +1094,6 @@ const railHiddenByTab = computed(
   () => isMobileLayout.value && (props.mobileAppTab === 'discover' || props.mobileAppTab === 'mine'),
 )
 
-/**
- * P2 T7 退场设计（2026-10-20 修复）：settled 收口态是「最后一眼」，结算信息已在气泡摘要
- * 同源落点，状态行允许被 dismiss；新回合开始 / 新一轮结算自动复位，避免永久常驻。
- */
-const settledDismissed = ref(false)
-watch(
-  () => agent.isStreaming,
-  (streaming) => {
-    if (streaming) settledDismissed.value = false
-  },
-)
-watch(
-  () => turnStatus.value?.mode,
-  (mode, prev) => {
-    if (mode === 'settled' && prev !== 'settled') settledDismissed.value = false
-  },
-)
 /**
  * 阻塞等待 propose_generation（2026-10-01）：确认动作只存在于画布节点，
  * 聊天侧必须明示「去哪确认 + 一键定位」，否则用户只看到转圈无从下手。
@@ -2825,7 +2728,12 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
       // pending）主流断开 ≠ turn 失败——服务端 run 活着，等待态已由 timeline part 单一
       // 真相呈现，重连后 lastEventId 回放对账。2026-10-29 生产事故：用户点「定位」切画布
       // → SSE 断开 → 被标「生成失败 · 网络连接不稳定」（服务端实际 13 分钟后正常 settled）。
-      if (agent.pendingProposal || agent.pendingQuestion) {
+      // ⭐ 2026-10-31 猴子回合：已收到 turn_suspended 的挂起回合，断链是**预期形态**
+      // （移动端切后台即被掐 socket）——等待卡+内联确认入口就是全部所需呈现，任何
+      // 「连接已断开」文案都是噪音，一律不追加（与 finally 的挂起豁免同一裁决）。
+      if (mainTurnSuspended.value) {
+        // 挂起后断链：静默。等待呈现交给时间线 part。
+      } else if (agent.pendingProposal || agent.pendingQuestion) {
         agent.appendText('\n\n⚠️ 连接已断开；你的确认仍在等待中，恢复网络后自动继续，无需重复操作。')
       } else {
         const cls = classifyRequestError(err)
@@ -3587,7 +3495,7 @@ function handleEvent(event: { type: string; data: unknown }) {
       // turn_suspended（2026-10-31 皮皮虾回合生产实证）：主流在阻塞等待边界被 pi lane
       // 挂起收尾的显式信号。run 仍活着、正等用户在画布确认/作答 —— **挂起 ≠ 断链**：
       // 不追加「连接已断开」文案、不标 turn 失败；等待呈现由 proposal/question part
-      // 单一真相承载，等待条存活期见 turnStatus 的 isStreaming 并集（mainTurnSuspended）。
+      // 单一真相承载，钉底时间线存活期 = 回合进行中基座 isStreaming ∪ mainTurnSuspended。
       // 等待解除后续跑事件经旁听流（followUp tail）续传，turn_end 收口时复位。
       mainTurnSuspended.value = true
       break
@@ -4635,9 +4543,11 @@ defineExpose({
                  #416 的「历史滑不动」在流内结构下不复存在（内容全在 flex-1 滚动区里）。
                  注：门控决策注释（确认入口收敛）随内容一并搬移，仍然有效。 -->
             <!-- 活体过程卡：钉在 composer 上方（P0 决策 1）；回合收束后由上面的气泡内 trace 接管。
-                 P2-2：flag on 时改用 AgentTurnTimeline(dense)，与历史气泡同一套 parts 渲染。 -->
+                 P2-2：flag on 时改用 AgentTurnTimeline(dense)，与历史气泡同一套 parts 渲染。
+                 2026-10-31 移动端改钉系统层（见下方 agent-system-layer 内的镜像块）：
+                 滚动流内 live 会随用户上滑断跟随而落至折叠线以下（第 2 轮全盲实证）。 -->
             <AgentExecutionTrace
-              v-if="liveTrace && !liveTimeline"
+              v-if="!isMobileLayout && liveTrace && !liveTimeline"
               class="agent-live-trace mb-1"
               :trace="liveTrace"
               :streaming="agent.isStreaming"
@@ -4647,7 +4557,7 @@ defineExpose({
               @focus-node="onFocusNode($event)"
             />
             <AgentTurnTimeline
-              v-else-if="liveTimeline"
+              v-else-if="!isMobileLayout && liveTimeline"
               class="agent-live-trace mb-1"
               :parts="liveTimeline.parts"
               :resolve-node-url="resolveCanvasNodeUrl"
@@ -4734,30 +4644,47 @@ defineExpose({
                ⚠️ 新增常显卡须重新立白名单类 + 守卫测试。 -->
           <div class="agent-system-layer">
             <!-- 根治规格（2026-10-28）：对话流外浮卡已移除——「提议生成」决策点改为时间线内联
-                 proposal part（见 AgentTurnTimeline.vue），与画布节点 ProposeConfirmOverlay、底部状态行
-                 同读一份单一真相。桌面 = 对话流内联卡；移动端画布视图 = 节点内联面；状态行 ambient 播报。 -->
-            <!-- 2026-10-31 收敛：长条 composer-status-line 已下线，流式 running 态改由本单行
-                 状态线统一承载（"生成回复中 · Ns · 预估 -N积分"），覆盖 running / waiting /
-                 failed / settled 全部态；T8 双显裁决随长条退役而失效，故不再对 running 隐藏本行。 -->
-            <!-- 2026-10-20：settled 收口态可 dismiss（气泡摘要保留同源落点）；dismiss 后
-                 仅本轮隐藏，新回合 / 新一轮结算自动复位（见 settledDismissed watch） -->
-            <p
-              v-if="turnStatus && !(turnStatus.mode === 'settled' && settledDismissed)"
-              class="agent-turn-status mx-0.5 mb-1 text-[11px]"
-              :class="`agent-turn-status--${turnStatus.mode}`"
-              data-testid="turn-status-line"
-            >
-              {{ turnStatus.text }}
-              <span v-if="turnStatus.hint" class="ml-1 opacity-70">{{ turnStatus.hint }}</span>
-              <button
-                v-if="turnStatus.mode === 'settled'"
-                type="button"
-                class="agent-turn-status-dismiss"
-                aria-label="隐藏结算信息"
-                data-testid="turn-status-dismiss"
-                @click="settledDismissed = true"
-              >×</button>
-            </p>
+                 proposal part（见 AgentTurnTimeline.vue），与画布节点 ProposeConfirmOverlay
+                 同读一份单一真相。桌面 = 对话流内联卡；移动端画布视图 = 节点内联面。
+                 （2026-10-31：状态行退役，ambient 播报职责由时间线内联卡独自承载。） -->
+            <!-- 2026-10-31 用户裁决：状态行整条退役（"等待你在画布上确认生成 还剩 N 分钟"等
+                 running/waiting/failed/settled 播报全部不再显示），只保留 SSE 对话流——
+                 等待呈现由钉在上方的时间线 proposal part（内联确认/取消卡）与画布确认面承载；
+                 失败仍由气泡内 ⚠️ 文本 + dock 通知卡播报，无信息丢失面。
+                 turnStatus computed / settledDismissed / nowSec ticker 已随之删除。 -->
+            <!-- 2026-10-31 移动端 live 钉显：发消息后全量 SSE 过程流必须实时可见。
+                 原先 live 块在滚动流底部——用户上滑回看上一轮产出即断滚动跟随闩锁
+                 （scrollToBottom 的 !followLatest 分支只置 hasNewBelow），本轮全部内容
+                 在折叠线以下静默增长 = 猴子/仙人掌/皮皮虾回合「第 2 轮全盲」实证。
+                 移动端把 live 块移出滚动流、钉在输入区上方（进 agent-system-layer 即
+                 继承「画布视图默认隐藏 + 白名单放行」机制）；桌面维持 2026-10-15
+                 三滚动条治理决议（live 内容在主滚动流内跟随）。 -->
+            <template v-if="isMobileLayout">
+              <AgentExecutionTrace
+                v-if="liveTrace && !liveTimeline"
+                class="agent-live-trace mx-0.5 mb-1"
+                :trace="liveTrace"
+                :streaming="agent.isStreaming"
+                :collapsed="liveTraceCollapsed"
+                dense
+                @update:collapsed="onToggleLiveTrace"
+                @focus-node="onFocusNode($event)"
+              />
+              <AgentTurnTimeline
+                v-else-if="liveTimeline"
+                class="agent-live-trace mx-0.5 mb-1"
+                :parts="liveTimeline.parts"
+                :resolve-node-url="resolveCanvasNodeUrl"
+                :streaming="agent.isStreaming"
+                dense
+                @retry-node="onLiveTimelineRetry"
+                @focus-node="onFocusNode($event)"
+                @confirm-proposal="onInlineConfirmProposal($event)"
+                @cancel-proposal="onInlineCancelProposal($event)"
+                @ask-submit="onAskSubmit"
+                @ask-cancel="onAskCancel"
+              />
+            </template>
             <!-- 根治规格（2026-10-28）：ask_user 卡已迁至对话流内联 question part（AgentTurnTimeline），
                  与画布确认面、状态行同读一份时间线真相；此处不再有对话流外的 composer 卡。 -->
             <div
@@ -4917,7 +4844,7 @@ defineExpose({
               </template>
               <!-- P1-5 移动端底部裸条（三态共条）：
                    本容器桌面端 display:contents（dock 内布局零改动）；移动端成为贴底裸条表面，
-                   内部经 CSS 摊平为 [芯片行?][＋/文本/模型⌄/发送]。系统层（turn-status-line /
+                   内部经 CSS 摊平为 [芯片行?][＋/文本/模型⌄/发送]。系统层（钉显 live 块 /
                    插话选项）在本条上方；文本直接落条内（无内嵌输入框）；◎ 锚条左顶点。 -->
               <div
                 ref="bareBarRef"
@@ -6272,38 +6199,6 @@ defineExpose({
 
 .agent-preset-primary:hover:not(:disabled) {
   filter: brightness(1.04);
-}
-
-/* ---- P1 回合状态行 ---- */
-.agent-turn-status {
-  color: var(--lnk-text-muted);
-  display: flex;
-  align-items: center;
-}
-
-.agent-turn-status--failed {
-  color: #fca5a5;
-}
-
-.agent-turn-status--waiting {
-  color: var(--lnk-text-secondary);
-}
-
-/* 2026-10-20：settled 收口态的 dismiss 入口——结算信息已在气泡同源落点，状态行可隐藏 */
-.agent-turn-status-dismiss {
-  margin-left: 4px;
-  padding: 0 2px;
-  font-size: 14px;
-  line-height: 1;
-  color: var(--lnk-text-muted);
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  transition: color 0.12s ease;
-}
-
-.agent-turn-status-dismiss:hover {
-  color: var(--lnk-text-primary);
 }
 
 .agent-composer {
