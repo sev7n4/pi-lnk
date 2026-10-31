@@ -732,6 +732,14 @@ export function createCanvasWriteTools(
 				// 3 分钟前已 completed 也无人把节点写回终态，产物搁浅。
 				let startedRecordId: string | undefined;
 				let startedKind: "image" | "video" = "image";
+				// ⭐ 终态动作广播源（2026-10-31 黑猩猩/奶牛生产实证）：tool_result 是 propose
+				// 阻塞分支唯一的 canvas_action 广播点（Nest B-5 只认 details.actions）。提议时刻
+				// base 携带的 update_node{pending_confirm} 到广播时已 stale 数分钟——原样透传会把
+				// 已完成节点重新打回待确认（画布确认/取消胶囊残留，且事件流此后再无任何
+				// update_node ⇒ 永久残留）。此处只收**终态时刻**的新鲜动作：Nest run-*/wait-*
+				// 响应里的 actions（与 SSOT 写入同对象，零漂移）优先；只读轮询降级路径按
+				// genOutcome 现造；timeout 下发空（宁可让前端保持现状，绝不重放 stale）。
+				let terminalActions: Record<string, unknown>[] = [];
 				try {
 					// 节点类型取 propose-generation 返回的 summary（Nest 侧已算好，不二次 get-node
 					// ——二次读会吃掉测试与生产的轮询序列，summary.type 是既有字段）。
@@ -758,6 +766,10 @@ export function createCanvasWriteTools(
 							s === "completed"
 								? { status: "completed", url: typeof res?.url === "string" ? res.url : undefined }
 								: { status: "failed", error: `生成未完成（${s || "unknown"}），请查看节点错误信息` };
+						// run-*/wait-* 响应自带终态时刻的 actions（Nest 与 SSOT 写入同对象，含文本
+						// content / generationRecordId）——采集为广播源；Nest 旧版缺 actions 时
+						// 由收尾处 buildTerminalActions 兜底现造。
+						terminalActions = extractActions(res);
 					} else {
 						// image / video（未知类型回落 image）：start-* 即返 record，终态走下方既有等待。
 						const startRes = (await client.post(
@@ -802,9 +814,41 @@ export function createCanvasWriteTools(
 			// PI_RUNTIME_GEN_TERMINAL_WAIT_MS 极小值即近似旧行为。
 			const capMs = opts.genTerminalWaitMs ?? genTerminalWaitMs();
 			let genOutcome: GenerationTerminalOutcome;
+			// 终态动作现造（Nest 响应缺 actions / 只读轮询降级时的兜底）：形状与 Nest
+			// waitImageGeneration 的 finishActions 同口径（status + generationRecordId + url/error）。
+			const buildTerminalActions = (outcome: GenerationTerminalOutcome): Record<string, unknown>[] => {
+				if (outcome.status === "completed") {
+					return [{
+						type: "update_node",
+						payload: {
+							id: p.node_id,
+							data: {
+								status: "completed",
+								...(outcome.url ? { url: outcome.url } : {}),
+								...(startedRecordId ? { generationRecordId: startedRecordId } : {}),
+							},
+						},
+					}];
+				}
+				if (outcome.status === "failed") {
+					return [{
+						type: "update_node",
+						payload: {
+							id: p.node_id,
+							data: {
+								status: "error",
+								...(outcome.error ? { errorMessage: outcome.error } : {}),
+							},
+						},
+					}];
+				}
+				return []; // timeout：不下发任何动作（生成可能仍在跑，前端现状由对账兜底）
+			};
 			if (runTerminal) {
 				// text / audio（P0-1）：run-* 已持至终态并写 SSOT，直接采用，不再轮询。
 				genOutcome = runTerminal;
+				// Nest 旧版 run-* 响应缺 actions 时按终态现造（有则保持采集原样，含 content）。
+				if (terminalActions.length === 0) terminalActions = buildTerminalActions(runTerminal);
 			} else {
 			// 等待期登记（2026-10-18 上游对齐）：notify-generation 通报据此抑制——
 			// 本工具自己会把终态交还模型，重复通报只会多啰嗦一轮。finally 必解绑。
@@ -816,7 +860,7 @@ export function createCanvasWriteTools(
 					/* 登记是纯观测面 */
 				}
 				try {
-					return await waitForGenerationTerminal(
+					const outcome = await waitForGenerationTerminal(
 						client,
 						{ sessionId: tc.sessionId, nodeId: p.node_id },
 						{
@@ -831,6 +875,9 @@ export function createCanvasWriteTools(
 						context,
 						{ recordId: snapRecordId, startedAtMs: snapStartedAtMs },
 					);
+					// 只读轮询路径没有 Nest 终态 actions 可采 ⇒ 按 genOutcome 现造广播源。
+					terminalActions = buildTerminalActions(outcome);
+					return outcome;
 				} finally {
 					try {
 						unregisterWait?.();
@@ -866,7 +913,7 @@ export function createCanvasWriteTools(
 							generationRecordId: startedRecordId,
 						},
 						{ signal: context?.abortSignal ?? undefined },
-					)) as { status?: unknown; url?: unknown; errorMessage?: unknown };
+					)) as { status?: unknown; url?: unknown; errorMessage?: unknown; actions?: unknown };
 					const ws = String(waitRes?.status ?? "");
 					const wurl = typeof waitRes?.url === "string" && waitRes.url ? waitRes.url : undefined;
 					if (ws === "completed" && wurl) {
@@ -885,6 +932,14 @@ export function createCanvasWriteTools(
 						// 不下发终态 node_status（run_* 同款保守口径）。
 						genOutcome = { status: "timeout" };
 					}
+					// 广播源：Nest wait-* 终态时刻现造的 finishActions（与 SSOT 写入同对象）；
+					// 旧版 Nest 缺 actions 时按 genOutcome 现造；timeout 恒空（不重放 stale）。
+					terminalActions =
+						genOutcome.status === "timeout"
+							? []
+							: extractActions(waitRes).length > 0
+								? extractActions(waitRes)
+								: buildTerminalActions(genOutcome);
 				} catch (err) {
 					// 用户中止（composer 停止）≠ 等待失败：保持上游 abort 语义（与启动臂同形）；
 					// 其余异常 → 降级既有只读节点轮询（旧行为，cap 兜底）。
@@ -903,7 +958,15 @@ export function createCanvasWriteTools(
 				genOutcome = await pollNodeTerminal();
 			}
 			}
-			const withActions = withWriteSignal(base, 1);
+			// ⭐ stale 动作免疫（2026-10-31 黑猩猩/奶牛生产实证）：details.actions 只携带
+			// 终态时刻的新鲜动作（terminalActions）——base 里的提议时刻 pending_confirm
+			// 动作绝不透传，否则生成完成后画布节点被重新打回待确认（胶囊按钮残留根治）。
+			// 副产收益：completed+url 随本 tool_result 广播上画布，产物免刷新实时可见。
+			const baseWrapped = withWriteSignal(base, 1);
+			const withActions = {
+				...baseWrapped,
+				details: { ...baseWrapped.details, actions: terminalActions },
+			};
 			const genMessage =
 				genOutcome.status === "completed"
 					? `生成已完成${genOutcome.url ? `（url: ${genOutcome.url}）` : ""}；可向用户报告产物已就绪。`
