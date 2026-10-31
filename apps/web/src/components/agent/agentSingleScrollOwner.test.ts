@@ -50,7 +50,7 @@ function runningThinking(): TimelinePart {
  * 解析器把后续代码当注释内容，报错行号指向毫不相干的位置（TS1127 / Unterminated
  * template literal），极易误判成别的问题。
  */
-function stripComments(src: string): string {
+export function stripComments(src: string): string {
   return src
     .replace(/<!--[\s\S]*?-->/g, '') // ③ Vue 模板 HTML 注释（可跨行）
     .split('\n')
@@ -71,7 +71,8 @@ describe('三滚动条治理 2/2 — 滚动上下文唯一，dense 卡片自带�
       '主滚动容器 .agent-chat-scroll 必须仍在',
     ).toMatch(/agent-chat-scroll/)
     // 有效性断言（防空集假绿）：确认确实扫到了模板与样式主体
-    expect(rail, '应扫到模板主体').toMatch(/data-testid="turn-status-line"/)
+    // （2026-10-31 状态行退役，模板主体锚点换为系统层容器）
+    expect(rail, '应扫到模板主体').toMatch(/class="agent-system-layer"/)
     expect(rail, '应扫到样式主体').toMatch(/\.agent-chat-scroll \{/)
   })
 
@@ -130,15 +131,16 @@ describe('三滚动条治理 2/2 — 滚动上下文唯一，dense 卡片自带�
   it('⑤ live 态对话内容在主滚动流内、composer 之后无对话内容（模板顺序断言）', () => {
     const rail = readFileSync(railPath, 'utf8')
     const iScroll = rail.indexOf('agent-chat-scroll')
-    // 根治规格 2026-10-28：propose 浮卡下线，锚点换成同处系统层的状态行
-    const iWait = rail.indexOf('data-testid="turn-status-line"')
+    // 2026-10-31 状态行退役：系统层锚点换为容器自身（状态行删除后系统层仍在，
+    // 承载移动端钉显 live 块与取消回执）
+    const iWait = rail.indexOf('class="agent-system-layer"')
     const iInput = rail.indexOf('class="agent-input-area')
     expect(iScroll, '主滚动容器应存在').toBeGreaterThan(-1)
-    expect(iWait, '状态行应存在').toBeGreaterThan(-1)
+    expect(iWait, '系统层应存在').toBeGreaterThan(-1)
     expect(iInput, '输入区应存在').toBeGreaterThan(-1)
     expect(
       iScroll < iWait && iWait < iInput,
-      `模板顺序必须是 主滚动容器(${iScroll}) < 状态行(${iWait}) < 输入区(${iInput})——系统层搬回消息流后不得再落回 dock`,
+      `模板顺序必须是 主滚动容器(${iScroll}) < 系统层(${iWait}) < 输入区(${iInput})——系统层搬回消息流后不得再落回 dock`,
     ).toBe(true)
   })
 
