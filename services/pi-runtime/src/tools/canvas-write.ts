@@ -725,6 +725,13 @@ export function createCanvasWriteTools(
 				// runtime 空轮询 13 分钟等一个自己没启动的任务。启动失败必须如实报错（fail 信号），
 				// 绝不装「生成中」。
 				let runTerminal: GenerationTerminalOutcome | undefined;
+				// B2（2026-10-31 蝌蚪回合实证 cmvvaw8ar000moe01fdolrugb）：start-* 即返 recordId，
+				// 终态等待据此走 Nest wait-image/video-generation（轮询 **record** 而非节点）。
+				// 旧只读轮询 get-node 的盲区：节点状态被 stale 全量 PUT 抹回 draft（#625 CAS
+				// 未合的既有顽疾）⇒ fresh/sawGenerating 永不成立 ⇒ 盲等 capMs 超时——record
+				// 3 分钟前已 completed 也无人把节点写回终态，产物搁浅。
+				let startedRecordId: string | undefined;
+				let startedKind: "image" | "video" = "image";
 				try {
 					// 节点类型取 propose-generation 返回的 summary（Nest 侧已算好，不二次 get-node
 					// ——二次读会吃掉测试与生产的轮询序列，summary.type 是既有字段）。
@@ -753,12 +760,17 @@ export function createCanvasWriteTools(
 								: { status: "failed", error: `生成未完成（${s || "unknown"}），请查看节点错误信息` };
 					} else {
 						// image / video（未知类型回落 image）：start-* 即返 record，终态走下方既有等待。
-						await client.post(
+						const startRes = (await client.post(
 							nodeType === "video"
 								? "/agent/internal/start-video-generation"
 								: "/agent/internal/start-image-generation",
 							{ sessionId: tc.sessionId, userId: tc.userId, nodeId: p.node_id },
-						);
+						)) as { generationRecordId?: unknown };
+						startedKind = nodeType === "video" ? "video" : "image";
+						startedRecordId =
+							typeof startRes?.generationRecordId === "string" && startRes.generationRecordId
+								? startRes.generationRecordId
+								: undefined;
 					}
 				} catch (err) {
 					// 用户中止（composer 停止）≠ 启动失败：保持上游 abort 语义（与等待臂同形）。
@@ -796,34 +808,99 @@ export function createCanvasWriteTools(
 			} else {
 			// 等待期登记（2026-10-18 上游对齐）：notify-generation 通报据此抑制——
 			// 本工具自己会把终态交还模型，重复通报只会多啰嗦一轮。finally 必解绑。
-			let unregisterWait: (() => void) | undefined;
-			try {
-				unregisterWait = opts.onRegisterGenerationWait?.(tc.sessionId, p.node_id);
-			} catch {
-				/* 登记是纯观测面 */
-			}
-			try {
-				genOutcome = await waitForGenerationTerminal(
-					client,
-					{ sessionId: tc.sessionId, nodeId: p.node_id },
-					{
-						pollMs: opts.pollMs,
-						capMs,
-						onNodeStatus: opts.onNodeStatus
-							? (data) => opts.onNodeStatus?.(tc.sessionId, data)
-							: undefined,
-						onUpdate,
-						tickerIntervalMs: opts.tickerIntervalMs,
-					},
-					context,
-					{ recordId: snapRecordId, startedAtMs: snapStartedAtMs },
-				);
-			} finally {
+			const pollNodeTerminal = async (): Promise<GenerationTerminalOutcome> => {
+				let unregisterWait: (() => void) | undefined;
 				try {
-					unregisterWait?.();
+					unregisterWait = opts.onRegisterGenerationWait?.(tc.sessionId, p.node_id);
 				} catch {
-					/* 解绑同理 */
+					/* 登记是纯观测面 */
 				}
+				try {
+					return await waitForGenerationTerminal(
+						client,
+						{ sessionId: tc.sessionId, nodeId: p.node_id },
+						{
+							pollMs: opts.pollMs,
+							capMs,
+							onNodeStatus: opts.onNodeStatus
+								? (data) => opts.onNodeStatus?.(tc.sessionId, data)
+								: undefined,
+							onUpdate,
+							tickerIntervalMs: opts.tickerIntervalMs,
+						},
+						context,
+						{ recordId: snapRecordId, startedAtMs: snapStartedAtMs },
+					);
+				} finally {
+					try {
+						unregisterWait?.();
+					} catch {
+						/* 解绑同理 */
+					}
+				}
+			};
+			if (startedRecordId) {
+				// ⭐ B2（2026-10-31 蝌蚪回合实证）：终态等待改走 Nest wait-image/video-generation
+				// ——与 run_* 完全同一执行语义：Nest 侧轮询 **generation record**（不受节点状态
+				// 被 stale PUT 抹掉影响），终态时把节点写回 SSOT（completed+url / error）。
+				// runtime 只负责映射结果 + node_status 广播（run_* 的 emitTerminalFromResult 同款口径）。
+				let unregisterWait: (() => void) | undefined;
+				const stopTicker = startGenerationProgressTicker(onUpdate, p.node_id, opts.tickerIntervalMs);
+				try {
+					try {
+						unregisterWait = opts.onRegisterGenerationWait?.(tc.sessionId, p.node_id);
+					} catch {
+						/* 登记是纯观测面 */
+					}
+					// 起手即 generating（run_* 同款）：阻塞等待期前端产物行翻「生成中」，
+					// 兼喂 stall watchdog 进度戳。
+					opts.onNodeStatus?.(tc.sessionId, { nodeId: p.node_id, status: "generating" });
+					const waitRes = (await client.post(
+						startedKind === "video"
+							? "/agent/internal/wait-video-generation"
+							: "/agent/internal/wait-image-generation",
+						{
+							sessionId: tc.sessionId,
+							userId: tc.userId,
+							nodeId: p.node_id,
+							generationRecordId: startedRecordId,
+						},
+						{ signal: context?.abortSignal ?? undefined },
+					)) as { status?: unknown; url?: unknown; errorMessage?: unknown };
+					const ws = String(waitRes?.status ?? "");
+					const wurl = typeof waitRes?.url === "string" && waitRes.url ? waitRes.url : undefined;
+					if (ws === "completed" && wurl) {
+						// done 必须有正据（url）——与 run_* emitTerminalFromResult / 前端 mapNodeStatus 同口径
+						opts.onNodeStatus?.(tc.sessionId, { nodeId: p.node_id, status: "done", url: wurl });
+						genOutcome = { status: "completed", url: wurl };
+					} else if (ws === "error" || ws === "failed") {
+						const werr =
+							typeof waitRes?.errorMessage === "string" && waitRes.errorMessage
+								? waitRes.errorMessage
+								: undefined;
+						opts.onNodeStatus?.(tc.sessionId, { nodeId: p.node_id, status: "failed", error: werr });
+						genOutcome = { status: "failed", error: werr };
+					} else {
+						// timeout / fallback_pending / 其他：不是终态（生成可能仍在跑/等确认），
+						// 不下发终态 node_status（run_* 同款保守口径）。
+						genOutcome = { status: "timeout" };
+					}
+				} catch (err) {
+					// 用户中止（composer 停止）≠ 等待失败：保持上游 abort 语义（与启动臂同形）；
+					// 其余异常 → 降级既有只读节点轮询（旧行为，cap 兜底）。
+					context?.abortSignal?.throwIfAborted();
+					genOutcome = await pollNodeTerminal();
+				} finally {
+					stopTicker();
+					try {
+						unregisterWait?.();
+					} catch {
+						/* 解绑同理 */
+					}
+				}
+			} else {
+				// 无 recordId（start-* 未回传 / 兜底路径）：既有只读节点轮询，行为逐字节保留。
+				genOutcome = await pollNodeTerminal();
 			}
 			}
 			const withActions = withWriteSignal(base, 1);

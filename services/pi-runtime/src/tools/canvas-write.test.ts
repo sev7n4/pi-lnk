@@ -479,6 +479,12 @@ function fakeNestClient(
 		startThrows?: boolean;
 		/** P0-1：run-text-generation 的返回（默认 {ok:true}）。 */
 		runTextResult?: Record<string, unknown>;
+		/** B2：start-image-generation 的返回（缺省 {ok:true} ⇒ 无 recordId ⇒ 旧只读轮询路径）。 */
+		startResult?: Record<string, unknown>;
+		/** B2：wait-image-generation 的返回。 */
+		waitImageResult?: Record<string, unknown>;
+		/** B2：wait-image-generation 抛错（模拟服务端等待失败 → 降级节点轮询）。 */
+		waitImageThrows?: boolean;
 	} = {},
 ) {
 	let i = 0;
@@ -499,6 +505,13 @@ function fakeNestClient(
 			}
 			if (path === "/agent/internal/run-text-generation" && opts.runTextResult) {
 				return opts.runTextResult;
+			}
+			if (path === "/agent/internal/start-image-generation" && opts.startResult) {
+				return opts.startResult;
+			}
+			if (path === "/agent/internal/wait-image-generation") {
+				if (opts.waitImageThrows) throw new NestToolError("nest http 500: boom", "http", 500);
+				return opts.waitImageResult ?? { ok: true };
 			}
 			if (path === "/agent/internal/get-node") {
 				stats.getNodeCalls++;
@@ -634,6 +647,88 @@ describe("propose_generation 阻塞确认（B-2）", () => {
 		// 2026-10-18 终态等待：answered 后无生成证据 ⇒ cap 超限 timeout 收尾（不再是即时「已启动」）
 		assert.match(text, /生成仍在进行/);
 		assert.equal(reg.hasPending("s1"), false);
+	});
+
+	// ── B2（2026-10-31 蝌蚪回合实证 cmvvaw8ar000moe01fdolrugb）─────────────────
+	// 旧只读轮询 get-node 的盲区：节点状态被 stale 全量 PUT 抹回 draft（#625 CAS 未合）
+	// ⇒ fresh/sawGenerating 永不成立 ⇒ 盲等 cap 超时，record 已完成也无人把节点写回
+	// 终态（小蝌蚪产物搁浅 13 分钟）。修复：P0-1 image/video 确认臂改走 Nest
+	// wait-image/video-generation（轮询 record + 服务端写回节点终态，run_* 同语义）。
+
+	it("B2 回归：确认后 start 返回 recordId ⇒ 走 wait-image-generation（record 轮询+服务端写回），completed 带 url ⇒ generation=completed 且 node_status generating/done", async () => {
+		const reg = new PendingToolRegistry();
+		const nodeStatuses: Array<{ status?: string; url?: string }> = [];
+		const client = fakeNestClient(["pending_confirm"], {
+			startResult: { generationRecordId: "rec-new" },
+			waitImageResult: { status: "completed", url: "https://x/out.png", generationRecordId: "rec-new" },
+		});
+		const [propose] = createCanvasWriteTools(client, {
+			registry: reg,
+			pollMs: 5,
+			genTerminalWaitMs: 100,
+			onNodeStatus: (_sid, data) => nodeStatuses.push(data),
+		}).filter((t) => t.name === "propose_generation");
+		const pending = run(propose, { node_id: "n1" });
+		await waitFor(() => reg.hasPending("s1"));
+		reg.answer("s1", "tc1", {});
+		const result = await pending;
+		const details = result.details as {
+			confirmed?: boolean;
+			generation?: { status?: string; url?: string };
+		};
+		assert.equal(details.confirmed, true);
+		assert.equal(details.generation?.status, "completed");
+		assert.equal(details.generation?.url, "https://x/out.png");
+		const waitPost = client.posts.find((p) => p.path === "/agent/internal/wait-image-generation");
+		assert.ok(waitPost, "must POST wait-image-generation");
+		assert.equal((waitPost.body as { generationRecordId?: string }).generationRecordId, "rec-new");
+		const statuses = nodeStatuses.map((s) => s.status);
+		assert.ok(statuses.includes("generating"), "起手即 generating（run_* 同款）");
+		assert.ok(statuses.includes("done"), "终态广播 done");
+		const text = String((result.content as Array<{ text: string }>)[0].text);
+		assert.match(text, /生成已完成/);
+		assert.match(text, /https:\/\/x\/out\.png/);
+	});
+
+	it("B2 回归：wait-image-generation 异常 ⇒ 降级既有只读节点轮询（cap 超限 timeout 收尾，工具不炸）", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient(["pending_confirm", "generating"], {
+			startResult: { generationRecordId: "rec-new" },
+			waitImageThrows: true,
+		});
+		const [propose] = createCanvasWriteTools(client, {
+			registry: reg,
+			pollMs: 5,
+			genTerminalWaitMs: 30,
+		}).filter((t) => t.name === "propose_generation");
+		const pending = run(propose, { node_id: "n1" });
+		await waitFor(() => reg.hasPending("s1"));
+		reg.answer("s1", "tc1", {});
+		const result = await pending;
+		const details = result.details as { confirmed?: boolean; generation?: { status?: string } };
+		assert.equal(details.confirmed, true);
+		assert.equal(details.generation?.status, "timeout");
+		// 降级轮询确实发生（get-node 消耗了快照之外的读）
+		assert.ok(client.stats.getNodeCalls > 1);
+	});
+
+	it("B2 回归：start 未回传 recordId ⇒ 保持旧只读节点轮询路径（行为逐字节保留）", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient(["pending_confirm", "generating"]);
+		const [propose] = createCanvasWriteTools(client, {
+			registry: reg,
+			pollMs: 5,
+			genTerminalWaitMs: 30,
+		}).filter((t) => t.name === "propose_generation");
+		const result = await run(propose, { node_id: "n1" });
+		const details = result.details as { confirmed?: boolean; generation?: { status?: string } };
+		assert.equal(details.confirmed, true);
+		assert.equal(details.generation?.status, "timeout");
+		// 未打 wait-* 端点（旧路径）
+		assert.equal(
+			client.posts.some((p) => p.path === "/agent/internal/wait-image-generation"),
+			false,
+		);
 	});
 
 	it("显式拒绝 + note（§17.8 批注流锚带回）→ confirmed=false，文案含批注意见与防抢跑提示", async () => {
