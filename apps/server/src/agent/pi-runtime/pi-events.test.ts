@@ -197,6 +197,52 @@ describe("extractCanvasActions（B-5 gen 工具 → canvas_action 派生）", ()
 			).toEqual([]);
 		}
 	});
+
+	// B-5 扩展（2026-10-31 蓝色小汽车）：propose 阻塞分支 start-* 成功后经 onUpdate
+	// 快照下发 started actions——update 路径必须同口径提取，否则生成中窗口零广播。
+	it("tool_execution_update 的 partialResult.details.actions 同口径提取（generating live 广播）", () => {
+		const actions = extractCanvasActions(
+			toolUpdate({
+				content: [{ type: "text", text: '{"status":"generating"}' }],
+				details: {
+					ok: true,
+					actions: [
+						{
+							type: "update_node",
+							payload: { id: "n_g", data: { status: "generating", generationRecordId: "rec_1" } },
+						},
+					],
+				},
+			}),
+		);
+		expect(actions).toEqual([
+			{
+				type: "update_node",
+				payload: { id: "n_g", data: { status: "generating", generationRecordId: "rec_1" } },
+			},
+		]);
+	});
+
+	it("update 快照缺 actions / actions 非数组均返回空（进度拍 details.generating 不受影响）", () => {
+		expect(extractCanvasActions(toolUpdate({ details: { ok: true, generating: true } }))).toEqual([]);
+		expect(extractCanvasActions(toolUpdate({ details: { actions: "oops" } }))).toEqual([]);
+		expect(extractCanvasActions(toolUpdate({}))).toEqual([]);
+	});
+
+	it("update 路径同样 zod 逐条校验 + nodeType 白名单", () => {
+		const actions = extractCanvasActions(
+			toolUpdate({
+				details: {
+					actions: [
+						{ type: "nonsense_type", payload: {} },
+						{ type: "add_node", payload: { id: "a2", nodeType: "mediaInput" } },
+						{ type: "update_node", payload: { id: "n_3", data: { status: "generating" } } },
+					],
+				},
+			}),
+		);
+		expect(actions).toEqual([{ type: "update_node", payload: { id: "n_3", data: { status: "generating" } } }]);
+	});
 });
 
 describe("thinking 透传（可观测性专项 ③）", () => {

@@ -861,14 +861,21 @@ describe("propose_generation 阻塞确认（B-2）", () => {
 		const details = result.details as { confirmed?: boolean; generation?: { status: string } };
 		assert.equal(details.confirmed, true);
 		assert.equal(details.generation?.status, "timeout"); // 全程 generating 至 cap
+		// start 成功即有 actions 快照（2026-10-31 live 上画布）：本用例 start 默认 {ok:true}
+		// ⇒ 现造 generating（无 recordId）；ticker 拍按 details.generating 判别，互不混淆。
+		const actionSnaps = updates.filter((u) => Array.isArray(u.details.actions));
+		assert.equal(actionSnaps.length, 1, "start 成功后恰发一条 actions 快照");
+		assert.deepEqual(actionSnaps[0].details.actions, [
+			{ type: "update_node", payload: { id: "n1", data: { status: "generating" } } },
+		]);
 		// ticker 至少发射一拍，且每拍均为 generating 全量快照 + checkpoint
-		assert.ok(updates.length >= 1, `进度 ticker 应至少发射一拍，实际 ${updates.length}`);
-		for (const u of updates) {
-			assert.equal(u.details.generating, true);
+		const beats = updates.filter((u) => u.details.generating === true);
+		assert.ok(beats.length >= 1, `进度 ticker 应至少发射一拍，实际 ${beats.length}`);
+		for (const u of beats) {
 			assert.equal(u.checkpoint, true);
 		}
 		// 快照携带 nodeId 路由键与 elapsedSec
-		const first = updates[0].details as { nodeId?: string; elapsedSec?: number };
+		const first = beats[0].details as { nodeId?: string; elapsedSec?: number };
 		assert.equal(first.nodeId, "n1");
 		assert.ok(typeof first.elapsedSec === "number" && first.elapsedSec >= 0);
 	});
@@ -1206,6 +1213,70 @@ describe("propose_generation 确认即启动（P0-1）", () => {
 		const start = client.posts.find((p) => p.path === "/agent/internal/start-image-generation");
 		assert.ok(start, "start-image-generation 未被调用");
 		assert.deepEqual(start.body, { sessionId: "s1", userId: "u1", nodeId: "n1" });
+	});
+
+	// ⭐ 生成中 live 上画布（2026-10-31 蓝色小汽车生产实证）：start 成功后必须立即经
+	// onUpdate 快照下发 generating actions——此前丢弃导致确认→完成窗口画布零广播
+	// （「待确认→空白」漂移的根因）。Nest extractCanvasActions 的 update 路径据此
+	// 派生 canvas_action → 前端画布实时进入「生成中」并挂载终态轮询。
+	it("answered → start 成功后立即 onUpdate 下发 started actions（响应自带则透传）", async () => {
+		const reg = new PendingToolRegistry();
+		const generating = {
+			type: "update_node",
+			payload: { id: "n1", data: { status: "generating", generationRecordId: "rec_live" } },
+		};
+		const client = fakeNestClient(["pending_confirm"], {
+			startResult: { generationRecordId: "rec_live", actions: [generating] },
+		});
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const updates: Array<{ details?: { actions?: unknown[] } }> = [];
+		const pending = propose.execute(
+			"tc1",
+			{ node_id: "n1" } as never,
+			(partial: unknown) => updates.push(partial as { details?: { actions?: unknown[] } }),
+			CTX,
+			{} as never,
+			undefined as never,
+		);
+		await waitFor(() => reg.hasPending("s1"));
+		reg.answer("s1", "tc1", {});
+		await pending;
+		const live = updates.find((u) => Array.isArray(u.details?.actions) && u.details.actions.length > 0);
+		assert.ok(live, "start 成功后未发射 onUpdate actions 快照");
+		assert.deepEqual(live.details?.actions, [generating]);
+	});
+
+	it("answered → start 响应缺 actions 时现造 generating 快照（旧 Nest 兼容，绝不缺席）", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient(["pending_confirm"], {
+			startResult: { generationRecordId: "rec_syn" },
+		});
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const updates: Array<{ details?: { actions?: Array<Record<string, unknown>> } }> = [];
+		const pending = propose.execute(
+			"tc1",
+			{ node_id: "n1" } as never,
+			(partial: unknown) =>
+				updates.push(partial as { details?: { actions?: Array<Record<string, unknown>> } }),
+			CTX,
+			{} as never,
+			undefined as never,
+		);
+		await waitFor(() => reg.hasPending("s1"));
+		reg.answer("s1", "tc1", {});
+		await pending;
+		const live = updates.find((u) => Array.isArray(u.details?.actions) && u.details.actions.length > 0);
+		assert.ok(live, "start 成功后未发射 onUpdate actions 快照");
+		assert.deepEqual(live.details?.actions, [
+			{
+				type: "update_node",
+				payload: { id: "n1", data: { status: "generating", generationRecordId: "rec_syn" } },
+			},
+		]);
 	});
 
 	it("summary.type=video → 派发 start-video-generation", async () => {

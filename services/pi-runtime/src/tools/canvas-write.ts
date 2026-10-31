@@ -783,6 +783,33 @@ export function createCanvasWriteTools(
 							typeof startRes?.generationRecordId === "string" && startRes.generationRecordId
 								? startRes.generationRecordId
 								: undefined;
+						// ⭐ 生成中 live 上画布（2026-10-31 蓝色小汽车生产实证）：start 响应的
+						// started actions（generating + generationRecordId）此前被丢弃 ⇒ 画布在
+						// 确认→完成之间整个窗口收不到任何状态广播（「待确认→空白」漂移的根因；
+						// 偶见「生成中」只是 SSOT 重载竞态）。借 ask_user 同款 B-6 onUpdate 通道
+						// 立即下发全量快照，Nest extractCanvasActions 扩展 update 路径提取。
+						// 响应缺 actions（旧 Nest）时按 Nest startImageGeneration.started 同形状现造。
+						const startedLiveActions = extractActions(startRes);
+						const liveActions = startedLiveActions.length
+							? startedLiveActions
+							: [{
+									type: "update_node",
+									payload: {
+										id: p.node_id,
+										data: {
+											status: "generating",
+											...(startedRecordId ? { generationRecordId: startedRecordId } : {}),
+										},
+									},
+								}];
+						try {
+							onUpdate?.({
+								content: [{ type: "text", text: JSON.stringify({ status: "generating", nodeId: p.node_id }) }],
+								details: { ok: true, actions: liveActions },
+							});
+						} catch {
+							/* 进度上报绝不在工具主链路上炸（progress-ticker 同纪律） */
+						}
 					}
 				} catch (err) {
 					// 用户中止（composer 停止）≠ 启动失败：保持上游 abort 语义（与等待臂同形）。
