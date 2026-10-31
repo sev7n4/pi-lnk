@@ -142,7 +142,7 @@ import { formatSessionTime } from '@/utils/formatSessionTime'
 import { randomId } from '@/utils/randomId'
 import { submitAnswers } from '@/components/agent/agentAnswers'
 import { failureReason, resolveWaitingFromTimeline, turnStatusLine } from '@/components/agent/turnStatusBar'
-import { hasBubbleContent, hasBubbleText } from '@/components/agent/bubbleVisibility'
+import { hasActionableWait, hasBubbleContent, hasBubbleText } from '@/components/agent/bubbleVisibility'
 import { describeActivityFromTimeline } from '@/components/agent/activityLine'
 import { ElMessage } from 'element-plus'
 
@@ -616,7 +616,14 @@ function nodeGraphPayload(msg: AgentStreamMessage): NodeGraphPayload {
 function shouldShowMessageBubbleText(msg: AgentStreamMessage): boolean {
   // ⚠️ node_graph 与 svg_card 同为「卡片即全部产出」的情形（agent 只调 render_canvas_view 不说话）
   //   ⇒ 两者都要放行，否则卡片静默不可见（PR #65 同类失效）。
-  return hasBubbleContent(msg) || hasRenderableSvgCard(msg) || hasRenderableNodeGraph(msg)
+  // ⚠️ B3（2026-10-31 蝌蚪回合实证）：阻塞等待回合零 token，proposal/question part 是
+  //   那一轮的全部用户产出（内联确认卡/题卡）——不放行 = 确认卡在对话流静默不可见。
+  return (
+    hasBubbleContent(msg) ||
+    hasRenderableSvgCard(msg) ||
+    hasRenderableNodeGraph(msg) ||
+    hasActionableWait(msg)
+  )
 }
 
 /**
