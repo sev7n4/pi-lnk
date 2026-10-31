@@ -1269,6 +1269,97 @@ describe("propose_generation 确认即启动（P0-1）", () => {
 		assert.match(text, /不要声称正在出图/);
 		assert.doesNotMatch(text, /生成仍在进行/);
 	});
+
+	// ── 终态动作广播源（2026-10-31 黑猩猩/奶牛生产实证回归锁）────────────────
+	// 事故形态：final result 透传提议时刻 base.actions[pending_confirm]，生成完成后
+	// 广播把画布节点重新打回待确认 ⇒ 确认/取消胶囊永久残留；且 completed+url 从未
+	// 广播 ⇒ 产物要手动刷新才上画布。锁：details.actions 只准携带终态时刻的新鲜动作。
+	it("B2 wait 终态：actions 透传 Nest finishActions（completed+url），绝不重放 pending_confirm", async () => {
+		const reg = new PendingToolRegistry();
+		const finish = {
+			type: "update_node",
+			payload: { id: "n1", data: { status: "completed", generationRecordId: "rec1", url: "https://x/a.png" } },
+		};
+		const client = fakeNestClient(["pending_confirm"], {
+			startResult: { generationRecordId: "rec1" },
+			waitImageResult: { status: "completed", url: "https://x/a.png", generationRecordId: "rec1", actions: [finish] },
+		});
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const pending = run(propose, { node_id: "n1" });
+		await waitFor(() => reg.hasPending("s1"));
+		reg.answer("s1", "tc1", {});
+		const result = await pending;
+		const details = result.details as { actions?: Array<Record<string, unknown>>; generation?: { status: string } };
+		assert.equal(details.generation?.status, "completed");
+		assert.deepEqual(details.actions, [finish]);
+		assert.ok(
+			!JSON.stringify(details.actions).includes("pending_confirm"),
+			"终态广播绝不允许携带 pending_confirm（胶囊残留根治锁）",
+		);
+	});
+
+	it("B2 wait 终态但 Nest 缺 actions → 按 genOutcome 现造 completed+url+recordId", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient(["pending_confirm"], {
+			startResult: { generationRecordId: "rec1" },
+			waitImageResult: { status: "completed", url: "https://x/a.png" },
+		});
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const pending = run(propose, { node_id: "n1" });
+		await waitFor(() => reg.hasPending("s1"));
+		reg.answer("s1", "tc1", {});
+		const result = await pending;
+		const details = result.details as { actions?: Array<{ type: string; payload: { id: string; data: Record<string, unknown> } }> };
+		assert.deepEqual(details.actions, [
+			{
+				type: "update_node",
+				payload: { id: "n1", data: { status: "completed", url: "https://x/a.png", generationRecordId: "rec1" } },
+			},
+		]);
+	});
+
+	it("wait 非终态（fallback_pending → timeout）→ 空 actions（绝不重放提议时刻动作）", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient(["pending_confirm"], {
+			startResult: { generationRecordId: "rec1" },
+			waitImageResult: { status: "fallback_pending" },
+		});
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const pending = run(propose, { node_id: "n1" });
+		await waitFor(() => reg.hasPending("s1"));
+		reg.answer("s1", "tc1", {});
+		const result = await pending;
+		const details = result.details as { actions?: unknown[]; generation?: { status: string } };
+		assert.equal(details.generation?.status, "timeout");
+		assert.deepEqual(details.actions, []);
+	});
+
+	it("text 节点 run-text 终态：Nest 自带 actions（含 content）原样透传", async () => {
+		const reg = new PendingToolRegistry();
+		const finish = {
+			type: "update_node",
+			payload: { id: "n1", data: { status: "completed", content: "你好", generationRecordId: "recT" } },
+		};
+		const client = fakeNestClient(["pending_confirm"], {
+			proposeSummary: { type: "text" },
+			runTextResult: { status: "completed", generationRecordId: "recT", actions: [finish] },
+		});
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5, genTerminalWaitMs: 40 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const pending = run(propose, { node_id: "n1" });
+		await waitFor(() => reg.hasPending("s1"));
+		reg.answer("s1", "tc1", {});
+		const result = await pending;
+		const details = result.details as { actions?: Array<Record<string, unknown>> };
+		assert.deepEqual(details.actions, [finish]);
+	});
 });
 
 describe("propose_generation 结算归因回调（P2）", () => {
