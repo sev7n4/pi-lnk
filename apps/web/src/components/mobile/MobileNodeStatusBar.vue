@@ -35,6 +35,22 @@ const hasTask = computed(() => props.generatingCount > 0 || props.pendingNodes.l
 
 /** 有多个待确认时只对第一个给动作（其余等处理完再露出——避免一排按钮挤爆底栏）。 */
 const firstPending = computed(() => props.pendingNodes[0])
+
+/**
+ * B1（2026-10-31 生产实证 cmvvaw8ar000moe01fdolrugb）：确认必须**点名**目标节点。
+ *
+ * 事故：等待期 proposal 节点（小蝌蚪）被 unshift 到队首，画布上用户心智里的待确认
+ * 却是小青蛙——条上只写「待确认 · 2」，用户按青蛙的心智点「确认」，实际打到小蝌蚪
+ * （/answers 带小蝌蚪 callId，等待开始 8 秒后即被 answered，用户根本不知情）。
+ * 修法：文案与 aria-label 都写出将要确认/拒绝的节点标题，让「点谁」在按下前可见。
+ */
+const pendingTargetText = computed(() => {
+  const first = firstPending.value
+  if (!first) return '待确认'
+  const named = first.title?.trim()
+  const base = named ? `待确认 · ${named}` : '待确认'
+  return props.pendingNodes.length > 1 ? `${base} 等 ${props.pendingNodes.length} 项` : base
+})
 </script>
 
 <template>
@@ -59,15 +75,16 @@ const firstPending = computed(() => props.pendingNodes[0])
       <span v-if="elapsedText" class="mobile-node-status-elapsed">{{ elapsedText }}</span>
     </button>
 
-    <!-- 待确认：拍板动作（复用批次 2 confirm 语义） -->
+    <!-- 待确认：拍板动作（复用批次 2 confirm 语义）。⭐ B1：点名目标节点——
+         「确认的是谁」必须在按下前可见（2026-10-31 蝌蚪误确认事故）。 -->
     <span v-if="firstPending" class="mobile-node-status-pending">
-      <span class="mobile-node-status-text">
-        待确认{{ pendingNodes.length > 1 ? ` · ${pendingNodes.length}` : '' }}
+      <span class="mobile-node-status-text" data-testid="mobile-node-status-pending-target">
+        {{ pendingTargetText }}
       </span>
       <button
         type="button"
         class="mobile-node-status-btn mobile-node-status-cancel"
-        aria-label="拒绝该提议"
+        :aria-label="`拒绝${firstPending.title ? `「${firstPending.title}」` : '该'}提议`"
         @click="emit('cancel', firstPending.id)"
       >
         拒绝
@@ -75,7 +92,7 @@ const firstPending = computed(() => props.pendingNodes[0])
       <button
         type="button"
         class="mobile-node-status-btn mobile-node-status-confirm is-primary"
-        aria-label="确认该提议"
+        :aria-label="`确认${firstPending.title ? `「${firstPending.title}」` : '该'}提议`"
         @click="emit('confirm', firstPending.id)"
       >
         确认

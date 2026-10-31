@@ -82,6 +82,64 @@ describe('MobileNodeStatusBar（壳层聚合状态栏）', () => {
     w.unmount()
   })
 
+  // ⭐ B1（2026-10-31 生产实证 cmvvaw8ar000moe01fdolrugb）：确认/拒绝必须**点名**目标节点。
+  // 等待期 proposal 节点被 unshift 到队首，条上只写「待确认 · 2」⇒ 用户按画布上可见的
+  // 另一个 pending 节点（小青蛙）的心智点「确认」，实际打到队首的小蝌蚪（等待开始
+  // 8 秒后即被 answered，用户不知情）。点名后「点谁」在按下前可见。
+  it('B1 回归：待确认文案点名目标节点标题（按下前可见「确认的是谁」）', () => {
+    const w = mount(MobileNodeStatusBar, {
+      props: {
+        generatingCount: 0,
+        pendingNodes: [
+          { id: 'tadpole', title: '小蝌蚪' },
+          { id: 'frog', title: '小青蛙' },
+        ],
+      },
+    })
+    const target = w.find('[data-testid="mobile-node-status-pending-target"]')
+    expect(target.exists()).toBe(true)
+    // 点名队首（实际确认目标），不是用户可能心智归属的另一个节点
+    expect(target.text()).toContain('小蝌蚪')
+    expect(target.text()).not.toContain('小青蛙')
+    // 多项时保留数量提示
+    expect(target.text()).toContain('2')
+    w.unmount()
+  })
+
+  it('B1 回归：确认/拒绝 aria-label 带节点标题（读屏可辨目标）', () => {
+    const w = mount(MobileNodeStatusBar, {
+      props: { generatingCount: 0, pendingNodes: [{ id: 'tadpole', title: '小蝌蚪' }] },
+    })
+    expect(w.find('.mobile-node-status-confirm').attributes('aria-label')).toContain('小蝌蚪')
+    expect(w.find('.mobile-node-status-cancel').attributes('aria-label')).toContain('小蝌蚪')
+    w.unmount()
+  })
+
+  it('B1 回归：多项时确认仍 emit 队首节点 id（点名与行为一致）', async () => {
+    const w = mount(MobileNodeStatusBar, {
+      props: {
+        generatingCount: 0,
+        pendingNodes: [
+          { id: 'tadpole', title: '小蝌蚪' },
+          { id: 'frog', title: '小青蛙' },
+        ],
+      },
+    })
+    await w.find('.mobile-node-status-confirm').trigger('click')
+    expect(w.emitted('confirm')?.[0]).toEqual(['tadpole'])
+    w.unmount()
+  })
+
+  it('B1 回归：无标题节点降级为「待确认」（不显示空名字）', () => {
+    const w = mount(MobileNodeStatusBar, {
+      props: { generatingCount: 0, pendingNodes: [{ id: 'n1' }] },
+    })
+    const target = w.find('[data-testid="mobile-node-status-pending-target"]')
+    expect(target.text()).toContain('待确认')
+    expect(target.text()).not.toContain('·')
+    w.unmount()
+  })
+
   it('触控目标 ≥ 44px（两个按钮）', () => {
     const block = /<style scoped>([\s\S]*?)<\/style>/.exec(SRC)?.[1] ?? ''
     const rule = /\.mobile-node-status-btn[^{]*\{([^}]*)\}/.exec(block)?.[1] ?? ''
