@@ -96,6 +96,12 @@ export interface AgentStreamEvent {
     // 本事件是「已受理、归属如下」的末尾裁定——双失败 / 非 409 失败都不发（那些场景
     // 已有 turn_not_submitted / error 把话说清，ack 再发就是二次编造）。
     | 'turn_ack'
+    // turn_suspended（2026-10-31 皮皮虾回合生产实证）：主流在**阻塞等待边界**被 pi lane
+    // 挂起收尾（iterator done、无 agent_end）时的显式信号。data: {}（占位）。
+    // 语义：run 仍活着，正阻塞等用户在画布确认/作答；等待解除后续跑事件经旁听流
+    // （/runs/events followUp tail）续传。前端据此保持等待态呈现（等待条不随
+    // isStreaming 熄灭）、不弹「连接已断开」断链文案——挂起 ≠ 断链。
+    | 'turn_suspended'
     | 'done'
     | 'error'
   data: unknown

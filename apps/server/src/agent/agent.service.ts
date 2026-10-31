@@ -2144,6 +2144,13 @@ export class AgentService {
     // P2 T6：本轮以 error 事件收束 → 收尾走 release 全退（hold 泄漏双保险之一，
     // Review Focus 1）；agent_end 正常收束 → settleFromHold 按实际 usage 结算。
     let runFailed = false
+    // turn_suspended（2026-10-31 皮皮虾回合生产实证）：主流在**阻塞等待边界**被
+    // pi lane 的挂起收尾（iterator done、无 agent_end）——此前客户端只能靠「流断了」
+    // 猜测语义：正常挂起与真断链在传输层不可区分，P0-5 的安抚文案只能挂在
+    // fetch 异常分支上（真挂起走 [DONE] 反而什么都不说、状态行随 isStreaming 熄灭）。
+    // 显式记录「本流见到过 waiting{waiting} 且未见权威收束」⇒ 流自然耗尽时下发
+    // turn_suspended（见循环出口处）。
+    let sawWaitingUser = false
     try {
       while (!done) {
         const { value: event, done: streamClosed } = await iterator.next()
@@ -2306,7 +2313,22 @@ export class AgentService {
           textPersister.flush() // 收束前把正文段归入当前 messageIndex
           traceMessageIndex += 1
         }
+        // turn_suspended 判据：waiting{waiting} 置位；同流内见到 resolved（等待在
+        // 本流生命周期内被 answered/取消）则复位——挂起事件只在「流耗尽时仍挂着」发。
+        if (ui.type === 'waiting_user') {
+          sawWaitingUser = (ui.data as { status?: string }).status === 'waiting'
+        }
         yield ui as AgentStreamEvent
+      }
+      // turn_suspended（2026-10-31 生产实证 cmvvaw8ar000moe01fdolrugb）：流在阻塞等待
+      // 边界自然耗尽（pi lane 挂起收尾 ⇒ iterator done、无 agent_end）。此前客户端对
+      // 「正常挂起」无任何显式信号——等待条随 isStreaming 熄灭、真断链与挂起不可区分。
+      // 显式下发 turn_suspended（其后 controller 照常补 [DONE]）：前端据此保持等待态
+      // 呈现、不弹断链文案；等待解除后续跑事件经旁听流（followUp tail）续传。
+      if (sawWaitingUser && !sawTerminalEvent) {
+        // 双段 cast（本仓既有模式）：本地 @lnkpi/agent dist 落后于源码联合类型时
+        // 单段 cast 报 TS2352；CI 一致 checkout 下等价。
+        yield { type: 'turn_suspended', data: {} } as unknown as AgentStreamEvent
       }
       // D2（Task 2）：只有 while 循环**自然**退出才置 true。消费方断连触发
       // `generator.return()` 时，generator 在 `yield` 处被回收，本语句不可达 ⇒

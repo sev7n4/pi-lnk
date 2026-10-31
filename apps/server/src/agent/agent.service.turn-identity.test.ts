@@ -301,6 +301,54 @@ describe('AgentService 回合身份与单一写者（TURN-IDENTITY P0-1/P0-2）'
 
   // ─────────────── PR2 · 立身份（回合唯一性 + 账本完整性）───────────────
 
+  it('D3（turn_suspended）：流在阻塞等待边界耗尽（无 agent_end）⇒ 末尾必须显式下发 turn_suspended', async () => {
+    // 生产实证 cmvvaw8ar000moe01fdolrugb（2026-10-31）：propose_generation 挂起后
+    // pi lane 收尾 ⇒ 主流在 waiting_user 后自然耗尽（nginx 实测 201 完成、用时=等待起点）。
+    // 此前客户端对「正常挂起」零显式信号：等待条随 isStreaming 熄灭、真断链与挂起
+    // 在传输层不可区分（P0-5 安抚文案只能挂在 fetch 异常分支）。修法：流耗尽时
+    // 若「见到 waiting{waiting} 且未见权威收束」⇒ 末尾下发 turn_suspended。
+    // 桩：回放事件后触发 streamEvents 的 closed 回调（= pi lane 挂起收尾的真实形态，
+    // stubPiClient 默认桩只回放不收口，iterator 会永久挂起）。
+    const pi = stubPiClient([])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    pi.streamEvents.mockImplementation(
+      (_sessionId: string, onEvent: (e: PiRuntimeEvent) => void, onClosed: () => void) => {
+        for (const event of [
+          ridEvent('agent_start', {}, 'run-91', 4240),
+          seqEvent('tool_execution_start', { toolCallId: 'call_s1', toolName: 'propose_generation', args: {} }, 4242),
+          seqEvent('waiting_user', { status: 'waiting', toolName: 'propose_generation', callId: 'call_s1', timeoutMs: 300_000, nodeId: 'node-shrimp' }, 4243),
+        ]) {
+          onEvent(event)
+        }
+        onClosed()
+        return () => {}
+      },
+    )
+    const out: Array<{ type: string; data?: unknown }> = []
+    for await (const e of service.streamConversation('s1', '生成一只皮皮虾', 'u1', 't1')) {
+      out.push(e)
+    }
+    // turn_ack（D4）在流末尾收口，晚于挂起事件 ⇒ 断言「恰一个且在 waiting_user 之后」。
+    const waitIdx = out.findIndex((e) => e.type === 'waiting_user')
+    const suspendedIdx = out.findIndex((e) => e.type === 'turn_suspended')
+    expect(suspendedIdx).toBeGreaterThan(waitIdx)
+    expect(waitIdx).toBeGreaterThan(-1)
+    const suspended = out.filter((e) => e.type === 'turn_suspended')
+    expect(suspended).toHaveLength(1)
+    expect(suspended[0]).toBeDefined()
+  }, 120_000)
+
+  it('D3（对照）：等待在同流内 resolved（answered/超时后 agent_end）⇒ 不发 turn_suspended', async () => {
+    // 只有「流耗尽时仍挂着」才算挂起收尾；等待已在流内解除 ⇒ 回合照常收口。
+    const { out } = await runTurn([
+      ridEvent('agent_start', {}, 'run-92', 4240),
+      seqEvent('waiting_user', { status: 'waiting', toolName: 'propose_generation', callId: 'call_s2', timeoutMs: 300_000, nodeId: 'node-x' }, 4241),
+      seqEvent('waiting_user', { status: 'resolved', toolName: 'propose_generation', callId: 'call_s2', reason: 'answered' }, 4242),
+      piEvent('agent_end', { status: 'completed' }),
+    ])
+    expect(out.some((e) => e.type === 'turn_suspended')).toBe(false)
+  }, 120_000)
+
   it('E：owner 落库必须写 runId —— 它是「一次 run 一条账」唯一键的一半', async () => {
     await runTurn([
       ridEvent('agent_start', {}, 'run-77'),
