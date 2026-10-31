@@ -186,6 +186,11 @@ const showPropose = computed(() => {
   // isPartAnchoredNode 内部 catch 无 pinia 的测试环境（退化为 false = 旧行为）。
   const partAnchored = isPartAnchoredNode(props.id)
   if (state.value !== 'pending' && !partAnchored) return false
+  // ⚠️ 孤儿兜底（2026-10-31 生产实证 cmvvaw8ar000moe01fdolrugb）：pending_confirm 且已有
+  // 成品（图已生成，P0「先出图预览再确认」模型）⇒ 显示预览图（与 WEB 一致），不强行只
+  // 渲染提示词卡把已生成的图藏掉。确认/取消走状态栏按钮（handleAgentGenerateNode 孤儿兜底）。
+  // 纯提案创建期（draft 且无图）不受影响，仍显示提议卡。
+  if (state.value === 'pending' && hasProduct.value) return false
   return String(props.data?.prompt ?? '').trim().length > 0
 })
 
