@@ -39,11 +39,11 @@ function stripComments(src: string): string {
 }
 
 describe('AgentSideRail — 滚动上下文唯一（治理 2/2 终局结构）', () => {
-  it('① live 态对话内容全部在主滚动流内：状态行模板位置在输入区之前', () => {
+  it('① live 态对话内容全部在主滚动流内：系统层模板位置在输入区之前', () => {
     const rail = sideRail // ① 已是 readFileSync 的文件内容，勿再当路径读（CI 曾因此假红）
     const iScroll = rail.indexOf('agent-chat-scroll')
-    // 根治规格 2026-10-28：propose 浮卡下线，锚点换成同处系统层的状态行（等待/收口播报）
-    const iWait = rail.indexOf('data-testid="turn-status-line"')
+    // 2026-10-31：状态行退役，锚点换为系统层容器（内含移动端钉显 live 块与取消回执）
+    const iWait = rail.indexOf('class="agent-system-layer"')
     const iInput = rail.indexOf('class="agent-input-area')
     // 根治规格 2026-10-28：ask_user 卡迁至对话流内联 question part（AgentTurnTimeline），
     // 不再是对话流外的 composer 直接子节点；卡片仍在主滚动流内的时间线组件里。
@@ -56,7 +56,7 @@ describe('AgentSideRail — 滚动上下文唯一（治理 2/2 终局结构）',
     expect(iAskInRail, 'ask_user 卡不得再作为 composer 直接子节点（对话流外）').toBe(-1)
     expect(
       iScroll < iWait && iWait < iInput,
-      `模板顺序必须 主滚动容器(${iScroll}) < 状态行(${iWait}) < 输入区(${iInput})——对话内容不得落回 dock`,
+      `模板顺序必须 主滚动容器(${iScroll}) < 系统层(${iWait}) < 输入区(${iInput})——对话内容不得落回 dock`,
     ).toBe(true)
   })
 
@@ -64,8 +64,8 @@ describe('AgentSideRail — 滚动上下文唯一（治理 2/2 终局结构）',
     const rail = stripComments(sideRail)
     expect(rail, '.agent-dock-scroll 系列必须完全删除').not.toMatch(/agent-dock-scroll/)
     expect(rail, 'hasDockPresentation 已无消费点，必须删除').not.toMatch(/hasDockPresentation/)
-    // 有效性断言（防空集假绿）
-    expect(rail, '应扫到模板主体').toMatch(/data-testid="turn-status-line"/)
+    // 有效性断言（防空集假绿）；2026-10-31 状态行退役，模板锚点换为系统层容器
+    expect(rail, '应扫到模板主体').toMatch(/class="agent-system-layer"/)
     expect(rail, '应扫到样式主体').toMatch(/\.agent-chat-scroll \{/)
   })
 

@@ -110,10 +110,11 @@ describe('mobile mask never covers the tab bar (页签失灵回归守卫)', () =
   it('系统层容器位置不变量：容器内卡片必须都在容器内', () => {
     // 新卡片若被加到容器外，画布视图会露头（旧 bug 形态）。容器开标签必须先于全部已知卡片。
     // 根治规格 2026-10-28/29：浮卡与对话流外 ask 卡均下线（决策点收敛进时间线内联卡，
-    // 跟随 chat-wrap 可见性），容器内剩状态行 / 取消回执两张播报式 chrome。
+    // 跟随 chat-wrap 可见性）。2026-10-31：状态行退役，容器内 = 移动端钉显 live 块
+    // （时间线内联确认卡，进层即继承画布视图默认隐藏）/ 取消回执。
     const open = sfc.indexOf('<div class="agent-system-layer">')
     expect(open).toBeGreaterThan(0)
-    expect(open).toBeLessThan(sfc.indexOf('class="agent-turn-status mx-0.5 mb-1'))
+    expect(open).toBeLessThan(sfc.indexOf('<template v-if="isMobileLayout">'))
     expect(open).toBeLessThan(sfc.indexOf('data-testid="run-cancelled-callout"'))
   })
 })

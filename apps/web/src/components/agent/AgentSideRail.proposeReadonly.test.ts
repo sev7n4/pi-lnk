@@ -118,38 +118,33 @@ describe('根治规格：propose 等待的单一真相 = 时间线 proposal part
     expect(w.find('[data-testid="propose-wait-cancel"]').exists()).toBe(false)
   })
 
-  it('单一真相端到端：trackWaitingUser ⇒ 状态行与内联卡同显（都不读 blockingWait/trace）', async () => {
+  it('单一真相端到端：trackWaitingUser ⇒ 等待卡上屏（内联卡即等待呈现；2026-10-31 状态行退役）', async () => {
     const w = await mountRail()
     seedTimelineProposal()
     await flushPromises()
 
-    // 状态行：从 proposal part 派生（未置位任何 store 镜像 ⇒ 同显即同源证据）
-    const statusLine = w.find('[data-testid="turn-status-line"]')
-    expect(statusLine.exists()).toBe(true)
-    expect(statusLine.text()).toContain('等待你在画布上确认生成')
+    // 状态行已整条退役（用户裁决：只保留 SSE 对话流）——等待呈现只允许来自时间线 part
+    expect(w.find('[data-testid="turn-status-line"]').exists()).toBe(false)
 
-    // 对话流内联卡：决策点在时间线内（title + 确认按钮）
+    // 对话流内联卡：决策点在时间线内（title + 等待提示 + 确认按钮）
     expect(w.text()).toContain('提议生成')
+    expect(w.text()).toContain('等待你在画布上确认生成')
     const confirmBtn = w.findAll('button').find((b) => b.text() === '确认生成')
     expect(confirmBtn).toBeTruthy()
   })
 
-  it('resolved 翻转后状态行与内联卡同步解除（不再有「状态条说等待、流里看不到」的 desync）', async () => {
+  it('resolved 翻转后等待卡同步解除（不再有「卡还在等、流里看不到」的 desync）', async () => {
     const w = await mountRail()
     seedTimelineProposal()
     await flushPromises()
-    expect(w.find('[data-testid="turn-status-line"]').text()).toContain('等待你在画布上确认生成')
+    expect(w.text()).toContain('等待你在画布上确认生成')
 
     const agent = useAgentStore()
     agent.trackWaitingUser({ status: 'resolved', toolName: 'propose_generation' })
     await flushPromises()
 
-    // 2026-10-31 收敛：长条 composer-status-line 下线后，running 态不再被隐藏——
-    // resolved 后回合仍在流式，状态行切回 running 文案（「生成回复中 · Ns」）而非消失。
-    // 本测不变式：等待文案与「确认生成」按钮**同步解除**（无 desync）。
-    const line = w.find('[data-testid="turn-status-line"]')
-    expect(line.exists()).toBe(true)
-    expect(line.text()).not.toContain('等待你在画布上确认生成')
+    // resolved 后：等待文案与「确认生成」按钮同步解除（单一真相 = proposal part 状态）
+    expect(w.text()).not.toContain('等待你在画布上确认生成')
     expect(w.findAll('button').map((b) => b.text())).not.toContain('确认生成')
   })
 })
