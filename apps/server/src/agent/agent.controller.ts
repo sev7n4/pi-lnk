@@ -750,6 +750,13 @@ export class AgentController {
     res.setHeader('Content-Type', 'text/event-stream')
     res.setHeader('Cache-Control', 'no-cache')
     res.setHeader('Connection', 'keep-alive')
+    // ⚠️ `X-Accel-Buffering: no`（2026-10-31 补齐，与旁听端点 /runs/events 对齐）：
+    // 生产 CVM 的 `/api/` location 当前已 `proxy_buffering off`，本头**不是**已知故障成因；
+    // 保留理由是防御性（见 runEvents 同名注释）：反代配置会漂移，而主流一旦被缓冲，
+    // 15s 心跳帧同样进不了客户端 ⇒ 前端 stale 判定（STREAM_STALE_MS=30s）误触发自断，
+    // 且「连接建立但收不到任何字节」在 nginx access log 里只显示 200，排查成本极高。
+    // ⇒ 逐响应声明「本响应不缓冲」，不依赖任何外层配置。
+    res.setHeader('X-Accel-Buffering', 'no')
 
     // Idempotency key check — prevent duplicate requests from network retries
     const idempotencyKey = req.headers['idempotency-key'] as string | undefined
