@@ -2284,10 +2284,19 @@ export class AgentService {
         // node_status（2026-10-18 回合挂住等终态）：生产实证漏入库——实时 SSE 走
         // 全量 ui yield 没问题，但这里只通用收集 tool_call/tool_result ⇒ 刷新后
         // 历史回合重放拿不到生成终态（TRACE_PERSIST 白名单早有它，是提取分支漏接）。
+        // waiting_user（2026-10-31 孤儿 pending_confirm 根治）：同款「漏入库」——阻塞
+        // 确认工具（ask_user/propose_generation）的等待生命周期事件只走实时 SSE，
+        // 落库后前端 replayTimelineEvents 才能在刷新/历史重放时重建 proposal part
+        // （含 callId），等待结束（resolved，含 timeout/aborted）也落库 ⇒ 重放把
+        // proposal part 翻终态，不再残留「点了没反应」的死确认卡。
+        // 生产实证 cmvvaw8ar000moe01fdolrugb：propose 阻塞等待 7.5min 超时收场，
+        // 账本里 tool_call/tool_result 齐全却无 waiting_user ⇒ 前端无法从历史判定
+        // 等待态，确认/取消按钮静默 no-op。
         if (
           ui.type === 'tool_call' ||
           ui.type === 'tool_result' ||
-          ui.type === 'node_status'
+          ui.type === 'node_status' ||
+          ui.type === 'waiting_user'
         ) {
           pushTraceEvent(ui.type, ui.data)
         }

@@ -264,6 +264,41 @@ describe('AgentService 回合身份与单一写者（TURN-IDENTITY P0-1/P0-2）'
     expect(toolCall?.seq).toBe(1)
   }, 120_000)
 
+  it('D2：waiting_user（阻塞确认等待生命周期）必须落库 —— 刷新/历史重放才能重建 proposal part', async () => {
+    // 生产实证 cmvvaw8ar000moe01fdolrugb（2026-10-31）：propose_generation 阻塞等待
+    // 7.5min 后 timeout 收场，账本里 tool_call/tool_result 齐全却无 waiting_user ⇒
+    // 前端 replayTimelineEvents 无法从历史重建 proposal part（含 callId），
+    // 确认/取消按钮静默 no-op，节点卡死在 pending_confirm。
+    // 修法与 node_status 漏入库同款：把 waiting_user 纳入落库白名单。
+    const waitingEv = seqEvent(
+      'waiting_user',
+      { status: 'waiting', toolName: 'propose_generation', callId: 'call_w1', timeoutMs: 450_000, nodeId: 'node-frog' },
+      4243,
+    )
+    const resolvedEv = seqEvent(
+      'waiting_user',
+      { status: 'resolved', toolName: 'propose_generation', callId: 'call_w1', reason: 'timeout' },
+      4299,
+    )
+    await runTurn([
+      ridEvent('agent_start', {}, 'run-88', 4240),
+      seqEvent('tool_execution_start', { toolCallId: 'call_w1', toolName: 'propose_generation', args: {} }, 4242),
+      waitingEv,
+      resolvedEv,
+      piEvent('agent_end', { status: 'completed' }),
+    ])
+
+    const meta = lastAssistantMetadata() as {
+      executionEvents?: Array<{ type: string; data?: { status?: string; callId?: string } }>
+    }
+    const waits = (meta.executionEvents ?? []).filter((e) => e.type === 'waiting_user')
+    // waiting + resolved 两条都必须在（缺 resolved ⇒ 重放后 proposal part 恒 pending_confirm，
+    // 历史里会残留可点但无效的确认卡；缺 waiting ⇒ part 无从建起）。
+    expect(waits).toHaveLength(2)
+    expect(waits[0]?.data).toMatchObject({ status: 'waiting', callId: 'call_w1', toolName: 'propose_generation' })
+    expect(waits[1]?.data).toMatchObject({ status: 'resolved', callId: 'call_w1', reason: 'timeout' })
+  }, 120_000)
+
   // ─────────────── PR2 · 立身份（回合唯一性 + 账本完整性）───────────────
 
   it('E：owner 落库必须写 runId —— 它是「一次 run 一条账」唯一键的一半', async () => {
