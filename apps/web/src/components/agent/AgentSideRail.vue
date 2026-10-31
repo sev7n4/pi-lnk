@@ -930,7 +930,12 @@ function useTimeline(msg: AgentStreamMessage): boolean {
 const liveTimeline = computed(() => {
   const last = [...agent.messages].reverse().find((m) => m.role === 'assistant')
   if (!last?.timeline) return null
-  const active = agent.isStreaming || showTaskCard.value || Boolean(last.streaming)
+  // ⭐ 2026-10-31 大章鱼回合实证：挂起回合（turn_suspended 后）isStreaming/last.streaming
+  // 双双翻 false，但等待仍在进行——active 必须并入 mainTurnSuspended，否则钉底时间线
+  // （含 proposal 卡）在挂起瞬间卸载，等待期全程不可见（turnStatus 的 isStreaming
+  // 并集已修，本处是同一裁决的漏配点：判定必须与 turnStatus 基座一致）。
+  const active =
+    agent.isStreaming || mainTurnSuspended.value || showTaskCard.value || Boolean(last.streaming)
   return active ? last.timeline : null
 })
 
@@ -1072,6 +1077,11 @@ const recoveredPhaseHint = ref<string | null>(null)
 
 const agentStream = useAgentStream({
   onStale: () => {
+    // ⭐ 2026-10-31 大章鱼回合实证：阻塞等待期（propose/ask 挂起）主流**本就无事件**，
+    // 30s 静默阈值会把「正常等待」误判成「流卡死」而 abort——AbortError 走「用户主动
+    // 取消」静默分支，用户侧表现即「连接无故断开」。等待期沉默是预期行为：流的收口
+    // 由服务端 turn_suspended / 等待超时保证，真正的网络死亡由旁听流与恢复链路兜底。
+    if (agent.pendingProposal || agent.pendingQuestion || mainTurnSuspended.value) return
     streamAbortController?.abort()
   },
 })
@@ -1205,6 +1215,24 @@ watch(
  * 传入 nodeId = 画布节点语义，与当前等待的 nodeId 不一致时**安全 no-op**
  * （浮层竞态残留防护：宁可不发，也不把 decline 发到别的节点上）。
  */
+/**
+ * ⭐ 2026-10-31 大章鱼回合生产实证（cmvvaw8ar000moe01fdolrugb，nginx 17:01:25-27）：
+ * 同一等待被连发 4×answers + 1×decline + 1×clear-propose——画布确认面 / 聚合状态条 /
+ * 时间线内联卡多入口同显且**无单飞去重**，首发的 resolved 事件又经旁听流迟到/缺席
+ * ⇒ 各入口在窗口期内持续可点。修复两层：
+ *   ① 单飞：同一 callId 首个成功提交后记入 settled 集合，后续 confirm/decline 一律
+ *      no-op（端点幂等只是兜底，客户端必须自己收敛）；
+ *   ② 乐观翻态：提交成功即刻本地翻 proposal part 终态（waiting_user resolved 回喂
+ *      时间线），pendingProposal 立即清位 ⇒ 所有确认 UI 同帧收口，stale 等待不再
+ *      污染下一轮（画布锚点 / 状态条倒计时 / composer 形态）。
+ */
+const settledProposeCallIds = new Set<string>()
+
+/** 提交成功后本地翻终态（resolved 事件的同构回喂，reason 决定标签）。 */
+function resolveProposePartLocally(callId: string, reason: 'answered' | 'aborted') {
+  agent.trackWaitingUser({ status: 'resolved', toolName: 'propose_generation', callId, reason })
+}
+
 async function cancelProposeForNode(nodeId?: string, opts?: { note?: string }): Promise<boolean> {
   // 根治 2026-10-29：等待态单一真相 = 时间线 proposal part（store.pendingProposal）。
   const wait = agent.pendingProposal
@@ -1213,6 +1241,9 @@ async function cancelProposeForNode(nodeId?: string, opts?: { note?: string }): 
   if (!waitNodeId) return false
   if (nodeId && waitNodeId !== nodeId) return false
   const callId = resolveProposeCancelCallId(wait)
+  // 单飞：该等待已成功结算（确认或取消任一）⇒ 本入口 no-op（连 clear-propose 也不发，
+  // 避免把已进入 generating/completed 的节点打回 draft——17:01:27 的 stale clear 实证）。
+  if (callId && settledProposeCallIds.has(callId)) return false
   if (callId) {
     try {
       await submitAnswers(
@@ -1227,6 +1258,10 @@ async function cancelProposeForNode(nodeId?: string, opts?: { note?: string }): 
         },
         answersPost,
       )
+      settledProposeCallIds.add(callId)
+      // 乐观翻态：不等旁听流的 resolved（缺席/迟到会让卡片永久 pending、
+      // 状态条倒计时空转）——decline 语义 = aborted。
+      resolveProposePartLocally(callId, 'aborted')
     } catch {
       // 幂等端点：失败说明网络/鉴权异常，画布侧仍要收敛（轮询兜底会判 rejected）
     }
@@ -1247,11 +1282,17 @@ async function confirmProposeWait(nodeId: string): Promise<boolean> {
   // 根治 2026-10-29：callId 取自上游 waiting_user 事件收敛成的 proposal part。
   const callId = resolveProposeConfirmCallId(agent.pendingProposal, nodeId)
   if (!callId) return false
+  // 单飞（2026-10-31 大章鱼回合实证）：该等待已成功结算 ⇒ no-op。
+  if (settledProposeCallIds.has(callId)) return false
   try {
     await submitAnswers(
       { threadId: agentThreadId.value, sessionId: props.sessionId, callId, answers: {} },
       answersPost,
     )
+    settledProposeCallIds.add(callId)
+    // 乐观翻态（answered）：所有确认入口（画布确认面 / 聚合条 / 内联卡）同帧收口，
+    // 状态条倒计时熄灭；不再依赖旁听流的 resolved（迟到/缺席 = 多入口持续可点）。
+    resolveProposePartLocally(callId, 'answered')
     return true
   } catch {
     return false
