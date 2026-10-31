@@ -759,3 +759,44 @@ describe('ask_user — 题面收敛进时间线 question part（2026-10-28 根�
     expect(qs[0].id).toBe('question:ask')
   })
 })
+
+describe('waiting_user{resolved} reason → proposal 终态映射（2026-10-31 大章鱼回合防回归）', () => {
+  function proposeTimeline(): TurnTimeline {
+    return feed([{ type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation', callId: 'c1', nodeId: 'n1' } }])
+  }
+
+  it('answered ⇒ confirmed（确认生成）', () => {
+    const tl = proposeTimeline()
+    applyTimelineEvent(tl, { type: 'waiting_user', data: { status: 'resolved', toolName: 'propose_generation', callId: 'c1', reason: 'answered' } })
+    expect(byKind(tl, 'proposal')[0].status).toBe('confirmed')
+  })
+
+  it('aborted ⇒ declined（用户显式取消，不得再显示「已确认」）', () => {
+    const tl = proposeTimeline()
+    applyTimelineEvent(tl, { type: 'waiting_user', data: { status: 'resolved', toolName: 'propose_generation', callId: 'c1', reason: 'aborted' } })
+    expect(byKind(tl, 'proposal')[0].status).toBe('declined')
+  })
+
+  it('timeout ⇒ expired（5 分钟自动取消）', () => {
+    const tl = proposeTimeline()
+    applyTimelineEvent(tl, { type: 'waiting_user', data: { status: 'resolved', toolName: 'propose_generation', callId: 'c1', reason: 'timeout' } })
+    expect(byKind(tl, 'proposal')[0].status).toBe('expired')
+  })
+
+  it('无 reason（老事件）⇒ 回落 confirmed（行为不回退）', () => {
+    const tl = proposeTimeline()
+    applyTimelineEvent(tl, { type: 'waiting_user', data: { status: 'resolved', toolName: 'propose_generation', callId: 'c1' } })
+    expect(byKind(tl, 'proposal')[0].status).toBe('confirmed')
+  })
+
+  it('callId 匹配：同消息内两个 proposal part 时只翻匹配的那个', () => {
+    const tl = feed([
+      { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation', callId: 'c1', nodeId: 'n1' } },
+      { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation', callId: 'c2', nodeId: 'n2' } },
+    ])
+    applyTimelineEvent(tl, { type: 'waiting_user', data: { status: 'resolved', toolName: 'propose_generation', callId: 'c2', reason: 'aborted' } })
+    const ps = byKind(tl, 'proposal')
+    expect(ps.find((p) => p.callId === 'c1')?.status).toBe('pending_confirm')
+    expect(ps.find((p) => p.callId === 'c2')?.status).toBe('declined')
+  })
+})

@@ -322,6 +322,18 @@ function closeOpenTextBlock(timeline: TurnTimeline): void {
   if (part) part.status = 'done'
 }
 
+/**
+ * waiting_user{resolved} 的 reason → proposal part 终态（2026-10-31 大章鱼回合实证）。
+ * 缺省回落 confirmed：与既有行为一致（老事件无 reason 时不回退）。
+ */
+function resolveProposalStatusByReason(
+  reason?: string,
+): 'confirmed' | 'declined' | 'expired' {
+  if (reason === 'aborted') return 'declined'
+  if (reason === 'timeout') return 'expired'
+  return 'confirmed'
+}
+
 export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent): void {
   // 非文本事件 ⇒ 先收口正在 streaming 的文本段（服务端 flush 同语义），保证文本按真实
   // 发生位置分段、与工具/思考交错顺序一致。文本类事件（text_delta/text/text_replace）与
@@ -603,10 +615,16 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
       // proposal/question part 翻终态，并把旧 notice 翻「已继续执行」，绝不新增/删除（保位）。
       const d = event.data
       if (d.status === 'resolved') {
+        // 2026-10-31 大章鱼回合生产实证（cmvvaw8ar000moe01fdolrugb）：resolved 必须按
+        // reason 映射终态——此前一律翻 confirmed，「用户点了取消」的卡也显示「已确认」，
+        // 展示层撒谎（v-else 分支把 declined/expired 全渲染成已确认）。
+        // reason 语义（pending-registry PendingResolution）：answered=确认 / aborted=中止
+        // （显式取消或批注锚带回）/ timeout=超时自动取消。
         const prop = timeline.parts.find(
-          (p): p is Extract<TimelinePart, { kind: 'proposal' }> => p.kind === 'proposal',
+          (p): p is Extract<TimelinePart, { kind: 'proposal' }> =>
+            p.kind === 'proposal' && (!d.callId || !p.callId || p.callId === d.callId),
         )
-        if (prop) prop.status = 'confirmed'
+        if (prop) prop.status = resolveProposalStatusByReason(d.reason)
         const q = timeline.parts.find(
           (p): p is Extract<TimelinePart, { kind: 'question' }> => p.kind === 'question',
         )

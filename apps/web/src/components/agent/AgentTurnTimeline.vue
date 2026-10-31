@@ -374,6 +374,16 @@ const rootClass = computed(() =>
             v-if="part.status === 'pending_confirm'"
             class="ml-auto text-[10px] text-[var(--lnk-text-muted)]"
           >待确认</span>
+          <!-- 2026-10-31 大章鱼回合实证：终态标签必须分流——cancelled（declined）与
+               expired（超时）一律显示「已确认」是展示层撒谎，用户据此误判已被确认。 -->
+          <span
+            v-else-if="part.status === 'declined'"
+            class="ml-auto text-[10px] text-[var(--lnk-text-muted)]"
+          >已取消</span>
+          <span
+            v-else-if="part.status === 'expired'"
+            class="ml-auto text-[10px] text-[var(--lnk-text-muted)]"
+          >已超时取消</span>
           <span
             v-else
             class="ml-auto text-[10px] text-[var(--lnk-text-muted)]"
