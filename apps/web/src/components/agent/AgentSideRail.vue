@@ -1055,6 +1055,14 @@ function pollTasksFromProgress() {
 
 let streamAbortController: AbortController | null = null
 const runCancelled = ref(false)
+/**
+ * turn_suspended（2026-10-31 皮皮虾回合生产实证）：主流在阻塞等待边界被 pi lane 挂起
+ * 收尾（服务端 streamFromPiRuntime 在「waiting{waiting} 且无权威收束」时于流末尾下发）。
+ * 挂起 ≠ 断链：等待条/回合呈现须在整个等待期存活（isStreaming 并集），finally 的
+ * 「本轮无文本回复」兜底也不得把挂起回合当空回合补文案。复位点：新一轮发送 /
+ * run_cancelled / 旁听流 turn_end 收口。
+ */
+const mainTurnSuspended = ref(false)
 const threadRunState = ref<{ phase?: string | null; runCancelled?: boolean | null } | null>(null)
 const cancelledPresentation = ref<AgentPresentationEnvelope | null>(null)
 /** Progress line built from the cancel API response, before the checkpoint refresh lands. */
@@ -1123,7 +1131,11 @@ const turnStatus = computed(() => {
       ? questionPart.startedAt + 300_000
       : null
   return turnStatusLine({
-    isStreaming: agent.isStreaming,
+    // turn_suspended（2026-10-31）：主流在等待边界挂起收尾后 isStreaming 翻 false，
+    // 但等待仍在进行 —— 挂起态计入「回合进行中」基座，等待条/倒计时不熄灭
+    // （waiting 分支在 turnStatusLine 内部优先于 running，挂起且无等待 part 时
+    // 也不会误显 running 计时：part 缺失则 waiting=false，此时挂起回合本就无进度可显）。
+    isStreaming: agent.isStreaming || mainTurnSuspended.value,
     turnStartedAt: lastAssistantMessage.value?.executionTrace?.turnStartedAt,
     now: nowSec.value,
     waiting,
@@ -2679,6 +2691,7 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
   // 记住本轮用户原文，供失败卡「重试」复用（幂等键已保证重试不重复扣积分）
   if (!isRetry) lastSentMessage.value = message
   runCancelled.value = false
+  mainTurnSuspended.value = false
   threadRunState.value = null
   cancelledPresentation.value = null
   cancelledProgressText.value = null
@@ -2821,7 +2834,14 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
     }
 
     const last = agent.messages[agent.messages.length - 1]
-    if (!runCancelled.value && last?.role === 'assistant' && !last.content.trim()) {
+    // turn_suspended：挂起回合（等待用户在画布确认）不是「无文本回复」——
+    // 补这句会挂在等待卡下方制造噪音（等待解除后模型自会续写总结）。
+    if (
+      !runCancelled.value &&
+      !mainTurnSuspended.value &&
+      last?.role === 'assistant' &&
+      !last.content.trim()
+    ) {
       agent.appendText('（本轮无文本回复。若还需确认，可再发「确认」；或点「新对话」后重试。）')
     }
     agent.finishStreaming()
@@ -2871,11 +2891,23 @@ const observerTurnActive = ref(false)
 function applyTextDelta(text: string): void {
   // ⛔ 本端主流在跑：同一份 text_delta 已经从 POST 响应体到了，旁听再追加就是双倍文本。
   if (agent.isStreaming) return
-  // 旁观另一端的那一轮：本地还没有这条 assistant 的影子 ⇒ 先起一条再追加。
   if (!observerTurnActive.value) {
-    agent.startAssistantMessage()
-    agent.isStreaming = true
-    observerTurnActive.value = true
+    // turn_suspended（2026-10-31 皮皮虾回合）：挂起回合的续跑事件属于**本端自己**那条
+    // assistant 消息（主流在等待边界收尾、run 仍在跑）——采纳原消息为旁观轮即可，
+    // **不得**开影子气泡（否则续写文本会重复冒出第二条气泡）。turn_end 时经
+    // reconcileLatestAssistant 以服务端权威历史收口（等待 part 终态一并翻正）。
+    if (mainTurnSuspended.value) {
+      const last = agent.messages[agent.messages.length - 1]
+      if (last?.role === 'assistant') {
+        agent.isStreaming = true
+        observerTurnActive.value = true
+      }
+    } else {
+      // 旁观另一端的那一轮：本地还没有这条 assistant 的影子 ⇒ 先起一条再追加。
+      agent.startAssistantMessage()
+      agent.isStreaming = true
+      observerTurnActive.value = true
+    }
   }
   // 与主流的事件契约完全一致（Nest 两端共用 mapPiEventToUiEvent）。
   agent.appendText(text)
@@ -2892,6 +2924,8 @@ function applyTurnEnd(): void {
   // 幂等：done 之后还有 turn_ack，会来第二次
   if (!observerTurnActive.value) return
   observerTurnActive.value = false
+  // turn_suspended 生命周期闭合：挂起回合已收口（等待解除/超时取消均到达 terminal 帧）
+  mainTurnSuspended.value = false
   agent.finishStreaming()
   // 旁观拿到的是增量片段，收尾必须以服务端权威历史为准纠正一次（漏帧/乱序的自愈口）。
   // 传 0：那一轮已在另一端跑完，不做终态轮询（否则旁观端会跟着睡 5s×N）。
@@ -3508,6 +3542,15 @@ function handleEvent(event: { type: string; data: unknown }) {
         event.data as Parameters<typeof agent.trackTurnSettled>[0],
       )
       break
+    case 'turn_suspended': {
+      // turn_suspended（2026-10-31 皮皮虾回合生产实证）：主流在阻塞等待边界被 pi lane
+      // 挂起收尾的显式信号。run 仍活着、正等用户在画布确认/作答 —— **挂起 ≠ 断链**：
+      // 不追加「连接已断开」文案、不标 turn 失败；等待呈现由 proposal/question part
+      // 单一真相承载，等待条存活期见 turnStatus 的 isStreaming 并集（mainTurnSuspended）。
+      // 等待解除后续跑事件经旁听流（followUp tail）续传，turn_end 收口时复位。
+      mainTurnSuspended.value = true
+      break
+    }
     case 'explore':
       agent.trackExplore(event.data as Parameters<typeof agent.trackExplore>[0])
       // 治理 2/2：探索步骤同样入主滚动流（同 step 口径）
@@ -3733,6 +3776,7 @@ function handleEvent(event: { type: string; data: unknown }) {
       break
     case 'run_cancelled': {
       runCancelled.value = true
+      mainTurnSuspended.value = false
       const data = event.data as {
         text?: string
         presentation?: AgentPresentationEnvelope | null
