@@ -1186,13 +1186,13 @@ watch(
  * 传入 nodeId = 画布节点语义，与当前等待的 nodeId 不一致时**安全 no-op**
  * （浮层竞态残留防护：宁可不发，也不把 decline 发到别的节点上）。
  */
-async function cancelProposeForNode(nodeId?: string, opts?: { note?: string }) {
+async function cancelProposeForNode(nodeId?: string, opts?: { note?: string }): Promise<boolean> {
   // 根治 2026-10-29：等待态单一真相 = 时间线 proposal part（store.pendingProposal）。
   const wait = agent.pendingProposal
-  if (!wait || wait.toolName !== 'propose_generation') return
+  if (!wait || wait.toolName !== 'propose_generation') return false
   const waitNodeId = resolveProposeCancelNodeId(wait)
-  if (!waitNodeId) return
-  if (nodeId && waitNodeId !== nodeId) return
+  if (!waitNodeId) return false
+  if (nodeId && waitNodeId !== nodeId) return false
   const callId = resolveProposeCancelCallId(wait)
   if (callId) {
     try {
@@ -1213,6 +1213,7 @@ async function cancelProposeForNode(nodeId?: string, opts?: { note?: string }) {
     }
   }
   emit('clearProposeGeneration', waitNodeId)
+  return true
 }
 
 /**

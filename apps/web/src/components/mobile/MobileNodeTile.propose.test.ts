@@ -91,6 +91,15 @@ describe('R4-T1 提议内容上瓦片', () => {
     w.unmount()
   })
 
+  it('孤儿 pending_confirm 且已有成品图（先出图再确认）→ 显示预览图，不藏图', () => {
+    // 2026-10-31 生产实证 cmvvaw8ar000moe01fdolrugb：运行时置 pending_confirm 后未留
+    // waiting_user 阻塞态，前端 must 显示已生成的预览图（与 WEB 一致），而非只渲染提示词卡。
+    const w = mountTile({ status: 'pending_confirm', url: 'https://x/a.png', prompt: '一只青蛙' })
+    expect(w.find('img.mobile-node-media').exists()).toBe(true)
+    expect(w.find('[data-testid="node-pending-prompt"]').exists()).toBe(false)
+    w.unmount()
+  })
+
   it('不显示 PC 语境的 hint（「可在提示词卡片上「编辑」后确认」——移动端编辑在 sheet）', () => {
     const w = mountTile({ status: 'pending_confirm', prompt: 'p' })
     expect(w.text()).not.toContain('可在提示词卡片上')

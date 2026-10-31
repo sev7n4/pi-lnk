@@ -57,7 +57,7 @@ import {
   latestUserSidebarImageCount,
   shouldConfirmDirectGenerateWithoutRefs,
 } from '@/utils/missingRefsConfirm'
-import { NODE_GENERATION_STATUS, isDockGenerateBusy, isNodeGenerating, isPendingConfirmNode } from '@/constants/dockStudio'
+import { NODE_GENERATION_STATUS, isDockGenerateBusy, isNodeGenerating, isPendingConfirmNode, NODE_PENDING_CONFIRM_STATUS } from '@/constants/dockStudio'
 import { nodeHasUsableOutput, shouldApplyGenerationPoll } from '@/utils/generationPollGate'
 import CanvasNodePrompt from '@/components/canvas/CanvasNodePrompt.vue'
 import NodeRenderer from '@/components/canvas/NodeRenderer.vue'
@@ -4655,8 +4655,28 @@ async function handleNodeGenerate() {
 async function handleAgentGenerateNode(nodeId: string) {
   const node = nodes.value.find((n) => n.id === nodeId)
   if (!node) return
-  // L1：与 dock 生成同一条显式确认路径（画布确认原子入口）
-  void agentRailRef.value?.confirmProposeWait?.(nodeId)
+  // L1：显式确认路径——有活跃等待态（活 proposal, 带 callId）时收口。
+  const confirmed = (await agentRailRef.value?.confirmProposeWait?.(nodeId)) ?? false
+  if (confirmed) return
+  // ⚠️ 孤儿兜底（2026-10-31 生产实证 cmvvaw8ar000moe01fdolrugb）：
+  // 节点卡 pending_confirm 但运行时未留 waiting_user 阻塞态 ⇒ store.pendingProposal
+  // 恒 null ⇒ confirmProposeWait 拿不到 callId 静默 no-op，按钮卡死。图已生成 ⇒ 等价于
+  // 「确认保留」，直接翻 completed（保留预览图）；无图（纯草稿）退回本地生成。
+  const data = (node.data ?? {}) as Record<string, unknown>
+  if (data.status === NODE_PENDING_CONFIRM_STATUS) {
+    const hasProduct =
+      Boolean(data.url) ||
+      Boolean((data.images as unknown[])?.length) ||
+      Boolean(data.mediaInfo)
+    if (hasProduct) {
+      await debouncedNodePatch.flush()
+      patchNodeData(nodeId, { status: NODE_GENERATION_STATUS.completed })
+      return
+    }
+    const fresh = editorNode.value
+    if (fresh) await generateForNode(fresh)
+    return
+  }
 }
 
 /**
@@ -4665,7 +4685,17 @@ async function handleAgentGenerateNode(nodeId: string) {
  * 与侧栏琥珀卡取消同源同语义；无匹配等待时安全 no-op（不发错误信号）。
  */
 async function handleProposeConfirmCancel(nodeId: string, note?: string) {
-  await agentRailRef.value?.cancelProposeForNode(nodeId, note ? { note } : undefined)
+  const cancelled =
+    (await agentRailRef.value?.cancelProposeForNode(nodeId, note ? { note } : undefined)) ?? false
+  if (cancelled) return
+  // ⚠️ 孤儿兜底（2026-10-31 生产实证）：无活跃等待态时，pending_confirm 节点直接翻
+  // draft（丢弃预览图），避免按钮静默 no-op 卡死。
+  const node = nodes.value.find((n) => n.id === nodeId)
+  const data = (node?.data ?? {}) as Record<string, unknown>
+  if (data.status === NODE_PENDING_CONFIRM_STATUS) {
+    await debouncedNodePatch.flush()
+    patchNodeData(nodeId, { status: NODE_GENERATION_STATUS.draft })
+  }
 }
 
 /**
