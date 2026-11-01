@@ -173,6 +173,7 @@ import { useCanvasRefPickAdd } from '@/composables/useCanvasRefPickAdd'
 import { useSidebarAttachments } from '@/composables/useSidebarAttachments'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import { summarizeMobileNodeTasks } from '@/composables/mobileNodeTaskSummary'
+import { composeFallbackOpinion } from '@/components/mobile/mobileEditorSheetPolicy'
 import { formatElapsed } from '@/components/canvas/nodeTaskChrome'
 import { useViewportGestures } from '@/composables/useViewportGestures'
 import type { CanvasAssetItem } from '@/components/canvas/CanvasAssetPanel.vue'
@@ -2756,10 +2757,17 @@ function handleMobileNodeSendToAgent(payload: { prompt: string; opinion: string 
     persistUserEdit()
   }
   closeMobileNodeEditor()
-  // ② 意见进 composer 输入框（用户自己发送）
+  // ② 意见进 composer 输入框（用户自己发送）。
+  //    J-2（2026-11-01 规格 图 2 G 分支）：只改词未留意见 ⇒ 兜底轻引用，
+  //    composer 永不为空（消灭「按了发送却无事可发」的死胡同）。
   const opinion = payload.opinion.trim()
   if (opinion) {
     agentRailRef.value?.setComposerInput?.(opinion)
+  } else {
+    const d = (node.data ?? {}) as Record<string, unknown>
+    agentRailRef.value?.setComposerInput?.(
+      composeFallbackOpinion(typeof d.title === 'string' ? d.title : '', String(node.type ?? '')),
+    )
   }
   // ③ 切回对话页签（看得见落地）
   mobileAppTab.value = 'chat'

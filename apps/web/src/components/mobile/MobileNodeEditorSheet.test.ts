@@ -101,4 +101,36 @@ describe('MobileNodeEditorSheet 轻量编辑器（D8 / J1 / K1）', () => {
     expect(w.get('[data-testid="mobile-editor-send"]').attributes('disabled')).toBeDefined()
     w.unmount()
   })
+
+  it('点参数 chip ⇒ 翻译成意见前缀（J-1 翻译制，不改值不越权）', async () => {
+    const w = mount(MobileNodeEditorSheet, {
+      props: { node: { id: 'n3', type: 'image', position: { x: 0, y: 0 }, data: { prompt: '一只猫', imageAspect: '16:9' } } as any },
+    })
+    await w.get('[data-testid="mobile-editor-param-chip"]').trigger('click')
+    const opinion = w.get('[data-testid="mobile-editor-opinion"]').element as HTMLTextAreaElement
+    expect(opinion.value).toBe('把画面比例改为')
+    w.unmount()
+  })
+
+  it('参数 chip 预填幂等 + 换行追加（不覆盖既有意见 / at mm:ss）', async () => {
+    const w = mount(MobileNodeEditorSheet, {
+      props: { node: { id: 'n4', type: 'audio', position: { x: 0, y: 0 }, data: { prompt: '一段钢琴', audioModel: 'tts-1' } } as any, initialOpinion: 'at 0:07' },
+    })
+    const chip = w.get('[data-testid="mobile-editor-param-chip"]')
+    await chip.trigger('click')
+    await chip.trigger('click')
+    const opinion = w.get('[data-testid="mobile-editor-opinion"]').element as HTMLTextAreaElement
+    expect(opinion.value).toBe('at 0:07\n把模型改为')
+    w.unmount()
+  })
+
+  it('产物上下文行：标题降级为「{类型}节点」+ 共用副标题（图 1 ②）', () => {
+    const w = mount(MobileNodeEditorSheet, {
+      props: { node: { id: 'n5', type: 'image', position: { x: 0, y: 0 }, data: { prompt: 'x' } } as any },
+    })
+    const ctx = w.get('[data-testid="mobile-editor-context"]')
+    expect(ctx.text()).toContain('图片节点')
+    expect(ctx.text()).toContain('发送后 agent 将按新词重做并替换当前产物')
+    w.unmount()
+  })
 })

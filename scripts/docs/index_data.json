@@ -1,5 +1,5 @@
 {
- "total": 422,
+ "total": 423,
  "by_status": {
   "living": 145,
   "frozen": 268,
@@ -3827,6 +3827,15 @@
    "status": "living",
    "reason": "文内标注待实现/待评审/进行中",
    "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-01-mobile-editor-sheet-ios-redesign.md",
+   "name": "2026-11-01-mobile-editor-sheet-ios-redesign.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待评审（2026-11-01 新出稿，实现进行中）",
+   "topic": "ui-interaction"
   }
  ]
 }

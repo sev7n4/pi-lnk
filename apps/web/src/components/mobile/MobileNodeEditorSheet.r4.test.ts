@@ -69,6 +69,13 @@ describe('R4-T2 收口：轻量编辑器的「发给 agent 修改」通道', () 
     expect(body).toContain("mobileAppTab.value = 'chat'")
   })
 
+  it('J-2 发送必有落点：意见为空 ⇒ composer 兜底轻引用（毛边修复，2026-11-01 规格 图 2 G）', () => {
+    const body = /function handleMobileNodeSendToAgent\([\s\S]*?\n\}/.exec(CP)?.[0] ?? ''
+    expect(body).toContain('composeFallbackOpinion')
+    // 兜底仍走 setComposerInput 既有通道（不新开通路）
+    expect(body).toMatch(/composeFallbackOpinion[\s\S]{0,120}setComposerInput|setComposerInput[\s\S]{0,160}composeFallbackOpinion/)
+  })
+
   it('PC 的 handleNodeGenerate 未被改动（PC 零 diff）', () => {
     const pcBody = /async function handleNodeGenerate\(\)[\s\S]*?\n\}/.exec(CP)?.[0] ?? ''
     expect(pcBody).toContain('debouncedNodePatch.flush()')
