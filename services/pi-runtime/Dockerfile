@@ -4,6 +4,8 @@ RUN corepack enable
 
 FROM base AS deps
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml ./
+# pnpm.patchedDependencies（0.99.2 addedToolNames 恢复补丁）：install 阶段按哈希读取 patch 文件，缺失即 ENOENT
+COPY patches ./patches
 COPY services/pi-runtime/package.json services/pi-runtime/
 RUN pnpm install --filter @pi-lnk/pi-runtime --frozen-lockfile
 
