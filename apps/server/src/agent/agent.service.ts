@@ -29,6 +29,7 @@ import {
 } from '@lnkpi/shared'
 import { buildSidebarBlock } from './pi-runtime/sidebar-block'
 import { decodeCursor, paginateVisibleRows } from './messages-cursor'
+import { normalizeIntent } from './intent-dedup'
 import { MaterialService } from '../canvas/material.service'
 import { ZodError } from 'zod'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
@@ -399,10 +400,19 @@ export class AgentService {
    * ⚠️ 追加在参数表**末尾**：本方法有 ~40 处按位置调用的测试，中间插入会移位。
    */
   billingSource?: 'user' | 'automation',
-): AsyncGenerator<AgentStreamEvent> {
+  ): AsyncGenerator<AgentStreamEvent> {
+    // P4 意图级去重（根治规格 §8.3）：预计算归一化意图指纹，供 registerIdempotencyKey 落库 +
+    // 控制器入口 findDuplicateIntent 近窗去重。与 HTTP 随机幂等键解耦。
+    const normalizedIntent = normalizeIntent(userMessage)
+
     // Register idempotency key (if provided) before starting
     if (idempotencyKey) {
-      await this.registerIdempotencyKey(idempotencyKey, sessionId, threadId || sessionId)
+      await this.registerIdempotencyKey(
+        idempotencyKey,
+        sessionId,
+        threadId || sessionId,
+        normalizedIntent,
+      )
     }
 
     let validatedAttachments: SidebarAttachment[] | undefined
@@ -600,6 +610,7 @@ export class AgentService {
     key: string,
     sessionId: string,
     threadId: string,
+    normalizedIntent?: string,
   ): Promise<void> {
     const now = new Date()
     await this.prisma.idempotencyRecord
@@ -608,6 +619,7 @@ export class AgentService {
           idempotencyKey: key,
           sessionId,
           threadId,
+          normalizedIntent: normalizedIntent ?? null,
           status: 'processing',
           expiresAt: new Date(now.getTime() + 5 * 60 * 1000),
         },
@@ -615,6 +627,36 @@ export class AgentService {
       .catch(() => {
         // Unique constraint conflict = concurrent registration, ignore
       })
+  }
+
+  /**
+   * P4 意图级去重查询（根治规格 §8.3 / §9-P4）。
+   *
+   * 在「同 threadId + 同归一化意图 + 未过期 + 近窗内创建」且状态为
+   * processing/completed 的范围内，查是否存在既有记录。命中即说明同一意图的生成
+   * 已在进行 / 刚完成，本次请求应去重（不新开 operation），由调用方走 reconcile 复用既有节点。
+   *
+   * 注意：仅按 threadId 维度（不跨 thread），且空意图直接返回 false（不参与去重）。
+   */
+  async findDuplicateIntent(
+    threadId: string,
+    normalizedIntent: string,
+    windowMs = 60_000,
+  ): Promise<boolean> {
+    if (!normalizedIntent) return false
+    const now = Date.now()
+    const hit = await this.prisma.idempotencyRecord.findFirst({
+      where: {
+        threadId,
+        normalizedIntent,
+        status: { in: ['processing', 'completed'] },
+        expiresAt: { gt: new Date(now) },
+        createdAt: { gte: new Date(now - windowMs) },
+      },
+      select: { id: true },
+      orderBy: { createdAt: 'desc' },
+    })
+    return hit !== null
   }
 
   /** Mark idempotency key as completed with optional result summary. */

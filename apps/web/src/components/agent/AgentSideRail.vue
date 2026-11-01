@@ -2628,12 +2628,14 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
   const idempotencyKey = buildIdempotencyKey(agentThreadId.value)
   // Track whether SSE stream ended normally (received [DONE])
   let streamEndedNormally = false
+  // P0：每轮重置断流对账暂态与主流游标，避免上一轮残留值泄漏
+  streamBrokenUnexpectedly.value = false
+  lastMainSeq.value = null
+  streamBreakError = null
   recoveredPhaseHint.value = null
   // 新一轮开始：清掉上一轮失败态标记与失败卡（续跑而非重发的前提）
   lastTurnFailed.value = false
   dockNotice.dismiss(REQUEST_FAILED_ID)
-  // 记住本轮用户原文，供失败卡「重试」复用（幂等键已保证重试不重复扣积分）
-  if (!isRetry) lastSentMessage.value = message
   runCancelled.value = false
   mainTurnSuspended.value = false
   threadRunState.value = null
@@ -2707,6 +2709,12 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
       const lines = buffer.split('\n')
       buffer = lines.pop() ?? ''
       for (const line of lines) {
+        // P0：捕获服务端下发的 id 游标帧，断流后供旁观流从断点续拉尾包（node_status:done 等）
+        if (line.startsWith('id: ')) {
+          const n = Number(line.slice(4).trim())
+          if (Number.isFinite(n) && n >= 0) lastMainSeq.value = n
+          continue
+        }
         if (!line.startsWith('data: ')) continue
         if (line === 'data: [DONE]') {
           streamEndedNormally = true
@@ -2736,30 +2744,28 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
       } else if (agent.pendingProposal || agent.pendingQuestion) {
         agent.appendText('\n\n⚠️ 连接已断开；你的确认仍在等待中，恢复网络后自动继续，无需重复操作。')
       } else {
-        const cls = classifyRequestError(err)
-        agent.markTurnError(err)
-        // 气泡只留一行人话摘要，原始技术文案（如 `TypeError: network error`）不再透出
-        agent.appendText(`\n\n⚠️ 生成失败 · ${cls.human}`)
-        lastTurnFailed.value = true
-        // 分流进 dock 三色卡片（单一出口）：连接级=黄卡+重试，业务级=红卡+重试
-        dockNotice.pushNotice({
-          id: REQUEST_FAILED_ID,
-          tone: cls.kind === 'network' ? 'warning' : 'error',
-          title: cls.kind === 'network' ? '网络连接中断' : '生成失败',
-          message:
-            cls.kind === 'network'
-              ? '生成进度已自动保存，可点「重试」继续。'
-              : cls.human,
-          action: { label: '重试', onClick: () => void retryLastTurn() },
-          ttl: 0,
-        })
+        // ⭐ P0 verify-before-fail（根治规格 2026-11-01-red-car-... §4.1 判据 1/2）：
+        // 主流在 [DONE] 前断开 ≠ 生成失败。先进入「对账中」暂态（不弹失败卡），把错误
+        // 暂存，等 finally 的 reconcileLatestAssistant 拉到服务端终态后再决定：
+        //   - 服务端已 settled ⇒ 自愈（清暂态、不弹卡，节点由 turnComplete→loadSession 回拉）；
+        //   - 服务端确无终态 ⇒ 再补弹失败卡（showGenerationFailureCard）。
+        // 直接动机：2026-11-01 生产会话 cmvwkh89b00lgp801xu2fjbrr 主流断被误报失败、
+        // 诱导用户重发 ⇒ 重复生成 2 张红车（① 误报 + ② 双图的根因入口）。
+        streamBrokenUnexpectedly.value = true
+        streamBreakError = err
+        if (!agent.messages.length || agent.messages[agent.messages.length - 1]?.role !== 'assistant') {
+          agent.startAssistantMessage()
+        }
+        agent.appendText('\n\n⚠️ 连接中断，正在确认生成进度…')
       }
     }
   } finally {
     agentStream.stop()
     streamAbortController = null
     // SSE abnormal-end detection: stream broke without [DONE]
-    if (!streamEndedNormally && !runCancelled.value) {
+    // P0：verify-before-fail 已接管主流断流的文案（先「对账中」暂态），此处跳过以免重复提示；
+    // 服务端确无终态时由下方 post-reconcile 决策统一补弹失败卡。
+    if (!streamEndedNormally && !runCancelled.value && !streamBrokenUnexpectedly.value) {
       const last = agent.messages[agent.messages.length - 1]
       if (last?.role === 'assistant' && !last.content.trim()) {
         agent.appendText('\n\n⚠️ 连接意外断开，请稍后重试。')
@@ -2795,6 +2801,24 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
     }
     agent.finishStreaming()
     await reconcileLatestAssistant()
+    // ⭐ P0 verify-before-fail 收口：断流后「先对账、再判失败」（根治规格 §4.1 判据 1/2）。
+    // reconcileLatestAssistant 已用服务端权威历史补齐终态（含 canvas 节点经 turnComplete→loadSession）。
+    // 此时再决定：服务端已 settled ⇒ 自愈（清「对账中」暂态、不弹失败卡）；否则补弹失败卡。
+    if (streamBrokenUnexpectedly.value) {
+      streamBrokenUnexpectedly.value = false
+      const last = agent.messages[agent.messages.length - 1]
+      const settled = Boolean(last?.role === 'assistant' && last.content.trim())
+      if (settled) {
+        // 服务端已 settled：清除「正在确认进度」暂态文案，失败卡永不出现（① 误报消除点）
+        if (last?.role === 'assistant') {
+          last.content = last.content.replace(/\n\n⚠️ 连接中断，正在确认生成进度…$/, '')
+        }
+      } else {
+        // 服务端确无终态：reconcile 已确认不会自愈，补弹失败卡（沿用历史失败文案与 dock 卡）
+        dismissFailureCard()
+        showGenerationFailureCard(streamBreakError)
+      }
+    }
     await refreshThreadCheckpoint()
     // canvas_action 已流内实时 emit（2026-10-01），无积压可 flush
     // 始终回拉：Runtime 已写 Session.canvasData；本地 save 不得用旧节点覆盖
@@ -3222,18 +3246,57 @@ const REQUEST_FAILED_ID = 'request-failed'
 const CONVERSATION_FETCH_MAX_ATTEMPTS = 2
 /** 上一轮是否以失败告终（供「恢复后自动续跑」判定） */
 const lastTurnFailed = ref(false)
-/** 本轮用户原文（失败卡「重试」复用，避免让用户重打） */
-const lastSentMessage = ref('')
+/**
+ * P0 verify-before-fail：主流在 [DONE] 前断开时记录最后 seq（来自 `id:` 帧）。
+ * ⚠️ 当前为 T0 回填钩子：捕获已完成，但**尚未**传入旁观流首连参数——
+ * P0 根治靠服务端权威对账（reconcileLatestAssistant + turnComplete→loadSession），
+ * 不依赖旁观流回填；等 §11 R1 修好旁观流稳定性后，由 follow-up-tail.ts 承接此 seq 做断点续拉。
+ */
+const lastMainSeq = ref<number | null>(null)
+/** P0 verify-before-fail：主流断≠失败，先进入「对账中」暂态，等 reconcile 拿服务端终态再判定 */
+const streamBrokenUnexpectedly = ref(false)
+/** P0 verify-before-fail：catch 捕获的断流错误，留给 finally 对账后补弹失败卡 */
+let streamBreakError: unknown = null
+
+/** 清掉「生成失败」dock 卡（自愈前置）。 */
+function dismissFailureCard() {
+  dockNotice.dismiss(REQUEST_FAILED_ID)
+}
 
 /**
- * 失败卡「重试」：复用上一轮用户原文重发。幂等键已保证重试不重复扣积分；
- * isRetry 跳过重复落 user 气泡，做到「续跑而非重发」。
+ * P0 verify-before-fail：仅在 reconcile 确认服务端确无终态时才补弹失败卡。
+ * 与历史「主流一断就标失败」相反——先对账、服务端 settled 则自愈（见 sendMessage finally）。
+ *
+ * D7 UX 翻转：主推「继续」（reconnectStream 走 reconcile 对账，**不重生成**），
+ * 杜绝 re-prompt 诱导双生成；用户若确需重发可手动再发一句。
  */
-function retryLastTurn() {
-  const msg = lastSentMessage.value
-  if (!msg) return
-  dockNotice.dismiss(REQUEST_FAILED_ID)
-  void sendMessage(msg, undefined, true)
+function showGenerationFailureCard(err: unknown) {
+  const cls = classifyRequestError(err)
+  // 零事件场景：assistant 气泡不存在，appendText 会静默 no-op ⇒ 先确保有承载气泡
+  if (!agent.messages.length || agent.messages[agent.messages.length - 1]?.role !== 'assistant') {
+    agent.startAssistantMessage()
+  }
+  // 清掉 catch 里写入的「正在确认进度」暂态文案，避免与失败文案叠加
+  const last = agent.messages[agent.messages.length - 1]
+  if (last?.role === 'assistant') {
+    last.content = last.content.replace(/\n\n⚠️ 连接中断，正在确认生成进度…$/, '')
+  }
+  agent.markTurnError(err)
+  // 气泡只留一行人话摘要，原始技术文案（如 `TypeError: network error`）不再透出
+  agent.appendText(`\n\n⚠️ 生成失败 · ${cls.human}`)
+  lastTurnFailed.value = true
+  // 分流进 dock 三色卡片（单一出口）：连接级=黄卡+继续，业务级=红卡+继续
+  dockNotice.pushNotice({
+    id: REQUEST_FAILED_ID,
+    tone: cls.kind === 'network' ? 'warning' : 'error',
+    title: cls.kind === 'network' ? '网络连接中断' : '生成失败',
+    message:
+      cls.kind === 'network'
+        ? '生成进度已自动保存，可点「继续」恢复。'
+        : cls.human,
+    action: { label: '继续', onClick: () => void reconnectStream() },
+    ttl: 0,
+  })
 }
 
 /**
