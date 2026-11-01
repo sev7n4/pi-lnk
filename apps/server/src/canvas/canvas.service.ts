@@ -2,6 +2,10 @@ import { Inject, Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 // 2026-10-25：封面抽取抽到 `canvas-cover.ts`，与 `SessionsService.findAll` 共用同一口径。
 import { readCover } from './canvas-cover'
+// P1-C C0（规格 2026-11-02-p1c-write-path-governance-design §4.1）：本面整份 PUT
+// 原是 P0-4 守卫旁路（sessions 面有守卫、此面没有）。接入共享纯函数堵缺口，
+// 两面同一实现禁止漂移。
+import { guardPendingConfirmStatuses } from './pending-confirm-guard'
 
 /** create() 不传 title 时的默认落库值（IA v4 2026-10-23：项目=画布+对话，
  *  全仓文案收口到「项目」）。list 的标题兜底据此判定「未命名」——
@@ -66,7 +70,19 @@ export class CanvasService {
   async update(id: string, userId: string, data: { title?: string; canvasData?: string }) {
     const session = await this.prisma.session.findFirst({ where: { id, userId } })
     if (!session) throw new NotFoundException('Session not found')
-    return this.prisma.session.update({ where: { id }, data })
+    // C0 守卫：controller 已把 dto.canvasData stringify，此处 parse 回对象过守卫
+    // （脏串/解析失败 ⇒ 守卫直通，保存优先——与共享函数的脏数据策略一致）。
+    let canvasData: string | undefined
+    if (data.canvasData !== undefined) {
+      let next: unknown = null
+      try {
+        next = JSON.parse(data.canvasData)
+      } catch {
+        next = null
+      }
+      canvasData = JSON.stringify(guardPendingConfirmStatuses(session.canvasData, next))
+    }
+    return this.prisma.session.update({ where: { id }, data: { ...data, canvasData } })
   }
 
   /** SP-D（ADR-0014）：浏览器侧连线端点（connect-nodes）的属主校验，与 update 同口径。 */
