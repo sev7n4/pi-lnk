@@ -1141,6 +1141,38 @@ describe("propose_generation 确认即启动（P0-1）", () => {
 		);
 	});
 
+	it("summary.proposalEpoch → start 请求原样带回（B6 epoch 校验透传）", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient(["pending_confirm"], {
+			proposeSummary: { type: "image", proposalEpoch: 7 },
+		});
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const pending = run(propose, { node_id: "n1" });
+		await waitFor(() => reg.hasPending("s1"));
+		reg.answer("s1", "tc1", {});
+		await pending;
+		const start = client.posts.find((p) => p.path === "/agent/internal/start-image-generation");
+		assert.ok(start, "start-image-generation 未被调用");
+		assert.equal((start.body as { proposalEpoch?: number }).proposalEpoch, 7);
+	});
+
+	it("summary 无 proposalEpoch → start 请求不带该字段（旧 Nest 兼容）", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient(["pending_confirm"]);
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const pending = run(propose, { node_id: "n1" });
+		await waitFor(() => reg.hasPending("s1"));
+		reg.answer("s1", "tc1", {});
+		await pending;
+		const start = client.posts.find((p) => p.path === "/agent/internal/start-image-generation");
+		assert.ok(start, "start-image-generation 未被调用");
+		assert.equal("proposalEpoch" in (start.body as Record<string, unknown>), false);
+	});
+
 	it("text 节点：改走 start-text-generation 即返（run-* 同步持住退役）", async () => {
 		const reg = new PendingToolRegistry();
 		const client = fakeNestClient(["pending_confirm"], {

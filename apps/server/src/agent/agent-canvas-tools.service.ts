@@ -1228,6 +1228,12 @@ export class AgentCanvasToolsService {
 
     const title = nodeTitle(node) || undefined
     const data = node.data ?? {}
+    // P1-B B6（spec 2026-11-01-p1b-generation-job-design §4.1 幂等/epoch）：每次
+    // propose（含撤回后重提）mark pending_confirm 时递增节点 proposalEpoch。撤回
+    // （clear-propose）本身不动 epoch —— 重提必然再次走本方法，天然 +1。start-* 端点
+    // 校验请求携带值与节点当前值，不等 ⇒ 409（防撤回后迟到确认抢占，红队风险④）。
+    // ⚠️ 节点 data 新增字段（非新表），随 mergeNodeData 透传，不触碰 spec §7 红线。
+    const proposalEpoch = (Number(data.proposalEpoch ?? 0) || 0) + 1
     const promptPreview = prompt.length > 120 ? `${prompt.slice(0, 120)}…` : prompt
     const summary: {
       type: string
@@ -1242,9 +1248,12 @@ export class AgentCanvasToolsService {
       videoSettings?: unknown
       /** P0-1（规格 2026-10-30 §5）：确认即启动的 run-audio 需要 kind；随 summary 一次带回，免二次 get-node。 */
       audioKind?: string
+      /** P1-B B6：本次 propose 的纪元；runtime 确认臂 start 请求原样带回供 Nest 校验。 */
+      proposalEpoch?: number
     } = {
       type: String(node.type),
       promptPreview,
+      proposalEpoch,
       ...(title ? { title } : {}),
     }
     if (typeof data.imageModel === 'string' && data.imageModel) summary.imageModel = data.imageModel
@@ -1263,7 +1272,7 @@ export class AgentCanvasToolsService {
     const actions: CanvasAction[] = [
       {
         type: 'update_node',
-        payload: { id: node.id, data: { status: 'pending_confirm' } },
+        payload: { id: node.id, data: { status: 'pending_confirm', proposalEpoch } },
       },
     ]
     await this.applyOrStage(input.sessionId, actions, false)
@@ -1839,10 +1848,33 @@ export class AgentCanvasToolsService {
     }
   }
 
+  /**
+   * P1-B B6（spec 2026-11-01-p1b-generation-job-design §4.1 幂等/epoch）：propose
+   * 确认链的 epoch 校验——防撤回重提后迟到确认抢占（红队风险④）。
+   *
+   * 三个宽容面（缺省一律放行，绝不让老调用方炸）：
+   * - 请求未携带（`proposalEpoch` 缺省）⇒ 跳过：手动生成、run_* 兼容端点、老客户端。
+   * - 节点无 `proposalEpoch`（B6 之前的存量节点）⇒ 跳过。
+   * - 相等 ⇒ 放行（含 P0-1 dedup 的正常二次确认路径）。
+   *
+   * 校验位置在 P0-1 dedup **之前**：迟到确认不得吃到幂等直返——若节点已被重提
+   * +确认在生成，旧确认应显式 409 而不是拿到新 record 的 handle。
+   */
+  private assertProposalEpoch(node: { data?: unknown }, input: { proposalEpoch?: number }): void {
+    if (typeof input.proposalEpoch !== 'number' || !Number.isFinite(input.proposalEpoch)) return
+    const data = (node.data ?? {}) as { proposalEpoch?: unknown }
+    const current = Number(data.proposalEpoch)
+    if (!Number.isFinite(current) || current <= 0) return
+    if (input.proposalEpoch !== current) {
+      throw new ConflictException('提议已过期：该节点已重新发起生成确认，请使用最新的确认')
+    }
+  }
+
   async startImageGeneration(input: {
     sessionId: string
     userId: string
     nodeId: string
+    proposalEpoch?: number
   }): Promise<{
     generationRecordId: string
     status: string
@@ -1854,6 +1886,7 @@ export class AgentCanvasToolsService {
     const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
     const node = canvas.nodes.find((n) => n.id === input.nodeId)
     if (!node) throw new NotFoundException('节点不存在')
+    this.assertProposalEpoch(node, input)
 
     // P0-1 幂等（规格 2026-10-30-propose-confirm-execution-unity §4.2）：确认即启动后，
     // 重复到达的启动请求（双击 / 重连重放 / 旧缓存前端叠加自起）不得产生第二个活跃
@@ -2095,10 +2128,12 @@ export class AgentCanvasToolsService {
     sessionId: string
     userId: string
     nodeId: string
+    proposalEpoch?: number
   }): Promise<{ generationRecordId: string; status: string; actions: CanvasAction[]; deduped?: boolean }> {
     const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
     const node = canvas.nodes.find((n) => n.id === input.nodeId)
     if (!node) throw new NotFoundException('节点不存在')
+    this.assertProposalEpoch(node, input)
 
     // P0-1 幂等（同 startImageGeneration）：确认即启动后重复请求不产生第二个活跃 record。
     if (
@@ -2288,10 +2323,12 @@ export class AgentCanvasToolsService {
     userId: string
     nodeId: string
     nodeContext?: { selectionDigest?: string; canvasSummary?: string }
+    proposalEpoch?: number
   }): Promise<{ status: string; generationRecordId?: string; actions: CanvasAction[]; deduped?: boolean; async?: boolean }> {
     const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
     const node = canvas.nodes.find((n) => n.id === input.nodeId)
     if (!node) throw new NotFoundException('节点不存在')
+    this.assertProposalEpoch(node, input)
     const prompt = String(node.data?.prompt ?? node.data?.content ?? '').trim()
     if (!prompt) throw new NotFoundException('节点缺少 prompt')
     // P0-1 幂等同形：已有活跃启动直接返回现有 record
@@ -2327,10 +2364,12 @@ export class AgentCanvasToolsService {
     caption?: string
     lyrics?: string
     instrumental?: boolean
+    proposalEpoch?: number
   }): Promise<{ status: string; generationRecordId?: string; actions: CanvasAction[]; deduped?: boolean; async?: boolean }> {
     const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
     const node = canvas.nodes.find((n) => n.id === input.nodeId)
     if (!node) throw new NotFoundException('节点不存在')
+    this.assertProposalEpoch(node, input)
     if (
       node.data?.status === 'generating' &&
       typeof node.data?.generationRecordId === 'string' &&

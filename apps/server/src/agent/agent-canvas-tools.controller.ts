@@ -444,6 +444,16 @@ class RunImageGenerationDto {
 
   @IsString()
   nodeId!: string
+
+  /**
+   * P1-B B6（spec 2026-11-01-p1b-generation-job-design §4.1 幂等/epoch）：propose
+   * 确认链携带的提议纪元。缺省（手动生成 / run_* 兼容端点 / 老客户端）⇒ 跳过校验；
+   * 携带且与节点当前 `data.proposalEpoch` 不等 ⇒ 409（撤回重提后迟到确认被拒）。
+   * ⚠️ 必须有装饰器 —— `whitelist: true` 会静默剥掉无装饰器字段。
+   */
+  @IsOptional()
+  @IsNumber()
+  proposalEpoch?: number
 }
 
 /**
@@ -512,6 +522,11 @@ export class RunTextGenerationDto {
 
   @IsString()
   nodeId!: string
+
+  /** P1-B B6：同 RunImageGenerationDto.proposalEpoch（本 DTO 有意不继承图片 DTO，字段重复声明）。 */
+  @IsOptional()
+  @IsNumber()
+  proposalEpoch?: number
 
   @IsOptional()
   @IsObject()
