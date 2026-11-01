@@ -1,6 +1,6 @@
 # superpowers 文档索引
 
-> 全部 **422 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
+> 全部 **423 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
 > **文档正文未改动** —— 本索引只做导航与状态标注。
 
 ## 怎么用这份索引
@@ -31,7 +31,7 @@
 | 规划与执行计划 | 19 | 5 |
 | 账号/登录/会员 | 18 | 4 |
 | 工作流导入导出 | 18 | 4 |
-| UI 交互细节 | 15 | 8 |
+| UI 交互细节 | 16 | 9 |
 | 长期记忆 | 11 | 8 |
 | 视觉输入（识图） | 7 | 6 |
 | 部署与基础设施 | 5 | 2 |
@@ -568,10 +568,11 @@
 
 </details>
 
-### UI 交互细节（15 份）
+### UI 交互细节（16 份）
 
-<details><summary>🟢 living · 8 份</summary>
+<details><summary>🟢 living · 9 份</summary>
 
+- `docs/superpowers/specs/2026-11-01-mobile-editor-sheet-ios-redesign.md` ★design
 - `docs/superpowers/specs/2026-09-28-agent-conversation-ux-p0-p2-design.md` ★design
 - `docs/superpowers/specs/2026-08-12-agent-mid-run-interrupt-design.md` ★design
 - `docs/superpowers/specs/2026-08-07-agent-conversation-isolation-design.md` ★design

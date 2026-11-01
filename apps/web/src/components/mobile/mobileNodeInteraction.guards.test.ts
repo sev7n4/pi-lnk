@@ -82,7 +82,8 @@ describe('移动端节点交互 · 行为级守卫（规格 §10.2）', () => {
   it('G-8 移动端编辑器无「生成」按钮（生成权归 agent）', () => {
     const tpl = /<template>([\s\S]*?)<\/template>/.exec(editor)?.[1] ?? ''
     expect(tpl).not.toContain('生成')
-    expect(tpl).toContain('发给 agent 修改')
+    // v2（2026-11-01 规格 J-7）：UI 短文案「发送」，完整语义由 aria-label 承载
+    expect(tpl).toContain('aria-label="发给 agent 修改"')
   })
 
   it('G-9 标注产出是「带标记的整图」（底图铺满，不裁切）', () => {

@@ -29,26 +29,36 @@ const CODE = stripComments(SRC)
  *   根因是 PC popover 在全屏 sheet 里被 `overflow:hidden` 裁剪 + 包含块错觉
  *   压扁（详见组件内注释）⇒ sheet 作用域内统一改为贴底卡片。
  */
-describe('走查④⑤：编辑 sheet 的关闭入口', () => {
+describe('走查④⑤ v2：导航三段（2026-11-01 规格 图 1 ①）', () => {
   const baseNode = { id: 'n1', type: 'image', data: { url: 'x.png' } } as never
 
-  it('右上角 X 存在且 emit close（行为级）', async () => {
+  it('左「取消」存在且 emit close（行为级；X 已退役）', async () => {
     const w = mount(MobileNodeEditorSheet, { props: { node: baseNode } })
-    const closeBtn = w.find('[data-testid="mobile-editor-close"]')
-    expect(closeBtn.exists()).toBe(true)
-    // 平台惯例：右上角（标题在左、按钮在右的 space-between 头栏）
-    expect(closeBtn.attributes('aria-label')).toBe('关闭')
-    await closeBtn.trigger('click')
+    const cancelBtn = w.find('[data-testid="mobile-editor-cancel"]')
+    expect(cancelBtn.exists()).toBe(true)
+    expect(cancelBtn.text()).toBe('取消')
+    await cancelBtn.trigger('click')
     expect(w.emitted('close')).toHaveLength(1)
     w.unmount()
   })
 
-  it('44px 触控目标（磁贴/按钮都不能小于系统触控下限）', () => {
+  it('右上「发送」胶囊：完整语义由 aria-label 承载（J-7）', () => {
+    const w = mount(MobileNodeEditorSheet, {
+      props: { node: { id: 'n1', type: 'image', data: { url: 'x.png', prompt: '一只猫' } } as never },
+    })
+    const send = w.find('[data-testid="mobile-editor-send"]')
+    expect(send.exists()).toBe(true)
+    expect(send.attributes('aria-label')).toBe('发给 agent 修改')
+    w.unmount()
+  })
+
+  it('44px 触控目标（取消与发送都不能小于系统触控下限）', () => {
     const block = /<style scoped>([\s\S]*?)<\/style>/.exec(SRC)?.[1] ?? ''
-    const rule = /\.sheet-close\s*\{([^}]*)\}/.exec(block)?.[1] ?? ''
-    expect(rule, '必须能定位 .sheet-close 规则').not.toBe('')
-    expect(rule).toMatch(/width:\s*var\(--lnk-touch-target\)/)
-    expect(rule).toMatch(/height:\s*var\(--lnk-touch-target\)/)
+    for (const cls of ['.nav-cancel', '.nav-send']) {
+      const rule = new RegExp(`${cls.replace('.', '\\.')}\\s*\\{([^}]*)\\}`).exec(block)?.[1] ?? ''
+      expect(rule, `必须能定位 ${cls} 规则`).not.toBe('')
+      expect(rule).toMatch(/(?:min-height|height):\s*var\(--lnk-touch-target\)/)
+    }
   })
 
   it('左上角语义模糊的「▾」已删（不再有两个关闭语义）', () => {
@@ -91,12 +101,14 @@ describe('走查⑥ 收口：换掉 PC dock 后，参数选择器与其补丁一
     }
   })
 
-  it('参数以**只读摘要一行**呈现（agent 定的，用户不可改）', () => {
+  it('参数以只读 chips 呈现（agent 锁定 + 翻译制预填，非选择器）', () => {
     const template = (/<template>([\s\S]*?)<\/template>/.exec(SRC)?.[1] ?? '').replace(
       /<!--[\s\S]*?-->/g,
       '',
     )
     expect(template).toContain('参数')
     expect(template).toContain('mobile-editor-params')
+    expect(template).toContain('mobile-editor-param-chip')
+    expect(template).toContain('由 agent 锁定')
   })
 })
