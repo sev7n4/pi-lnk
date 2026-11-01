@@ -20,6 +20,7 @@ import { SessionsService } from '../sessions/sessions.service'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
 import { AgentMemoryService } from './agent-memory.service'
 import { AgentService } from './agent.service'
+import { normalizeIntent, isRegenerationIntent } from './intent-dedup'
 import { recordSessionSeen } from './generation-recovery/presence'
 import {
   loadRegistry,
@@ -772,6 +773,31 @@ export class AgentController {
         res.end()
         return
       }
+    }
+
+    // P4 意图级去重（根治规格 2026-11-01-red-car-... §9-P4）：同 thread + 同归一化意图 + 近窗内
+    // 已存在 processing/completed 记录 ⇒ 本次是同句重发（断线误报诱导 / 手抖连点），不新开 operation，
+    // 复用既有节点。含再生成语义词（再/第二/另一个/换一张）放行，避免误杀「真想再来一张」。
+    // 仅作用于用户 HTTP 入口（recovery/auto-resume 等内部调用直接走 streamConversation，不经此门）。
+    const threadKey = dto.threadId || dto.sessionId
+    const normalizedIntent = normalizeIntent(dto.message)
+    if (
+      normalizedIntent &&
+      !isRegenerationIntent(dto.message) &&
+      (await this.agentService.findDuplicateIntent(threadKey, normalizedIntent))
+    ) {
+      res.write(
+        `data: ${JSON.stringify({ type: 'turn_not_submitted', data: { reason: 'not_idle' } })}\n\n`,
+      )
+      res.write(
+        `data: ${JSON.stringify({
+          type: 'text_delta',
+          data: { text: '检测到相同内容已在生成 / 已生成，已为你复用，无需重复发送。' },
+        })}\n\n`,
+      )
+      res.write('data: [DONE]\n\n')
+      res.end()
+      return
     }
 
     try {

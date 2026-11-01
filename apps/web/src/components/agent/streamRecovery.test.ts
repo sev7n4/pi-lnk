@@ -2,6 +2,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import {
   buildIdempotencyKey,
+  deriveObserverFromSeq,
   createAgentThreadId,
   getForkedThreadId,
   randomThreadSuffix,
@@ -243,6 +244,22 @@ describe('checkRuntimeHealthViaNest', () => {
 
     const result = await checkRuntimeHealthViaNest()
     expect(result).toBeNull()
+  })
+})
+
+describe('deriveObserverFromSeq（P0 断流回填尾包参数推导）', () => {
+  it('有主流最后 seq 时返回 lastEventId 断点续拉', () => {
+    expect(deriveObserverFromSeq(42)).toEqual({ fromNow: false, lastEventId: 42 })
+  })
+
+  it('null/undefined 时回退从 now 起', () => {
+    expect(deriveObserverFromSeq(null)).toEqual({ fromNow: true })
+    expect(deriveObserverFromSeq(undefined as unknown as number | null)).toEqual({ fromNow: true })
+  })
+
+  it('负值/小数被当作无效，回退 fromNow（避免拼接空值触发全量重放）', () => {
+    expect(deriveObserverFromSeq(-1)).toEqual({ fromNow: true })
+    expect(deriveObserverFromSeq(3.5)).toEqual({ fromNow: true })
   })
 })
 

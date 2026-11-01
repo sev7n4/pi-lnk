@@ -130,6 +130,24 @@ export function buildIdempotencyKey(threadId: string): string {
 }
 
 /**
+ * P0（根治规格 2026-11-01-red-car-disconnect-misreport-duplicate-rootfix §8）：
+ * 主流断流后旁观流首连参数推导。
+ *
+ * - 有主流最后 seq ⇒ 从断点续拉尾包（返回 `lastEventId`），把丢的 `node_status:done` 补回；
+ * - 无 seq ⇒ 从 now 起（`fromNow`），**绝不**拼空值——空 `lastEventId` 会触发 pi-runtime
+ *   全量重放分支（见 observer-stream.buildObserverStreamUrl 注释），比丢一帧严重得多。
+ */
+export function deriveObserverFromSeq(lastMainSeq: number | null): {
+  fromNow: boolean
+  lastEventId?: number
+} {
+  if (typeof lastMainSeq === 'number' && Number.isInteger(lastMainSeq) && lastMainSeq >= 0) {
+    return { fromNow: false, lastEventId: lastMainSeq }
+  }
+  return { fromNow: true }
+}
+
+/**
  * Decide whether the frontend should poll runtime health (pi-runtime) after SSE ends.
  * Returns true when the assistant content suggests generation is still in progress
  * and hasn't reached a terminal state.
