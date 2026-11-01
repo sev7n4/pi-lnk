@@ -11,6 +11,12 @@ export const canvasApi = {
   update: (id: string, data: { title?: string; canvasData?: unknown }) =>
     api.put('/agent/canvas/update', { id, ...data }),
   /**
+   * P1-C C1b（规格 2026-11-02 §3.2）：ops 级画布写主通道。
+   * 载荷 ops 由 canvasDiff 产出（服务端白名单再收敛一次）；空 diff 由调用方拦下（零请求）。
+   */
+  patchCanvas: (id: string, ops: unknown[]) =>
+    api.patch<{ data: { applied: number } }>(`/sessions/${id}/canvas`, { ops }),
+  /**
    * SP-D（ADR-0014）：手拉边落库走服务端统一校验通道（端点存在/禁自环/禁成环 fail-closed），
    * 与 agent connect_nodes 同一服务方法；硬非法 ⇒ 400，message 逐条点名 `source -> target (reason)`。
    */

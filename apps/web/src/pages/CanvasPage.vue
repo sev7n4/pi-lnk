@@ -21,13 +21,14 @@ import { Background } from '@vue-flow/background'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/minimap/dist/style.css'
-import type { Session, CanvasAction, ImageVersionEntry, PlanSelectionGenerateResult, CanvasGroup, SnapPrev } from '@lnkpi/shared'
+import type { Session, CanvasAction, ImageVersionEntry, PlanSelectionGenerateResult, CanvasGroup, SnapPrev, CanvasData } from '@lnkpi/shared'
 import { seedImageVersions, planSelectionGenerate, SelectionBatchLimitError, SelectionBatchPendingConfirmError, computeSnapGuides } from '@lnkpi/shared'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
 import { applyActionsToFlow, deriveProposeConfirmAnchor, extrasForCanvasSave, flowToCanvasData, shouldStartPolling } from '@/composables/useCanvasActions'
+import { diffCanvasData } from '@/utils/canvasDiff'
 import { patchDiffers, pickInflightRecords, shouldPollNode } from '@/utils/generationPollScope'
 import { formatMediaDuration } from '@/utils/mediaInfoFormat'
 import { shouldBlockCanvasOverwrite, type CanvasLoadState } from './canvas/canvasLoadGuard'
@@ -315,6 +316,15 @@ const saving = ref(false)
  * 任何整份 PUT 都会**用残缺覆盖服务端真画布** ⇒ 不可逆的数据丢失。
  */
 const canvasLoadState = ref<CanvasLoadState>('idle')
+/**
+ * P1-C C1b：上次成功落库的画布快照（diff 基线）。
+ * - loadSession 成功 ⇒ 用服务端 canvasData 初始化（含空画布分支）；
+ * - PATCH/PUT 成功 ⇒ 用本次落库的 canvasData 重建；
+ * - diff 空且 title 未变 ⇒ saveCanvas 零请求（消灭「无变更也保存」）。
+ */
+const lastSavedCanvasSnapshot = ref<CanvasData | null>(null)
+/** diff 基线之 title（title 走 title-only PUT，与 canvas ops 分离）。 */
+let lastSavedTitle: string | null = null
 /**
  * 被守卫拦下的保存 ⇒ 加载成功后**补做**（否则用户刚画的东西会丢）。
  * 只记一次布尔：多次触发合并成一次补做。
@@ -5248,10 +5258,51 @@ async function saveCanvas() {
         compositionRunGroup.value = canvasData.compositionRunGroup
       }
     }
-    await api.put(`/sessions/${sessionId.value}`, {
-      title: sessionTitle.value,
-      canvasData,
-    })
+    // ⭐ P1-C C1b（规格 2026-11-02 §3.2）：整份 PUT → ops PATCH 主通道切换。
+    // - diff(lastSavedSnapshot, 本次落库形状) ⇒ 空 diff 且 title 未变 ⇒ 零请求；
+    // - 节点/边/视口变化 ⇒ PATCH /sessions/:id/canvas（服务端白名单再收敛一次）；
+    // - groups / compositionRunGroup 侧车变化 ⇒ 无 op 通道，回退整份 PUT（C1 过渡期，
+    //   C2 关 PUT 前须给侧车补 op——已知收尾项）；
+    // - title 变化 ⇒ title-only PUT（无 canvasData ⇒ 不触发 P0-4 守卫面）。
+    // - PATCH 失败 ⇒ 全量 GET 对账重建基线后放弃本次 diff（不做本地重放，
+    //   fail-safe 与 canvasLoadGuard 同纪律）。
+    const diff = diffCanvasData(lastSavedCanvasSnapshot.value, canvasData)
+    const titleChanged = lastSavedTitle !== sessionTitle.value
+    if (diff.ops.length === 0 && !diff.sidecarChanged && !titleChanged) {
+      saveFailed.value = false
+      return
+    }
+    if (diff.sidecarChanged) {
+      await api.put(`/sessions/${sessionId.value}`, {
+        title: sessionTitle.value,
+        canvasData,
+      })
+      lastSavedTitle = sessionTitle.value
+    } else {
+      if (diff.ops.length > 0) {
+        try {
+          await canvasApi.patchCanvas(sessionId.value, diff.ops)
+          lastSavedCanvasSnapshot.value = canvasData
+        } catch (patchErr) {
+          // 对账重建基线：服务端 SSOT 为准，丢弃本次 diff（下次保存重新 diff）
+          try {
+            const { data: snap } = await api.get<{
+              data: { title: string; canvasData?: CanvasData }
+            }>(`/sessions/${sessionId.value}`)
+            lastSavedCanvasSnapshot.value = snap.data.canvasData ?? { nodes: [], edges: [] }
+            lastSavedTitle = snap.data.title
+          } catch {
+            // 对账也失败：基线置空 ⇒ 下次保存退化为全量 add（add_node 幂等，安全）
+            lastSavedCanvasSnapshot.value = { nodes: [], edges: [] }
+          }
+          throw patchErr
+        }
+      }
+      if (titleChanged) {
+        await canvasApi.update(sessionId.value, { title: sessionTitle.value })
+        lastSavedTitle = sessionTitle.value
+      }
+    }
     // 只在真正落库成功后清失败位——失败路径（含 demo mode 吞异常）不进这里
     saveFailed.value = false
   } catch {
@@ -5450,6 +5501,9 @@ async function loadSession() {
     }
     // ⭐ 2026-10-26：加载成功 ⇒ 解除「整份覆盖保存」守卫，并把此前被拦下的保存**补做**。
     //   （不补做 ⇒ 用户在等待期间画的内容会丢；补做 ⇒ 空画布不会覆盖真画布。）
+    // P1-C C1b：diff 基线重建——服务端 canvasData（fold 形状）为快照，title 单独记。
+    lastSavedCanvasSnapshot.value = (data.data.canvasData as CanvasData | undefined) ?? { nodes: [], edges: [] }
+    lastSavedTitle = data.data.title
     canvasLoadState.value = 'loaded'
     deferredSaveWarned = false
     if (deferredCanvasSave) {
