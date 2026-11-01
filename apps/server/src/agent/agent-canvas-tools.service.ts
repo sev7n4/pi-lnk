@@ -2482,16 +2482,30 @@ export class AgentCanvasToolsService {
         return { status: 'timeout', generationRecordId: recordId, actions: allActions, used: usedAudio }
       }
 
+      // ⭐ U6 判定收归 Nest（§4.3-B2）+ 终态投影修正：record 上游终态按真实状态投影
+      // （此前非 generating 一律写 completed——上游 failed 也会被写成 completed）；
+      // completed 无产物（B2 前端 describeCompletedWithoutOutput 教训场景）⇒ 写 error。
+      const upstreamStatus = String(record.status)
+      const nodeTerminalStatus =
+        upstreamStatus === 'completed' && url
+          ? 'completed'
+          : upstreamStatus === 'completed'
+            ? 'error'
+            : upstreamStatus === 'failed' || upstreamStatus === 'error'
+              ? 'error'
+              : upstreamStatus
+      const noOutputNotice =
+        upstreamStatus === 'completed' && !url ? '音频生成完成但没有产物（缺少音频文件地址），请重试' : null
       const finishActions: CanvasAction[] = [
         {
           type: 'update_node',
           payload: {
             id: input.nodeId,
             data: {
-              status: 'completed',
+              status: nodeTerminalStatus,
               url,
               generationRecordId: recordId,
-              errorMessage: null,
+              errorMessage: noOutputNotice ?? (nodeTerminalStatus === 'error' ? '音频生成未完成' : null),
             },
           },
         },
@@ -2499,7 +2513,7 @@ export class AgentCanvasToolsService {
       await this.persist(input.sessionId, finishActions)
       allActions.push(...finishActions)
       await this.notifyTerminalNow()
-      return { url, status: 'completed', generationRecordId: recordId, actions: allActions, used: usedAudio }
+      return { url, status: String(nodeTerminalStatus), generationRecordId: recordId, actions: allActions, used: usedAudio }
     } catch (err) {
       if (err instanceof ForbiddenException || err instanceof NotFoundException) throw err
       const errorMessage = err instanceof Error ? err.message : '音频生成失败'

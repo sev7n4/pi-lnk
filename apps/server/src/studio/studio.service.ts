@@ -1193,6 +1193,13 @@ export class StudioService {
         prompt,
         genOptions,
       )
+      // ⭐ U6 判定收归 Nest（spec 2026-11-01-p1b-generation-job-design §4.3-B2）：
+      // 上游报 completed 但无产物（B2 前端 describeCompletedWithoutOutput 的教训场景：
+      // 节点停在「已完成」却没有任何图）⇒ 视为失败抛出，走既有失败链（退款+failed+
+      // failure diagnostic）。前端此后只投影 record.status，不再本地判定。
+      if (!url && !(urls?.length)) {
+        throw new Error('图像生成完成但没有产物（缺少图片文件地址）')
+      }
       const imageUrls = urls?.length ? urls : [url]
       const existing = await this.prisma.generationRecord.findFirst({ where: { id } })
       if (!existing || existing.status !== 'generating') return null
@@ -3082,6 +3089,10 @@ export class StudioService {
         ...(Array.isArray(meta.referenceVideos) ? (meta.referenceVideos as string[]) : []),
         ...(Array.isArray(meta.referenceAudios) ? (meta.referenceAudios as string[]) : []),
       ].filter((u): u is string => typeof u === 'string' && u.trim().length > 0)
+      // ⭐ U6 判定收归 Nest（同 completeImage）：completed 无产物 ⇒ 走失败链。
+      if (!url) {
+        throw new Error('视频生成完成但没有产物（缺少视频文件地址）')
+      }
       const mediaInfo = await this.enrichVideoMediaInfoDimensions(
         await this.buildMediaInfo(url, referenceUrls),
         lastFrameUrl,

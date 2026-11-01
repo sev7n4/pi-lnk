@@ -9,7 +9,6 @@ import { NODE_GENERATION_STATUS, isDockGenerateBusy, isNodeGenerating } from '@/
 import {
   shouldApplyGenerationPoll,
   settleDeadlineExceeded,
-  describeCompletedWithoutOutput,
   DEFAULT_SETTLE_TIMEOUT_MS,
 } from '@/utils/generationPollGate'
 import { DEFAULT_AUDIO_VOICE } from '@/constants/dockAudio'
@@ -505,18 +504,9 @@ async function cancelRemoteGeneration(
     if (record.status === NODE_GENERATION_STATUS.completed) {
       const wasGenerating = current?.data?.status === NODE_GENERATION_STATUS.generating
       const urls = parseRecordUrls(record)
-      // ⚠️ 2026-10-04（U6）：原先无论有没有产物都写 `status: completed`。
-      // 音频存 COS / metadata 无 url 时 `parseRecordUrl` 返回 `''`
-      // ⇒ 节点永远停在「生成中」却没有任何产物，也没有错误提示。
-      const noOutputNotice = describeCompletedWithoutOutput(record)
-      if (noOutputNotice) {
-        deps.patchNodeData(nodeId, {
-          status: NODE_GENERATION_STATUS.error,
-          errorMessage: noOutputNotice,
-          generationRecordId: record.id,
-        })
-        return true
-      }
+      // ⭐ U6 判定已收归 Nest（B2，spec §4.3）：completed 无产物在 complete*/run-audio
+      // 结算点翻 error（complete* 走失败链 / run-audio 写节点 error）。此处纯投影
+      // record.status——不再有本地 describeCompletedWithoutOutput 判定。
       const patch: Record<string, unknown> = {
         status: NODE_GENERATION_STATUS.completed,
         errorMessage: null,
