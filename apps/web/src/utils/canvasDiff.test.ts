@@ -131,11 +131,11 @@ describe('diffCanvasData', () => {
 
   it('groups / compositionRunGroup 侧车变化 ⇒ sidecarChanged（无 op）', () => {
     const base = { nodes: [], edges: [] } as unknown as CanvasData
-    const withGroup = { ...base, groups: [{ id: 'g1', childIds: ['n1'] }] } as CanvasData
+    const withGroup = { ...base, groups: [{ id: 'g1', childIds: ['n1'] }] } as unknown as CanvasData
     const out = diffCanvasData(base, withGroup)
     expect(out.sidecarChanged).toBe(true)
     expect(out.ops).toEqual([])
-    const withRunGroup = { ...base, compositionRunGroup: { runId: 'r1' } } as CanvasData
+    const withRunGroup = { ...base, compositionRunGroup: { runId: 'r1' } } as unknown as CanvasData
     expect(diffCanvasData(base, withRunGroup).sidecarChanged).toBe(true)
     expect(diffCanvasData(base, structuredClone(base)).sidecarChanged).toBe(false)
   })
