@@ -620,7 +620,12 @@ export function createCanvasWriteTools(
 				try {
 					// 节点类型取 propose-generation 返回的 summary（Nest 侧已算好，不二次 get-node
 					// ——二次读会吃掉测试与生产的轮询序列，summary.type 是既有字段）。
-					const baseInfo = (base ?? null) as { summary?: { type?: unknown; audioKind?: unknown } } | null;
+					// P1-B B6（spec §4.1 幂等/epoch）：start 请求原样带回 propose 时的
+					// proposalEpoch，Nest 校验不等 ⇒ 409（撤回重提后迟到确认被拒）。
+					// run_* 工具无 propose 上下文 ⇒ 不带（Nest 缺省跳过校验，兼容面）。
+					const baseInfo = (base ?? null) as {
+						summary?: { type?: unknown; audioKind?: unknown; proposalEpoch?: unknown };
+					} | null;
 					const nodeType = String(baseInfo?.summary?.type ?? "image");
 					const startEndpoint =
 						nodeType === "video" ? "/agent/internal/start-video-generation"
@@ -635,6 +640,10 @@ export function createCanvasWriteTools(
 							nodeId: p.node_id,
 							...(nodeType === "audio" && typeof baseInfo?.summary?.audioKind === "string"
 								? { kind: baseInfo.summary.audioKind }
+								: {}),
+							...(typeof baseInfo?.summary?.proposalEpoch === "number" &&
+							Number.isFinite(baseInfo.summary.proposalEpoch)
+								? { proposalEpoch: baseInfo.summary.proposalEpoch }
 								: {}),
 						},
 						{ signal: context?.abortSignal ?? undefined },
