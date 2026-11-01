@@ -506,7 +506,7 @@ async function cancelRemoteGeneration(
       const urls = parseRecordUrls(record)
       // ⭐ U6 判定已收归 Nest（B2，spec §4.3）：completed 无产物在 complete*/run-audio
       // 结算点翻 error（complete* 走失败链 / run-audio 写节点 error）。此处纯投影
-      // record.status——不再有本地 describeCompletedWithoutOutput 判定。
+      // record.status——不再有本地 U6 无产物判定（守卫钉死，勿回填符号名）。
       const patch: Record<string, unknown> = {
         status: NODE_GENERATION_STATUS.completed,
         errorMessage: null,
