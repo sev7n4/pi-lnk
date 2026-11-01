@@ -70,20 +70,20 @@ describe('MobileNodeEditorSheet 轻量编辑器（D8 / J1 / K1）', () => {
   })
 
   it('关闭按钮 emit close', async () => {
-    const w = mount(MobileNodeEditorSheet, { props: { node: baseNode } })
+    const w = mount(MobileNodeEditorSheet, { props: { node: baseNode }, global: { stubs: { teleport: true } } })
     await w.find('[data-action="close"]').trigger('click')
     expect(w.emitted('close')).toHaveLength(1)
     w.unmount()
   })
 
   it('initialOpinion 预填意见框（音频 at mm:ss 链路终点，规格 v1.5 Q）', () => {
-    const w = mount(MobileNodeEditorSheet, { props: { node: baseNode, initialOpinion: 'at 0:07' } })
+    const w = mount(MobileNodeEditorSheet, { props: { node: baseNode, initialOpinion: 'at 0:07' }, global: { stubs: { teleport: true } } })
     expect((w.get('[data-testid="mobile-editor-opinion"]').element as HTMLTextAreaElement).value).toBe('at 0:07')
     w.unmount()
   })
 
   it('提交 ⇒ emit send-to-agent({ prompt, opinion })，且提示词有改动时同时 emit patch', async () => {
-    const w = mount(MobileNodeEditorSheet, { props: { node: baseNode } })
+    const w = mount(MobileNodeEditorSheet, { props: { node: baseNode }, global: { stubs: { teleport: true } } })
     await w.get('[data-testid="mobile-editor-prompt"]').setValue('一只戴帽子的猫')
     await w.get('[data-testid="mobile-editor-opinion"]').setValue('加一顶帽子')
     await w.get('[data-testid="mobile-editor-send"]').trigger('click')
@@ -97,6 +97,7 @@ describe('MobileNodeEditorSheet 轻量编辑器（D8 / J1 / K1）', () => {
   it('空节点（无提示词无意见）⇒ 提交钮禁用（不空转）', () => {
     const w = mount(MobileNodeEditorSheet, {
       props: { node: { id: 'n2', type: 'image', position: { x: 0, y: 0 }, data: {} } as any },
+      global: { stubs: { teleport: true } },
     })
     expect(w.get('[data-testid="mobile-editor-send"]').attributes('disabled')).toBeDefined()
     w.unmount()
@@ -105,6 +106,7 @@ describe('MobileNodeEditorSheet 轻量编辑器（D8 / J1 / K1）', () => {
   it('点参数 chip ⇒ 翻译成意见前缀（J-1 翻译制，不改值不越权）', async () => {
     const w = mount(MobileNodeEditorSheet, {
       props: { node: { id: 'n3', type: 'image', position: { x: 0, y: 0 }, data: { prompt: '一只猫', imageAspect: '16:9' } } as any },
+      global: { stubs: { teleport: true } },
     })
     await w.get('[data-testid="mobile-editor-param-chip"]').trigger('click')
     const opinion = w.get('[data-testid="mobile-editor-opinion"]').element as HTMLTextAreaElement
@@ -115,6 +117,7 @@ describe('MobileNodeEditorSheet 轻量编辑器（D8 / J1 / K1）', () => {
   it('参数 chip 预填幂等 + 换行追加（不覆盖既有意见 / at mm:ss）', async () => {
     const w = mount(MobileNodeEditorSheet, {
       props: { node: { id: 'n4', type: 'audio', position: { x: 0, y: 0 }, data: { prompt: '一段钢琴', audioModel: 'tts-1' } } as any, initialOpinion: 'at 0:07' },
+      global: { stubs: { teleport: true } },
     })
     const chip = w.get('[data-testid="mobile-editor-param-chip"]')
     await chip.trigger('click')
@@ -124,9 +127,41 @@ describe('MobileNodeEditorSheet 轻量编辑器（D8 / J1 / K1）', () => {
     w.unmount()
   })
 
+  it('P0 层序修复：浮层 Teleport 到 body（不被 main.z-10 堆叠上下文困住，2026-11-01 真机回归）', () => {
+    // 行为级：不 stub teleport → 内容渲染进 document.body，而非组件树内
+    const w = mount(MobileNodeEditorSheet, {
+      props: { node: { id: 'n6', type: 'image', position: { x: 0, y: 0 }, data: { prompt: 'x' } } as any },
+      attachTo: document.body,
+    })
+    expect(document.body.querySelector('[data-testid="mobile-editor-cancel"]')).toBeTruthy()
+    expect(document.body.querySelector('[data-testid="mobile-editor-send"]')).toBeTruthy()
+    w.unmount()
+    expect(document.body.querySelector('[data-testid="mobile-editor-cancel"]')).toBeNull()
+  })
+
+  it('裸内部模型 ID 不上屏：humanize 短标签 + 全量原值进 aria-label（v2.1 P1）', () => {
+    const w = mount(MobileNodeEditorSheet, {
+      props: {
+        node: {
+          id: 'n7',
+          type: 'image',
+          position: { x: 0, y: 0 },
+          data: { prompt: 'x', imageModel: 'platform::agnes-image-2.1-flash' },
+        } as any,
+      },
+      global: { stubs: { teleport: true } },
+    })
+    const chip = w.get('[data-testid="mobile-editor-param-chip"]')
+    expect(chip.text()).not.toContain('platform::')
+    expect(chip.text()).toContain('图像')
+    expect(chip.attributes('aria-label')).toBe('platform::agnes-image-2.1-flash')
+    w.unmount()
+  })
+
   it('产物上下文行：标题降级为「{类型}节点」+ 共用副标题（图 1 ②）', () => {
     const w = mount(MobileNodeEditorSheet, {
       props: { node: { id: 'n5', type: 'image', position: { x: 0, y: 0 }, data: { prompt: 'x' } } as any },
+      global: { stubs: { teleport: true } },
     })
     const ctx = w.get('[data-testid="mobile-editor-context"]')
     expect(ctx.text()).toContain('图片节点')

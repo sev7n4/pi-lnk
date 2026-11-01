@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import type { EditableFlowNode } from '@/composables/useSelectedNodeEditor'
 import type { MentionOption } from '@/components/canvas/MentionInput.vue'
 import type { NodeRef } from '@/composables/useNodeRefs'
@@ -7,6 +7,7 @@ import {
   appendOpinionPrefill,
   contextTitle,
   CONTEXT_SUBTITLE,
+  humanizeParamLabel,
   paramChipToPrefill,
 } from './mobileEditorSheetPolicy'
 
@@ -30,6 +31,17 @@ import {
  *     纯函数在 `mobileEditorSheetPolicy.ts`），不改值、不越权；
  *   - 全屏表单浮层保留自己的布局（`MobileSheet` 是 62vh 选择型，§4.11.8；
  *     V-3 白名单豁免理由不变），z-85 不动（J-5），入场滑入 + reduced-motion 降级。
+ *
+ * ⭐ v2.1（2026-11-01 真机走查回归修复）：
+ *   1. **P0 层序**：Teleport 到 body（同 `MobileSheet` 惯例）。此前挂在
+ *      `<main class="relative z-10">` 堆叠上下文内，z-85 对外等效 z-10，
+ *      输给 teleport 到 body 的顶栏（z-40）⇒ 真机上「取消/改词」被顶栏盖住、
+ *      发送胶囊裁半（用户无法退出）；
+ *   2. **裸内部模型 ID 不上屏**：`platform::agnes-image-2.1-flash` → 「agnes 图像
+ *      2.1 flash」（`humanizeParamLabel`），全量原值进 aria-label；
+ *   3. **桌面拖拽斜纹不上移动端**：`resize: none` + auto-grow（备忘录式自增高），
+ *      替代 min-height 96px 的硬撑留白；
+ *   4. 「由 agent 锁定」加锁形图标内联；上下文行图标盒瘦身（34px 盒 → 24px 内联）。
  */
 const props = withDefaults(
   defineProps<{
@@ -71,14 +83,14 @@ const opinion = ref(props.initialOpinion)
 /** 产物上下文行（四类节点唯一差异化点：图标随 type，标题降级见策略文件） */
 const ctxTitle = computed(() => contextTitle(nodeData.value, typeKey.value))
 
-/** 参数 chips（只读值展示；点 chip 走翻译制预填，非选择器） */
+/** 参数 chips（只读值展示；点 chip 走翻译制预填，非选择器；裸 ID 不上屏 → humanize） */
 const paramChips = computed(() => {
   const d = nodeData.value
-  const out: Array<{ field: string; label: string }> = []
+  const out: Array<{ field: string; label: string; raw: string }> = []
   for (const field of ['imageModel', 'imageAspect', 'imageResolution', 'videoModel', 'textModel', 'audioModel']) {
     const v = d[field]
     if (typeof v === 'string' && v.trim() && paramChipToPrefill(field)) {
-      out.push({ field, label: v })
+      out.push({ field, label: humanizeParamLabel(field, v), raw: v })
     }
   }
   return out
@@ -107,6 +119,21 @@ async function onParamChipTap(field: string) {
   }
 }
 
+/** auto-grow（备忘录式自增高）：输入与初值两条路径都要 fit */
+const promptEl = ref<HTMLTextAreaElement | null>(null)
+function fit(el: HTMLTextAreaElement | null) {
+  if (!el) return
+  el.style.height = 'auto'
+  el.style.height = `${el.scrollHeight}px`
+}
+function autogrow(e: Event) {
+  fit(e.target as HTMLTextAreaElement)
+}
+onMounted(() => {
+  fit(promptEl.value)
+  fit(opinionEl.value)
+})
+
 function submit() {
   const nextPrompt = prompt.value.trim()
   const nextOpinion = opinion.value.trim()
@@ -120,117 +147,134 @@ function submit() {
 </script>
 
 <template>
-  <div class="mobile-editor-sheet" role="dialog" aria-modal="true" aria-label="改词">
-    <!-- 导航三段（图 1 ①）：取消 / 大标题 / 发送胶囊（iOS 全屏撰写惯例） -->
-    <header class="mobile-editor-nav">
-      <button
-        class="nav-cancel"
-        type="button"
-        data-testid="mobile-editor-cancel"
-        data-action="close"
-        @click="emit('close')"
-      >
-        取消
-      </button>
-      <span class="nav-title">改词</span>
-      <!-- 主出口（J-3/J-7）：UI 短文案「发送」，完整语义在 aria-label -->
-      <button
-        class="nav-send"
-        type="button"
-        :disabled="!canSubmit"
-        aria-label="发给 agent 修改"
-        data-testid="mobile-editor-send"
-        data-action="send"
-        @click="submit"
-      >
-        <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">
-          <path d="M12 19V5M5 12l7-7 7 7" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-        <span>发送</span>
-      </button>
-    </header>
-
-    <div class="mobile-editor-body">
-      <!-- 产物上下文行（图 1 ②）：四类节点唯一差异化点 -->
-      <div class="ctx-row" data-testid="mobile-editor-context">
-        <span class="ctx-icon" aria-hidden="true">
-          <svg v-if="typeKey === 'image'" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="4" width="18" height="16" rx="2.5" />
-            <circle cx="9" cy="10" r="1.6" />
-            <path d="m3 17 5-4 4 3 4-4 5 5" />
-          </svg>
-          <svg v-else-if="typeKey === 'video'" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="6" width="13" height="12" rx="2.5" />
-            <path d="m16 10 5-3v10l-5-3" />
-          </svg>
-          <svg v-else-if="typeKey === 'audio'" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-            <path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4" />
-          </svg>
-          <svg v-else viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M6 3h9l4 4v14H6z" />
-            <path d="M9 12h7M9 16h7M9 8h3" />
-          </svg>
-        </span>
-        <span class="ctx-meta">
-          <span class="ctx-name">{{ ctxTitle }}</span>
-          <span class="ctx-sub">{{ CONTEXT_SUBTITLE }}</span>
-        </span>
-      </div>
-
-      <!-- 提示词：无框输入（图 1 ③，J-4 内容即界面） -->
-      <div class="input-block">
-        <span class="input-role">提示词</span>
-        <textarea
-          v-model="prompt"
-          class="mobile-editor-textarea"
-          rows="5"
-          placeholder="要改哪句？"
-          data-testid="mobile-editor-prompt"
-        />
-      </div>
-
-      <!-- 参数 chips：只读值 + 翻译制预填（图 1 ④ / 图 3；agent 锁定，J-1） -->
-      <div v-if="paramChips.length" class="meta-row" data-testid="mobile-editor-params">
-        <span class="input-role input-role--inline">参数</span>
+  <!-- P0 层序修复（v2.1）：必须 Teleport 到 body——画布壳层 `<main class="relative z-10">`
+       会创建堆叠上下文困住 z-85（对外等效 z-10），输给 teleport 到 body 的顶栏 z-40。
+       同 MobileSheet 头注释惯例：「fixed + Teleport body」。 -->
+  <Teleport to="body">
+    <div class="mobile-editor-sheet" role="dialog" aria-modal="true" aria-label="改词">
+      <!-- 导航三段（图 1 ①）：取消 / 大标题 / 发送胶囊（iOS 全屏撰写惯例） -->
+      <header class="mobile-editor-nav">
         <button
-          v-for="c in paramChips"
-          :key="c.field"
-          class="param-chip"
+          class="nav-cancel"
           type="button"
-          :data-field="c.field"
-          data-testid="mobile-editor-param-chip"
-          @click="onParamChipTap(c.field)"
+          data-testid="mobile-editor-cancel"
+          data-action="close"
+          @click="emit('close')"
         >
-          {{ c.label }}
+          取消
         </button>
-        <span class="meta-note">由 agent 锁定</span>
-      </div>
+        <span class="nav-title">改词</span>
+        <!-- 主出口（J-3/J-7）：UI 短文案「发送」，完整语义在 aria-label -->
+        <button
+          class="nav-send"
+          type="button"
+          :disabled="!canSubmit"
+          aria-label="发给 agent 修改"
+          data-testid="mobile-editor-send"
+          data-action="send"
+          @click="submit"
+        >
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">
+            <path d="M12 19V5M5 12l7-7 7 7" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span>发送</span>
+        </button>
+      </header>
 
-      <!-- 引用 chips（只读） -->
-      <div v-if="refChips.length" class="meta-row" data-testid="mobile-editor-refs">
-        <span class="input-role input-role--inline">引用</span>
-        <span v-for="c in refChips" :key="c.id" class="ref-chip">{{ c.label }}</span>
-      </div>
+      <div class="mobile-editor-body">
+        <!-- 产物上下文行（图 1 ②）：四类节点唯一差异化点 -->
+        <div class="ctx-row" data-testid="mobile-editor-context">
+          <span class="ctx-icon" aria-hidden="true">
+            <svg v-if="typeKey === 'image'" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="16" rx="2.5" />
+              <circle cx="9" cy="10" r="1.6" />
+              <path d="m3 17 5-4 4 3 4-4 5 5" />
+            </svg>
+            <svg v-else-if="typeKey === 'video'" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="6" width="13" height="12" rx="2.5" />
+              <path d="m16 10 5-3v10l-5-3" />
+            </svg>
+            <svg v-else-if="typeKey === 'audio'" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4" />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M6 3h9l4 4v14H6z" />
+              <path d="M9 12h7M9 16h7M9 8h3" />
+            </svg>
+          </span>
+          <span class="ctx-meta">
+            <span class="ctx-name">{{ ctxTitle }}</span>
+            <span class="ctx-sub">{{ CONTEXT_SUBTITLE }}</span>
+          </span>
+        </div>
 
-      <!-- 我的意见：无框输入（图 1 ⑤） -->
-      <div class="input-block input-block--divided">
-        <span class="input-role">我的意见</span>
-        <textarea
-          ref="opinionEl"
-          v-model="opinion"
-          class="mobile-editor-textarea"
-          rows="4"
-          placeholder="想让 agent 怎么改？"
-          data-testid="mobile-editor-opinion"
-        />
+        <!-- 提示词：无框输入（图 1 ③，J-4 内容即界面）+ auto-grow -->
+        <div class="input-block">
+          <span class="input-role">提示词</span>
+          <textarea
+            ref="promptEl"
+            v-model="prompt"
+            class="mobile-editor-textarea"
+            rows="2"
+            placeholder="要改哪句？"
+            data-testid="mobile-editor-prompt"
+            @input="autogrow"
+          />
+        </div>
+
+        <!-- 参数 chips：只读值 + 翻译制预填（图 1 ④ / 图 3；agent 锁定，J-1）。
+             裸内部 ID 不上屏：显示 humanize 短标签，全量原值进 aria-label。 -->
+        <div v-if="paramChips.length" class="meta-row" data-testid="mobile-editor-params">
+          <span class="input-role input-role--inline">参数</span>
+          <button
+            v-for="c in paramChips"
+            :key="c.field"
+            class="param-chip"
+            type="button"
+            :data-field="c.field"
+            :aria-label="c.raw"
+            data-testid="mobile-editor-param-chip"
+            @click="onParamChipTap(c.field)"
+          >
+            {{ c.label }}
+          </button>
+          <span class="meta-note">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <rect x="5" y="11" width="14" height="9" rx="2" />
+              <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+            </svg>
+            由 agent 锁定
+          </span>
+        </div>
+
+        <!-- 引用 chips（只读） -->
+        <div v-if="refChips.length" class="meta-row" data-testid="mobile-editor-refs">
+          <span class="input-role input-role--inline">引用</span>
+          <span v-for="c in refChips" :key="c.id" class="ref-chip">{{ c.label }}</span>
+        </div>
+
+        <!-- 我的意见：无框输入（图 1 ⑤）+ auto-grow -->
+        <div class="input-block input-block--divided">
+          <span class="input-role">我的意见</span>
+          <textarea
+            ref="opinionEl"
+            v-model="opinion"
+            class="mobile-editor-textarea"
+            rows="2"
+            placeholder="想让 agent 怎么改？"
+            data-testid="mobile-editor-opinion"
+            @input="autogrow"
+          />
+        </div>
       </div>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <style scoped>
 /* 全屏表单浮层（不是选择型底部浮层 ⇒ 不走 MobileSheet；V-3 白名单豁免理由不变）。
-   z-85 生态位已盘点（顶栏 40 / 对话面板 30 / 抽屉 95），J-5：改转场不动层。 */
+   ⭐ v2.1：本组件 Teleport 到 body（见模板头注释），z-85 直接参与 body 层排序：
+   顶栏 40 < 本浮层 85 < 抽屉 95（生态位不变）。 */
 .mobile-editor-sheet {
   position: fixed;
   inset: 0;
@@ -329,15 +373,13 @@ function submit() {
   padding: var(--lnk-space-2) var(--lnk-pad-card) var(--lnk-pad-card);
 }
 
-/* 产物上下文行（图 1 ②） */
+/* 产物上下文行（图 1 ②）—— v2.1 瘦身：34px 图标盒 → 24px 内联图标 */
 .ctx-row {
   flex: none;
   display: flex;
   align-items: center;
-  gap: var(--lnk-space-3);
-  padding: var(--lnk-space-2) var(--lnk-space-3);
-  border-radius: var(--lnk-radius-md);
-  background: var(--lnk-surface-overlay);
+  gap: var(--lnk-space-2);
+  padding: var(--lnk-space-2) 0;
 }
 
 .ctx-icon {
@@ -345,10 +387,6 @@ function submit() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: var(--lnk-radius-md);
-  background: var(--lnk-surface-base);
   color: var(--lnk-accent);
 }
 
@@ -394,9 +432,10 @@ function submit() {
   align-self: center;
 }
 
+/* ⭐ v2.1：resize: none —— 桌面拖拽斜纹绝不上移动端；高度走 auto-grow */
 .mobile-editor-textarea {
   width: 100%;
-  min-height: 96px;
+  min-height: 52px;
   box-sizing: border-box;
   padding: var(--lnk-space-1) 0;
   border: none;
@@ -405,7 +444,8 @@ function submit() {
   font-size: var(--lnk-text-md);
   line-height: var(--lnk-lh-md);
   caret-color: var(--lnk-accent);
-  resize: vertical;
+  resize: none;
+  overflow: hidden;
 }
 
 .mobile-editor-textarea:focus {
@@ -455,8 +495,12 @@ function submit() {
   font-size: var(--lnk-text-2xs);
 }
 
+/* 锁定标注（v2.1：锁形图标内联，弱化但可辨识） */
 .meta-note {
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: var(--lnk-text-2xs);
   color: var(--lnk-text-muted);
 }

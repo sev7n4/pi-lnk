@@ -6,6 +6,7 @@ import {
   nodeTypeLabel,
   paramChipToPrefill,
   CONTEXT_SUBTITLE,
+  humanizeParamLabel,
 } from './mobileEditorSheetPolicy'
 
 /**
@@ -71,6 +72,18 @@ describe('mobileEditorSheetPolicy（改词浮层 v2 策略）', () => {
     expect(composeFallbackOpinion('', 'image')).toBe(
       '已更新「图片节点」的提示词，请按新词重做并替换当前产物',
     )
+  })
+
+  it('humanizeParamLabel：剥命名空间 + 类型词翻译（裸内部 ID 不上屏，v2.1 P1）', () => {
+    expect(humanizeParamLabel('imageModel', 'platform::agnes-image-2.1-flash')).toBe('agnes 图像 2.1 flash')
+    expect(humanizeParamLabel('videoModel', 'vendor::sora-video-2')).toBe('sora 视频 2')
+  })
+
+  it('humanizeParamLabel：无类型词命中 ⇒ 原样（不猜不变形）；比例/分辨率原样', () => {
+    expect(humanizeParamLabel('audioModel', 'tts-1')).toBe('tts-1')
+    expect(humanizeParamLabel('textModel', 'gpt-4o')).toBe('gpt-4o')
+    expect(humanizeParamLabel('imageAspect', '16:9')).toBe('16:9')
+    expect(humanizeParamLabel('imageResolution', '1K')).toBe('1K')
   })
 
   it('CONTEXT_SUBTITLE 与 fallback 文案同源（不出现「生成」二字，G-8 表达习惯一致）', () => {

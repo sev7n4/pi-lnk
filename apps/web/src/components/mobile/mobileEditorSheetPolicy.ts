@@ -78,6 +78,30 @@ export function appendOpinionPrefill(
 }
 
 /**
+ * 裸内部标识 → 人类可读短标签（2026-11-01 真机走查 P1）。
+ *
+ * ⭐ iOS 极简裁决：`platform::agnes-image-2.1-flash` 这类内部命名空间 / 版本号
+ *   **不上屏**。规则刻意保守：只做「剥 `::` 命名空间 + 类型词翻译」，其余原样——
+ *   没有把握的美化不如不做（无类型词命中 ⇒ 原样返回，绝不猜）。
+ *   全量原值由组件放进 aria-label（无障碍与可诊断性不丢）。
+ */
+const MODEL_WORD_ZH: Record<string, string> = {
+  image: '图像',
+  video: '视频',
+  text: '文本',
+  audio: '音频',
+}
+
+export function humanizeParamLabel(field: string, value: string): string {
+  // 比例 / 分辨率本就是人类可读短值（16:9 / 1K），原样
+  if (field === 'imageAspect' || field === 'imageResolution') return value
+  const raw = value.includes('::') ? (value.split('::').pop() ?? value) : value
+  const segs = raw.split(/[-_]/)
+  if (!segs.some((s) => s.toLowerCase() in MODEL_WORD_ZH)) return raw
+  return segs.map((s) => MODEL_WORD_ZH[s.toLowerCase()] ?? s).join(' ')
+}
+
+/**
  * 毛边修复的兜底轻引用（规格 图 2 G 分支）：只改词未留意见时预填 composer，
  * 仍由用户自己按发送（扣扳机者永远是用户）。
  */
