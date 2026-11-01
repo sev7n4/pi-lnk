@@ -1,6 +1,6 @@
 # superpowers 文档索引
 
-> 全部 **423 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
+> 全部 **426 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
 > **文档正文未改动** —— 本索引只做导航与状态标注。
 
 ## 怎么用这份索引
@@ -14,14 +14,14 @@
 | 状态 | 份数 | 含义 |
 |---|---|---|
 | 🟢 living | 145 | 仍在演进，改动前先看这份 |
-| 🔒 frozen | 268 | 内容已定稿或功能已落地，作为历史依据 |
+| 🔒 frozen | 272 | 内容已定稿或功能已落地，作为历史依据 |
 | ⛔ superseded | 9 | 已被后续决策取代，勿再参考 |
 
 ## 主题分布
 
 | 主题 | 份数 | 其中 living |
 |---|---|---|
-| 其他 | 87 | 24 |
+| 其他 | 91 | 24 |
 | 画布工具与交互 | 73 | 33 |
 | 生成管线（图像/视频/3D） | 40 | 9 |
 | 画布产品能力（原子/意图/neowow） | 34 | 8 |
@@ -31,7 +31,7 @@
 | 规划与执行计划 | 19 | 5 |
 | 账号/登录/会员 | 18 | 4 |
 | 工作流导入导出 | 18 | 4 |
-| UI 交互细节 | 16 | 9 |
+| UI 交互细节 | 15 | 8 |
 | 长期记忆 | 11 | 8 |
 | 视觉输入（识图） | 7 | 6 |
 | 部署与基础设施 | 5 | 2 |
@@ -42,7 +42,7 @@
 
 ## 按主题浏览
 
-### 其他（87 份）
+### 其他（91 份）
 
 <details><summary>🟢 living · 24 份</summary>
 
@@ -73,8 +73,12 @@
 
 </details>
 
-<details><summary>🔒 frozen · 61 份</summary>
+<details><summary>🔒 frozen · 65 份</summary>
 
+- `docs/superpowers/plans/2026-11-01-red-car-disconnect-misreport-duplicate-rootfix.md`
+- `docs/superpowers/specs/2026-11-01-red-car-disconnect-misreport-duplicate-rootfix-design.md` ★design
+- `docs/superpowers/specs/2026-11-01-p1a-suspend-persistence-design.md` ★design
+- `docs/superpowers/specs/2026-11-01-mobile-editor-sheet-ios-redesign.md` ★design
 - `docs/superpowers/plans/2026-10-29-mobile-viewer-chrome-v15.md`
 - `docs/superpowers/specs/2026-10-28-askuser-card-visual-refinement.md` ★design
 - `docs/superpowers/plans/2026-10-28-agent-history-recovery-h0-h1.md`
@@ -568,11 +572,10 @@
 
 </details>
 
-### UI 交互细节（16 份）
+### UI 交互细节（15 份）
 
-<details><summary>🟢 living · 9 份</summary>
+<details><summary>🟢 living · 8 份</summary>
 
-- `docs/superpowers/specs/2026-11-01-mobile-editor-sheet-ios-redesign.md` ★design
 - `docs/superpowers/specs/2026-09-28-agent-conversation-ux-p0-p2-design.md` ★design
 - `docs/superpowers/specs/2026-08-12-agent-mid-run-interrupt-design.md` ★design
 - `docs/superpowers/specs/2026-08-07-agent-conversation-isolation-design.md` ★design
