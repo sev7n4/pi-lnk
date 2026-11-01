@@ -50,15 +50,16 @@ describe('sanitizeClientOps（C1a 纯函数）', () => {
     warn.mockRestore()
   })
 
-  it('非 whitelisted op 类型整体剥除；脏输入（非数组/非对象）安全', () => {
+  it('非 whitelisted op 类型整体剥除；set_viewport 放行；脏输入安全', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const { sanitized, droppedOps } = sanitizeClientOps([
       { type: 'set_viewport', payload: { viewport: { x: 1 } } },
       { type: 'update_node', payload: { id: 'n1', data: { title: 'ok' } } },
+      { type: 'rewrite_all', payload: {} },
       'garbage',
       null,
     ])
-    expect(sanitized).toHaveLength(1)
+    expect(sanitized).toHaveLength(2)
     expect(droppedOps).toBe(3)
     warn.mockRestore()
   })

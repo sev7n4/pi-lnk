@@ -26,13 +26,14 @@ export const CLIENT_FORBIDDEN_NODE_DATA_KEYS: ReadonlySet<string> = new Set([
   'proposalEpoch',
 ])
 
-/** 客户端 PATCH 允许的 op 类型（与服务端 applier 的 5 类 op 对齐）。 */
+/** 客户端 PATCH 允许的 op 类型（与 applier 对齐：5 类画布 op + set_viewport，executor 原生支持）。 */
 const CLIENT_ALLOWED_OP_TYPES: ReadonlySet<string> = new Set([
   'add_node',
   'update_node',
   'remove_node',
   'add_edge',
   'remove_edge',
+  'set_viewport',
 ])
 
 export interface SanitizeClientOpsResult {
