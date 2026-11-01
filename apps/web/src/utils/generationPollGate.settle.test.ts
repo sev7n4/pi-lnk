@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { NODE_GENERATION_STATUS } from '@/constants/dockStudio'
 import { SETTLE_TIMEOUT_FLOOR_MS } from '@lnkpi/shared'
 import {
-  describeCompletedWithoutOutput,
   settleDeadlineExceeded,
   DEFAULT_SETTLE_TIMEOUT_MS,
 } from './generationPollGate'
@@ -57,56 +55,3 @@ describe('DEFAULT_SETTLE_TIMEOUT_MS', () => {
   })
 })
 
-describe('describeCompletedWithoutOutput', () => {
-  it('flags a media record that completed but has no usable url', () => {
-    const msg = describeCompletedWithoutOutput({
-      type: 'audio',
-      url: '',
-      metadata: JSON.stringify({ url: '' }),
-    })
-    expect(msg).toBeTruthy()
-    expect(msg).toMatch(/音频/)
-  })
-
-  it('returns null when the record has a url', () => {
-    expect(
-      describeCompletedWithoutOutput({ type: 'audio', url: 'https://cdn/a.mp3', metadata: null }),
-    ).toBeNull()
-  })
-
-  it('returns null for a url that only exists in metadata', () => {
-    expect(
-      describeCompletedWithoutOutput({
-        type: 'audio',
-        url: null,
-        metadata: JSON.stringify({ url: 'https://cdn/a.mp3' }),
-      }),
-    ).toBeNull()
-  })
-
-  it('returns null for text/prompt records (no url expected)', () => {
-    // 文本没有 url 是正常的，不能误报
-    expect(describeCompletedWithoutOutput({ type: 'text', url: '', metadata: null })).toBeNull()
-    expect(describeCompletedWithoutOutput({ type: 'prompt', url: '', metadata: null })).toBeNull()
-  })
-
-  it('flags an image/video record with no url', () => {
-    expect(describeCompletedWithoutOutput({ type: 'image', url: '', metadata: null })).toMatch(/图片/)
-    expect(describeCompletedWithoutOutput({ type: 'video', url: '', metadata: null })).toMatch(/视频/)
-  })
-
-  it('tolerates malformed metadata instead of throwing', () => {
-    expect(describeCompletedWithoutOutput({ type: 'audio', url: '', metadata: '{' })).toMatch(/音频/)
-  })
-})
-
-describe('completed 无产物时的节点状态', () => {
-  it('应判为 error 而非 completed（否则 UI 永久显示生成中）', () => {
-    // 复现 applyStudioRecord 的缺陷：completed 无条件设status=completed，
-    // 音频 url 为空时 patch.url='' ⇒ 节点永远「生成中」但没有任何产物。
-    const record = { type: 'audio', status: NODE_GENERATION_STATUS.completed, url: '' }
-    const notice = describeCompletedWithoutOutput(record)
-    const shouldBeError = Boolean(notice)
-    expect(shouldBeError).toBe(true)
-  })
-})

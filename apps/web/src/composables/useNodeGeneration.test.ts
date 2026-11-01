@@ -1438,8 +1438,10 @@ describe('waitForRunGroupMemberSettled 墙钟上限', () => {
 // `status: completed`，而 `parseRecordUrl` 在音频存 COS / metadata 无 url 时返回 `''`
 // ⇒ 节点永远停在「生成中」却无产物、无提示。
 // 见 docs/superpowers/specs/2026-10-04-media-generation-audit.md §2.6
-describe('applyStudioRecord 对「completed 但无产物」的处理', () => {
-  it('音频 completed 且 url 为空 ⇒ 判error并给出可读原因（不是永久生成中）', async () => {
+// ⭐ B2 起 U6 判定权收归 Nest（studio.service complete* 失败链 / run-audio 结算点写 error），
+// 前端 applyStudioRecord 只投影 record.status——completed 无产物也原样投影 completed。
+describe('applyStudioRecord 对「completed」记录的纯投影（B2 后 U6 判定在 Nest）', () => {
+  it('音频 completed 且 url 为空 ⇒ 纯投影 completed（不再本地判 error）', async () => {
     const node = createNode('audio', { prompt: '台词' })
     node.data = { ...(node.data ?? {}), status: NODE_GENERATION_STATUS.generating }
     const { api, deps } = createDeps([node])
@@ -1465,9 +1467,9 @@ describe('applyStudioRecord 对「completed 但无产物」的处理', () => {
     })
 
     const last = deps.patchNodeData.mock.calls.at(-1)?.[1] as Record<string, unknown>
-    expect(last.status).not.toBe(NODE_GENERATION_STATUS.completed)
-    expect(last.status).toBe(NODE_GENERATION_STATUS.error)
-    expect(String(last.errorMessage)).toMatch(/音频/)
+    expect(last.status).toBe(NODE_GENERATION_STATUS.completed)
+    expect(last.errorMessage).toBeNull()
+    expect(last.generationRecordId).toBe('rec-a')
   })
 
   it('音频 completed 且有 url ⇒ 仍正常 completed（不误报）', async () => {

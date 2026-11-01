@@ -56,6 +56,19 @@ export function parseShortGenerationError(err: unknown): ShortGenerationError {
   }
 }
 
+/** B2 投影纯化：读 Nest 侧失败文案（applyFailureDiagnosticMeta 写入的 userMessage）。 */
+export function parseServerUserMessageFromMetadata(metadata?: string | null): string | undefined {
+  if (!metadata) return undefined
+  try {
+    const meta = JSON.parse(metadata) as { userMessage?: unknown }
+    return typeof meta.userMessage === 'string' && meta.userMessage.trim()
+      ? meta.userMessage
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export function parseErrorCodeFromMetadata(metadata?: string | null): ErrorCode | undefined {
   if (!metadata) return undefined
   try {
@@ -75,11 +88,14 @@ export function buildPollingFailurePatch(opts: {
 }): Record<string, unknown> {
   const refundedPoints = parseRefundedPointsFromMetadata(opts.metadata)
   const errorCode = parseErrorCodeFromMetadata(opts.metadata)
+  // B2 投影纯化：Nest 侧失败文案（metadata.userMessage，由 applyFailureDiagnosticMeta
+  // 写入，含 U6 无产物翻失败后的标准文案）优先透出，缺省回退既有硬编码（旧记录无该字段）。
+  const serverMessage = parseServerUserMessageFromMetadata(opts.metadata)
   const patch: Record<string, unknown> = {
     status: NODE_GENERATION_STATUS.error,
     errorMessage: refundedPoints
       ? formatGenerationFailureMessage(new Error('生成失败'), refundedPoints)
-      : '生成失败',
+      : serverMessage ?? '生成失败',
   }
   if (opts.generationRecordId) patch.generationRecordId = opts.generationRecordId
   if (opts.materialId) patch.materialId = opts.materialId
