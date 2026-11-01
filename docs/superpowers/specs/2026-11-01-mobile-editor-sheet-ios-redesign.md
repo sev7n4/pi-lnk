@@ -223,3 +223,37 @@ flowchart TD
 - **判据分层一致性**：J-1（翻译制）> §6-D 映射表 > 图 3 流程 > chip 单测；J-2（发送必有落点）> 图 2 > §6-E > V-H。与 §4.11 既有判据无冲突（J-3/J-4 是新增全屏撰写判据，非推翻）。
 - **与 #644/#636 边界**：§3 显式声明不照搬、不破边界；文本节点 plain/markdown 仍走就地编辑，本浮层只承接 html 文本 + 媒体节点。
 - **遗漏自查**：键盘顶推、OOM、BSD grep（`\|` 禁用）、zsh 词分割等工程纪律已入 §10/§11；gen_index 与 verify-spec-figures 收尾动作入 §9/§13；规格头 sha 登记待实现 PR 描述补（本仓库惯例）。
+
+## 15. 真机走查回归修订 v2.1（2026-11-01 上线后当日）
+
+用户真机截图（V-F 场景）暴露 1 个 P0 缺陷 + 3 个 P1/P2 打磨点，本节登记修复裁决：
+
+### 15.1 P0 层序缺陷（功能性 bug，用户无法退出）
+
+- **现象**：改词浮层三段导航整体不可见——顶栏「‹ 创作空间」压在浮层头部之上，
+  「取消/改词」被盖、「发送」胶囊只露下半；用户找不到「取消」即无法退出。
+- **根因（代码实锤链）**：`MobileTopBar` 头注释（IA v3.1）早已记载——顶栏
+  Teleport 到 body 才不被 `<main class="relative z-10">` 堆叠上下文困住；
+  `MobileNodeEditorSheet` v2 重写时漏掉了这一步（挂在 shell 内），z-85 对外
+  等效 z-10 < 顶栏 z-40。这是 #633 同款教训在编辑浮层上的复现。
+- **修复**：`<Teleport to="body">` 包裹（同 `MobileSheet` 头注释惯例
+  「fixed + Teleport body」）；z-85 不动（40 < 85 < 95 生态位不变）。
+- **守卫**：新增行为级用例——mount 不 stub teleport ⇒ `document.body` 内可查到
+  cancel/send（防再犯；源码级断言对 Teleport 缺失不敏感）。
+
+### 15.2 P1/P2 打磨（同 PR 顺路收口）
+
+| 项 | 裁决 |
+| --- | --- |
+| 裸内部模型 ID 上屏（`platform::agnes-image-2.1-flash`） | `humanizeParamLabel`：剥 `::` 命名空间 + 类型词翻译（image→图像…），无类型词命中⇒原样（不猜）；全量原值进 chip 的 aria-label |
+| textarea 桌面拖拽斜纹（`resize: vertical`） | `resize: none` + auto-grow（备忘录式自增高）；min-height 96px→52px，消灭中段空洞；守卫钉死禁 `resize: vertical/both` |
+| 「由 agent 锁定」右对齐孤行 | 行尾内联 lock 图标（12px stroke 2）+ 文案 |
+| 上下文行 34px 图标盒偏重 | 瘦身为 24px 内联图标，卡片降一级视觉重量 |
+
+### 15.3 测试与验收
+
+- 受影响 6 文件 63 用例全绿；token/视觉守卫 5 文件 137 用例全绿；`vue-tsc -b` 零错误。
+- 生产取证断言（上线后）：chunk 命中 `Teleport` 相关行为不可见 ⇒ 改断言字面量：
+  `humanize` 后 chip 文案（如「agnes 图像 2.1 flash」视模型值而定）、`resize: none`
+  在产物 CSS 中命中、`由 agent 锁定` 保留。
+- 真机复测：V-F 场景重走（三段导航可见可点、无顶栏叠压）；V-G chip 显示人类可读标签。

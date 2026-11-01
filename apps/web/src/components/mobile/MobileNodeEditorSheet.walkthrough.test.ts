@@ -33,7 +33,7 @@ describe('走查④⑤ v2：导航三段（2026-11-01 规格 图 1 ①）', () =
   const baseNode = { id: 'n1', type: 'image', data: { url: 'x.png' } } as never
 
   it('左「取消」存在且 emit close（行为级；X 已退役）', async () => {
-    const w = mount(MobileNodeEditorSheet, { props: { node: baseNode } })
+    const w = mount(MobileNodeEditorSheet, { props: { node: baseNode }, global: { stubs: { teleport: true } } })
     const cancelBtn = w.find('[data-testid="mobile-editor-cancel"]')
     expect(cancelBtn.exists()).toBe(true)
     expect(cancelBtn.text()).toBe('取消')
@@ -45,6 +45,7 @@ describe('走查④⑤ v2：导航三段（2026-11-01 规格 图 1 ①）', () =
   it('右上「发送」胶囊：完整语义由 aria-label 承载（J-7）', () => {
     const w = mount(MobileNodeEditorSheet, {
       props: { node: { id: 'n1', type: 'image', data: { url: 'x.png', prompt: '一只猫' } } as never },
+      global: { stubs: { teleport: true } },
     })
     const send = w.find('[data-testid="mobile-editor-send"]')
     expect(send.exists()).toBe(true)
@@ -59,6 +60,13 @@ describe('走查④⑤ v2：导航三段（2026-11-01 规格 图 1 ①）', () =
       expect(rule, `必须能定位 ${cls} 规则`).not.toBe('')
       expect(rule).toMatch(/(?:min-height|height):\s*var\(--lnk-touch-target\)/)
     }
+  })
+
+  it('⛔ 桌面拖拽斜纹不上移动端：resize: none（v2.1 真机走查 P1）', () => {
+    const block = /<style scoped>([\s\S]*?)<\/style>/.exec(SRC)?.[1] ?? ''
+    expect(block).toContain('resize: none')
+    expect(block).not.toContain('resize: vertical')
+    expect(block).not.toContain('resize: both')
   })
 
   it('左上角语义模糊的「▾」已删（不再有两个关闭语义）', () => {

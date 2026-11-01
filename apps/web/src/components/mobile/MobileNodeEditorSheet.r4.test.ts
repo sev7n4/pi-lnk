@@ -28,7 +28,7 @@ describe('R4-T2 收口：轻量编辑器的「发给 agent 修改」通道', () 
   } as any
 
   function mountSheet() {
-    return mount(MobileNodeEditorSheet, { props: { node } })
+    return mount(MobileNodeEditorSheet, { props: { node }, global: { stubs: { teleport: true } } })
   }
 
   it('⛔ 不再声明 generate / removeRef（PC dock 专用契约已移除）', () => {
