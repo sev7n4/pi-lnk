@@ -1504,7 +1504,10 @@ describe('AgentService.answerPiPending（B-2 ask_user 阻塞透传）', () => {
 
   it('answerPiPending：无 threadId 回落 sessionId', async () => {
     const svc = createService()
-    const answer = vi.fn(async () => ({ ok: true, deduped: true }))
+    // P1-A：deduped:true 无 prior 会进 durable part 裁决链（需 prisma findMany）——
+    // 本用例断言的是 sessionKey 回落与 answerId 不复活，与 deduped 值无关，
+    // 用正常 settle（deduped:false）直通，不牵扯裁决（裁决分支见 answers-adjudication.test.ts）。
+    const answer = vi.fn(async () => ({ ok: true, deduped: false }))
     stubPi(svc, 'http://pi-runtime', { answer })
 
     const result = await svc.answerPiPending({
@@ -1513,7 +1516,7 @@ describe('AgentService.answerPiPending（B-2 ask_user 阻塞透传）', () => {
       callId: 'c1',
       answers: { choice: ['b'] },
     })
-    expect(result).toEqual({ ok: true, deduped: true })
+    expect(result).toEqual({ ok: true, deduped: false })
     expect(answer).toHaveBeenCalledWith('s1', { callId: 'c1', answers: { choice: ['b'] } })
     const body = answer.mock.calls[0]?.[1] as Record<string, unknown>
     // 锁死：answerId 已从链路删除（registry.answer 从不读它），任何形态都不该再冒出来

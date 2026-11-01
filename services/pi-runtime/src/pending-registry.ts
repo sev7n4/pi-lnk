@@ -22,6 +22,25 @@ export interface PendingInfo {
 	toolName: string;
 }
 
+/**
+ * P1-A（规格 2026-11-01 §4.3）：settle 后的**墓碑**——判别「竞态回放」与「真丢失」。
+ *
+ * 为什么必须有它：entry settle 后即从 Map 删除，而并发双 /answers 的第二发会在
+ * part 翻终态落库**之前**到达（SSE 广播 → Nest 落库是异步链）。没有墓碑时第二发
+ * 查不到条目 → 返回无 prior 的 deduped:true → Nest 误判为「重启丢失」→ late 注入
+ * **双发**。有墓碑时第二发拿到 prior → Nest 按幂等回执收口。
+ *
+ * TTL 10min：覆盖「SSE 广播 → Nest 落库」的最坏延迟（>reaper 5min 巡检间隔）；
+ * 纯内存不持久化——重启后墓碑清空与 registry 清空是同一事实（真丢失），语义自洽。
+ */
+interface PendingTombstone {
+	status: PendingResolution["status"];
+	settledAt: number;
+}
+
+/** 墓碑保留时长：10min（毫秒）。 */
+const TOMBSTONE_TTL_MS = 10 * 60 * 1000;
+
 interface PendingEntry {
 	toolName: string;
 	resolve: (r: PendingResolution) => void;
@@ -60,6 +79,32 @@ export interface PendingHooks {
 
 export class PendingToolRegistry {
 	private readonly entries = new Map<string, Map<string, PendingEntry>>();
+	/** P1-A：settle 墓碑（§4.3），键结构与 entries 同构。 */
+	private readonly tombstones = new Map<string, Map<string, PendingTombstone>>();
+
+	/** 落墓碑 + 惰性清理过期项（无后台 timer，访问时顺手清）。 */
+	private recordTombstone(sessionId: string, callId: string, status: PendingResolution["status"]): void {
+		const now = Date.now();
+		let byCall = this.tombstones.get(sessionId);
+		if (!byCall) {
+			byCall = new Map();
+			this.tombstones.set(sessionId, byCall);
+		}
+		for (const [k, v] of byCall) {
+			if (now - v.settledAt > TOMBSTONE_TTL_MS) byCall.delete(k);
+		}
+		byCall.set(callId, { status, settledAt: now });
+	}
+
+	private readTombstone(sessionId: string, callId: string): PendingTombstone | undefined {
+		const t = this.tombstones.get(sessionId)?.get(callId);
+		if (!t) return undefined;
+		if (Date.now() - t.settledAt > TOMBSTONE_TTL_MS) {
+			this.tombstones.get(sessionId)?.delete(callId);
+			return undefined;
+		}
+		return t;
+	}
 
 	constructor(private readonly hooks: PendingHooks = {}) {}
 
@@ -85,6 +130,9 @@ export class PendingToolRegistry {
 					if (entry.settled) return;
 					entry.settled = true;
 					clearTimeout(entry.timer);
+					// P1-A：settle 即落墓碑（先于删除——answer/decline 对刚 settle 的 callId
+					// 必须能答出 prior，防并发第二发被误判为「真丢失」而双注入）。
+					this.recordTombstone(sessionId, callId, r.status);
 					this.entries.get(sessionId)?.delete(callId);
 					// 广播必须在 resolve **之前**：等待方（工具 execute）紧接着会继续跑
 					// 并可能立刻发下一批事件，晚一步前端就会多闪一帧「等待你确认」。
@@ -107,12 +155,27 @@ export class PendingToolRegistry {
 		});
 	}
 
-	/** 幂等：未知 callId / 已 settle 一律 {ok:true, deduped:true}（回答端点重试安全，spec §6.2）。 */
-	answer(sessionId: string, callId: string, answers: Record<string, string[]>): { ok: true; deduped: boolean } {
+	/**
+	 * 幂等：未知 callId / 已 settle 一律 {ok:true, deduped:true}（回答端点重试安全，spec §6.2）。
+	 *
+	 * P1-A（规格 2026-11-01 §4.3）：deduped:true 细分两态——
+	 * - 带 `prior`：本进程内**刚 settle 过**（墓碑命中）⇒ Nest 按幂等回执收口，不 late 注入；
+	 * - 不带 `prior`：真未知（重启丢失 / 脏 callId）⇒ Nest 据此触发 late/expired 裁决。
+	 * 这个判别器是「竞态回放」与「真丢失」的唯一分界（并发双 /answers 防双注入）。
+	 */
+	answer(
+		sessionId: string,
+		callId: string,
+		answers: Record<string, string[]>,
+	): { ok: true; deduped: boolean; prior?: PendingResolution["status"] } {
 		const entry = this.entries.get(sessionId)?.get(callId);
-		if (!entry) return { ok: true, deduped: true };
-		entry.resolve({ status: "answered", answers });
-		return { ok: true, deduped: false };
+		if (entry) {
+			entry.resolve({ status: "answered", answers });
+			return { ok: true, deduped: false };
+		}
+		const tomb = this.readTombstone(sessionId, callId);
+		if (tomb) return { ok: true, deduped: true, prior: tomb.status };
+		return { ok: true, deduped: true };
 	}
 
 	/**
@@ -129,12 +192,22 @@ export class PendingToolRegistry {
 	 *
 	 * `note`（§17.8，2026-10-27）：批注流锚带回时随 decline 透传批注意见，
 	 * 工具侧 tool_result 据此提示模型「反馈正从对话发来，勿盲目重提议」（防抢跑）。
+	 *
+	 * P1-A：与 `answer` 同款 prior 判别（墓碑命中 = 本进程刚 settle 过）。
 	 */
-	decline(sessionId: string, callId: string, note?: string): { ok: true; deduped: boolean } {
+	decline(
+		sessionId: string,
+		callId: string,
+		note?: string,
+	): { ok: true; deduped: boolean; prior?: PendingResolution["status"] } {
 		const entry = this.entries.get(sessionId)?.get(callId);
-		if (!entry) return { ok: true, deduped: true };
-		entry.resolve(note ? { status: "aborted", note } : { status: "aborted" });
-		return { ok: true, deduped: false };
+		if (entry) {
+			entry.resolve(note ? { status: "aborted", note } : { status: "aborted" });
+			return { ok: true, deduped: false };
+		}
+		const tomb = this.readTombstone(sessionId, callId);
+		if (tomb) return { ok: true, deduped: true, prior: tomb.status };
+		return { ok: true, deduped: true };
 	}
 
 	/**

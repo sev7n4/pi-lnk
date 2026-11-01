@@ -32,12 +32,12 @@ function fnBlock(signature: string): string {
 }
 
 describe('propose 等待结算单飞 + 乐观翻态（多确认入口收敛）', () => {
-  it('confirmProposeWait：单飞守卫 + 成功后乐观翻 answered', () => {
+  it('confirmProposeWait：单飞守卫 + 成功后乐观翻终态（P1-A：reason 按 Nest 回执分流）', () => {
     const block = fnBlock('async function confirmProposeWait(')
     expect(block, '必须能定位 confirmProposeWait').not.toBe('')
     expect(block, '单飞：已结算 callId 必须短路').toContain('settledProposeCallIds.has(callId)')
-    expect(block, '成功后必须本地翻终态（不等旁听 resolved）').toContain(
-      "resolveProposePartLocally(callId, 'answered')",
+    expect(block, '成功后必须本地翻终态（不等旁听 resolved；P1-A expired 回执翻 timeout）').toContain(
+      "resolveProposePartLocally(callId, result.expired ? 'timeout' : 'answered')",
     )
   })
 
@@ -45,8 +45,8 @@ describe('propose 等待结算单飞 + 乐观翻态（多确认入口收敛）',
     const block = fnBlock('async function cancelProposeForNode(')
     expect(block, '必须能定位 cancelProposeForNode').not.toBe('')
     expect(block, '单飞：已结算 callId 必须短路').toContain('settledProposeCallIds.has(callId)')
-    expect(block, '取消的乐观翻态语义 = aborted').toContain(
-      "resolveProposePartLocally(callId, 'aborted')",
+    expect(block, '取消的乐观翻态语义 = aborted（P1-A expired 回执翻 timeout）').toContain(
+      "resolveProposePartLocally(callId, result.expired ? 'timeout' : 'aborted')",
     )
     expect(
       block.indexOf('settledProposeCallIds.has(callId)'),

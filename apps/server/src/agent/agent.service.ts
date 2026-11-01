@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  HttpException,
   Inject,
   Injectable,
   Logger,
@@ -1136,15 +1137,236 @@ export class AgentService {
     answers: Record<string, string[]>
     /** 2026-10-06：`decline` = 用户显式拒绝（propose 卡取消），runtime 以 aborted 交还。 */
     decision?: 'answer' | 'decline'
-  }): Promise<{ ok: boolean; deduped: boolean }> {
+    /** P1-A：late 裁决的归属校验与 llm 装配（controller 透传 req.user.sub）。 */
+    userId?: string
+  }): Promise<{ ok: boolean; deduped: boolean; prior?: string; late?: boolean; expired?: boolean }> {
     const piUrl = this.getPiRuntimeUrl()
     if (!piUrl) return { ok: false, deduped: false }
     const sessionKey = input.threadId?.trim() || input.sessionId
-    return this.createPiRuntimeClient(piUrl).answer(sessionKey, {
+    const client = this.createPiRuntimeClient(piUrl)
+    const data = await client.answer(sessionKey, {
       callId: input.callId,
       answers: input.answers,
       ...(input.decision ? { decision: input.decision } : {}),
     })
+    // 正常 settle（registry hit）：响应形态与 P1-A 前完全一致（规格 A3 零回归）。
+    if (!data.deduped) return data
+    // deduped:true + prior：runtime 本进程刚 settle（墓碑命中）——并发第二发的幂等回执，不裁决。
+    if (data.prior) return { ok: true, deduped: true, prior: data.prior }
+    // deduped:true 无 prior：真丢失（runtime 重启 / 脏 callId）→ durable part 裁决（规格 §4.2）。
+    return this.adjudicateLateAnswer({
+      sessionId: input.sessionId,
+      sessionKey,
+      callId: input.callId,
+      decision: input.decision,
+      answers: input.answers,
+      userId: input.userId,
+      client,
+    })
+  }
+
+  /**
+   * P1-A（规格 2026-11-01 §4.2）：/answers 在 runtime 侧真丢失时的 durable part 裁决。
+   *
+   * 真源 = AgentMessage.metadata.executionEvents 里的 waiting_user 事件（#648 起落库）。
+   * 分支：找不到 waiting part → 脏 callId 幂等回执（A6）；已过 deadline（ts+timeoutMs）
+   * → part 翻 expired（reason=timeout，#654 映射 expired）；未过期 → 先 CAS 翻 part 终态
+   * （双闸防双裁决，规格 §8-2）再 late-answer 注入 runtime（注入失败回滚 CAS 并 503 可重试）。
+   */
+  private async adjudicateLateAnswer(input: {
+    sessionId: string
+    sessionKey: string
+    callId: string
+    decision?: 'answer' | 'decline'
+    answers: Record<string, string[]>
+    userId?: string
+    client: PiRuntimeClient
+  }): Promise<{ ok: boolean; deduped: boolean; prior?: string; late?: boolean; expired?: boolean }> {
+    const row = await this.findWaitingPartRow(input.sessionId, input.sessionKey, input.callId)
+    // A6 脏 callId：无 waiting part（或已终态）→ 幂等回执，不泄漏探测面。
+    if (!row) return { ok: true, deduped: true }
+    const { messageId, event } = row
+    const wd = (event.data ?? {}) as {
+      timeoutMs?: number
+      toolName?: string
+      nodeId?: string
+    }
+    const timeoutMs = typeof wd.timeoutMs === 'number' ? wd.timeoutMs : null
+    const startedAt = typeof event.ts === 'number' ? event.ts : null
+    const expired =
+      timeoutMs !== null && startedAt !== null && Date.now() > startedAt + timeoutMs
+    // 翻 part 终态（CAS）：先落库再注入——CAS 输掉 = 并发裁决方已收口，本请求按幂等回执返回。
+    const reason: 'answered' | 'aborted' | 'timeout' = expired
+      ? 'timeout'
+      : input.decision === 'decline'
+        ? 'aborted'
+        : 'answered'
+    const casOk = await this.appendWaitingResolution(messageId, input.callId, event, reason)
+    if (!casOk) {
+      return { ok: true, deduped: true, prior: reason }
+    }
+    if (expired) return { ok: true, deduped: false, expired: true }
+    // 未过期 → 迟到语境注入 runtime（answer/decline 都注入，取消走取消语境）。
+    try {
+      const llm = await this.resolvePiSessionLlm(input.userId)
+      await input.client.lateAnswer(input.sessionKey, {
+        userId: input.userId ?? '',
+        callId: input.callId,
+        toolName: wd.toolName,
+        kind: input.decision === 'decline' ? 'decline' : 'answer',
+        ...(input.decision === 'decline' ? {} : { answers: input.answers }),
+        ...(llm ? { llm } : {}),
+        canvasSessionId: input.sessionId,
+      })
+    } catch (err) {
+      // 注入失败 → 回滚 CAS（part 保持 waiting 可重试）；回滚也失败则留痕（终态 receipt 已 durable，
+      // 模型缺迟到语境是已登记风险，warn 不抛）。
+      const rolledBack = await this.removeWaitingResolution(messageId, input.callId)
+      if (!rolledBack) {
+        this.piLogger.warn(
+          `late-answer CAS rollback failed (callId=${input.callId}, message=${messageId}) — part 已终态但注入未达`,
+        )
+      }
+      throw new HttpException(
+        `late-answer injection failed: ${err instanceof Error ? err.message : String(err)}`,
+        503,
+      )
+    }
+    return { ok: true, deduped: false, late: true }
+  }
+
+  /**
+   * 在该 thread 最近消息的 metadata.executionEvents 里找指定 callId 的**未决** waiting_user 事件。
+   * 返回 messageId（供 CAS 翻终态）与事件本体；waiting 不存在（或同 callId 已有 resolved
+   * ——先前裁决/正常 settle 已落库）→ null（幂等回执路径）。
+   */
+  private async findWaitingPartRow(
+    sessionId: string,
+    threadId: string,
+    callId: string,
+  ): Promise<{ messageId: string; event: PersistedExecutionEvent } | null> {
+    const rows = await this.prisma.agentMessage.findMany({
+      where: { sessionId, threadId },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: { id: true, metadata: true },
+    })
+    for (const row of rows) {
+      if (!row.metadata) continue
+      let meta: { executionEvents?: PersistedExecutionEvent[] }
+      try {
+        meta = JSON.parse(row.metadata) as { executionEvents?: PersistedExecutionEvent[] }
+      } catch {
+        continue
+      }
+      const events = Array.isArray(meta.executionEvents) ? meta.executionEvents : []
+      let waiting: PersistedExecutionEvent | undefined
+      for (const ev of events) {
+        if (ev?.type !== 'waiting_user') continue
+        const d = ev.data as { callId?: string; status?: string } | undefined
+        if (d?.callId !== callId) continue
+        if (d.status === 'resolved') {
+          waiting = undefined // 已终态（正常 settle / 先前裁决落库）→ 幂等回执
+          break
+        }
+        waiting = ev
+      }
+      if (waiting) return { messageId: row.id, event: waiting }
+    }
+    return null
+  }
+
+  /**
+   * part 翻终态：向 executionEvents **追加**同型 waiting_user resolved 事件（#648 消费形态，
+   * reason 沿用 #654 映射表 → 前端重放零新增映射）。CAS = 以旧 metadata 整串作 where 条件
+   * （updateMany 计数判胜负），输掉即返回 false 由调用方按幂等收口。
+   */
+  private async appendWaitingResolution(
+    messageId: string,
+    callId: string,
+    waiting: PersistedExecutionEvent,
+    reason: 'answered' | 'aborted' | 'timeout',
+  ): Promise<boolean> {
+    const raw = (await this.prisma.agentMessage.findUnique({
+      where: { id: messageId },
+      select: { metadata: true },
+    }))?.metadata
+    let meta: Record<string, unknown> = {}
+    try {
+      meta = raw ? (JSON.parse(raw) as Record<string, unknown>) : {}
+    } catch {
+      return false
+    }
+    const events = Array.isArray(meta.executionEvents)
+      ? [...(meta.executionEvents as PersistedExecutionEvent[])]
+      : []
+    if (
+      events.some(
+        (ev) =>
+          ev?.type === 'waiting_user' &&
+          (ev.data as { callId?: string; status?: string } | undefined)?.callId === callId &&
+          (ev.data as { status?: string } | undefined)?.status === 'resolved',
+      )
+    ) {
+      return false // 已终态（并发先到）——CAS 语义的一部分
+    }
+    const wd = waiting.data as { callId?: string; toolName?: string; nodeId?: string } | undefined
+    const lastSeq = events.length ? (events[events.length - 1]?.seq ?? 0) : 0
+    events.push({
+      type: 'waiting_user',
+      data: {
+        status: 'resolved',
+        toolName: wd?.toolName,
+        callId: wd?.callId ?? callId,
+        nodeId: wd?.nodeId,
+        reason,
+      },
+      seq: lastSeq + 1,
+      gSeq: waiting.gSeq,
+      ts: Date.now(),
+      messageIndex: waiting.messageIndex,
+    })
+    const next = JSON.stringify({ ...meta, executionEvents: events })
+    const res = await this.prisma.agentMessage.updateMany({
+      where: { id: messageId, metadata: raw ?? null },
+      data: { metadata: next },
+    })
+    return res.count > 0
+  }
+
+  /** 回滚 appendWaitingResolution（注入失败路径）：以追加后的整串作 CAS 条件还原旧串。 */
+  private async removeWaitingResolution(messageId: string, callId: string): Promise<boolean> {
+    const row = await this.prisma.agentMessage.findUnique({
+      where: { id: messageId },
+      select: { metadata: true },
+    })
+    if (!row?.metadata) return false
+    let meta: { executionEvents?: PersistedExecutionEvent[] }
+    try {
+      meta = JSON.parse(row.metadata) as { executionEvents?: PersistedExecutionEvent[] }
+    } catch {
+      return false
+    }
+    const events = meta.executionEvents ?? []
+    const idx = [...events]
+      .reverse()
+      .findIndex(
+        (ev) =>
+          ev?.type === 'waiting_user' &&
+          (ev.data as { callId?: string; status?: string } | undefined)?.callId === callId &&
+          (ev.data as { status?: string } | undefined)?.status === 'resolved',
+      )
+    if (idx < 0) return true // 已无 resolved 条目（视为已还原）
+    const realIdx = events.length - 1 - idx
+    const next = JSON.stringify({
+      ...meta,
+      executionEvents: [...events.slice(0, realIdx), ...events.slice(realIdx + 1)],
+    })
+    const res = await this.prisma.agentMessage.updateMany({
+      where: { id: messageId, metadata: row.metadata },
+      data: { metadata: next },
+    })
+    return res.count > 0
   }
 
   /**

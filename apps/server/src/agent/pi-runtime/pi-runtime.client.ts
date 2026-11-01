@@ -539,19 +539,61 @@ export class PiRuntimeClient {
 		};
 	}
 
-	/** B-2：向阻塞中的确认类工具提交用户回答（幂等；未知/已清理 callId 返回 deduped=true）。 */
+	/**
+	 * B-2：向阻塞中的确认类工具提交用户回答（幂等；未知/已清理 callId 返回 deduped=true）。
+	 *
+	 * P1-A（规格 2026-11-01 §4.3）：deduped:true 细分——带 `prior` = 本进程刚 settle
+	 * （墓碑命中，竞态回放收口）；不带 = 真丢失（重启/脏 callId），调用方据此触发裁决。
+	 */
 	async answer(
 		sessionId: string,
 		body: { callId: string; answers: Record<string, string[]>; decision?: "answer" | "decline" },
-	): Promise<{ ok: boolean; deduped: boolean }> {
-		const { status, body: resp } = await this.request<{ ok?: boolean; deduped?: boolean; error?: string }>(
-			`/sessions/${encodeURIComponent(sessionId)}/answers`,
-			{ method: "POST", body: JSON.stringify(body) },
-		);
+	): Promise<{ ok: boolean; deduped: boolean; prior?: "answered" | "timeout" | "aborted" }> {
+		const { status, body: resp } = await this.request<{
+			ok?: boolean;
+			deduped?: boolean;
+			prior?: string;
+			error?: string;
+		}>(`/sessions/${encodeURIComponent(sessionId)}/answers`, {
+			method: "POST",
+			body: JSON.stringify(body),
+		});
 		if (status >= 400 || resp?.error) {
 			throw new PiRuntimeError(resp?.error ?? `answer failed: HTTP ${status}`, status);
 		}
-		return { ok: resp?.ok === true, deduped: resp?.deduped === true };
+		const prior =
+			resp?.prior === "answered" || resp?.prior === "timeout" || resp?.prior === "aborted"
+				? resp.prior
+				: undefined;
+		return { ok: resp?.ok === true, deduped: resp?.deduped === true, ...(prior ? { prior } : {}) };
+	}
+
+	/**
+	 * P1-A（规格 2026-11-01 §4.4）：迟到答案注入（Nest 裁决「真丢失 + part 未过期」后调用）。
+	 * runtime 侧幂等 create 激活会话后以 followUp 迟到语境注入；失败（装配 503 / 归属 409 /
+	 * 激活 404）抛 PiRuntimeError 保留 status，调用方据此 503 让 part 保持 waiting 可重试。
+	 */
+	async lateAnswer(
+		sessionId: string,
+		body: {
+			userId: string;
+			callId: string;
+			toolName?: string;
+			kind: "answer" | "decline";
+			answers?: Record<string, string[]>;
+			note?: string;
+			llm?: unknown;
+			canvasSessionId?: string;
+		},
+	): Promise<{ queued: true; entryId: string }> {
+		const { status, body: resp } = await this.request<{ queued?: boolean; entryId?: string; error?: string }>(
+			`/sessions/${encodeURIComponent(sessionId)}/late-answer`,
+			{ method: "POST", body: JSON.stringify(body) },
+		);
+		if (status >= 400 || resp?.error) {
+			throw new PiRuntimeError(resp?.error ?? `lateAnswer failed: HTTP ${status}`, status);
+		}
+		return { queued: true, entryId: resp?.entryId ?? "" };
 	}
 
 	/** B-2：查询会话是否有阻塞中的确认类工具（前端 409 降级恢复用）。 */

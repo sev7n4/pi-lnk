@@ -1131,8 +1131,9 @@ const railHiddenByTab = computed(
  */
 const settledProposeCallIds = new Set<string>()
 
-/** 提交成功后本地翻终态（resolved 事件的同构回喂，reason 决定标签）。 */
-function resolveProposePartLocally(callId: string, reason: 'answered' | 'aborted') {
+/** 提交成功后本地翻终态（resolved 事件的同构回喂，reason 决定标签）。
+ *  P1-A：reason 扩 'timeout'——Nest expired 回执时 part 按 #654 映射翻 expired（非 confirmed）。 */
+function resolveProposePartLocally(callId: string, reason: 'answered' | 'aborted' | 'timeout') {
   agent.trackWaitingUser({ status: 'resolved', toolName: 'propose_generation', callId, reason })
 }
 
@@ -1149,7 +1150,10 @@ async function cancelProposeForNode(nodeId?: string, opts?: { note?: string }): 
   if (callId && settledProposeCallIds.has(callId)) return false
   if (callId) {
     try {
-      await submitAnswers(
+      // 乐观翻态：不等旁听流的 resolved（缺席/迟到会让卡片永久 pending、
+      // 状态条倒计时空转）——decline 语义 = aborted。P1-A：Nest expired 回执
+      // 时 part 按 timeout 翻 expired（late 收口仍按 aborted 语义呈现）。
+      const result = await submitAnswers(
         {
           threadId: agentThreadId.value,
           sessionId: props.sessionId,
@@ -1162,9 +1166,7 @@ async function cancelProposeForNode(nodeId?: string, opts?: { note?: string }): 
         answersPost,
       )
       settledProposeCallIds.add(callId)
-      // 乐观翻态：不等旁听流的 resolved（缺席/迟到会让卡片永久 pending、
-      // 状态条倒计时空转）——decline 语义 = aborted。
-      resolveProposePartLocally(callId, 'aborted')
+      resolveProposePartLocally(callId, result.expired ? 'timeout' : 'aborted')
     } catch {
       // 幂等端点：失败说明网络/鉴权异常，画布侧仍要收敛（轮询兜底会判 rejected）
     }
@@ -1188,14 +1190,15 @@ async function confirmProposeWait(nodeId: string): Promise<boolean> {
   // 单飞（2026-10-31 大章鱼回合实证）：该等待已成功结算 ⇒ no-op。
   if (settledProposeCallIds.has(callId)) return false
   try {
-    await submitAnswers(
+    const result = await submitAnswers(
       { threadId: agentThreadId.value, sessionId: props.sessionId, callId, answers: {} },
       answersPost,
     )
     settledProposeCallIds.add(callId)
     // 乐观翻态（answered）：所有确认入口（画布确认面 / 聚合条 / 内联卡）同帧收口，
     // 状态条倒计时熄灭；不再依赖旁听流的 resolved（迟到/缺席 = 多入口持续可点）。
-    resolveProposePartLocally(callId, 'answered')
+    // P1-A：Nest expired 回执 = 提议已过 deadline 被 timeout 收口，翻 expired 而非 confirmed。
+    resolveProposePartLocally(callId, result.expired ? 'timeout' : 'answered')
     return true
   } catch {
     return false

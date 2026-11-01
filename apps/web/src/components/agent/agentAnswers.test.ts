@@ -85,3 +85,32 @@ describe('submitAnswers', () => {
     expect(second).not.toHaveProperty('note')
   })
 })
+
+describe('submitAnswers P1-A 裁决回执透传（规格 2026-11-01 §4.5）', () => {
+  it('late/expired/prior 字段按需透传；老响应形态零变化', async () => {
+    const latePost = async () => ({
+      ok: true,
+      json: async () => ({ code: 0, data: { ok: true, deduped: false, late: true } }),
+    })
+    const expiredPost = async () => ({
+      ok: true,
+      json: async () => ({ code: 0, data: { ok: true, deduped: false, expired: true } }),
+    })
+    const priorPost = async () => ({
+      ok: true,
+      json: async () => ({ code: 0, data: { ok: true, deduped: true, prior: 'answered' } }),
+    })
+    const legacyPost = async () => ({
+      ok: true,
+      json: async () => ({ code: 0, data: { ok: true, deduped: true } }),
+    })
+    expect(await submitAnswers(base, latePost)).toEqual({ ok: true, deduped: false, late: true })
+    expect(await submitAnswers(base, expiredPost)).toEqual({ ok: true, deduped: false, expired: true })
+    expect(await submitAnswers(base, priorPost)).toEqual({ ok: true, deduped: true, prior: 'answered' })
+    // 老形态：late/expired/prior 键不出现（调用方 `if (result.late)` 语义安全）
+    const legacy = await submitAnswers(base, legacyPost)
+    expect(legacy).toEqual({ ok: true, deduped: true })
+    expect('late' in legacy).toBe(false)
+    expect('expired' in legacy).toBe(false)
+  })
+})
