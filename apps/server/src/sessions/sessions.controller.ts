@@ -1,5 +1,5 @@
-import { Body, Controller, Delete, Get, Inject, Param, Post, Put, Req, UseGuards } from '@nestjs/common'
-import { IsArray, IsOptional, IsString } from 'class-validator'
+import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common'
+import { ArrayMaxSize, IsArray, IsOptional, IsString } from 'class-validator'
 import { AuthGuard } from '../auth/auth.guard'
 import { SessionsService } from './sessions.service'
 
@@ -16,6 +16,13 @@ class UpdateSessionDto {
 
   @IsOptional()
   canvasData?: unknown
+}
+
+/** P1-C C1a（规格 §3.1）：PATCH /sessions/:id/canvas 载荷——ops 数组，服务端白名单收敛。 */
+class PatchCanvasDto {
+  @IsArray()
+  @ArrayMaxSize(200)
+  ops!: unknown[]
 }
 
 class BatchDeleteSessionsDto {
@@ -63,6 +70,18 @@ export class SessionsController {
     @Body() dto: UpdateSessionDto,
   ) {
     const data = await this.sessionsService.update(id, req.user.sub, dto)
+    return { code: 0, message: 'ok', data }
+  }
+
+  /** P1-C C1a：ops 级画布写主通道（整份 PUT 进入弃用期打点观测）。 */
+  @Patch(':id/canvas')
+  @UseGuards(AuthGuard)
+  async patchCanvas(
+    @Param('id') id: string,
+    @Req() req: { user: { sub: string } },
+    @Body() dto: PatchCanvasDto,
+  ) {
+    const data = await this.sessionsService.patchCanvas(id, req.user.sub, dto.ops)
     return { code: 0, message: 'ok', data }
   }
 

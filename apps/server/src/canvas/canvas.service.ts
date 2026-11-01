@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common'
+import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 // 2026-10-25：封面抽取抽到 `canvas-cover.ts`，与 `SessionsService.findAll` 共用同一口径。
 import { readCover } from './canvas-cover'
@@ -21,6 +21,8 @@ const LEGACY_DEFAULT_PROJECT_TITLE = '未命名画布'
 
 @Injectable()
 export class CanvasService {
+  private readonly logger = new Logger(CanvasService.name)
+
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   /** 列表返回卡片元数据（id/title/时间戳）+ A3 封面字段。
@@ -70,8 +72,7 @@ export class CanvasService {
   async update(id: string, userId: string, data: { title?: string; canvasData?: string }) {
     const session = await this.prisma.session.findFirst({ where: { id, userId } })
     if (!session) throw new NotFoundException('Session not found')
-    // C0 守卫：controller 已把 dto.canvasData stringify，此处 parse 回对象过守卫
-    // （脏串/解析失败 ⇒ 守卫直通，保存优先——与共享函数的脏数据策略一致）。
+    // P1-C C1a：整份 PUT 弃用期打点（与 sessions 面同格式，零阻塞）。
     let canvasData: string | undefined
     if (data.canvasData !== undefined) {
       let next: unknown = null
@@ -80,6 +81,10 @@ export class CanvasService {
       } catch {
         next = null
       }
+      const nodes = (next as { nodes?: unknown[] } | null)?.nodes
+      this.logger.warn(
+        `canvas_put_deprecated sessionId=${id} nodes=${Array.isArray(nodes) ? nodes.length : -1}`,
+      )
       canvasData = JSON.stringify(guardPendingConfirmStatuses(session.canvasData, next))
     }
     return this.prisma.session.update({ where: { id }, data: { ...data, canvasData } })
