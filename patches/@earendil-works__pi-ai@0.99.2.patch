@@ -1,0 +1,13 @@
+diff --git a/dist/types.d.ts b/dist/types.d.ts
+index 68aa0553de03aab4f7a47084995732f83ae4de00..82342912c85704343552d1726cd377182119e11f 100644
+--- a/dist/types.d.ts
++++ b/dist/types.d.ts
+@@ -424,6 +424,8 @@ export type ToolResultMessage<TDetails = JsonValue> = IsJsonCompatible<TDetails>
+     usage?: Usage;
+     /** Calls this tool made to other tools. Kept for the session record; not sent to the model. */
+     nestedCalls?: NestedToolCalls;
++    /** Names of tools introduced by this result and available from this transcript point onward. (restored: upstream removed in 0.99.x, lnkpi DTL depends on it) */
++    addedToolNames?: string[];
+     isError: boolean;
+     timestamp: number;
+ } : never;

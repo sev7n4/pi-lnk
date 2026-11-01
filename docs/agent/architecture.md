@@ -6,17 +6,18 @@ pi 内核版本 · pi-runtime 开发纪律 · 仓库结构 · 端口约定。
 
 ## pi 内核版本
 
-**当前唯一版本：`0.85.1`**（2026-10-03 核实，三处一致）
+**当前唯一版本：`0.99.2`**（2026-11-01 核实，harness 末代，P1-A→P1-B 之间窗口升级；v1.0.0 起上游删 harness 改推 Experimental 的 pi-durable，升 v1.x=换轨独立专包，见升级审计）
 
 | 位置 | 值 | 含义 |
 |---|---|---|
-| `vendor/earendil-works/pi/VENDORED.md` | `v0.85.1`（tag 对应 commit `d981de1`） | pin 的上游版本，**权威来源** |
-| `services/pi-runtime/package.json` | `"@earendil-works/pi-agent-core": "0.85.1"` | 运行时 npm 依赖，**实际生效的版本** |
+| `vendor/earendil-works/pi/VENDORED.md` | `v0.99.2`（tag 对应 commit `005af57`） | pin 的上游版本，**权威来源** |
+| `services/pi-runtime/package.json` | `"@earendil-works/pi-agent-core": "0.99.2"` | 运行时 npm 依赖，**实际生效的版本** |
+| 根 `package.json` 的 `patchedDependencies` | `pi-agent-core`/`pi-ai`@0.99.2 两枚 pnpm patch | ⚠️ npm 侧行为 patch（恢复 `addedToolNames` 激活机制），登记与理由见 VENDORED.md |
 | `vendor/earendil-works/pi/package.json` | `"version": "0.0.3"` | ⚠️ vendor 镜像的**内部版本号，与上游无关** |
 
 ### 三个版本号别混
 
-- **`0.85.1`** = pi 内核版本（npm 包名无 `v` 前缀；VENDORED.md 写作 `v0.85.1`）
+- **`0.99.2`** = pi 内核版本（npm 包名无 `v` 前缀；VENDORED.md 写作 `v0.99.2`）
 - **`0.0.3`** = vendor 镜像目录自己的 `package.json` 版本号，**不是 pi 版本**
 - **`0.0.1`~ `0.0.41`** = **pi-runtime 镜像的部署 tag**（历史遗留的数字版号，2026-10-03 起已停用）
 
@@ -33,7 +34,7 @@ pi 内核版本 · pi-runtime 开发纪律 · 仓库结构 · 端口约定。
 → 在 `VENDORED.md` 记录升级理由 → 走分支七步流程。
 ⚠️ vendor 目录**禁止业务 patch**（只允许记录版本与来源），否则 upmerge 时无法与上游对齐。
 
-> pi v0.85.1 **无 subagent 支持**（全仓 0 命中）。subagent 需 L2 自建（嵌套 Agent 实例或复用 Lane）；
+> pi 0.x harness 时代（≤0.99.2 实测）**无 subagent 支持**（全仓 0 命中）。subagent 需 L2 自建（嵌套 Agent 实例或复用 Lane）；
 > HITL 挂点用 `before_tool` hook，上下文注入用 `transform_context`。
 
 ## ⭐ pi-runtime 开发纪律（吃满内核能力）
@@ -102,7 +103,7 @@ git grep -n "<能力关键词>" -- services/pi-runtime/src/
 
 ### 已知的最大缺口
 
-**pi 0.85.1 无 subagent 支持**（全仓 0 命中）。需要 subagent 时只能 L2 自建：
+**pi 0.x harness 时代（≤0.99.2 实测）无 subagent 支持**（全仓 0 命中）。需要 subagent 时只能 L2 自建：
 嵌套 Agent 实例，或复用现有 Lane。HITL 挂点用 `before_tool` hook，
 上下文注入用 `transform_context`。
 

@@ -56,6 +56,7 @@ interface HarnessCapture {
  * 集成装配：spawn_subagent 真实入表 + coordinator.attach(sm) + factory spy。
  * 返回 captured（每次 harnessFactory 调用的 tools/activeToolNames，k=0 主会话，k≥1 子会话）。
  */
+
 function makeE2e(
 	metrics: Metrics,
 	responses: unknown[],
@@ -268,8 +269,12 @@ test("端到端超时硬停：挂起子 run 撞 timeoutMs → status=timeout，�
 	await waitAgentEnd(sm, threadKey);
 	await waitSourceIdle(sm, threadKey);
 
-	const outcome = await sm.runSubagent(threadKey, "长调研", { timeoutMs: 600 });
-	// 600ms：I3 后计时器从 fork 前起跳，须给 fork+build 留出余量；子 run 永挂必然撞线
+	const outcome = await sm.runSubagent(threadKey, "长调研", { timeoutMs: 1500 });
+	// 1500ms：I3 后计时器从 fork 前起跳，须给 fork+build 留出余量；子 run 永挂必然撞线。
+	// ⚠️ 不能压回 600ms：0.99.x 的 drive 在「run 已启动但 LLM 未调用」相位收 cancel
+	// 会留下未收尾状态，卡死主会话下一轮（探针实锤：turn_start 后永不发 LLM 调用；
+	// 取消落在 LLM await 相位则一切正常）。生产默认 5min 必落在 LLM 相位，风险仅测试面。
+	// 已登记 VENDORED.md「上游已知边界」；v1.x 换轨时随 harness 时代一并消失。
 	assert.equal(outcome.status, "timeout");
 	// 子 entry 已摘除（清理铁律：sessions.delete）
 	assert.deepEqual(subKeys(sm), [], "子 entry 未从 sessions map 摘除");
