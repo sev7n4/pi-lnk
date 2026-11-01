@@ -178,7 +178,7 @@ jobs:
           RSYNC_SSH="ssh -i $HOME/.ssh/deploy_key -o BatchMode=yes"
           rsync -az --delete --exclude node_modules --exclude .git --exclude '*.test.ts' \
             -e "$RSYNC_SSH" \
-            package.json pnpm-lock.yaml pnpm-workspace.yaml skills vendor \
+            package.json pnpm-lock.yaml pnpm-workspace.yaml patches skills vendor \
             deploy-cvm:${DEPLOY_DIR}/
           rsync -az --delete --exclude node_modules --exclude '*.test.ts' \
             -e "$RSYNC_SSH" \
