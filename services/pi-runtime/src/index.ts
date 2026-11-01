@@ -61,18 +61,12 @@ const registry = new PendingToolRegistry({
 // C4：spawn_subagent ↔ SessionManager 的解耦中转（PendingToolRegistry 同款装配顺序）：
 // 同一实例两处共享——工具域（spawn 工具 tryRun）、manager 构造后 attach(runSubagent 实现)。
 const subagentCoordinator = new SubagentCoordinator();
+// P1-B job 化（2026-11-01）：onNodeStatus/onRegisterGenerationWait 接线随等待臂退役——
+// 生成终态写者收归 Nest（结算点直发 notify-generation），runtime 工具域即返 job handle，
+// 不再持有终态等待、不再广播 node_status、不再登记等待。
 const { tools, client: nestClient } = resolveToolsWithClient(metrics, {
 	registry,
 	coordinator: subagentCoordinator,
-	// node_status 广播（2026-10-18 回合挂住等终态）：propose_generation 终态等待期 /
-	// run_* 持有期由工具域按画布会话 id 上行，经 manager 反查 pi 会话派发 SSE。
-	// manager 在下方构造——回调运行时才解引用，装配顺序与 registry.onWaitStart 同款。
-	onNodeStatus: (sessionId, data) => {
-		manager.dispatchNodeStatus(sessionId, data);
-	},
-	// 生成终态等待登记（2026-10-18 上游对齐）：run_*/propose 等待期登记节点，
-	// notify-generation 通报据此抑制（等待者自己交还终态）；解绑由工具 finally 调。
-	onRegisterGenerationWait: (sessionId, nodeId) => manager.registerGenerationWait(sessionId, nodeId),
 });
 
 // D-η'：进程内扫描一次 skills 目录（缺省 ./skills；PI_RUNTIME_SKILLS_DIR 覆盖）。

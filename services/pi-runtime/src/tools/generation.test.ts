@@ -55,7 +55,7 @@ test("run_audio_generation 把 kind 与内联参数透传到 Nest（不要求先
 		instrumental: true,
 	});
 	const call = fake.calls.at(-1)!;
-	assert.equal(call.path, "/agent/internal/run-audio-generation");
+	assert.equal(call.path, "/agent/internal/start-audio-generation");
 	const body = call.body as Record<string, unknown>;
 	assert.equal(body.nodeId, "n1");
 	assert.equal(body.kind, "music");
@@ -88,7 +88,7 @@ test("run_image_generation posts correct body and surfaces actions in details", 
 	const res = await run(tool, { node_id: "n_1" });
 	assert.deepEqual(client.calls, [
 		{
-			path: "/agent/internal/run-image-generation",
+			path: "/agent/internal/start-image-generation",
 			body: { sessionId: "s1", userId: "u1", nodeId: "n_1" },
 		},
 	]);
@@ -331,95 +331,56 @@ test("run_audio_generation details._signal + used（model/kind/voice）", async 
 	assert.deepEqual(d.generationParams, { kind: "voice", voice: "female-shaonv" });
 });
 
-// ── node_status 广播（2026-10-18 回合挂住等终态）─────────────────────────
+// ── B1 job 化（spec 2026-11-01-p1b-generation-job-design §4.1）────────────────
+// run_* 改调 start-*（即返 job handle）；同步持至终态 / node_status 广播 / 等待登记
+// / 进度 ticker 全部退役。编译期锁：createGenerationTools deps 已收缩为 {fetchImpl?}
+// ——传 onNodeStatus/onRegisterGenerationWait 直接 tsc 报错。
 
-test("run_image_generation 起手广播 generating、完成按 url 正据广播 done", async () => {
-	const seen: Array<{ sessionId: string; data: { nodeId: string; status: string; url?: string } }> = [];
+test("B1 job 化：run_video_generation 改走 start-video-generation 且即返 job handle", async () => {
+	const calls: Array<{ path: string; body: unknown }> = [];
 	const client = {
-		post: async () => ({ status: "completed", url: "https://x/y.png", actions: [] }),
+		post: async (path: string, body: unknown) => {
+			calls.push({ path, body });
+			return { generationRecordId: "g-new", actions: [] };
+		},
 	};
-	const tools = createGenerationTools(client as never, {
-		onNodeStatus: (sessionId, data) => seen.push({ sessionId, data }),
-	});
-	await run(tools.find((t) => t.name === "run_image_generation")!, { node_id: "n1" });
-	assert.deepEqual(
-		seen.map((s) => ({ sid: s.sessionId, ...s.data })),
-		[
-			{ sid: "s1", nodeId: "n1", status: "generating" },
-			{ sid: "s1", nodeId: "n1", status: "done", url: "https://x/y.png" },
-		],
-	);
-});
-
-test("阻塞期等待登记：onRegisterGenerationWait 起手注册、finally 必解绑（2026-10-18 上游对齐）", async () => {
-	const calls: Array<{ sid: string; node: string; phase: string }> = [];
-	const client = { post: async () => ({ status: "completed", url: "https://x/y.png", actions: [] }) };
-	const tools = createGenerationTools(client as never, {
-		onRegisterGenerationWait: (sid, node) => {
-			calls.push({ sid, node, phase: "register" });
-			return () => calls.push({ sid, node, phase: "unregister" });
-		},
-	});
-	await run(tools.find((t) => t.name === "run_video_generation")!, { node_id: "n1" });
+	const tools = createGenerationTools(client as never);
+	const res = await run(tools.find((t) => t.name === "run_video_generation")!, { node_id: "n1" });
 	assert.deepEqual(calls, [
-		{ sid: "s1", node: "n1", phase: "register" },
-		{ sid: "s1", node: "n1", phase: "unregister" },
+		{ path: "/agent/internal/start-video-generation", body: { sessionId: "s1", userId: "u1", nodeId: "n1" } },
 	]);
+	// job handle 在 content JSON 的 data 里（details 只承载 actions）
+	const payload = JSON.parse(String((res.content as Array<{ text: string }>)[0].text)) as {
+		data?: { generationRecordId?: string };
+	};
+	assert.equal(payload.data?.generationRecordId, "g-new");
 });
 
-test("onRegisterGenerationWait 注册抛错不影响工具结果（登记是纯观测面）", async () => {
-	const client = { post: async () => ({ status: "completed", url: "https://x/y.png", actions: [] }) };
-	const tools = createGenerationTools(client as never, {
-		onRegisterGenerationWait: () => {
-			throw new Error("registry boom");
+test("B1 job 化：run_text_generation 改走 start-text-generation", async () => {
+	const calls: Array<{ path: string }> = [];
+	const client = { post: async (path: string) => { calls.push({ path }); return { generationRecordId: "g-t" }; } };
+	const tools = createGenerationTools(client as never);
+	await run(tools.find((t) => t.name === "run_text_generation")!, { node_id: "n1" });
+	assert.equal(calls[0]?.path, "/agent/internal/start-text-generation");
+});
+
+test("B1 job 化：run_audio_generation 改走 start-audio-generation（内联参数透传不变）", async () => {
+	const calls: Array<{ path: string; body: unknown }> = [];
+	const client = {
+		post: async (path: string, body: unknown) => {
+			calls.push({ path, body });
+			return { generationRecordId: "g-a" };
 		},
-	});
-	const result = await run(tools.find((t) => t.name === "run_video_generation")!, { node_id: "n1" });
-	// 工具结果形状等同正常路径（withGenSignal：content 带正据 url、details.actions 数组在位）
-	assert.match(String((result.content as Array<{ text: string }>)[0].text), /https:\/\/x\/y\.png/);
-	assert.ok(Array.isArray((result.details as { actions: unknown[] }).actions));
+	};
+	const tools = createGenerationTools(client as never);
+	await run(tools.find((t) => t.name === "run_audio_generation")!, { node_id: "n1", kind: "music" });
+	assert.equal(calls[0]?.path, "/agent/internal/start-audio-generation");
+	assert.equal((calls[0]?.body as { kind?: string }).kind, "music");
 });
 
-test("onUpdate 提供时不启动也永不炸主链路（progress-ticker 自己吞错，这里验证直通路径）", async () => {
-	let updateCalls = 0;
-	const client = { post: async () => ({ status: "completed", url: "https://x/y.png", actions: [] }) };
-	const tools = createGenerationTools(client as never, {});
-	const tool = tools.find((t) => t.name === "run_video_generation")!;
-	// onUpdate 为抛错回调：30s 内不发射（本用例即时完成）⇒ 不炸即通过；
-	// 发射吞错由 progress-ticker.test.ts 单测锁定。
-	const result = await run(tool, { node_id: "n1" }, () => {
-		updateCalls += 1;
-		throw new Error("update boom");
-	});
-	assert.match(String((result.content as Array<{ text: string }>)[0].text), /https:\/\/x\/y\.png/);
-	assert.equal(updateCalls, 0); // 即时完成路径零发射
-});
-
-test("timeout / fallback_pending 不是终态：不下发 node_status 终态（保守口径）", async () => {
-	for (const status of ["timeout", "fallback_pending"]) {
-		const seen: Array<{ status: string }> = [];
-		const client = { post: async () => ({ status, actions: [] }) };
-		const tools = createGenerationTools(client as never, {
-			onNodeStatus: (_sid, d) => seen.push({ status: d.status }),
-		});
-		await run(tools.find((t) => t.name === "run_image_generation")!, { node_id: "n1" });
-		assert.deepEqual(seen, [{ status: "generating" }], `status=${status} 不得产生终态广播`);
-	}
-});
-
-test("failed 结果（errorMessage 正据）广播 failed；onNodeStatus 抛错被 fail-soft 吞掉不污染工具结果", async () => {
-	const seen: Array<{ status: string; error?: string }> = [];
-	const client = { post: async () => ({ status: "failed", errorMessage: "boom", actions: [] }) };
-	const tools = createGenerationTools(client as never, {
-		onNodeStatus: (_sid, d) => {
-			seen.push({ status: d.status, error: d.error });
-			if (seen.length === 2) throw new Error("observer boom");
-		},
-	});
+test("B1 job 化：start 响应缺 generationRecordId（旧 Nest）⇒ 原样透传不造值", async () => {
+	const client = { post: async () => ({ status: "completed" }) };
+	const tools = createGenerationTools(client as never);
 	const res = await run(tools.find((t) => t.name === "run_image_generation")!, { node_id: "n1" });
-	assert.deepEqual(seen, [
-		{ status: "generating", error: undefined },
-		{ status: "failed", error: "boom" },
-	]);
-	assert.ok(res.details, "观察者抛错不影响工具结果返回");
+	assert.deepEqual((res.details as { actions: unknown[] }).actions, []);
 });
