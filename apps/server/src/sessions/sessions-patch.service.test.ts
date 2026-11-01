@@ -153,7 +153,11 @@ describe('SessionsService.patchCanvas（C1a 端到端）', () => {
   })
 
   it('stagedActions 未清 ⇒ 409（与 agent persist 同语义）', async () => {
-    ownSession(canvas([]), JSON.stringify([{ type: 'update_node', payload: {} }]))
+    ownSession(canvas([]))
+    txFindUnique.mockResolvedValue({
+      canvasData: canvas([]),
+      stagedActions: JSON.stringify([{ type: 'update_node', payload: {} }]),
+    })
     await expect(
       svc.patchCanvas('s1', 'u1', [
         { type: 'update_node', payload: { id: 'n1', data: { title: 'x' } } },
