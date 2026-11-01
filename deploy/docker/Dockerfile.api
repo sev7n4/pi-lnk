@@ -21,6 +21,8 @@ RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# pnpm.patchedDependencies（0.99.2 addedToolNames 恢复补丁）：install 阶段按哈希读取 patch 文件，缺失即 ENOENT
+COPY patches ./patches
 COPY packages ./packages
 COPY apps/server ./apps/server
 COPY deploy/docker ./deploy/docker

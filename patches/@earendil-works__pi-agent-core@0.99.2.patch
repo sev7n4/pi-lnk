@@ -1,0 +1,94 @@
+diff --git a/dist/harness/execution/tools.js b/dist/harness/execution/tools.js
+index 1248c2e0659f298882773972e9c1370dce4916f2..007713bba1047981cc2c6b405224dc9910a586f2 100644
+--- a/dist/harness/execution/tools.js
++++ b/dist/harness/execution/tools.js
+@@ -100,6 +100,7 @@ export function toolResultFromMessage(message, terminate) {
+         content: message.content,
+         details: message.details,
+         ...(message.usage === undefined ? {} : { usage: message.usage }),
++        ...(message.addedToolNames === undefined ? {} : { addedToolNames: message.addedToolNames }),
+         ...(terminate ? { terminate: true } : {}),
+     };
+ }
+@@ -112,6 +113,7 @@ export function createToolResultMessage(call) {
+         content: call.result.content ?? [],
+         ...(call.result.details === undefined ? {} : { details: call.result.details }),
+         ...(call.result.usage === undefined ? {} : { usage: call.result.usage }),
++        ...(call.result.addedToolNames?.length ? { addedToolNames: call.result.addedToolNames } : {}),
+         isError: call.isError,
+         timestamp: Date.now(),
+     };
+diff --git a/dist/harness/runtime/drive/tool-placement.js b/dist/harness/runtime/drive/tool-placement.js
+index d281b9b674b08cceaf1e2e7a71f4c7855ac8e90a..7c4e5e357b6ebd54440f82b7da170bfe0cac2eb1 100644
+--- a/dist/harness/runtime/drive/tool-placement.js
++++ b/dist/harness/runtime/drive/tool-placement.js
+@@ -1,7 +1,7 @@
+ import { insertEntry, insertUsage } from "../../session/commit.js";
+ import { SessionInvariantError } from "../../session/session.js";
+ import { operationScopeOf, } from "../../session/types.js";
+-import { branchTip, deleteValue, operationToolArgsPrefix, pendingEntry, setValue } from "../../session/values.js";
++import { branchTip, deleteValue, laneConfig, operationToolArgsPrefix, pendingEntry, setValue } from "../../session/values.js";
+ export async function readToolBatchSource(lane, drive, batch) {
+     return lane.command(async (_state, reader) => {
+         const entry = (await reader.getEntries([batch.assistantEntryId], drive.context)).get(batch.assistantEntryId);
+@@ -119,6 +119,22 @@ async function commitPlacement(lane, drive, capability, read) {
+             }
+             parentId = item.call.resultEntryId;
+         }
++        let nextConfiguration = state.configuration;
++        const addedNames = [];
++        for (const item of read.items) {
++            for (const name of item.message.addedToolNames ?? []) {
++                if (!nextConfiguration.activeToolNames.includes(name) && !addedNames.includes(name)) {
++                    addedNames.push(name);
++                }
++            }
++        }
++        if (addedNames.length !== 0) {
++            nextConfiguration = {
++                ...nextConfiguration,
++                activeToolNames: [...nextConfiguration.activeToolNames, ...addedNames],
++            };
++            writes.push(setValue(laneConfig(lane.name), nextConfiguration));
++        }
+         const completedCalls = current.calls.map((call) => {
+             const item = read.items.find((candidate) => candidate.call.sourceIndex === call.sourceIndex &&
+                 candidate.call.resultEntryId === call.resultEntryId);
+@@ -155,7 +171,7 @@ async function commitPlacement(lane, drive, capability, read) {
+             kind: "commit",
+             writes,
+             operationState: nextRun,
+-            lane: { tipId: parentId, configuration: state.configuration },
++            lane: { tipId: parentId, configuration: nextConfiguration },
+             materialize: () => complete,
+             events: (commit) => {
+                 const events = [];
+@@ -175,6 +191,15 @@ async function commitPlacement(lane, drive, capability, read) {
+                         });
+                     }
+                 }
++                if (addedNames.length !== 0) {
++                    events.push({
++                        type: "config_update",
++                        lane: lane.name,
++                        property: "activeTools",
++                        previous: state.configuration.activeToolNames,
++                        value: nextConfiguration.activeToolNames,
++                    });
++                }
+                 return events;
+             },
+         };
+diff --git a/dist/types.d.ts b/dist/types.d.ts
+index fb6234695814cf1c21c15a84a4691e5361c1ddb7..bfc2298c34620af3494bb9c63d9a41c0e8b9dc36 100644
+--- a/dist/types.d.ts
++++ b/dist/types.d.ts
+@@ -379,6 +379,8 @@ export interface AgentToolResult<T = JsonValue | undefined> {
+     structuredContent?: JsonValue;
+     /** Usage from the final tool execution itself, if available. Not used for main LLM context accounting. */
+     usage?: Usage;
++    /** Names of tools introduced by this result and available from this transcript point onward. (restored: upstream removed in 0.99.x, lnkpi DTL depends on it) */
++    addedToolNames?: string[];
+     /**
+      * Report a failure without throwing. The model sees `content` as an error result, like a thrown
+      * error, but `details` and `structuredContent` are kept for the UI and programmatic callers.

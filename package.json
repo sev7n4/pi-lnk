@@ -33,5 +33,11 @@
   "engines": {
     "node": ">=20"
   },
-  "packageManager": "pnpm@9.15.0"
+  "packageManager": "pnpm@9.15.0",
+  "pnpm": {
+    "patchedDependencies": {
+      "@earendil-works/pi-ai@0.99.2": "patches/@earendil-works__pi-ai@0.99.2.patch",
+      "@earendil-works/pi-agent-core@0.99.2": "patches/@earendil-works__pi-agent-core@0.99.2.patch"
+    }
+  }
 }
