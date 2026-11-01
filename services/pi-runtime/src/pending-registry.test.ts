@@ -16,8 +16,9 @@ describe("PendingToolRegistry", () => {
 		const p = reg.waitForUser("s1", "c1", "propose_generation", 60_000);
 		assert.deepEqual(reg.decline("s1", "c1"), { ok: true, deduped: false });
 		assert.deepEqual(await p, { status: "aborted" });
-		// 幂等：已 settle → deduped，不抛错（回答端点重试安全）
-		assert.deepEqual(reg.decline("s1", "c1"), { ok: true, deduped: true });
+		// 幂等：已 settle → deduped（带 prior 墓碑），不抛错（回答端点重试安全）
+		assert.deepEqual(reg.decline("s1", "c1"), { ok: true, deduped: true, prior: "aborted" });
+		// 真·未知 callId：无 prior（P1-A 判别器——Nest 据此触发 late/expired 裁决）
 		assert.deepEqual(reg.decline("sx", "ghost"), { ok: true, deduped: true });
 	});
 
@@ -25,7 +26,11 @@ describe("PendingToolRegistry", () => {
 		const reg = new PendingToolRegistry();
 		const p = reg.waitForUser("s1", "c2", "propose_generation", 60_000);
 		reg.decline("s1", "c2");
-		assert.deepEqual(reg.answer("s1", "c2", { propose: ["confirm"] }), { ok: true, deduped: true });
+		assert.deepEqual(reg.answer("s1", "c2", { propose: ["confirm"] }), {
+			ok: true,
+			deduped: true,
+			prior: "aborted",
+		});
 		assert.deepEqual(await p, { status: "aborted" });
 	});
 
@@ -58,7 +63,28 @@ describe("PendingToolRegistry", () => {
 		const reg2 = new PendingToolRegistry();
 		void reg2.waitForUser("s", "c", "ask_user", 60_000);
 		assert.deepEqual(reg2.answer("s", "c", { a: ["1"] }), { ok: true, deduped: false });
-		assert.deepEqual(reg2.answer("s", "c", { a: ["2"] }), { ok: true, deduped: true }); // 已 resolve → deduped
+		assert.deepEqual(reg2.answer("s", "c", { a: ["2"] }), { ok: true, deduped: true, prior: "answered" }); // 已 resolve → deduped + prior 墓碑
+	});
+
+	it("P1-A 墓碑：settle 后 answer/decline 带 prior；并发双发防双注入", async () => {
+		const reg = new PendingToolRegistry();
+		const p = reg.waitForUser("s", "cT", "propose_generation", 60_000);
+		// 模拟并发双 /answers：第一发真 settle，第二发命中墓碑
+		assert.deepEqual(reg.answer("s", "cT", { propose: ["confirm"] }), { ok: true, deduped: false });
+		assert.deepEqual(await p, { status: "answered", answers: { propose: ["confirm"] } });
+		assert.deepEqual(reg.answer("s", "cT", { propose: ["confirm"] }), {
+			ok: true,
+			deduped: true,
+			prior: "answered",
+		});
+		assert.deepEqual(reg.decline("s", "cT"), { ok: true, deduped: true, prior: "answered" });
+		// 超时 settle 也落墓碑（Nest 侧 part 落库延迟窗口内同样防误判）
+		const reg3 = new PendingToolRegistry();
+		const p3 = reg3.waitForUser("s", "cTo", "ask_user", 5);
+		await p3;
+		assert.deepEqual(reg3.answer("s", "cTo", { a: ["1"] }), { ok: true, deduped: true, prior: "timeout" });
+		// 真·未知（重启丢失的等价形态）：无 prior
+		assert.deepEqual(reg3.answer("s", "ghost", { a: ["1"] }), { ok: true, deduped: true });
 	});
 
 	it("abortAll resolves 所有 pending 为 aborted", async () => {

@@ -2222,6 +2222,57 @@ export class SessionManager {
 	}
 
 	/**
+	 * P1-A（规格 2026-11-01 §4.4）：迟到答案注入——重启后 registry 条目已丢，Nest 裁决
+	 * 「part 未过期」时把用户对**已死等待**的回应以 followUp 新轮输入送达。
+	 *
+	 * 语境铁律（总纲 §5.2-4 / 红队 Part E 风险②）：文本必须显式声明「迟到 + 仅作背景参考 +
+	 * 不要重复执行」，防模型把迟到答案当新指令重新行动。decline 分支同理（不要等待、
+	 * 不要断定用户已同意）。
+	 *
+	 * ⛔ 全程不 resolve 任何 promise、不写 tool_result、不 `lane.resume()`（A5 守卫对象）：
+	 * 上游 drive 对重启前未决 tool_call 的 interrupted 合成发生在下轮运行时
+	 * （drive.ts:68 / tools.ts:576，见规格 §2.1 分工表），与本注入天然正交。
+	 *
+	 * 前置：调用方（/late-answer 端点）须先 `manager.create()` 幂等激活会话——重启后
+	 * 内存无会话，`require()` 会抛 NotFoundError，激活后 followUp 才可用。
+	 *
+	 * @throws NotFoundError 会话不存在且无法激活（端点映射 409/404，Nest 侧 503 可重试）
+	 */
+	async lateAnswerInject(
+		threadKey: string,
+		data: {
+			callId: string;
+			toolName?: string;
+			kind: "answer" | "decline";
+			answers?: Record<string, string[]>;
+			note?: string;
+		},
+	): Promise<{ queued: true; entryId: string }> {
+		// 会话存在性守卫（不存在抛 NotFoundError）；真正注入走 followUp。
+		this.require(threadKey);
+		const what = data.toolName?.trim() || "确认提问";
+		let text: string;
+		if (data.kind === "decline") {
+			text =
+				`[迟到取消] 用户取消了此前等待的提问（${what}）。` +
+				"不要等待该事项，也不要断定用户已同意；若相关节点状态需要核实，先用画布工具查看。" +
+				(data.note?.trim() ? `用户附言：${data.note.trim()}` : "");
+		} else {
+			const answersSummary =
+				data.answers && Object.keys(data.answers).length > 0
+					? Object.entries(data.answers)
+							.map(([k, v]) => `${k}: ${(v ?? []).join("、") || "（未答）"}`)
+							.join("；")
+					: "（无具体作答内容）";
+			text =
+				`[迟到答案] 用户此前对提问（${what}）的回应已超过会话等待窗口。` +
+				"以下为迟到回应，仅作背景参考：若该事项已在后续进展中处理，不要重复执行；" +
+				`若尚未处理，按此意图继续。迟到回应内容——${answersSummary}`;
+		}
+		return this.followUp(threadKey, text);
+	}
+
+	/**
 	 * lane.watch() 快照（2026-10-18 上游对齐，快照重连）。
 	 *
 	 * 上游范式（lane.ts:1705-1726）：`watch()` 返回的 `WatchHandle` 自带**完整快照**

@@ -36,6 +36,15 @@ export interface SubmitAnswersInput {
 export interface SubmitAnswersResult {
   ok: boolean
   deduped: boolean
+  /**
+   * P1-A（规格 2026-11-01 §4.2）：Nest 裁决回执——
+   * `late:true` = 重启丢失后按 durable part 补收（Nest 已翻 part answered/aborted 并
+   * 注入迟到语境，**前端勿再降级重发**）；`expired:true` = 已过 deadline（part 翻
+   * timeout，答案按过期丢弃，无悬挂）；`prior` = 幂等回执（本等待先前已被收口）。
+   */
+  late?: boolean
+  expired?: boolean
+  prior?: string
 }
 
 export interface AnswersPostInit {
@@ -70,6 +79,14 @@ export async function submitAnswers(
   })
   // status 进错误信息：出问题时能一眼区分 401（未登录）/ 409（会话忙）/ 5xx，省掉抓包
   if (!res.ok) throw new Error(`submitAnswers failed: ${res.status ?? 'unknown'}`)
-  const json = (await res.json()) as { data?: { ok?: boolean; deduped?: boolean } }
-  return { ok: json.data?.ok === true, deduped: json.data?.deduped === true }
+  const json = (await res.json()) as {
+    data?: { ok?: boolean; deduped?: boolean; late?: boolean; expired?: boolean; prior?: string }
+  }
+  return {
+    ok: json.data?.ok === true,
+    deduped: json.data?.deduped === true,
+    ...(json.data?.late ? { late: true } : {}),
+    ...(json.data?.expired ? { expired: true } : {}),
+    ...(json.data?.prior ? { prior: json.data.prior } : {}),
+  }
 }

@@ -731,6 +731,8 @@ export class AgentController {
       callId: dto.callId,
       answers: dto.answers,
       decision: dto.decision,
+      // P1-A：late 裁决需要归属校验（runtime create fail-closed）与 llm 装配
+      userId: req.user.sub,
     })
     return { code: 0, message: 'ok', data }
   }

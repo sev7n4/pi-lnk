@@ -488,6 +488,67 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 	});
 
 	/**
+	 * P1-A（规格 2026-11-01 §4.4）：迟到答案注入端点（Nest 裁决「part 未过期 + runtime
+	 * 返回无 prior 的 deduped」后调用）。语义与 /answers 的差别：**不查 registry**——
+	 * 等待条目已随重启丢失，答案不再 settle 任何 promise，而是以 followUp 新轮输入
+	 * 送达模型（迟到语境由 session-manager.lateAnswerInject 拼装）。
+	 *
+	 * 会话激活：重启后内存无会话，先幂等 create（磁盘命中自动 restoreSession）。
+	 * ⚠️ Nest 必须传与该会话对话流**一致**的 llm 覆盖——身份不一致会触发 rebuilt
+	 * （换凭据错账）；userId 必填（磁盘路径 fail-closed 归属校验）。
+	 */
+	app.post<{
+		Params: { sessionId: string };
+		Body: {
+			userId?: string;
+			callId?: string;
+			toolName?: string;
+			kind?: "answer" | "decline";
+			answers?: Record<string, string[]>;
+			note?: string;
+			llm?: unknown;
+			canvasSessionId?: string;
+		};
+	}>("/sessions/:sessionId/late-answer", async (request, reply) => {
+		const callId = request.body?.callId;
+		const kind = request.body?.kind;
+		const userId = request.body?.userId;
+		if (!userId?.trim()) return reply.code(400).send({ error: "userId is required" });
+		if (!callId || (kind !== "answer" && kind !== "decline")) {
+			return reply.code(400).send({ error: "callId and kind (answer|decline) are required" });
+		}
+		if (kind === "answer" && (typeof request.body?.answers !== "object" || request.body?.answers === null)) {
+			return reply.code(400).send({ error: "answers object is required for kind=answer" });
+		}
+		const llm = parseLlmOverride(request.body?.llm);
+		if (llm.state === "invalid") {
+			return reply.code(400).send({ error: "invalid llm override: 必填字段缺失或类型错误" });
+		}
+		const threadKey = toSessionKey(request.params.sessionId);
+		try {
+			await manager.create(threadKey, {
+				userId,
+				canvasSessionId: request.body?.canvasSessionId,
+				llm: llm.state === "ok" ? llm.value : undefined,
+			});
+			return reply.send(
+				await manager.lateAnswerInject(threadKey, {
+					callId,
+					toolName: request.body?.toolName,
+					kind,
+					answers: request.body?.answers,
+					note: request.body?.note,
+				}),
+			);
+		} catch (err) {
+			if (err instanceof ConflictError) return reply.code(409).send({ error: err.message });
+			if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });
+			// 模型凭据缺失等装配期错误：503（下游不可用），part 保持 waiting 可重试
+			return reply.code(503).send({ error: (err as Error).message });
+		}
+	});
+
+	/**
 	 * 当前阻塞等待状态查询（Nest 轮询用）。会话不存在 / 无 pending 一律 200
 	 * `{pending:null}` —— 不给探测面（枚举会话无意义），也不 404。
 	 */
