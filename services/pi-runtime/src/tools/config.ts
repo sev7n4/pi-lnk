@@ -37,11 +37,8 @@ export function resolveToolsWithClient(
 	deps: {
 		registry?: PendingToolRegistry;
 		coordinator?: SubagentCoordinator;
-		/** node_status 广播（2026-10-18 回合挂住等终态）：index.ts 接线到 SessionManager.dispatchNodeStatus。 */
-		onNodeStatus?: (sessionId: string, data: import("../session-manager.js").NodeStatusData) => void;
-		/** 生成终态等待登记（2026-10-18 上游对齐）：接线到 SessionManager.registerGenerationWait。
-		 *  返回解绑函数，工具在 finally 里调用；notify-generation 通报据此抑制/放行。 */
-		onRegisterGenerationWait?: (sessionId: string, nodeId: string) => () => void;
+		// P1-B job 化：onNodeStatus/onRegisterGenerationWait 随等待臂退役（§4.1）——
+		// 生成终态写者收归 Nest，runtime 不再广播 node_status、不再登记等待。
 	} = {},
 ): { tools: LnkpiTool[]; client: NestClient | null; registry: PendingToolRegistry | null } {
 	const cfg = loadNestConfig();
@@ -95,8 +92,6 @@ export function resolveToolsWithClient(
 			onSidebarRefBind: (outcome) => metrics.observeSidebarRefBind(outcome),
 			onProposeMissingRefs: () => metrics.observeProposeMissingRefs(),
 			onNestZodReject: (endpoint) => metrics.observeNestZodReject(endpoint),
-			onNodeStatus: deps.onNodeStatus,
-			onRegisterGenerationWait: deps.onRegisterGenerationWait,
 		}),
 		...buildUiCommandTools(),
 		...buildAskUserTools(deps.registry),
@@ -104,7 +99,7 @@ export function resolveToolsWithClient(
 		// 分组工具组（2026-10-21）：tier=ui_command，走 canvas_command 前端执行。
 		// ⛔ 不能改走 Nest 端点——saveCanvas 整份覆盖会把 Agent 建的组静默抹掉。
 		...buildCanvasGroupTools(client),
-		...buildGenerationTools(client, { onNodeStatus: deps.onNodeStatus, onRegisterGenerationWait: deps.onRegisterGenerationWait }),
+		...buildGenerationTools(client),
 		...(hasTavily ? buildWebTools() : []),
 		...buildDeleteNodesTools(client),
 		...buildReadDocumentTools(),

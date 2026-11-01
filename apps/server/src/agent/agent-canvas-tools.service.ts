@@ -49,6 +49,13 @@ import { StudioService, type StudioRefInput } from '../studio/studio.service'
 import { ImageSliceService } from '../studio/image-slice.service'
 import { VideoGenerationOrchestrator } from '../studio/video-generation.orchestrator'
 import { emitGenerationFailure } from './generation-recovery/emission'
+// P1-B job 化（§4.2）：结算点直发 late-generation-notify（纯函数模块，绕模块环同 reaper 形态）
+import {
+  notifyLateGenerationTerminals,
+  piLateNotifyEnabled,
+  type LateNotifyPrisma,
+} from './pi-runtime/late-generation-notify'
+import { PiRuntimeClient } from './pi-runtime/pi-runtime.client'
 import { GenerationRecoveryService } from './generation-recovery/generation-recovery.service'
 import { PLATFORM_CHANNEL_ID, ProviderService } from '../provider/provider.service'
 // B2 S2-1e：模型能力判定/audioKind 派生切 DB 目录缓存（DB 是唯一真源）——
@@ -1808,6 +1815,30 @@ export class AgentCanvasToolsService {
     return { actions }
   }
 
+  /**
+   * P1-B job 化（spec 2026-11-01-p1b-generation-job-design §4.2）：结算点直发通报。
+   * 生成终态落库后立即扫一轮 late-generation-notify（回看窗 60s 覆盖刚落终态的本条
+   * 与同期记录；agentTurnNotified durable 去重先到先得，与 reaper 巡检零重复）——
+   * reaper 5min 巡检自此降为兜底（直发失败/未启用时接手）。
+   * fail-soft：任何异常不得污染结算链路（与 persist 同纪律）。
+   */
+  private async notifyTerminalNow(): Promise<void> {
+    if (!piLateNotifyEnabled()) return
+    try {
+      const client = new PiRuntimeClient({ baseUrl: process.env.PI_RUNTIME_URL!.trim() })
+      await notifyLateGenerationTerminals(
+        this.prisma as unknown as LateNotifyPrisma,
+        client,
+        this.logger,
+        { lookbackMs: 60_000, batch: 10 },
+      )
+    } catch (err) {
+      this.logger.warn(
+        `[notify-terminal-now] 直发失败（reaper 兜底重扫）: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+  }
+
   async startImageGeneration(input: {
     sessionId: string
     userId: string
@@ -1994,6 +2025,7 @@ export class AgentCanvasToolsService {
       ]
       await this.persist(input.sessionId, finishActions)
       allActions.push(...finishActions)
+      await this.notifyTerminalNow()
 
       return {
         url,
@@ -2014,6 +2046,7 @@ export class AgentCanvasToolsService {
       ]
       await this.persist(input.sessionId, errorActions)
       allActions.push(...errorActions)
+      await this.notifyTerminalNow()
       return { status: 'error', generationRecordId: recordId, actions: allActions }
     }
   }
@@ -2053,6 +2086,7 @@ export class AgentCanvasToolsService {
         },
       ]
       await this.persist(input.sessionId, errorActions)
+      await this.notifyTerminalNow()
       return { status: 'error', actions: errorActions }
     }
   }
@@ -2153,6 +2187,7 @@ export class AgentCanvasToolsService {
         },
       ]
       await this.persist(input.sessionId, errorActions)
+      await this.notifyTerminalNow()
       return { status: 'error', actions: errorActions }
     }
   }
@@ -2221,6 +2256,7 @@ export class AgentCanvasToolsService {
       ]
       await this.persist(input.sessionId, finishActions)
       allActions.push(...finishActions)
+      await this.notifyTerminalNow()
       return { status: 'completed', generationRecordId: recordId, actions: allActions }
     } catch (err) {
       if (err instanceof ForbiddenException || err instanceof NotFoundException) throw err
@@ -2236,8 +2272,80 @@ export class AgentCanvasToolsService {
       ]
       await this.persist(input.sessionId, errorActions)
       allActions.push(...errorActions)
+      await this.notifyTerminalNow()
       return { status: 'error', actions: allActions }
     }
+  }
+
+  /**
+   * P1-B job 化（§4.1）：start-text/start-audio —— job 化入口。
+   * 幂等校验（活跃 record 直返，P0-1 同形）+ detached 跑原 run-* 管线（终态落库 +
+   * notifyTerminalNow 在管线内），**即返**不再持 HTTP 至终态。
+   * run-text/run-audio 保留为兼容端点（同步持至终态语义不变，run_* 工具已改走 start-*）。
+   */
+  async startTextGeneration(input: {
+    sessionId: string
+    userId: string
+    nodeId: string
+    nodeContext?: { selectionDigest?: string; canvasSummary?: string }
+  }): Promise<{ status: string; generationRecordId?: string; actions: CanvasAction[]; deduped?: boolean; async?: boolean }> {
+    const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
+    const node = canvas.nodes.find((n) => n.id === input.nodeId)
+    if (!node) throw new NotFoundException('节点不存在')
+    const prompt = String(node.data?.prompt ?? node.data?.content ?? '').trim()
+    if (!prompt) throw new NotFoundException('节点缺少 prompt')
+    // P0-1 幂等同形：已有活跃启动直接返回现有 record
+    if (
+      node.data?.status === 'generating' &&
+      typeof node.data?.generationRecordId === 'string' &&
+      node.data.generationRecordId
+    ) {
+      return {
+        status: 'generating',
+        generationRecordId: node.data.generationRecordId,
+        actions: [],
+        deduped: true,
+      }
+    }
+    // detached：管线在后台跑（含终态 persist 与 notifyTerminalNow）；本方法即返。
+    // record 在管线内由 studio.generateText 创建 ⇒ job handle 无 recordId（容忍面：
+    // runtime 工具即返不依赖 handle；前端经 persist 广播/对账收敛）。
+    void this.runTextGeneration(input).catch(() => undefined)
+    return { status: 'generating', actions: [], async: true }
+  }
+
+  async startAudioGeneration(input: {
+    sessionId: string
+    userId: string
+    nodeId: string
+    kind?: string
+    voice?: string
+    emotion?: string
+    roles?: Array<{ role: string; voice: string }>
+    scripts?: Array<{ role?: string; text: string }>
+    instruction?: string
+    caption?: string
+    lyrics?: string
+    instrumental?: boolean
+  }): Promise<{ status: string; generationRecordId?: string; actions: CanvasAction[]; deduped?: boolean; async?: boolean }> {
+    const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
+    const node = canvas.nodes.find((n) => n.id === input.nodeId)
+    if (!node) throw new NotFoundException('节点不存在')
+    if (
+      node.data?.status === 'generating' &&
+      typeof node.data?.generationRecordId === 'string' &&
+      node.data.generationRecordId
+    ) {
+      return {
+        status: 'generating',
+        generationRecordId: node.data.generationRecordId,
+        actions: [],
+        deduped: true,
+      }
+    }
+    // detached：同 startTextGeneration；内联参数透传语义与 run-audio 逐字节一致
+    void this.runAudioGeneration(input).catch(() => undefined)
+    return { status: 'generating', actions: [], async: true }
   }
 
   // 被删历史（2026-10-17 prompt 节点下线，PR feat/prompt-node-decommission）：
@@ -2390,6 +2498,7 @@ export class AgentCanvasToolsService {
       ]
       await this.persist(input.sessionId, finishActions)
       allActions.push(...finishActions)
+      await this.notifyTerminalNow()
       return { url, status: 'completed', generationRecordId: recordId, actions: allActions, used: usedAudio }
     } catch (err) {
       if (err instanceof ForbiddenException || err instanceof NotFoundException) throw err
@@ -2405,6 +2514,7 @@ export class AgentCanvasToolsService {
       ]
       await this.persist(input.sessionId, errorActions)
       allActions.push(...errorActions)
+      await this.notifyTerminalNow()
       return { status: 'error', actions: allActions }
     }
   }
@@ -2520,6 +2630,7 @@ export class AgentCanvasToolsService {
         },
       })
       await this.persist(input.sessionId, actions)
+      await this.notifyTerminalNow()
     }
     return {
       status: 'cancelled',

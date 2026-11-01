@@ -455,9 +455,8 @@ describe("canvas-write: 全部写工具都推 details.actions（实时通道回�
 import { PendingToolRegistry } from "../pending-registry.js";
 import { NestToolError } from "./nest-client.js";
 
-// 2026-10-18 回合挂住等终态：确认路径的**旧**用例没有终态等待预算注入 ⇒ 文件级给
-// 极小上限，避免旧用例挂进默认 13min 等待（新用例用 opts.genTerminalWaitMs 显式注入）。
-process.env.PI_RUNTIME_GEN_TERMINAL_WAIT_MS = "30";
+// P1-B job 化（2026-11-01）：终态等待臂退役，PI_RUNTIME_GEN_TERMINAL_WAIT_MS 环境变量
+// 一并退役——确认成功后工具即返 job handle，不再有任何挂轮期需要预算注入。
 
 type PollRead = string | { status: string; generationRecordId?: string; generationStartedAt?: string; url?: string; errorMessage?: string; content?: string };
 
@@ -479,8 +478,10 @@ function fakeNestClient(
 		startThrows?: boolean;
 		/** P0-1：run-text-generation 的返回（默认 {ok:true}）。 */
 		runTextResult?: Record<string, unknown>;
-		/** B2：start-image-generation 的返回（缺省 {ok:true} ⇒ 无 recordId ⇒ 旧只读轮询路径）。 */
+		/** B1：start-image-generation 的返回（缺省 {ok:true} ⇒ 无 recordId ⇒ 即返无 handle）。 */
 		startResult?: Record<string, unknown>;
+		/** B1：start-text/start-audio-generation 的返回（job 化后 text/audio 改走 start-*）。 */
+		startTextResult?: Record<string, unknown>;
 		/** B2：wait-image-generation 的返回。 */
 		waitImageResult?: Record<string, unknown>;
 		/** B2：wait-image-generation 抛错（模拟服务端等待失败 → 降级节点轮询）。 */
@@ -497,14 +498,14 @@ function fakeNestClient(
 		posts,
 		post: async (path: string, body?: unknown, _opts?: { signal?: AbortSignal }) => {
 			posts.push({ path, body });
-			if (opts.startThrows && /\/agent\/internal\/(start-(image|video)-generation|run-(text|audio)-generation)$/.test(path)) {
+			if (opts.startThrows && /\/agent\/internal\/(start-(image|video|text|audio)-generation|run-(text|audio)-generation)$/.test(path)) {
 				throw new NestToolError("nest http 500: boom", "http", 500);
 			}
 			if (path === "/agent/internal/propose-generation") {
 				return { ok: true, ...(opts.proposeSummary ? { summary: opts.proposeSummary } : {}) };
 			}
-			if (path === "/agent/internal/run-text-generation" && opts.runTextResult) {
-				return opts.runTextResult;
+			if (path === "/agent/internal/start-text-generation" && opts.startTextResult) {
+				return opts.startTextResult;
 			}
 			if (path === "/agent/internal/start-image-generation" && opts.startResult) {
 				return opts.startResult;
@@ -623,9 +624,8 @@ describe("propose_generation 阻塞确认（B-2）", () => {
 		assert.equal(details.confirmed, true);
 		assert.equal(details.reason, "generating");
 		const text = String((result.content as Array<{ text: string }>)[0].text);
-		// 2026-10-18 回合挂住等终态：确认后进入终态等待，轮询序列耗尽 clamp 在 generating
-		// ⇒ cap 超限收尾，文案不再有「已在画布侧启动生成」的即时返回措辞。
-		assert.match(text, /生成仍在进行/);
+		// P1-B job 化：即返 job handle（不再有 cap 超限收尾）；防抢跑措辞保留
+		assert.match(text, /生成已启动/);
 		assert.match(text, /不要对该节点调用 run_\*/);
 	});
 
@@ -643,30 +643,27 @@ describe("propose_generation 阻塞确认（B-2）", () => {
 		reg.answer("s1", "tc1", {});
 		const result = await pending;
 		assert.equal((result.details as { confirmed?: boolean }).confirmed, true);
+		const details = result.details as { started?: boolean; generation?: { status?: string; recordId?: string } };
 		const text = String((result.content as Array<{ text: string }>)[0].text);
-		// 2026-10-18 终态等待：answered 后无生成证据 ⇒ cap 超限 timeout 收尾（不再是即时「已启动」）
-		assert.match(text, /生成仍在进行/);
+		// P1-B job 化：即返 job handle（不再有 cap 超限等待期）
+		assert.match(text, /生成已启动/);
+		assert.equal(details.started, true);
+		assert.equal(details.generation?.status, "started");
 		assert.equal(reg.hasPending("s1"), false);
 	});
 
-	// ── B2（2026-10-31 蝌蚪回合实证 cmvvaw8ar000moe01fdolrugb）─────────────────
-	// 旧只读轮询 get-node 的盲区：节点状态被 stale 全量 PUT 抹回 draft（#625 CAS 未合）
-	// ⇒ fresh/sawGenerating 永不成立 ⇒ 盲等 cap 超时，record 已完成也无人把节点写回
-	// 终态（小蝌蚪产物搁浅 13 分钟）。修复：P0-1 image/video 确认臂改走 Nest
-	// wait-image/video-generation（轮询 record + 服务端写回节点终态，run_* 同语义）。
+	// ── B1 job 化（spec 2026-11-01-p1b-generation-job-design §4.1）────────────────
+	// 确认成功后 start-* 即返 job handle，回合收口；终态由 Nest 写 SSOT + 直发 notify。
+	// wait-* 挂住、只读降级轮询、终态 node_status 广播全部退役。
 
-	it("B2 回归：确认后 start 返回 recordId ⇒ 走 wait-image-generation（record 轮询+服务端写回），completed 带 url ⇒ generation=completed 且 node_status generating/done", async () => {
+	it("B1 job 化：确认后 start 返回 recordId ⇒ 即返 job handle，绝不调 wait-*", async () => {
 		const reg = new PendingToolRegistry();
-		const nodeStatuses: Array<{ status?: string; url?: string }> = [];
 		const client = fakeNestClient(["pending_confirm"], {
 			startResult: { generationRecordId: "rec-new" },
-			waitImageResult: { status: "completed", url: "https://x/out.png", generationRecordId: "rec-new" },
 		});
 		const [propose] = createCanvasWriteTools(client, {
 			registry: reg,
 			pollMs: 5,
-			genTerminalWaitMs: 100,
-			onNodeStatus: (_sid, data) => nodeStatuses.push(data),
 		}).filter((t) => t.name === "propose_generation");
 		const pending = run(propose, { node_id: "n1" });
 		await waitFor(() => reg.hasPending("s1"));
@@ -674,61 +671,45 @@ describe("propose_generation 阻塞确认（B-2）", () => {
 		const result = await pending;
 		const details = result.details as {
 			confirmed?: boolean;
-			generation?: { status?: string; url?: string };
+			started?: boolean;
+			generation?: { status?: string; recordId?: string };
 		};
 		assert.equal(details.confirmed, true);
-		assert.equal(details.generation?.status, "completed");
-		assert.equal(details.generation?.url, "https://x/out.png");
-		const waitPost = client.posts.find((p) => p.path === "/agent/internal/wait-image-generation");
-		assert.ok(waitPost, "must POST wait-image-generation");
-		assert.equal((waitPost.body as { generationRecordId?: string }).generationRecordId, "rec-new");
-		const statuses = nodeStatuses.map((s) => s.status);
-		assert.ok(statuses.includes("generating"), "起手即 generating（run_* 同款）");
-		assert.ok(statuses.includes("done"), "终态广播 done");
+		assert.equal(details.started, true);
+		assert.equal(details.generation?.status, "started");
+		assert.equal(details.generation?.recordId, "rec-new");
+		assert.equal(
+			client.posts.some((p) => p.path === "/agent/internal/wait-image-generation"),
+			false,
+			"job 化后绝不打 wait-*（等待臂已退役）",
+		);
 		const text = String((result.content as Array<{ text: string }>)[0].text);
-		assert.match(text, /生成已完成/);
-		assert.match(text, /https:\/\/x\/out\.png/);
+		assert.match(text, /生成已启动/);
+		assert.match(text, /generationRecordId/);
+		assert.doesNotMatch(text, /生成已完成/);
 	});
 
-	it("B2 回归：wait-image-generation 异常 ⇒ 降级既有只读节点轮询（cap 超限 timeout 收尾，工具不炸）", async () => {
+	it("B1 job 化：start 未回传 recordId ⇒ 仍即返（绝不降级只读轮询）", async () => {
 		const reg = new PendingToolRegistry();
-		const client = fakeNestClient(["pending_confirm", "generating"], {
-			startResult: { generationRecordId: "rec-new" },
-			waitImageThrows: true,
-		});
+		const client = fakeNestClient(["pending_confirm"]);
 		const [propose] = createCanvasWriteTools(client, {
 			registry: reg,
 			pollMs: 5,
-			genTerminalWaitMs: 30,
 		}).filter((t) => t.name === "propose_generation");
 		const pending = run(propose, { node_id: "n1" });
 		await waitFor(() => reg.hasPending("s1"));
 		reg.answer("s1", "tc1", {});
 		const result = await pending;
-		const details = result.details as { confirmed?: boolean; generation?: { status?: string } };
+		const details = result.details as { confirmed?: boolean; started?: boolean; generation?: { status?: string } };
 		assert.equal(details.confirmed, true);
-		assert.equal(details.generation?.status, "timeout");
-		// 降级轮询确实发生（get-node 消耗了快照之外的读）
-		assert.ok(client.stats.getNodeCalls > 1);
-	});
-
-	it("B2 回归：start 未回传 recordId ⇒ 保持旧只读节点轮询路径（行为逐字节保留）", async () => {
-		const reg = new PendingToolRegistry();
-		const client = fakeNestClient(["pending_confirm", "generating"]);
-		const [propose] = createCanvasWriteTools(client, {
-			registry: reg,
-			pollMs: 5,
-			genTerminalWaitMs: 30,
-		}).filter((t) => t.name === "propose_generation");
-		const result = await run(propose, { node_id: "n1" });
-		const details = result.details as { confirmed?: boolean; generation?: { status?: string } };
-		assert.equal(details.confirmed, true);
-		assert.equal(details.generation?.status, "timeout");
-		// 未打 wait-* 端点（旧路径）
+		assert.equal(details.started, true);
+		assert.equal(details.generation?.status, "started");
 		assert.equal(
 			client.posts.some((p) => p.path === "/agent/internal/wait-image-generation"),
 			false,
 		);
+		// 确认臂的快照 get-node 仍发生（正证据确认路径），但无后续轮询读
+		assert.ok(client.stats.getNodeCalls >= 1);
 	});
 
 	it("显式拒绝 + note（§17.8 批注流锚带回）→ confirmed=false，文案含批注意见与防抢跑提示", async () => {
@@ -764,168 +745,33 @@ describe("propose_generation 阻塞确认（B-2）", () => {
 		assert.doesNotMatch(text, /批注模式/);
 	});
 
-	// ── 生成终态等待登记（2026-10-18 上游对齐）─────────────────────────────
+	// ── 等待登记/node_status 终态广播（2026-10-18 上游对齐）已随等待臂退役（B1）────
 
-	it("终态等待期登记节点：onRegisterGenerationWait 确认后注册、等待收尾必解绑（异常收尾也解）", async () => {
+	it("B1 job 化：确认后零 node_status 广播、零等待登记（终态面收归 Nest）", async () => {
 		const reg = new PendingToolRegistry();
 		const calls: Array<{ sid: string; node: string; phase: string }> = [];
-		const client = fakeNestClient(["generating"]);
-		const [propose] = createCanvasWriteTools(client, {
-			registry: reg,
-			pollMs: 2,
-			genTerminalWaitMs: 25,
-			onRegisterGenerationWait: (sid, node) => {
-				calls.push({ sid, node, phase: "register" });
-				return () => calls.push({ sid, node, phase: "unregister" });
-			},
-		}).filter((t) => t.name === "propose_generation");
-		const result = await run(propose, { node_id: "n1" });
-		assert.equal((result.details as { confirmed?: boolean }).confirmed, true);
-		assert.deepEqual(calls, [
-			{ sid: "s1", node: "n1", phase: "register" },
-			{ sid: "s1", node: "n1", phase: "unregister" },
-		]);
-	});
-
-	// ── 回合挂住等终态（2026-10-18，上游对齐）─────────────────────────────
-
-	it("终态等待：generating→completed+url ⇒ 广播 node_status generating/done，结果带 generation，文案报完成", async () => {
-		const reg = new PendingToolRegistry();
-		const events: Array<{ status: string; url?: string; error?: string }> = [];
-		const client = fakeNestClient(
-			[
-				"generating", // 确认臂：正证据 → confirmed
-				"generating", // 终态等待首拍：广播 generating
-				{ status: "completed", url: "https://x/a.png", generationRecordId: "rec-new" }, // 终态
-			],
-			{ snapshotRecordId: "rec-old" },
-		);
-		const [propose] = createCanvasWriteTools(client, {
-			registry: reg,
-			pollMs: 2,
-			genTerminalWaitMs: 2_000,
-			onNodeStatus: (_sid, d) => events.push({ status: d.status, url: d.url, error: d.error }),
-		}).filter((t) => t.name === "propose_generation");
-		const result = await run(propose, { node_id: "n1" });
-		const details = result.details as { confirmed?: boolean; generation?: { status: string; url?: string } };
-		assert.equal(details.confirmed, true);
-		assert.deepEqual(events, [
-			{ status: "generating", url: undefined, error: undefined },
-			{ status: "done", url: "https://x/a.png", error: undefined },
-		]);
-		assert.equal(details.generation?.status, "completed");
-		assert.equal(details.generation?.url, "https://x/a.png");
-		const text = String((result.content as Array<{ text: string }>)[0].text);
-		assert.match(text, /生成已完成/);
-	});
-
-	it("超限收尾：持续 generating 至 cap ⇒ generation.status=timeout，只广播一次 generating，不伪造终态", async () => {
-		const reg = new PendingToolRegistry();
-		const events: Array<{ status: string }> = [];
-		const client = fakeNestClient(["generating"]);
-		const [propose] = createCanvasWriteTools(client, {
-			registry: reg,
-			pollMs: 2,
-			genTerminalWaitMs: 25,
-			onNodeStatus: (_sid, d) => events.push({ status: d.status }),
-		}).filter((t) => t.name === "propose_generation");
-		const result = await run(propose, { node_id: "n1" });
-		const details = result.details as { confirmed?: boolean; generation?: { status: string } };
-		assert.equal(details.confirmed, true);
-		assert.equal(details.generation?.status, "timeout");
-		assert.deepEqual(events, [{ status: "generating" }]);
-		const text = String((result.content as Array<{ text: string }>)[0].text);
-		assert.match(text, /生成仍在进行/);
-		assert.match(text, /不要声称已完成/);
-	});
-
-	it("进度 ticker 接线：generating 等待期经 onUpdate 每拍全量快照 + checkpoint（feature ① 画布链路活性证据）", async () => {
-		const reg = new PendingToolRegistry();
-		const updates: Array<{ details: any; checkpoint: boolean }> = [];
-		const client = fakeNestClient(["generating"]);
-		const [propose] = createCanvasWriteTools(client, {
-			registry: reg,
-			pollMs: 2,
-			genTerminalWaitMs: 120,
-			tickerIntervalMs: 5,
-		}).filter((t) => t.name === "propose_generation");
-		// 不经由 run()（其 onUpdate 为 no-op）；直接喂 recording onUpdate
-		const result = await propose.execute!(
-			"tc1",
-			{ node_id: "n1" },
-			(partial: any, meta: any) => updates.push({ details: partial.details, checkpoint: meta?.checkpoint === true }),
-			CTX,
-			{} as never,
-			undefined as never,
-		);
-		const details = result.details as { confirmed?: boolean; generation?: { status: string } };
-		assert.equal(details.confirmed, true);
-		assert.equal(details.generation?.status, "timeout"); // 全程 generating 至 cap
-		// start 成功即有 actions 快照（2026-10-31 live 上画布）：本用例 start 默认 {ok:true}
-		// ⇒ 现造 generating（无 recordId）；ticker 拍按 details.generating 判别，互不混淆。
-		const actionSnaps = updates.filter((u) => Array.isArray(u.details.actions));
-		assert.equal(actionSnaps.length, 1, "start 成功后恰发一条 actions 快照");
-		assert.deepEqual(actionSnaps[0].details.actions, [
-			{ type: "update_node", payload: { id: "n1", data: { status: "generating" } } },
-		]);
-		// ticker 至少发射一拍，且每拍均为 generating 全量快照 + checkpoint
-		const beats = updates.filter((u) => u.details.generating === true);
-		assert.ok(beats.length >= 1, `进度 ticker 应至少发射一拍，实际 ${beats.length}`);
-		for (const u of beats) {
-			assert.equal(u.checkpoint, true);
-		}
-		// 快照携带 nodeId 路由键与 elapsedSec
-		const first = beats[0].details as { nodeId?: string; elapsedSec?: number };
-		assert.equal(first.nodeId, "n1");
-		assert.ok(typeof first.elapsedSec === "number" && first.elapsedSec >= 0);
-	});
-
-	it("failed 终态：errorMessage 透传广播 failed，文案禁称已出图", async () => {
-		const reg = new PendingToolRegistry();
-		const events: Array<{ status: string; error?: string }> = [];
-		const client = fakeNestClient(
-			[{ status: "failed", errorMessage: "upstream 500", generationRecordId: "rec-new" }],
-			{ snapshotRecordId: "rec-old" },
-		);
-		const [propose] = createCanvasWriteTools(client, {
-			registry: reg,
-			pollMs: 2,
-			genTerminalWaitMs: 2_000,
-			onNodeStatus: (_sid, d) => events.push({ status: d.status, error: d.error }),
-		}).filter((t) => t.name === "propose_generation");
-		const result = await run(propose, { node_id: "n1" });
-		const details = result.details as { confirmed?: boolean; generation?: { status: string; error?: string } };
-		assert.equal(details.confirmed, true);
-		assert.deepEqual(events, [{ status: "failed", error: "upstream 500" }]);
-		assert.equal(details.generation?.status, "failed");
-		assert.equal(details.generation?.error, "upstream 500");
-		const text = String((result.content as Array<{ text: string }>)[0].text);
-		assert.match(text, /生成失败/);
-		assert.match(text, /不要声称已出图/);
-	});
-
-	it("旧终态残留：completed 无新生成证据 ⇒ 绝不下发 done（2026-10-12 事故形态在终态等待期的同构回归锁）", async () => {
-		const reg = new PendingToolRegistry();
-		const events: Array<{ status: string }> = [];
-		// confirmed 经 answered 收口（无新生成证据路径），终态等待读到 stale completed
-		const client = fakeNestClient([{ status: "completed", generationRecordId: "rec-old" }], {
-			snapshotRecordId: "rec-old",
+		const nodeStatuses: Array<Record<string, unknown>> = [];
+		const client = fakeNestClient(["generating"], {
+			startResult: { generationRecordId: "rec-new" },
 		});
 		const [propose] = createCanvasWriteTools(client, {
 			registry: reg,
 			pollMs: 2,
-			genTerminalWaitMs: 25,
-			onNodeStatus: (_sid, d) => events.push({ status: d.status }),
-		}).filter((t) => t.name === "propose_generation");
+			onNodeStatus: (_sid: string, d: { status?: string }) => nodeStatuses.push(d),
+			onRegisterGenerationWait: (sid: string, node: string) => {
+				calls.push({ sid, node, phase: "register" });
+				return () => calls.push({ sid, node, phase: "unregister" });
+			},
+		} as never).filter((t) => t.name === "propose_generation");
 		const pending = run(propose, { node_id: "n1" });
 		await waitFor(() => reg.hasPending("s1"));
 		reg.answer("s1", "tc1", {});
 		const result = await pending;
-		assert.equal((result.details as { confirmed?: boolean }).confirmed, true);
-		assert.deepEqual(events, [], "stale completed 无正据 ⇒ 不广播 done");
-		const details = result.details as { generation?: { status: string } };
-		assert.equal(details.generation?.status, "timeout");
+		assert.equal((result.details as { started?: boolean }).started, true);
+		assert.deepEqual(calls, [], "等待登记面已退役，绝不再注册");
+		assert.deepEqual(nodeStatuses, [], "终态等待期 node_status 广播已退役");
 	});
+
 
 	it("取消路径：连续两次轮询停 draft（用户 clear-propose）→ confirmed=false reason=rejected", async () => {
 		const reg = new PendingToolRegistry();
@@ -1295,24 +1141,29 @@ describe("propose_generation 确认即启动（P0-1）", () => {
 		);
 	});
 
-	it("text 节点：run-text-generation 持至终态 → 直接采用，不再轮询等待", async () => {
+	it("text 节点：改走 start-text-generation 即返（run-* 同步持住退役）", async () => {
 		const reg = new PendingToolRegistry();
 		const client = fakeNestClient(["pending_confirm"], {
 			proposeSummary: { type: "text" },
-			runTextResult: { status: "completed" },
+			startTextResult: { generationRecordId: "rec-t" },
 		});
-		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5, genTerminalWaitMs: 40 }).filter(
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
 			(t) => t.name === "propose_generation",
 		);
 		const pending = run(propose, { node_id: "n1" });
 		await waitFor(() => reg.hasPending("s1"));
 		reg.answer("s1", "tc1", {});
 		const result = await pending;
-		const details = result.details as { generation?: { status: string } };
-		assert.equal(details.generation?.status, "completed");
-		assert.ok(client.posts.some((p) => p.path === "/agent/internal/run-text-generation"));
-		const text = String((result.content as Array<{ text: string }>)[0].text);
-		assert.match(text, /生成已完成/);
+		const details = result.details as { started?: boolean; generation?: { status?: string; recordId?: string } };
+		assert.equal(details.started, true);
+		assert.equal(details.generation?.status, "started");
+		assert.equal(details.generation?.recordId, "rec-t");
+		assert.ok(client.posts.some((p) => p.path === "/agent/internal/start-text-generation"));
+		assert.equal(
+			client.posts.some((p) => p.path === "/agent/internal/run-text-generation"),
+			false,
+			"run-text-generation（同步持住）不再被 propose 调用",
+		);
 	});
 
 	it("启动失败（start 抛 500）→ fail 信号 + 明说未启动，绝不装「生成中」", async () => {
@@ -1341,87 +1192,20 @@ describe("propose_generation 确认即启动（P0-1）", () => {
 		assert.doesNotMatch(text, /生成仍在进行/);
 	});
 
-	// ── 终态动作广播源（2026-10-31 黑猩猩/奶牛生产实证回归锁）────────────────
+	// ── stale 动作免疫锁（2026-10-31 黑猩猩/奶牛生产实证回归锁，B1 保留）────────
 	// 事故形态：final result 透传提议时刻 base.actions[pending_confirm]，生成完成后
-	// 广播把画布节点重新打回待确认 ⇒ 确认/取消胶囊永久残留；且 completed+url 从未
-	// 广播 ⇒ 产物要手动刷新才上画布。锁：details.actions 只准携带终态时刻的新鲜动作。
-	it("B2 wait 终态：actions 透传 Nest finishActions（completed+url），绝不重放 pending_confirm", async () => {
+	// 广播把画布节点重新打回待确认 ⇒ 确认/取消胶囊永久残留。B1 后 details.actions
+	// 只携带 start 时刻的 generating 快照（终态动作写者收归 Nest）。
+	it("job 化：details.actions 只携带 start 时刻 generating 快照，绝不重放 pending_confirm", async () => {
 		const reg = new PendingToolRegistry();
-		const finish = {
+		const generating = {
 			type: "update_node",
-			payload: { id: "n1", data: { status: "completed", generationRecordId: "rec1", url: "https://x/a.png" } },
+			payload: { id: "n1", data: { status: "generating", generationRecordId: "rec1" } },
 		};
 		const client = fakeNestClient(["pending_confirm"], {
-			startResult: { generationRecordId: "rec1" },
-			waitImageResult: { status: "completed", url: "https://x/a.png", generationRecordId: "rec1", actions: [finish] },
+			startResult: { generationRecordId: "rec1", actions: [generating] },
 		});
 		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
-			(t) => t.name === "propose_generation",
-		);
-		const pending = run(propose, { node_id: "n1" });
-		await waitFor(() => reg.hasPending("s1"));
-		reg.answer("s1", "tc1", {});
-		const result = await pending;
-		const details = result.details as { actions?: Array<Record<string, unknown>>; generation?: { status: string } };
-		assert.equal(details.generation?.status, "completed");
-		assert.deepEqual(details.actions, [finish]);
-		assert.ok(
-			!JSON.stringify(details.actions).includes("pending_confirm"),
-			"终态广播绝不允许携带 pending_confirm（胶囊残留根治锁）",
-		);
-	});
-
-	it("B2 wait 终态但 Nest 缺 actions → 按 genOutcome 现造 completed+url+recordId", async () => {
-		const reg = new PendingToolRegistry();
-		const client = fakeNestClient(["pending_confirm"], {
-			startResult: { generationRecordId: "rec1" },
-			waitImageResult: { status: "completed", url: "https://x/a.png" },
-		});
-		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
-			(t) => t.name === "propose_generation",
-		);
-		const pending = run(propose, { node_id: "n1" });
-		await waitFor(() => reg.hasPending("s1"));
-		reg.answer("s1", "tc1", {});
-		const result = await pending;
-		const details = result.details as { actions?: Array<{ type: string; payload: { id: string; data: Record<string, unknown> } }> };
-		assert.deepEqual(details.actions, [
-			{
-				type: "update_node",
-				payload: { id: "n1", data: { status: "completed", url: "https://x/a.png", generationRecordId: "rec1" } },
-			},
-		]);
-	});
-
-	it("wait 非终态（fallback_pending → timeout）→ 空 actions（绝不重放提议时刻动作）", async () => {
-		const reg = new PendingToolRegistry();
-		const client = fakeNestClient(["pending_confirm"], {
-			startResult: { generationRecordId: "rec1" },
-			waitImageResult: { status: "fallback_pending" },
-		});
-		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
-			(t) => t.name === "propose_generation",
-		);
-		const pending = run(propose, { node_id: "n1" });
-		await waitFor(() => reg.hasPending("s1"));
-		reg.answer("s1", "tc1", {});
-		const result = await pending;
-		const details = result.details as { actions?: unknown[]; generation?: { status: string } };
-		assert.equal(details.generation?.status, "timeout");
-		assert.deepEqual(details.actions, []);
-	});
-
-	it("text 节点 run-text 终态：Nest 自带 actions（含 content）原样透传", async () => {
-		const reg = new PendingToolRegistry();
-		const finish = {
-			type: "update_node",
-			payload: { id: "n1", data: { status: "completed", content: "你好", generationRecordId: "recT" } },
-		};
-		const client = fakeNestClient(["pending_confirm"], {
-			proposeSummary: { type: "text" },
-			runTextResult: { status: "completed", generationRecordId: "recT", actions: [finish] },
-		});
-		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5, genTerminalWaitMs: 40 }).filter(
 			(t) => t.name === "propose_generation",
 		);
 		const pending = run(propose, { node_id: "n1" });
@@ -1429,7 +1213,11 @@ describe("propose_generation 确认即启动（P0-1）", () => {
 		reg.answer("s1", "tc1", {});
 		const result = await pending;
 		const details = result.details as { actions?: Array<Record<string, unknown>> };
-		assert.deepEqual(details.actions, [finish]);
+		assert.deepEqual(details.actions, [generating]);
+		assert.ok(
+			!JSON.stringify(details.actions).includes("pending_confirm"),
+			"广播绝不允许携带 pending_confirm（胶囊残留根治锁）",
+		);
 	});
 });
 

@@ -1338,6 +1338,20 @@ export class AgentCanvasToolsController {
     return { code: 0, message: 'ok', data }
   }
 
+  // P1-B job 化（spec 2026-11-01-p1b-generation-job-design §4.1）：job 化入口——
+  // 即返不持 HTTP；管线 detached 在后台跑（终态落库 + 直发通报）。run-* 保留为兼容端点。
+  @Post('start-text-generation')
+  async startTextGeneration(@Body() dto: RunTextGenerationDto) {
+    const data = await this.tools.startTextGeneration(dto)
+    return { code: 0, message: 'ok', data }
+  }
+
+  @Post('start-audio-generation')
+  async startAudioGeneration(@Body() dto: RunAudioGenerationDto) {
+    const data = await this.tools.startAudioGeneration(dto)
+    return { code: 0, message: 'ok', data }
+  }
+
   @Post('run-vision-qa')
   async runVisionQa(@Body() dto: RunVisionQaDto) {
     const data = await this.tools.runVisionQa(dto)

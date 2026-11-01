@@ -52,11 +52,9 @@ export function buildCanvasWriteTools(
 		onSidebarRefBind?: (outcome: "ok" | "invalid_params" | "upstream_error" | "short_circuit") => void;
 		onProposeMissingRefs?: () => void;
 		onNestZodReject?: (endpoint: string) => void;
-		onNodeStatus?: (sessionId: string, data: import("../session-manager.js").NodeStatusData) => void;
-		onRegisterGenerationWait?: (sessionId: string, nodeId: string) => () => void;
-		genTerminalWaitMs?: number;
 	},
 ): LnkpiTool[] {
+	// P1-B job 化：onNodeStatus/onRegisterGenerationWait/genTerminalWaitMs 随等待臂退役
 	return createCanvasWriteTools(client, { registry, ...hooks });
 }
 
@@ -102,14 +100,9 @@ export function buildCanvasGroupTools(client?: NestClient): LnkpiTool[] {
  * B-5/B-3 批次：5 个 run_* 生成工具（tier=gen）+ cancel_generation（tier=lifecycle）。
  * HITL 由 before_tool Gate 强制（generation-gate.ts），工具本身不含门禁逻辑。
  */
-export function buildGenerationTools(
-	client: NestClient,
-	deps?: {
-		onNodeStatus?: (sessionId: string, data: import("../session-manager.js").NodeStatusData) => void;
-		onRegisterGenerationWait?: (sessionId: string, nodeId: string) => () => void;
-	},
-): LnkpiTool[] {
-	return createGenerationTools(client, deps);
+export function buildGenerationTools(client: NestClient): LnkpiTool[] {
+	// P1-B job 化：deps 收缩（等待登记/node_status 广播退役，§4.1）
+	return createGenerationTools(client);
 }
 
 /**
