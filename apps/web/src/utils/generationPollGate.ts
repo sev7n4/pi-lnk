@@ -120,13 +120,3 @@ export function nodeHasUsableOutput(data: unknown): boolean {
   if (typeof d.url === 'string' && d.url) return true
   return false
 }
-
-const MEDIA_TYPE_LABEL: Record<string, string> = {
-  audio: '音频',
-  image: '图片',
-  video: '视频',
-}
-
-  }
-  return `${label}生成完成但没有产物（缺少音频文件地址），请重试`
-}
