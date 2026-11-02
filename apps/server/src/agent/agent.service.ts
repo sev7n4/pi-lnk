@@ -2599,9 +2599,10 @@ export class AgentService implements OnModuleInit {
     // 估算（computeTextTokenCredits）——「≈N 积分（预估）」与「对话回合结算」同源同式，
     // 改价目表两端同时生效。非 token 模型 / 价目表降级时 plan=null，回落 USD 成本预估
     // （那正是结算的 degraded 兜底公式，口径仍一致）。
-    const textQuotePlan = this.pricing
-      ? await this.pricing.prepareTextTokenQuote(userId, billingModelKey)
-      : null
+    const textQuotePlan =
+      this.pricing && typeof this.pricing.prepareTextTokenQuote === 'function'
+        ? await this.pricing.prepareTextTokenQuote(userId, billingModelKey)
+        : null
     const estimateTurnCredits = (totals: {
       inputTokens?: number
       cacheReadTokens?: number
