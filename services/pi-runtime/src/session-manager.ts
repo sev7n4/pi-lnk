@@ -2206,6 +2206,8 @@ export class SessionManager {
 		const entry = this.require(threadKey);
 		const canvasId = entry.canvasSessionId ?? entry.id;
 		if (this.hasGenerationWait(canvasId, data.nodeId)) {
+			// P2 观测（RCA v2 R5）：抑制≠丢失——终态交还等待者回传，但持续走量即信号黑洞探针。
+			this.metrics?.observeNotifyGeneration(false, "tool-wait-active");
 			return { delivered: false, reason: "tool-wait-active" };
 		}
 		const kindLabel = data.kind ?? "生成";
@@ -2218,6 +2220,7 @@ export class SessionManager {
 			"这条生成是在本回合之外落定终态的：请先用画布工具核实节点当前状态，再向用户一句话简报结果；" +
 			"不要重新触发生成，也不要虚构产物内容。";
 		await this.followUp(threadKey, text);
+		this.metrics?.observeNotifyGeneration(true);
 		return { delivered: true };
 	}
 
