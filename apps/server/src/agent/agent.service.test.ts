@@ -235,6 +235,45 @@ describe('AgentService streamConversation', () => {
     })
   })
 
+  it('P0-B 回合围栏：回合外 run 的事件不黏进本流正文、其 agent_end 不提前终止主流', async () => {
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    // 生产实证（2026-11-02 天鹅事故）：黑天鹅的回合外简报轮事件（不同 runId）插进
+    // 蓝天鹅主流 —— 旧行为「turnRunId 取最后非空值 + 任意 agent_end 置 done」导致
+    // 简报文本黏进主流正文落库，且主流被提前掐断。
+    const runEv = (type: Parameters<typeof piEvent>[0], data: unknown, runId: string) =>
+      ({ ...piEvent(type, data), runId }) as ReturnType<typeof piEvent>
+    const pi = stubPiClient([
+      runEv('agent_start', {}, 'run-mine'),
+      runEv('message_update', { event: { type: 'text_delta', delta: '主轮文本' } }, 'run-mine'),
+      // ── 回合外简报轮插队 ──
+      runEv('message_update', { event: { type: 'text_delta', delta: '黑色天鹅图片已生成完成' } }, 'run-brief'),
+      runEv('agent_end', { status: 'completed' }, 'run-brief'),
+      // ── 主流继续（旧代码此处已被 run-brief 的 agent_end 掐断，到不了这里）──
+      runEv('message_update', { event: { type: 'text_delta', delta: '（主轮续）' } }, 'run-mine'),
+      runEv('agent_end', { status: 'completed' }, 'run-mine'),
+    ])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+
+    const events: Array<{ type: string; data?: unknown }> = []
+    for await (const event of service.streamConversation('s1', 'hello', 'u1', 's1:thread-a')) {
+      events.push(event)
+    }
+
+    const text = events
+      .filter((e) => e.type === 'text_delta')
+      .map((e) => (e.data as { text: string }).text)
+      .join('')
+    expect(text).toBe('主轮文本（主轮续）')
+    // 恰一个 done（run-brief 的 agent_end 被围栏跳过）
+    expect(events.filter((e) => e.type === 'done')).toHaveLength(1)
+    // 落库正文零黏连
+    const assistantCall = agentMessageCreate.mock.calls
+      .map((call) => call[0] as { data: { role?: string; content?: string } })
+      .find((arg) => arg?.data?.role === 'assistant')
+    expect(assistantCall?.data.content).toContain('主轮文本')
+    expect(assistantCall?.data.content).not.toContain('黑色天鹅')
+  })
+
   it('returns runtime_unavailable when pi-runtime healthz fails', async () => {
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
     const pi = stubPiClient([], false)
