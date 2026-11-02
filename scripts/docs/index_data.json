@@ -1,14 +1,14 @@
 {
- "total": 426,
+ "total": 434,
  "by_status": {
-  "living": 145,
-  "frozen": 272,
+  "living": 147,
+  "frozen": 278,
   "superseded": 9
  },
  "by_topic": {
-  "other": 91,
-  "canvas-tool": 73,
-  "generation-pipeline": 40,
+  "other": 96,
+  "canvas-tool": 75,
+  "generation-pipeline": 41,
   "canvas-product": 34,
   "agent-ux": 32,
   "image-editor": 30,
@@ -28,7 +28,7 @@
   "2026-08": 79,
   "2026-09": 155,
   "2026-10": 147,
-  "2026-11": 4
+  "2026-11": 12
  },
  "items": [
   {
@@ -1931,6 +1931,15 @@
    "topic": "other"
   },
   {
+   "path": "docs/superpowers/specs/2026-11-01-p1b-generation-job-design.md",
+   "name": "2026-11-01-p1b-generation-job-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "generation-pipeline"
+  },
+  {
    "path": "docs/superpowers/specs/2026-11-01-red-car-disconnect-misreport-duplicate-rootfix-design.md",
    "name": "2026-11-01-red-car-disconnect-misreport-duplicate-rootfix-design.md",
    "month": "2026-11",
@@ -1938,6 +1947,51 @@
    "status": "frozen",
    "reason": "文内标注已实现/已交付",
    "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-02-delivery-card-v1-design.md",
+   "name": "2026-11-02-delivery-card-v1-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-02-p1c-write-path-governance-design.md",
+   "name": "2026-11-02-p1c-write-path-governance-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-02-p1d-approval-tiering-design.md",
+   "name": "2026-11-02-p1d-approval-tiering-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-11 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-02-p1d-state-machine-input.md",
+   "name": "2026-11-02-p1d-state-machine-input.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-02-propose-card-ux-optimization-design.md",
+   "name": "2026-11-02-propose-card-ux-optimization-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
   },
   {
    "path": "docs/superpowers/plans/2026-07-09-neowow-workflow.md",
@@ -3864,6 +3918,24 @@
    "status": "frozen",
    "reason": "文内标注已实现/已交付",
    "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-11-02-delivery-card-v1.md",
+   "name": "2026-11-02-delivery-card-v1.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-11-02-propose-card-ux-optimization.md",
+   "name": "2026-11-02-propose-card-ux-optimization.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
   }
  ]
 }
