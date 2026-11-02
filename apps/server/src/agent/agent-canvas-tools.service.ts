@@ -1197,6 +1197,14 @@ export class AgentCanvasToolsService {
         actions: CanvasAction[]
       }
     | { confirmed: false; reason: 'missing_refs'; message: string }
+    | {
+        /** P1-D（spec 2026-11-02-p1d-approval-tiering-design §3.2）：tier=auto 直达。 */
+        nodeId: string
+        status: 'generating'
+        generationRecordId?: string
+        autoApproved: true
+        actions: CanvasAction[]
+      }
   > {
     const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
     const node = canvas.nodes.find((n) => n.id === input.nodeId)
@@ -1267,6 +1275,37 @@ export class AgentCanvasToolsService {
     }
     if (data.videoSettings && typeof data.videoSettings === 'object') {
       summary.videoSettings = data.videoSettings
+    }
+
+    // P1-D（spec 2026-11-02-p1d-approval-tiering-design §3）：审批分级。
+    // 判定权在服务端 SSOT（agent/客户端不可传入 tier——防自declare 低风险提权）。
+    // v1 白名单机制通用但仅实现 text 通道（成本≈0）：env 配其他介质不生效（保守，
+    // 未来介质 auto 化时在此加对应 start-* 分支）。auto 路径保持「重提即纪元」不变式：
+    // 先落新 epoch（不带 status，节点保持 draft），再直调 start-text 同一函数——
+    // 吃 P0-1 dedup + epoch 断言 + 锚点纪律，零新增幂等键；不产生 pending_confirm
+    // （C0 守卫面零接触）。
+    if (node.type === 'text' && this.isAutoApproveMediaType('text')) {
+      await this.applyOrStage(
+        input.sessionId,
+        [{ type: 'update_node', payload: { id: node.id, data: { proposalEpoch } } }],
+        false,
+      )
+      const start = await this.startTextGeneration({
+        sessionId: input.sessionId,
+        userId: input.userId,
+        nodeId: input.nodeId,
+        proposalEpoch,
+      })
+      this.logger.warn(
+        `[approval_tier_bypassed] sessionId=${input.sessionId} nodeId=${node.id} mediaType=text deduped=${start.deduped ?? false}`,
+      )
+      return {
+        nodeId: node.id,
+        status: 'generating',
+        generationRecordId: start.generationRecordId,
+        autoApproved: true,
+        actions: start.actions,
+      }
     }
 
     const actions: CanvasAction[] = [
@@ -3920,6 +3959,22 @@ export class AgentCanvasToolsService {
       where: { id: sessionId },
       data: { stagedActions: null, stagedAt: null },
     })
+  }
+
+  /**
+   * P1-D（spec 2026-11-02-p1d-approval-tiering-design §3.1/§3.4）：审批分级判定。
+   * 静态规则表：介质类型 ∈ env 白名单 ⇒ auto；否则人工确认。
+   * `GENERATION_AUTO_APPROVE` 逗号分隔介质白名单，缺省 'text'；置空 ⇒ 全人工
+   * （部署级回滚开关）。每次调用现读 env（低频路径），改 env 重启即生效且测试可注入。
+   */
+  private isAutoApproveMediaType(mediaType: string): boolean {
+    const raw = (process.env.GENERATION_AUTO_APPROVE ?? 'text').trim()
+    if (raw === '') return false
+    return raw
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .includes(mediaType)
   }
 
   private async applyOrStage(

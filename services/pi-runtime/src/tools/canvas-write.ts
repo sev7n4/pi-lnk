@@ -439,6 +439,16 @@ export function createCanvasWriteTools(
 							},
 						};
 				}
+				// P1-D（spec 2026-11-02-p1d-approval-tiering-design §3.2）：服务端 auto-approve
+				// 短路——Nest 已判 tier 并直调 start-*（节点已 generating），工具不进阻塞
+				// 等待/轮询；返回形态与 B-5 off 非阻塞路径一致（withWriteSignal）。
+				// 判定严格双条件：autoApproved === true 且 status === 'generating'。
+				const autoApproved = (base ?? null) as { status?: unknown; autoApproved?: unknown } | null;
+				if (autoApproved && autoApproved.autoApproved === true && autoApproved.status === "generating") {
+					// P2 结算归因：auto 也是一次 propose 结算（分母不失真）
+					onProposeOutcome?.("auto_approved", true);
+					return withWriteSignal(base, 1);
+				}
 				// B-5 off（或无 registry）→ 旧行为逐字节保留（spec §8 回退纪律）
 				if (!registry || !askUserBlocking()) {
 					// P2 结算归因：非阻塞路径也是一次 propose 结算（不记会使 outcome 分布的分母失真）

@@ -2791,7 +2791,11 @@ describe('AgentCanvasToolsService', () => {
         nodeId: 'text-1',
         sidebarImageCount: 3,
       })
-      expect(result.status).toBe('pending_confirm')
+      // P1-D（spec 2026-11-02-p1d-approval-tiering-design）：text 是 v1 唯一 auto 介质，
+      // 「不受门禁」的形态从 pending_confirm 变为 auto 直达 generating——门禁检查本身
+      // 只对 image/video 生效，text 连门禁都不进，随后走 auto 分支（epoch+1 → start-text）。
+      expect(result.status).toBe('generating')
+      expect((result as { autoApproved?: boolean }).autoApproved).toBe(true)
     })
   })
 
