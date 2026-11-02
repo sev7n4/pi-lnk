@@ -474,6 +474,8 @@ function fakeNestClient(
 		snapshotStartedAt?: string;
 		/** P0-1：propose-generation 返回的 summary（节点类型派发生成端点用）。 */
 		proposeSummary?: Record<string, unknown>;
+		/** P1-D：propose-generation 的整体返回覆盖（auto-approve 形态）。 */
+		proposeResult?: Record<string, unknown>;
 		/** P0-1：start 与 run 系启动端点抛错（模拟服务端启动失败）。 */
 		startThrows?: boolean;
 		/** P0-1：run-text-generation 的返回（默认 {ok:true}）。 */
@@ -502,7 +504,9 @@ function fakeNestClient(
 				throw new NestToolError("nest http 500: boom", "http", 500);
 			}
 			if (path === "/agent/internal/propose-generation") {
-				return { ok: true, ...(opts.proposeSummary ? { summary: opts.proposeSummary } : {}) };
+				return (
+					opts.proposeResult ?? { ok: true, ...(opts.proposeSummary ? { summary: opts.proposeSummary } : {}) }
+				);
 			}
 			if (path === "/agent/internal/start-text-generation" && opts.startTextResult) {
 				return opts.startTextResult;
@@ -551,6 +555,30 @@ describe("propose_generation 阻塞确认（B-2）", () => {
 			await new Promise((r) => setTimeout(r, 2));
 		}
 	}
+
+	it("P1-D：Nest auto-approve → 工具即返短路（不进阻塞等待/轮询，无 get-node、无 start post）", async () => {
+		const reg = new PendingToolRegistry();
+		const client = fakeNestClient([], {
+			proposeResult: {
+				ok: true,
+				status: "generating",
+				autoApproved: true,
+				generationRecordId: "rec-auto",
+			},
+		});
+		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
+			(t) => t.name === "propose_generation",
+		);
+		const result = await run(propose, { node_id: "n1" });
+		// 即返：只有 propose-generation 一次 post，零轮询读、零 start-* 调用
+		assert.equal(client.posts.length, 1);
+		assert.equal(client.posts[0].path, "/agent/internal/propose-generation");
+		assert.equal(client.stats.getNodeCalls, 0);
+		assert.equal(reg.hasPending("s1"), false);
+		const text = String((result.content as Array<{ text: string }>)[0].text);
+		assert.match(text, /autoApproved/);
+		assert.match(text, /generating/);
+	});
 
 	it("事故回归锁：stale 覆盖回 completed 且无新生成证据 → confirmed=false reason=stale_status，文案禁称出图（2026-10-12 会话 cmv51vwpu0008p801hxaxcf8m）", async () => {
 		const reg = new PendingToolRegistry();
@@ -1139,38 +1167,6 @@ describe("propose_generation 确认即启动（P0-1）", () => {
 			client.posts.some((p) => p.path === "/agent/internal/start-video-generation"),
 			"start-video-generation 未被调用",
 		);
-	});
-
-	it("summary.proposalEpoch → start 请求原样带回（B6 epoch 校验透传）", async () => {
-		const reg = new PendingToolRegistry();
-		const client = fakeNestClient(["pending_confirm"], {
-			proposeSummary: { type: "image", proposalEpoch: 7 },
-		});
-		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
-			(t) => t.name === "propose_generation",
-		);
-		const pending = run(propose, { node_id: "n1" });
-		await waitFor(() => reg.hasPending("s1"));
-		reg.answer("s1", "tc1", {});
-		await pending;
-		const start = client.posts.find((p) => p.path === "/agent/internal/start-image-generation");
-		assert.ok(start, "start-image-generation 未被调用");
-		assert.equal((start.body as { proposalEpoch?: number }).proposalEpoch, 7);
-	});
-
-	it("summary 无 proposalEpoch → start 请求不带该字段（旧 Nest 兼容）", async () => {
-		const reg = new PendingToolRegistry();
-		const client = fakeNestClient(["pending_confirm"]);
-		const [propose] = createCanvasWriteTools(client, { registry: reg, pollMs: 5 }).filter(
-			(t) => t.name === "propose_generation",
-		);
-		const pending = run(propose, { node_id: "n1" });
-		await waitFor(() => reg.hasPending("s1"));
-		reg.answer("s1", "tc1", {});
-		await pending;
-		const start = client.posts.find((p) => p.path === "/agent/internal/start-image-generation");
-		assert.ok(start, "start-image-generation 未被调用");
-		assert.equal("proposalEpoch" in (start.body as Record<string, unknown>), false);
 	});
 
 	it("text 节点：改走 start-text-generation 即返（run-* 同步持住退役）", async () => {
