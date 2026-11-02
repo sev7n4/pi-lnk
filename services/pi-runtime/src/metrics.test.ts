@@ -413,3 +413,23 @@ test("RB-D9 nest_zod_reject：零样本不渲染数据行", () => {
 	assert.ok(out.includes("# TYPE nest_zod_reject_total counter"));
 	assert.doesNotMatch(out, /nest_zod_reject_total\{endpoint=/);
 });
+
+test("P2 notify_generation_terminal：delivered 与 suppressed|reason 分键渲染", () => {
+	const m = new Metrics();
+	m.observeNotifyGeneration(true);
+	m.observeNotifyGeneration(false, "tool-wait-active");
+	m.observeNotifyGeneration(false, "tool-wait-active");
+	m.observeNotifyGeneration(false); // 无 reason 兜底 unknown
+	const out = m.render(0, "test");
+	assert.match(out, /pi_runtime_notify_generation_terminal_total\{outcome="delivered"\} 1/);
+	assert.match(out, /pi_runtime_notify_generation_terminal_total\{outcome="suppressed",reason="tool-wait-active"\} 2/);
+	assert.match(out, /pi_runtime_notify_generation_terminal_total\{outcome="suppressed",reason="unknown"\} 1/);
+});
+
+test("P2 notify_generation_terminal：零样本仍渲染 HELP/TYPE（0 也出样本原则例外——本指标按需出样本）", () => {
+	const m = new Metrics();
+	const out = m.render(0, "test");
+	assert.ok(out.includes("# HELP pi_runtime_notify_generation_terminal_total "));
+	assert.ok(out.includes("# TYPE pi_runtime_notify_generation_terminal_total counter"));
+	assert.doesNotMatch(out, /pi_runtime_notify_generation_terminal_total\{outcome=/);
+});

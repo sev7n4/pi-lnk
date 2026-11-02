@@ -149,6 +149,7 @@ export class Metrics {
 	private resultSignals = new Map<string, number>(); // key: tier|status（P1 信号活性探针）
 	private resultSignalUnknown = new Map<string, number>(); // key: tool——errorCode=unknown 单独计数（§6 根因修复驱动）
 	private compactionGaps = new Map<string, number>(); // key: 摘要缺失段标题（REQUIRED_SECTIONS 原文）
+	private notifyGeneration = new Map<string, number>(); // key: delivered 或 suppressed|<reason>（回合外终态通报投递）
 	private startedAt = Date.now();
 	/**
 	 * 工具/LLM 指标的事件层结算器（spec §4.1/§4.2）。
@@ -240,6 +241,13 @@ export class Metrics {
 	observeOrphanSettle(tookAbortReconcile: boolean): void {
 		if (tookAbortReconcile) this.orphanAbortReconcile.ok += 1;
 		else this.orphanAbortReconcile.drift += 1;
+	}
+
+	/** P2（老黄牛 RCA v2 R5）：回合外生成终态通报投递观测——delivered 写入 followUp；
+	 *  suppressed=被工具等待抑制（终态交还等待者回传）。持续走量的 suppressed 即信号黑洞探针。 */
+	observeNotifyGeneration(delivered: boolean, reason?: string): void {
+		const key = delivered ? "delivered" : `suppressed|${reason ?? "unknown"}`;
+		this.notifyGeneration.set(key, (this.notifyGeneration.get(key) ?? 0) + 1);
 	}
 
 	/** P3：工具调用 token 观测（防御式：非有限/负数丢弃，与 observeUsage 同口径）。 */
@@ -576,6 +584,20 @@ export class Metrics {
 		lines.push("# TYPE pi_runtime_orphan_settle_abort_reconcile_total counter");
 		lines.push(`pi_runtime_orphan_settle_abort_reconcile_total{outcome="ok"} ${this.orphanAbortReconcile.ok}`);
 		lines.push(`pi_runtime_orphan_settle_abort_reconcile_total{outcome="drift"} ${this.orphanAbortReconcile.drift}`);
+
+		// P2：回合外生成终态通报投递观测。恒渲染（0 也出样本）；suppressed|tool-wait-active
+		// 持续增长=终态被工具等待吞掉、依赖等待者回传，需结合 propose gate 指标判读。
+		lines.push("# HELP pi_runtime_notify_generation_terminal_total Out-of-turn generation terminal notice delivery.");
+		lines.push("# TYPE pi_runtime_notify_generation_terminal_total counter");
+		for (const [key, count] of [...this.notifyGeneration.entries()].sort()) {
+			const idx = key.indexOf("|");
+			const outcome = idx === -1 ? key : key.slice(0, idx);
+			const reason = idx === -1 ? undefined : key.slice(idx + 1);
+			const labels = reason
+				? `outcome="${esc(outcome)}",reason="${esc(reason)}"`
+				: `outcome="${esc(outcome)}"`;
+			lines.push(`pi_runtime_notify_generation_terminal_total{${labels}} ${count}`);
+		}
 
 		// M6b：恒渲染（0 也出样本），让「链路从未触发」与「指标缺失」可区分。
 		lines.push("# HELP pi_runtime_memory_suppressed_total Memories suppressed by feedback loop.");
