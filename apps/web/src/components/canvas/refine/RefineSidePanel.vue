@@ -13,6 +13,7 @@ import DockTypeIcon from '@/components/canvas/dock-studio/shared/DockTypeIcon.vu
 import { sameOriginApiMediaUrl } from '@/services/media-url'
 import { persistMediaUrl } from '@/composables/useMediaUpload'
 import { estimateImageCredits } from '@/constants/credits'
+import { usePricingQuote } from '@/composables/usePricingQuote'
 import { studioApi } from '@/services/studio-api'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
 import { maskCoverageMessage } from '@/utils/maskCoverage'
@@ -167,8 +168,12 @@ const sizeOverride = ref<string | 'auto'>('auto')
 /** dock 的 mode：扩图模式下传 'outpaint' 以隐藏尺寸选择器（Task 7 接线）。 */
 /** server @IsIn(['inpaint','outpaint'])：蒙版选区精修 = inpaint；扩图 = outpaint。 */
 const dockMode = computed<'inpaint' | 'outpaint'>(() => (editor.refineMode === 'outpaint' ? 'outpaint' : 'inpaint'))
-/** credits 按 shared 模型定价表动态计算（image2 = 10），模型不可识别时回落到默认估算。 */
-const credits = computed(() => IMAGE_EDIT_MODEL_PRICING[modelKey.value] ?? estimateImageCredits(1))
+/** credits 单一真相源：走服务端 quote 端点 image_edit:<model>（与计费同源读价目表）；
+ *  离线才回落 shared 模型定价表（IMAGE_EDIT_MODEL_PRICING）或本地估算。 */
+const { credits } = usePricingQuote(
+  () => ({ capability: 'image_edit', modelKey: modelKey.value }),
+  () => IMAGE_EDIT_MODEL_PRICING[modelKey.value] ?? estimateImageCredits(1),
+)
 const coverageKind = computed(() => maskCoverageMessage(editor.refineCoverage))
 /** 当前激活的一级工具（注册表是唯一真相：未注册 → 无面板、无 dock）。 */
 const activeTool = computed(() => getWorkbenchTool(toolIdForRefineMode(editor.refineMode)))
