@@ -1,9 +1,11 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { flushPromises } from 'vitest'
 import { usePricingQuote } from './usePricingQuote'
 import { fetchPriceQuote } from '@/services/pricing-api'
 
 vi.mock('@/services/pricing-api')
+
+/** vitest 不导出 flushPromises（在 @vue/test-utils）——自带实现：宏任务边界冲刷全部微任务。 */
+const flushPromises = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
 
 describe('usePricingQuote', () => {
   beforeEach(() => {

@@ -48,6 +48,8 @@
 
 图 1 说明修复前后取数链路：修复前展示走硬编码常量、计费走价目表，两源脱节；修复后两者收敛到同一 `pricing.quote` 引擎。
 
+*图 1 · 修复前后展示取数链路对比——展示与计费同源收敛到 pricing.quote，同表故同值*
+
 ```mermaid
 flowchart LR
     A["前端图片/精修展示"] --> Q["GET /api/pricing/quote"]
@@ -58,6 +60,8 @@ flowchart LR
 ```
 
 图 2 是端点的运行时时序，证明展示值来自价目表而非常量。
+
+*图 2 · GET /api/pricing/quote 时序——展示值源自 active 价目表（经计费引擎）*
 
 ```mermaid
 sequenceDiagram
