@@ -23,6 +23,7 @@ import { useDisclosure } from '@/components/agent/useDisclosure'
 import type { TimelinePart, ThinkingPart } from '@/components/agent/turnTimeline'
 import {
   resolveProposalNodeData,
+  proposalCreditCost,
   type ProposalCanvasNode,
   type ProposalNodeData,
 } from '@/composables/useProposalNodeData'
@@ -185,9 +186,16 @@ function endStateLabel(status?: string): string {
  */
 const cancelGeneration = inject(CANVAS_NODE_CANCEL_KEY, null)
 
-/** artifact 卡积分 pill：proposalData 同源（服务端 creditCost 优先，本地估算兜底）。 */
+/**
+ * 卡片积分 pill 权威取值（v2 单一真相源修复）：服务端 creditCost 优先，
+ * 其余经 `GET /api/pricing/quote` 与计费同源读价目表（image:1K:1=33 而非旧常量 10）。
+ * proposal 卡（预计/未扣减）与 artifact 卡（预扣/消耗）共用，杜绝两卡两口径。
+ */
+function proposalCredit(nodeId?: string): number | undefined {
+  return proposalCreditCost(proposalData(nodeId))
+}
 function artifactCredit(nodeId: string): number | undefined {
-  return proposalData(nodeId)?.creditCost
+  return proposalCredit(nodeId)
 }
 function onAskSubmit(
   part: Extract<TimelinePart, { kind: 'question' }>,
@@ -523,7 +531,7 @@ const rootClass = computed(() =>
         <div v-if="proposalData(part.nodeId)" class="meta">
           <span v-if="proposalData(part.nodeId)!.modelId" class="chip model">{{ proposalData(part.nodeId)!.modelId }}</span>
           <span v-if="proposalData(part.nodeId)!.aspectRatio" class="chip">{{ proposalData(part.nodeId)!.aspectRatio }}</span>
-          <span v-if="proposalData(part.nodeId)!.creditCost" class="chip credit">预计 {{ proposalData(part.nodeId)!.creditCost }} 积分</span>
+          <span v-if="proposalCredit(part.nodeId)" class="chip credit">预计 {{ proposalCredit(part.nodeId) }} 积分</span>
           <span v-if="proposalData(part.nodeId)!.imageCount > 1" class="chip">{{ proposalData(part.nodeId)!.imageCount }} 张</span>
         </div>
 
@@ -569,7 +577,7 @@ const rootClass = computed(() =>
           </span>
           <!-- 积分诚实合并（截图审查裁定）：未扣减与金额一体（金额删除线），
                不再「预计 30 积分」chip 与「未扣减」pill 两处割裂；无金额时兜底纯文字。 -->
-          <span v-if="part.status !== 'confirmed' && proposalData(part.nodeId)?.creditCost" class="status-pill credit">未扣减 <s>{{ proposalData(part.nodeId)!.creditCost }} 积分</s></span>
+          <span v-if="part.status !== 'confirmed' && proposalCredit(part.nodeId)" class="status-pill credit">未扣减 <s>{{ proposalCredit(part.nodeId) }} 积分</s></span>
           <span v-else-if="part.status !== 'confirmed'" class="status-pill credit struck">未扣减</span>
         </div>
 
