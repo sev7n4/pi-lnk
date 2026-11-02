@@ -31,6 +31,18 @@
  * 改为从 **prisma 生成的类型**派生（`Prisma.GenerationRecordFindManyArgs` 等）⇒
  * 字段名写错 ⇒ **tsc 直接报错** ⇒ 第三层防线成立。
  * `import type` 是**纯类型**导入（编译后擦除）⇒ 零运行时依赖，不引入模块环。
+ *
+ * ⭐⭐ **2026-11-02 第二处同类字段名 bug（本次黑章鱼事件根因）**
+ * 上一處把 `findMany` 接回了真源类型，但 `agentThread.findFirst` 的 `select` 仍手写
+ * 成 `{ threadId: true }` —— 而 `AgentThread` 主键列是 **`id`**（不是 `threadId`，
+ * schema:377 注释写明 `id String @id // threadId`）。Prisma 对该非法 select 抛校验错，
+ * 被 `findFirst(...).catch(() => null)` 静默吞掉 ⇒ `thread` 恒为 null ⇒ 每条记录被
+ * 永久标 `no-thread`（durable 去重键，永不重试）⇒ **回合外完成通知系统性失效**
+ * （生产近 15h、跨多会话全部 no-thread）。
+ * 修法：① select 取真实字段 `id`（接口 select 类型接回 `Prisma.AgentThreadSelect`
+ *   做第三层防线）；② 去掉 `.catch(() => null)` 的静默吞错，改为 try/catch 区分
+ *   「真·无线程」(→标 no-thread) 与「查询报错」(→warn + 下轮重试不落标记)，
+ *   杜绝瞬时/确定性查询错误被固化成 no-thread。
  */
 import type { Logger } from '@nestjs/common'
 import type { Prisma } from '@prisma/client'
@@ -88,9 +100,14 @@ export interface LateNotifyPrisma {
 		findFirst(
 			args: Omit<Prisma.AgentThreadFindFirstArgs, 'where' | 'select'> & {
 				where: Prisma.AgentThreadWhereInput
-				select: { threadId: boolean }
+				// ⭐ 第三层防线（接回真源类型）：select 的类型来自 prisma 生成的
+				// `AgentThreadSelect` ⇒ 写错字段名（如历史 bug 的 `threadId`）在 tsc 阶段
+				// 直接报错，而不是等到生产把合法线程静默判成 no-thread。
+				// AgentThread 的主键列就是 `id`（schema:377 注释 `id String @id // threadId`），
+				// 即对外所称的 threadId；select 必须取 `id`，不能取不存在的 `threadId`。
+				select: Prisma.AgentThreadSelect
 			},
-		): Promise<{ threadId: string } | null>
+		): Promise<{ id: string } | null>
 	}
 }
 
@@ -179,9 +196,19 @@ export async function notifyLateGenerationTerminals(
 			handled += 1
 			continue
 		}
-		const thread = await prisma.agentThread
-			.findFirst({ where: { sessionId: rec.sessionId }, orderBy: { updatedAt: 'desc' }, select: { threadId: true } })
-			.catch(() => null)
+		let thread: { id: string } | null
+		try {
+			thread = await prisma.agentThread.findFirst({
+				where: { sessionId: rec.sessionId },
+				orderBy: { updatedAt: 'desc' },
+				select: { id: true },
+			})
+		} catch (err) {
+			// 查询失败 ≠ 无线程：不落 no-thread 永久跳过重扫，下轮巡检重试即可，
+			// 避免瞬时/确定性查询错误（如字段名写错）被 catch 吞掉后固化成 no-thread 导致通知永远失联。
+			logger.warn(`[late-notify] ${rec.type} ${rec.id} 查询 agent 线程失败（下轮重试）: ${errMessage(err)}`)
+			continue
+		}
 		if (!thread) {
 			// 无 agent 线程 = 该画布从未开过对话 ⇒ 永远不会有人消费通报，落标记防重扫。
 			await markNotified(prisma, rec.id, meta, 'no-thread')
@@ -194,7 +221,7 @@ export async function notifyLateGenerationTerminals(
 				? meta.userMessage
 				: undefined
 		try {
-			const result = await client.notifyGeneration(thread.threadId, {
+			const result = await client.notifyGeneration(thread.id, {
 				nodeId: rec.nodeId,
 				status: rec.status === 'completed' ? 'completed' : 'failed',
 				...(rec.id ? { recordId: rec.id } : {}),
@@ -206,7 +233,7 @@ export async function notifyLateGenerationTerminals(
 			await markNotified(prisma, rec.id, meta, result.delivered ? 'delivered' : `suppressed:${result.reason ?? 'unknown'}`)
 			handled += 1
 			logger.log(
-				`[late-notify] ${rec.type} ${rec.id} node=${rec.nodeId} → thread=${thread.threadId} ` +
+				`[late-notify] ${rec.type} ${rec.id} node=${rec.nodeId} → thread=${thread.id} ` +
 					`delivered=${result.delivered}${result.reason ? ` (${result.reason})` : ''}`,
 			)
 		} catch (err) {
