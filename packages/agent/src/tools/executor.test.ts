@@ -52,6 +52,41 @@ describe('applyCanvasActions', () => {
     expect(result.viewport).toEqual({ x: 1, y: 2, zoom: 1.5 })
   })
 
+  // P1-C C2a：侧车 op（全量替换语义）
+  it('set_groups 全量替换；空数组清空不删键', () => {
+    const data: CanvasData = {
+      nodes: [],
+      edges: [],
+      groups: [{ id: 'g0', title: 'old', childIds: [], position: { x: 0, y: 0 }, size: { width: 1, height: 1 } }],
+    }
+    const next = [{ id: 'g1', title: 'new', childIds: ['a'], position: { x: 2, y: 3 }, size: { width: 9, height: 9 } }]
+    const result = applyCanvasActions(data, [{ type: 'set_groups', payload: { groups: next } }])
+    expect(result.groups).toEqual(next)
+    const cleared = applyCanvasActions(result, [{ type: 'set_groups', payload: { groups: [] } }])
+    expect(cleared.groups).toEqual([])
+  })
+
+  it('set_composition_run_group 全量替换；null 清除删键；缺载荷幂等', () => {
+    const data: CanvasData = {
+      nodes: [],
+      edges: [],
+      compositionRunGroup: { nodeIds: ['a'], dumpHash: 'h0', createdAt: 't0' },
+    }
+    const next = { nodeIds: ['b', 'c'], dumpHash: 'h1', createdAt: 't1' }
+    const replaced = applyCanvasActions(data, [
+      { type: 'set_composition_run_group', payload: { compositionRunGroup: next } },
+    ])
+    expect(replaced.compositionRunGroup).toEqual(next)
+    const cleared = applyCanvasActions(replaced, [
+      { type: 'set_composition_run_group', payload: { compositionRunGroup: null } },
+    ])
+    expect('compositionRunGroup' in cleared).toBe(false)
+    const noop = applyCanvasActions(cleared, [
+      { type: 'set_composition_run_group', payload: {} },
+    ])
+    expect('compositionRunGroup' in noop).toBe(false)
+  })
+
   it('remove_node 仍然连带删除其关联边（回归）', () => {
     const data: CanvasData = {
       nodes: [

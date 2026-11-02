@@ -55,6 +55,10 @@ C0（S）→ C1（XL，分 C1a 服务端 + C1b 前端两 PR）→ C2（S，收�
 - **并发编辑**：diff 粒度=节点级 ops，双端同时改同一节点的不同字段在服务端 merge 天然共存；同字段后写胜（与今日整份 PUT 的「后写全胜」相比严格改善）。
 - **foldGroups / viewport / compositionRunGroup**：均为 saveCanvas 输入侧逻辑，零改动——diff 只替换「序列化之后 → 传输」的一段。
 
+> ⚠️ **C1b 落地修正（2026-11-02，PR #669）**：上行「零改动」不准确——viewport 与侧车都是落库载荷的一部分。实际处置：viewport 变化走 `set_viewport` op（executor 原生第 6 类，C1b 同步放行白名单）；groups / compositionRunGroup 无 op 通道，C1b 过渡期回退整份 PUT。
+>
+> ✅ **C2a 补齐（2026-11-02）**：`CanvasActionTypeSchema` 增 `set_groups` / `set_composition_run_group`（全量替换语义，后者 null=删键）；applier、服务端 sanitize 白名单（含畸形载荷剥除）、web canvasDiff 同步扩展。此后 web 主路径**不再有任何带 canvasData 的 PUT**，侧车 op 化成为关 PUT 的达成前提而非缺口。`sidecarChanged` 旗标退役为观测面。
+
 ### 3.3 明确不做（防膨胀）
 
 - 不做 ops 冲突解决/OT/CRDT（同字段后写胜足够，红队 Part E 未要求）。
@@ -65,7 +69,8 @@ C0（S）→ C1（XL，分 C1a 服务端 + C1b 前端两 PR）→ C2（S，收�
 
 1. **PATCH 白名单守卫进 CI**：服务端单测锁「客户端 ops 提交 status ⇒ 被丢弃/拒绝」；web 侧 `canvasDiff` 单测锁「白名单外键变化不进 ops」。与 B2 双守卫（web ratchet + runtime 硬零）合并成三件套。
 2. **PUT 观测清零流程**：C1 上线后观测 `canvas_put_deprecated` 日志计数；连续两周清零 ⇒ 关闭 PUT 的 canvasData 写入（保留 title）——独立小 PR，届时另评估。
-3. **状态转移 API 幂等面定型**（P1-D 依赖输入）：文档化一页——节点状态全部合法转移及其幂等键（proposeEpoch / generationRecordId / P0-1 dedup / cancel 通道），作为 P1-D「审批分级」的状态机输入。
+3. **侧车 op 通道（C2a，已落地 2026-11-02）**：`set_groups` / `set_composition_run_group` 两类 op（SSOT=`packages/shared/src/agentContract.ts`；applier=`packages/agent/src/tools/executor.ts` 单实现三端共用；服务端 `sanitizeClientOps` 白名单放行 + 形状校验；web `useCanvasActions.applyActionsToFlow` 显式 no-op case 防静默丢弃）。这是第 2 条「关闭 PUT」的前置——已达成。
+4. **状态转移 API 幂等面定型**（P1-D 依赖输入）：文档化一页——节点状态全部合法转移及其幂等键（proposeEpoch / generationRecordId / P0-1 dedup / cancel 通道），作为 P1-D「审批分级」的状态机输入。
 
 ## 5. 验收判据（行为级）
 

@@ -26,7 +26,12 @@ export const CLIENT_FORBIDDEN_NODE_DATA_KEYS: ReadonlySet<string> = new Set([
   'proposalEpoch',
 ])
 
-/** 客户端 PATCH 允许的 op 类型（与 applier 对齐：5 类画布 op + set_viewport，executor 原生支持）。 */
+/** plain object 判定（侧车 op 载荷校验用；null/数组/标量均非）。 */
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+/** 客户端 PATCH 允许的 op 类型（与 applier 对齐：5 类画布 op + set_viewport + C2a 侧车 2 类）。 */
 const CLIENT_ALLOWED_OP_TYPES: ReadonlySet<string> = new Set([
   'add_node',
   'update_node',
@@ -34,6 +39,10 @@ const CLIENT_ALLOWED_OP_TYPES: ReadonlySet<string> = new Set([
   'add_edge',
   'remove_edge',
   'set_viewport',
+  // P1-C C2a：侧车 op（groups / compositionRunGroup）。全量替换语义，
+  // 载荷形状由 CanvasActionSchema（@lnkpi/shared SSOT）在 applier 侧约束。
+  'set_groups',
+  'set_composition_run_group',
 ])
 
 export interface SanitizeClientOpsResult {
@@ -85,6 +94,26 @@ export function sanitizeClientOps(raw: unknown): SanitizeClientOpsResult {
           ...(op as CanvasAction),
           payload: { ...(payload ?? {}), data: cleaned },
         } as CanvasAction)
+        continue
+      }
+    }
+    // P1-C C2a：侧车 op 全量替换语义，形状不对整体剥除（防脏载荷直接覆盖侧车）。
+    if (type === 'set_groups' || type === 'set_composition_run_group') {
+      const payload = (op as { payload?: Record<string, unknown> }).payload
+      const valid =
+        type === 'set_groups'
+          ? !!payload && Array.isArray(payload.groups)
+          : !!payload &&
+            (payload.compositionRunGroup === null ||
+              (isPlainObject(payload.compositionRunGroup) &&
+                Array.isArray((payload.compositionRunGroup as { nodeIds?: unknown }).nodeIds) &&
+                typeof (payload.compositionRunGroup as { dumpHash?: unknown }).dumpHash ===
+                  'string' &&
+                typeof (payload.compositionRunGroup as { createdAt?: unknown }).createdAt ===
+                  'string'))
+      if (!valid) {
+        console.warn(`[canvas_patch] dropped malformed sidecar op type=${type}`)
+        droppedOps += 1
         continue
       }
     }

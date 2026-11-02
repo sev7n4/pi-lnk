@@ -129,15 +129,37 @@ describe('diffCanvasData', () => {
     expect(diffCanvasData(saved, base).ops).toEqual([])
   })
 
-  it('groups / compositionRunGroup 侧车变化 ⇒ sidecarChanged（无 op）', () => {
+  it('侧车变化 ⇒ set_groups / set_composition_run_group op（C2a 通道；旗标仅观测）', () => {
     const base = { nodes: [], edges: [] } as unknown as CanvasData
-    const withGroup = { ...base, groups: [{ id: 'g1', childIds: ['n1'] }] } as unknown as CanvasData
+    // groups 出现 ⇒ set_groups 全量替换
+    const withGroup = {
+      ...base,
+      groups: [{ id: 'g1', title: 't', childIds: ['n1'], position: { x: 0, y: 0 }, size: { width: 10, height: 10 } }],
+    } as unknown as CanvasData
     const out = diffCanvasData(base, withGroup)
     expect(out.sidecarChanged).toBe(true)
-    expect(out.ops).toEqual([])
-    const withRunGroup = { ...base, compositionRunGroup: { runId: 'r1' } } as unknown as CanvasData
-    expect(diffCanvasData(base, withRunGroup).sidecarChanged).toBe(true)
+    expect(out.ops).toEqual([{ type: 'set_groups', payload: { groups: withGroup.groups } }])
+    // groups 清空（有→无）⇒ set_groups 空数组（统一「设置」语义）
+    const outClear = diffCanvasData(withGroup, base)
+    expect(outClear.ops).toEqual([{ type: 'set_groups', payload: { groups: [] } }])
+    // compositionRunGroup 出现 ⇒ set_composition_run_group（对象）
+    const withRunGroup = {
+      ...base,
+      compositionRunGroup: { nodeIds: ['n1'], dumpHash: 'h', createdAt: 't' },
+    } as unknown as CanvasData
+    const outRun = diffCanvasData(base, withRunGroup)
+    expect(outRun.sidecarChanged).toBe(true)
+    expect(outRun.ops).toEqual([
+      { type: 'set_composition_run_group', payload: { compositionRunGroup: withRunGroup.compositionRunGroup } },
+    ])
+    // compositionRunGroup 清除（有→无）⇒ null（applier 删键）
+    const outRunClear = diffCanvasData(withRunGroup, base)
+    expect(outRunClear.ops).toEqual([
+      { type: 'set_composition_run_group', payload: { compositionRunGroup: null } },
+    ])
+    // 无变化 ⇒ 无侧车 op
     expect(diffCanvasData(base, structuredClone(base)).sidecarChanged).toBe(false)
+    expect(diffCanvasData(base, structuredClone(base)).ops).toEqual([])
   })
 
   it('脏形状（null/缺数组）安全空 diff', () => {

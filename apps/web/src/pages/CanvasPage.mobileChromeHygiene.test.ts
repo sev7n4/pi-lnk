@@ -75,17 +75,17 @@ describe('PR4 视觉与卫生（移动端画布）', () => {
     expect(topBarTag).not.toContain('@save=')
   })
 
-  it('保存失败置位 / 成功清位：失败路径点亮，成功清位在网络写之后且不落 catch（C1b PATCH 通道）', () => {
+  it('保存失败置位 / 成功清位：失败路径点亮，成功清位在网络写之后且不落 catch（C2a PUT 退役）', () => {
     const save = page.match(/async function saveCanvas\(\)[\s\S]*?\n}/)?.[0] ?? ''
-    // ⭐ P1-C C1b：PATCH 主通道 + 侧车回退 PUT 都必须在
+    // ⭐ C2a：saveCanvas 内不得再有整份 PUT（侧车已 op 化；PUT 仅剩旧缓存自愈，不在主路径）
+    expect(save, 'saveCanvas 不应再含 api.put（C2a 侧车 op 化后 PUT 退役）').not.toContain(
+      'await api.put(',
+    )
     const patchAt = save.indexOf('await canvasApi.patchCanvas(')
-    const putAt = save.indexOf('await api.put(')
     expect(patchAt, 'saveCanvas 里应有 PATCH 主通道').toBeGreaterThan(0)
-    expect(putAt, '侧车回退应保留整份 PUT').toBeGreaterThan(0)
-    // 成功清位 = 最后一次清位，必须落在所有网络写之后
+    // 成功清位 = 最后一次清位，必须落在 PATCH 之后
     const clearAt = save.lastIndexOf('saveFailed.value = false')
     expect(clearAt, '成功路径应清失败位').toBeGreaterThan(patchAt)
-    expect(clearAt, '成功清位应在侧车回退 PUT 之后').toBeGreaterThan(putAt)
     // 清位不得落在 catch 里（否则失败也显示成功）：最后一次清位之后的 catch 块只允许置位
     const catchAt = save.indexOf('} catch {', clearAt)
     expect(catchAt, '成功清位后应接 catch 兜底').toBeGreaterThan(0)

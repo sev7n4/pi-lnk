@@ -3,7 +3,8 @@
  *
  * ⭐ 为什么要有这层守卫：`canvasLoadGuard.ts` 只判「该不该拦」，
  *   真正的价值全在**接线**上——
- *   ① 守卫必须落在 `api.put('/sessions/:id')` **之前**（否则拦不住覆盖）；
+ *   ① 守卫必须落在任何网络写**之前**（C2a 前是 `api.put('/sessions/:id')`，
+ *      C2a 后是 PATCH 主通道 `canvasApi.patchCanvas`——否则拦不住覆盖）；
  *   ② 加载成功必须把状态置 `loaded`（否则新建的空画布永远存不下去）；
  *   ③ 加载失败必须置 `failed`（否则失败态的一次自动保存就会抹掉真画布）；
  *   ④ 被拦下的保存必须在加载成功后**补做**（否则用户在等待期画的内容会丢）。
@@ -35,20 +36,24 @@ function bodyOf(fnName: string): string {
 }
 
 describe('画布整份覆盖保存守卫 · 接线契约', () => {
-  it('① 守卫必须落在整份 PUT 之前（拦不住覆盖就等于没修）', () => {
+  it('① 守卫必须落在任何网络写之前（C2a 后主通道=PATCH；拦不住覆盖就等于没修）', () => {
     const body = bodyOf('saveCanvas')
     const guardAt = body.indexOf('shouldBlockCanvasOverwrite(')
-    const putAt = body.indexOf("api.put(`/sessions/${sessionId.value}`")
+    // ⭐ C2a：整份 PUT 已退役（saveCanvas 内不得再有 api.put；旧缓存自愈 PUT 不走此函数）。
+    //    主通道 = diff→PATCH，守卫语义不变：画布未加载 ⇒ 禁止把空画布写出去
+    //    （PATCH 形态下空 diff 零请求天然安全，但守卫仍拦「异常基线下的批量 add_node」）。
+    expect(body, 'saveCanvas 不应再含整份 PUT（C2a PUT 退役）').not.toContain('api.put(')
+    const patchAt = body.indexOf('await canvasApi.patchCanvas(')
     expect(guardAt, 'saveCanvas 必须调用 shouldBlockCanvasOverwrite').toBeGreaterThan(-1)
-    expect(putAt, 'saveCanvas 里必须定位得到整份 PUT').toBeGreaterThan(-1)
-    expect(guardAt, '守卫必须早于整份 PUT（否则空画布照样覆盖真画布）').toBeLessThan(putAt)
+    expect(patchAt, 'saveCanvas 里必须定位得到 PATCH 主通道').toBeGreaterThan(-1)
+    expect(guardAt, '守卫必须早于 PATCH 主通道（否则空画布照样写出去）').toBeLessThan(patchAt)
     // ⚠️ 静态文本守卫的**已知局限**（沿用仓库既有做法，见 tail-visibility.test.ts 的同类注释）：
-    //    它抓得到「守卫整段被删/被挪到 PUT 之后」，抓不到「人为把条件短路成 false」。
+    //    它抓得到「守卫整段被删/被挪到网络写之后」，抓不到「人为把条件短路成 false」。
     //    ⇒ 真正的行为防线是纯函数用例（canvasLoadGuard.test.ts）+ 生产 e2e。
     //    这里额外锁住「守卫分支必须真的 return」——否则守卫形同虚设。
     //    ⚠️ 取区间不能按第一个 `}` 截断：守卫块内还有嵌套 if（会被先撞上）⇒ 用窗口。
     const guardWindow = body.slice(guardAt, guardAt + 500)
-    expect(guardWindow, '守卫分支必须 return（否则拦不住整份 PUT）').toContain('return')
+    expect(guardWindow, '守卫分支必须 return（否则拦不住保存）').toContain('return')
   })
 
   it('② 加载成功必须置 loaded（新建的空画布也要能保存）', () => {
