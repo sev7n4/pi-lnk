@@ -231,6 +231,22 @@ function messageTextOf(message: unknown): string | undefined {
 	return joined.length > SNAPSHOT_TEXT_LIMIT ? `${joined.slice(0, SNAPSHOT_TEXT_LIMIT)}…` : joined;
 }
 
+/** 从 vendor AgentMessage 的 content 块里抽纯文本（不截断，供 drain 回灌 prompt 用）。 */
+function extractTextBlocks(message: unknown): string | undefined {
+	if (!message || typeof message !== "object") return undefined;
+	const content = (message as { content?: unknown }).content;
+	if (!Array.isArray(content)) return undefined;
+	const parts: string[] = [];
+	for (const block of content) {
+		if (block && typeof block === "object" && (block as { type?: unknown }).type === "text") {
+			const text = (block as { text?: unknown }).text;
+			if (typeof text === "string") parts.push(text);
+		}
+	}
+	const joined = parts.join("\n").trim();
+	return joined.length > 0 ? joined : undefined;
+}
+
 /** LaneSnapshot → 可序列化投影（纯函数，测试直测）。 */
 export function projectLaneSnapshot(snap: LaneSnapshot): LaneSnapshotProjection {
 	const tail = snap.transcript.slice(-TRANSCRIPT_TAIL_LIMIT).map((entry) => {
@@ -2194,8 +2210,9 @@ export class SessionManager {
 	 *
 	 * 裁决：该节点仍有工具等待 ⇒ 抑制（`delivered:false`，等待者会把终态交还模型）；
 	 * 否则把通报写进 lane followUp 队列——run 在跑时由收尾边界消费（boundary.ts:106，
-	 * 同 run 续跑一代）；idle 时由 `followUp` 内的 `drainQueued` 空 prompt 兜底立刻开一轮，
-	 * 模型据此主动向用户简报。通报文案在本方法拼装（Nest 只传事实字段，不传文案）。
+	 * 同 run 续跑一代）；idle 时由 `followUp` 内的 `drainQueued` 以通知文案兜底开一轮
+	 * （非空 prompt 绕过空 prompt 验收门禁，lane.ts:614-626），模型据此主动向用户简报。
+	 * 通报文案在本方法拼装（Nest 只传事实字段，不传文案）。
 	 *
 	 * @throws NotFoundError 会话不存在（Nest 侧 fail-soft 吞掉即可）
 	 */
@@ -2641,33 +2658,87 @@ export class SessionManager {
 	 * run 结束后入队的 steer/followUp 会一直睡到下一次 `accept()`。用户视角就是「我明明发了，
 	 * 但它不理我」—— 这正是本项目此前只有前端单槽队列（刷新即丢）且服务端一律 409 的老毛病。
 	 *
-	 * 这里替用户在 lane idle 时开一轮空 prompt：accept 会走 `selectAcceptedInbox` 把积压
-	 * 全部取走（空 prompt + 有积压是合法组合，`lane.ts:614-626`）。
+	 * 原实现用 `lane.prompt("")` 空 prompt 兜底开一轮，指望 accept 走 `selectAcceptedInbox`
+	 * 把积压取走。但 harness 验收门禁（lane.ts:614-626）要求「空 prompt 时必须有 captured
+	 * conversation（即 inbox 里有非 write 条目）」，否则直接拒 `Acceptance must append at least
+	 * one message`。生产实证（2026-11-02 鲸鱼用例）该拒断稳定触发，导致回合外生成终态通报永久沉睡。
 	 *
-	 * 失败不重试：积压留在 vendor inbox 里，下一条 prompt 到来时自然会再被消费一次。
+	 * 改为：读取积压的 followUp/steer 文案，先撤回该条目（避免 prompt 文案 + inbox 捕获双发同一句），
+	 * 再以文案作为**非空 prompt** 开一轮——非空 prompt 直接绕过空 prompt 验收门禁，模型据此向用户简报。
+	 * 失败不重试：撞 busy 时把文案补回队列，下一条 prompt 到来时自然再被消费一次。
 	 */
 	private async drainQueued(entry: SessionEntry, lane: AgentLane): Promise<void> {
 		if (entry.draining) return;
 		// 压缩在途时 lane 判 busy（Critical #1 同构）：排空必失败，保留积压等下一次时机，
 		// 不在此处刷 warn——那是正常状态而非故障，刷了只会淹没真错误。
 		if (entry.compacting) return;
+		const items = await this.queuedTriggerItems(lane);
+		if (items.length === 0) return; // 没有可排空的尾随指令，保留积压等下一次时机。
 		entry.draining = true;
 		try {
-			const res = await lane.prompt("", undefined, this.context);
+			// 撤回已入队项，避免「prompt 文案 + inbox 捕获」双发同一句。
+			for (const it of items) {
+				try {
+					await lane.cancelQueued(it.entryId, this.context);
+				} catch {
+					/* 已被消费则忽略 */
+				}
+			}
+			const text = items.map((i) => i.text).join("\n");
+			const res = await lane.prompt(text, undefined, this.context);
 			if (res.ok) {
 				entry.queued.clear();
 				return;
 			}
-			// 仍忙（压缩在途 / 别的 operation）：保留积压，只留痕。
+			// 仍忙（压缩在途 / 别的 operation）：把文案补回队列，等下一次时机。
 			const msg = describeQueueError(res.error);
-			if (/empty|must contain/i.test(msg)) {
-				// 我们的快照领先于 vendor 实际 inbox（空 prompt 无内容可排）→ 视为已排空。
-				entry.queued.clear();
+			if (/busy|already has an active operation/i.test(msg)) {
+				for (const it of items) {
+					try {
+						if (it.kind === "steer") await lane.steer(it.text, undefined, this.context);
+						else await lane.followUp(it.text, undefined, this.context);
+					} catch {
+						/* best-effort */
+					}
+				}
 				return;
 			}
 			console.warn(`[pi-runtime] drain queued messages failed for ${entry.id}: ${msg}`);
 		} finally {
 			entry.draining = false;
+		}
+	}
+
+	/** 取 inbox 中待排空的 followUp / steer / nextRun 文案（含 entryId 以便撤回）。 */
+	private async queuedTriggerItems(
+		lane: AgentLane,
+	): Promise<Array<{ entryId: string; kind: string; text: string }>> {
+		try {
+			const watcher = await lane.watch(this.context);
+			try {
+				const queues = (watcher.snapshot.queues ?? []) as Array<{
+					entryId: string;
+					kind: string;
+					type?: string;
+					message?: { content?: unknown };
+				}>;
+				const out: Array<{ entryId: string; kind: string; text: string }> = [];
+				for (const q of queues) {
+					if (
+						(q.kind === "followUp" || q.kind === "steer" || q.kind === "nextRun") &&
+						q.type === "message" &&
+						q.message
+					) {
+						const text = extractTextBlocks(q.message);
+						if (text) out.push({ entryId: q.entryId, kind: q.kind, text });
+					}
+				}
+				return out;
+			} finally {
+				watcher.unsubscribe();
+			}
+		} catch {
+			return [];
 		}
 	}
 
