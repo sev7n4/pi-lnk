@@ -14,18 +14,32 @@
  *   failed 出内联重试入口（D2）+ 错误文案；点击/定位复用现有画布能力
  * - notice：按 tone 着色；error 带重试按钮
  */
-import { computed, shallowReactive } from 'vue'
+import { computed, inject, shallowReactive } from 'vue'
 import DockTypeIcon from '@/components/canvas/dock-studio/shared/DockTypeIcon.vue'
 import CanvasLocateButton from '@/components/shared/CanvasLocateButton.vue'
 import AskUserCard from '@/components/agent/AskUserCard.vue'
 import { presentToolStep } from '@/components/agent/toolPresentation'
 import { useDisclosure } from '@/components/agent/useDisclosure'
 import type { TimelinePart, ThinkingPart } from '@/components/agent/turnTimeline'
+import {
+  resolveProposalNodeData,
+  type ProposalCanvasNode,
+  type ProposalNodeData,
+} from '@/composables/useProposalNodeData'
+import { tuneSheetOpen, tuneNodeId, openProposeTuneSheet } from './proposeWaitActions'
+import { CANVAS_NODE_CANCEL_KEY } from '@/composables/canvasNodeActions'
+import ProposeTuneSheet from './ProposeTuneSheet.vue'
 
 const props = defineProps<{
   parts: TimelinePart[]
   /** 画布节点 url 解析器（SideRail 由 canvasNodes 提供）；缺省=旧行为纯文本行 */
   resolveNodeUrl?: (nodeId: string) => string | undefined
+  /**
+   * 画布节点（vue-flow nodes 的结构化形状，由 SideRail 透传）：proposal 卡
+   * 经 nodeId 纯解析出节点名/模型/比例/积分等决策信息。
+   * 不读 store（ledger R1/R2：canvasEditor 是精修编辑器 store，不含画布节点）。
+   */
+  canvasNodes?: ProposalCanvasNode[] | null
   streaming?: boolean
   /**
    * P2-2：dense = 活体钉底（composer 上方）变体。**只调行密度与折叠默认值**，
@@ -100,21 +114,6 @@ function elapsedLabel(p: Extract<TimelinePart, { kind: 'artifact' }>): string {
   return min > 0 ? ` · ${min}m${String(sec).padStart(2, '0')}s` : ` · ${sec}s`
 }
 
-function statusIcon(status: string): string {
-  switch (status) {
-    case 'done':
-      return '✓'
-    case 'failed':
-      return '✗'
-    case 'running':
-      return '⏳'
-    case 'pending':
-      return '○'
-    default:
-      return '○'
-  }
-}
-
 function onLocate(nodeId: string) {
   emit('focusNode', nodeId)
 }
@@ -126,6 +125,69 @@ function onConfirmProposal(nodeId?: string) {
 }
 function onCancelProposal(nodeId?: string) {
   if (nodeId) emit('cancelProposal', nodeId)
+}
+
+/**
+ * proposal 卡决策信息（2026-11-02 卡片 UX 优化）：经 canvasNodes 纯解析，
+ * 无 store 依赖（ledger R1/R2）。节点找不到（换页/未同步）→ null=降级渲染，
+ * 卡面仍保留标题占位与定位入口，不崩。
+ */
+function proposalData(nodeId?: string): ProposalNodeData | null {
+  if (!nodeId) return null
+  return resolveProposalNodeData(nodeId, props.canvasNodes)
+}
+
+/** 参数微调 Sheet（Task 3 在 SideRail 挂载；此处只负责开，不写回）。 */
+function onOpenTune(nodeId?: string) {
+  if (nodeId) openProposeTuneSheet(nodeId)
+}
+
+/**
+ * 折叠判定（2026-11-02 PM 裁决）：confirmed 提议卡在同 nodeId 存在执行卡
+ * （artifact running/done/failed）时塌缩为单行凭据——生成中用户只关心
+ * 「生成得怎么样 / 能不能停」（执行卡承载），提议卡全量参数退为事后凭据
+ * （完整参数仍可从「在画布查看节点」取得）；两卡同题同轨同屏读作渲染事故
+ * （用户实测反馈「为什么会有两张卡片」）。纯呈现收敛，不改流程不变量。
+ */
+function proposalFolded(nodeId: string | undefined): boolean {
+  if (!nodeId) return false
+  return props.parts.some(
+    (p) =>
+      p.kind === 'artifact' &&
+      p.nodeId === nodeId &&
+      (p.status === 'running' || p.status === 'done' || p.status === 'failed'),
+  )
+}
+
+/** 终态折叠行状态 pill 配色：confirmed=成功绿，declined/expired=中性灰。 */
+function endStateClass(status?: string): string {
+  return status === 'confirmed' ? 'ok' : 'cancel'
+}
+
+/** 终态文案（2026-10-31 教训：终态标签必须分流，不得一律显示「已确认」）。 */
+function endStateLabel(status?: string): string {
+  switch (status) {
+    case 'confirmed':
+      return '已落锚'
+    case 'declined':
+      return '已取消'
+    case 'expired':
+      return '已超时'
+    default:
+      return ''
+  }
+}
+
+/**
+ * artifact 卡停止生成（2026-11-02）：经 CanvasPage provide 的 cancelGeneration
+ * （useNodeGeneration 同源）。SideRail 只挂在 CanvasPage 内，inject 正常可达；
+ * null 兜底（独立渲染场景）= 不渲染停止钮而非报错。
+ */
+const cancelGeneration = inject(CANVAS_NODE_CANCEL_KEY, null)
+
+/** artifact 卡积分 pill：proposalData 同源（服务端 creditCost 优先，本地估算兜底）。 */
+function artifactCredit(nodeId: string): number | undefined {
+  return proposalData(nodeId)?.creditCost
 }
 function onAskSubmit(
   part: Extract<TimelinePart, { kind: 'question' }>,
@@ -304,118 +366,218 @@ const rootClass = computed(() =>
         />
       </div>
 
-      <!-- artifact -->
+      <!-- artifact（2026-11-02 卡片 UX 优化）：执行面在 artifact 卡——running 墨滴进度 +
+           停止生成（CANVAS_NODE_CANCEL_KEY inject，null 兜底不渲染）+ 预扣积分 pill；
+           done 查看结果↗ 回链 + 消耗积分 + 画布段点亮（end-canvas 转 success 绿）；
+           failed 错误文案 + 重试（emit retryNode）+ 未扣减删除线。
+           品牌三联轨道与 proposal 卡共用 <style> R-A 表（running=.55 / done=1 / failed=.5）。
+           令牌纪律：一律 --lnk-*（R7：失败色 = --lnk-error，无 --lnk-danger）。 -->
       <div
         v-else-if="part.kind === 'artifact'"
-        class="flex items-center gap-1.5 rounded border border-[var(--agent-assistant-divider)] px-2 py-1"
-        :class="part.status === 'failed' ? 'border-danger/40' : ''"
+        class="artifact-card rounded-md border bg-[var(--lnk-surface-raised)] px-2.5 py-2"
+        :class="[
+          part.status === 'failed' ? 'border-[var(--lnk-error-border)]' : 'border-[var(--lnk-border-default)]',
+          `state-${part.status}`,
+        ]"
+        data-test="artifact-card"
       >
-        <span
-          class="w-3 shrink-0 text-center"
-          :class="part.status === 'failed' ? 'text-danger' : 'text-[var(--neo-text-muted)]'"
-        >{{ statusIcon(part.status) }}</span>
-        <!-- 缩略图（2026-10-17 增强）：h-7→h-9 提升产物可感知度；音频 url 不进 <img>/<video>
-            （裂图），回退 DockTypeIcon 类型图标。 -->
-        <span
-          v-if="part.status === 'done' && artifactUrl(part) && !isAudioUrl(artifactUrl(part)!)"
-          class="relative block h-9 w-9 shrink-0 overflow-hidden rounded border border-[var(--neo-border)]"
-        >
-          <video
-            v-if="isVideoUrl(artifactUrl(part)!)"
-            :src="`${artifactUrl(part)}#t=0.1`"
-            muted
-            preload="metadata"
-            class="h-full w-full object-cover"
-          />
-          <img
-            v-else
-            :src="artifactUrl(part)"
-            :alt="part.title"
-            loading="lazy"
-            class="h-full w-full object-cover"
-          />
-        </span>
-        <DockTypeIcon v-else :type="part.nodeType" :size="12" class="shrink-0 opacity-80" />
-        <span
-          class="min-w-0 flex-1 truncate"
-          :class="part.status === 'failed' ? 'text-danger' : 'text-[var(--neo-fg)]'"
-        >{{ part.title }}</span>
-        <span
-          v-if="part.status === 'running' || part.status === 'pending'"
-          class="shrink-0 text-[10px] text-[var(--neo-text-muted)] animate-pulse"
-        >{{ part.status === 'pending' ? '待确认' : `生成中${elapsedLabel(part)}` }}</span>
-        <CanvasLocateButton
-          v-if="part.status === 'done' || part.status === 'failed'"
-          title="在画布中定位"
-          @click="onLocate(part.nodeId)"
-        />
-        <button
-          v-if="part.status === 'failed'"
-          type="button"
-          class="shrink-0 rounded border border-danger/50 px-1.5 py-0.5 text-[10px] text-danger hover:bg-danger/10"
-          @click="onRetry(part.nodeId)"
-        >重试生成</button>
-      </div>
+        <header class="flex items-center gap-1.5">
+          <!-- 引领 glyph 随态变：running=锚(energy) / done=✓(success) / failed=⚠(error)；pending 回退类型图标 -->
+          <span class="lead shrink-0" :class="`lead-${part.status}`" aria-hidden="true">
+            <svg v-if="part.status === 'running'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/></svg>
+            <svg v-else-if="part.status === 'done'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+            <svg v-else-if="part.status === 'failed'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+          </span>
+          <DockTypeIcon v-if="part.status === 'pending'" :type="part.nodeType" :size="12" class="shrink-0 opacity-80" />
+          <!-- 缩略图（2026-10-17 增强）：音频 url 不进 <img>/<video>（裂图），回退类型图标 -->
+          <span
+            v-if="part.status === 'done' && artifactUrl(part) && !isAudioUrl(artifactUrl(part)!)"
+            class="relative block h-9 w-9 shrink-0 overflow-hidden rounded border border-[var(--lnk-border-subtle)]"
+          >
+            <video
+              v-if="isVideoUrl(artifactUrl(part)!)"
+              :src="`${artifactUrl(part)}#t=0.1`"
+              muted
+              preload="metadata"
+              class="h-full w-full object-cover"
+            />
+            <img
+              v-else
+              :src="artifactUrl(part)"
+              :alt="part.title"
+              loading="lazy"
+              class="h-full w-full object-cover"
+            />
+          </span>
+          <span
+            class="min-w-0 flex-1 truncate font-medium"
+            :class="part.status === 'failed' ? 'text-[var(--lnk-error)]' : 'text-[var(--lnk-text-primary)]'"
+          >{{ part.title }}</span>
+          <span
+            v-if="part.status === 'running' || part.status === 'pending'"
+            class="shrink-0 text-[10px] text-[var(--lnk-text-muted)]"
+            :class="part.status === 'running' ? 'animate-pulse' : ''"
+          >{{ part.status === 'pending' ? '待确认' : `生成中${elapsedLabel(part)}` }}</span>
+        </header>
 
-      <!-- proposal（根治规格 2026-10-28）：等待态单一真相的内联决策点——确认 / 取消 / 定位
-           都在对话流里，不再有对话流之外的独立浮卡。状态行与画布浮层都读同一 part。
-           令牌纪律：本分支为新增样式，一律 --lnk-* 语义令牌（neoUsageRatchet 全仓只减不增）。 -->
-      <div
-        v-else-if="part.kind === 'proposal'"
-        class="rounded border px-2 py-1"
-        :class="part.status === 'pending_confirm'
-          ? 'border-[var(--lnk-warning-border)]'
-          : 'border-[var(--lnk-border-default)]'"
-      >
-        <div class="flex items-center gap-1.5">
-          <span>🎨</span>
-          <span class="font-medium text-[var(--lnk-text-primary)]">{{ part.title }}</span>
-          <span
-            v-if="part.status === 'pending_confirm'"
-            class="ml-auto text-[10px] text-[var(--lnk-text-muted)]"
-          >待确认</span>
-          <!-- 2026-10-31 大章鱼回合实证：终态标签必须分流——cancelled（declined）与
-               expired（超时）一律显示「已确认」是展示层撒谎，用户据此误判已被确认。 -->
-          <span
-            v-else-if="part.status === 'declined'"
-            class="ml-auto text-[10px] text-[var(--lnk-text-muted)]"
-          >已取消</span>
-          <span
-            v-else-if="part.status === 'expired'"
-            class="ml-auto text-[10px] text-[var(--lnk-text-muted)]"
-          >已超时取消</span>
-          <span
-            v-else
-            class="ml-auto text-[10px] text-[var(--lnk-text-muted)]"
-          >已确认</span>
+        <!-- 品牌三联轨道（与 proposal 卡同构；--p 随 state-* 滑动）。
+             running 态它就是唯一进度载体：不定态流光 trail + 锚作业脉冲
+             （截图审查裁定：旧墨滴进度条与锚轨双进度冗余，2026-11-02 退役）。 -->
+        <div class="trilink-rail" role="img" aria-label="品牌链条：对话 → 锚（滑动）→ 画布">
+          <span class="end end-conv" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-12.4 7.4L3 21l2.1-5.5A8.5 8.5 0 1 1 21 11.5z"/></svg></span>
+          <span class="track"><span class="trail"></span><span class="thumb" aria-hidden="true"></span></span>
+          <span class="end end-canvas" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.8"/><rect x="14" y="14" width="7" height="7" rx="1.8"/><path d="M10 6.5h7.5V14"/></svg></span>
         </div>
-        <!-- 2026-10-31 猴子回合 CI 钓出：等待提示此前不分状态恒显——已取消/已超时/已确认
-             的卡仍挂着「等待你在画布上确认生成」（与 #654 标签撒谎同族）。只 pending 才显示。 -->
-        <p
-          v-if="part.status === 'pending_confirm'"
-          class="mt-0.5 text-[10px] text-[var(--lnk-text-secondary)]"
-        >
-          等待你在画布上确认生成，确认后继续输出
-        </p>
-        <div class="mt-1 flex items-center gap-1.5">
+
+        <!-- failed：错误文案 -->
+        <p v-if="part.status === 'failed' && part.errorText" class="prompt-preview">{{ part.errorText }}</p>
+
+        <div class="actions">
+          <!-- running：停止生成（inject null 时不渲染）+ 预扣积分 -->
+          <button
+            v-if="part.status === 'running' && cancelGeneration"
+            type="button"
+            class="btn-stop"
+            data-test="stop"
+            @click="cancelGeneration(part.nodeId)"
+          >停止生成</button>
+          <span v-if="part.status === 'running' && artifactCredit(part.nodeId)" class="status-pill credit soft">预扣 {{ artifactCredit(part.nodeId) }} 积分</span>
+          <!-- done：查看结果↗ 回链 + 消耗积分 -->
+          <button
+            v-if="part.status === 'done'"
+            type="button"
+            class="tether view-result"
+            data-test="view-result"
+            @click="onLocate(part.nodeId)"
+          >查看结果 ↗</button>
+          <span v-if="part.status === 'done' && artifactCredit(part.nodeId)" class="status-pill credit">消耗 {{ artifactCredit(part.nodeId) }} 积分</span>
+          <!-- failed：重试 + 未扣减 -->
+          <button
+            v-if="part.status === 'failed'"
+            type="button"
+            class="btn-stop danger"
+            data-test="retry"
+            @click="onRetry(part.nodeId)"
+          >重试生成</button>
+          <span v-if="part.status === 'failed' && artifactCredit(part.nodeId)" class="status-pill credit">未扣减 <s>{{ artifactCredit(part.nodeId) }} 积分</s></span>
+          <span v-else-if="part.status === 'failed'" class="status-pill credit struck">未扣减</span>
           <CanvasLocateButton
-            v-if="part.nodeId"
+            v-if="part.status !== 'pending'"
+            class="ml-auto"
             title="在画布中定位"
             @click="onLocate(part.nodeId)"
           />
-          <button
-            v-if="part.status === 'pending_confirm'"
-            type="button"
-            class="shrink-0 rounded border border-[var(--lnk-accent-border)] bg-[var(--lnk-accent-subtle)] px-2 py-0.5 text-[10px] text-[var(--lnk-accent-text)] hover:bg-[var(--lnk-accent-border)]"
-            @click="onConfirmProposal(part.nodeId)"
-          >确认生成</button>
-          <button
-            v-if="part.status === 'pending_confirm'"
-            type="button"
-            class="shrink-0 rounded border border-[var(--lnk-border-default)] px-2 py-0.5 text-[10px] text-[var(--lnk-text-secondary)] hover:bg-[var(--lnk-hover-overlay)]"
-            @click="onCancelProposal(part.nodeId)"
-          >取消</button>
         </div>
+      </div>
+
+      <!-- proposal（2026-11-02 卡片 UX 优化）：对话内决策中枢——标题取节点名、
+           元信息（模型·比例·预计积分·张数）恒可见、提示词 1 行预览、
+           三动作（落锚生成/调整/取消）+ 终态折叠行（未扣减删除线=积分诚实）。
+           品牌三联叙事：锚 glyph + 「对话──锚(滑)──画布」轨道（--p 由根 state-* 驱动，
+           一组 CSS 规则映射全部状态，见 <style> R-A 表）。
+           令牌纪律：本分支为新增样式，一律 --lnk-* 语义令牌（neoUsageRatchet 全仓只减不增）。 -->
+      <div
+        v-else-if="part.kind === 'proposal'"
+        class="proposal-card rounded-md border border-[var(--lnk-border-default)] bg-[var(--lnk-surface-raised)] px-2.5 py-2"
+        :class="[`state-${part.status ?? 'pending_confirm'}`, { folded: part.status === 'confirmed' && proposalFolded(part.nodeId) }]"
+        data-test="proposal-card"
+      >
+        <!-- 折叠单行凭据（执行卡在场时）：✓已落锚 + 节点名 + 画布回链。
+             参数/轨道不重复渲染——执行卡是唯一活跃面（PM 裁决 2026-11-02）。 -->
+        <div v-if="part.status === 'confirmed' && proposalFolded(part.nodeId)" class="genrow" data-test="proposal-folded">
+          <span class="status-pill" :class="endStateClass(part.status)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+            {{ endStateLabel(part.status) }}
+          </span>
+          <span class="min-w-0 flex-1 truncate text-[11px] text-[var(--lnk-text-secondary)]">{{ proposalData(part.nodeId)?.title ?? '提议生成' }}</span>
+          <button v-if="part.nodeId" type="button" class="tether" data-test="locate-link" @click="onLocate(part.nodeId)">
+            <svg class="chain" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 12h6"/><path d="M11 5h5a4 4 0 0 1 0 8h-1"/><path d="M13 19H8a4 4 0 0 1 0-8h1"/></svg>
+            在画布查看节点
+          </button>
+        </div>
+        <template v-else>
+        <header class="pc-head flex items-center gap-1.5">
+          <!-- 锚 glyph=纯品牌装饰（定位收敛纪律 2026-11-02）：定位出口每卡一个，
+               由页脚 tether 唯一承载；glyph 不再可点，避免同卡三入口。 -->
+          <span v-if="part.nodeId" class="lead shrink-0">
+            <span class="anchor-glyph" data-test="anchor-glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/></svg></span>
+          </span>
+          <div class="min-w-0 flex-1">
+            <div class="eyebrow">画布节点</div>
+            <div class="name truncate font-medium text-[var(--lnk-text-primary)]">{{ proposalData(part.nodeId)?.title ?? '提议生成' }}</div>
+          </div>
+          <span
+            v-if="part.status === 'pending_confirm'"
+            class="ml-auto shrink-0 text-[10px] text-[var(--lnk-text-muted)]"
+          >待确认</span>
+        </header>
+
+        <!-- 品牌三联轨道：对话(左端)──锚(滑)──画布(右端)；锚=进度拇指，位置由 state-* 经 --p 驱动 -->
+        <div class="trilink-rail" role="img" aria-label="品牌链条：对话 → 锚（滑动）→ 画布">
+          <span class="end end-conv" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-12.4 7.4L3 21l2.1-5.5A8.5 8.5 0 1 1 21 11.5z"/></svg></span>
+          <span class="track"><span class="trail"></span><span class="thumb" aria-hidden="true"></span></span>
+          <span class="end end-canvas" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.8"/><rect x="14" y="14" width="7" height="7" rx="1.8"/><path d="M10 6.5h7.5V14"/></svg></span>
+        </div>
+
+        <!-- 元信息（决策关键信息恒可见；积分 A-now 本地估算，C-later 服务端 creditCost 优先） -->
+        <div v-if="proposalData(part.nodeId)" class="meta">
+          <span v-if="proposalData(part.nodeId)!.modelId" class="chip model">{{ proposalData(part.nodeId)!.modelId }}</span>
+          <span v-if="proposalData(part.nodeId)!.aspectRatio" class="chip">{{ proposalData(part.nodeId)!.aspectRatio }}</span>
+          <span v-if="proposalData(part.nodeId)!.creditCost" class="chip credit">预计 {{ proposalData(part.nodeId)!.creditCost }} 积分</span>
+          <span v-if="proposalData(part.nodeId)!.imageCount > 1" class="chip">{{ proposalData(part.nodeId)!.imageCount }} 张</span>
+        </div>
+
+        <!-- 提示词：仅 1 行预览（证据，非决策控件） -->
+        <p class="prompt-preview single-line" data-test="prompt-preview">{{ proposalData(part.nodeId)?.prompt || '—' }}</p>
+
+        <!-- 三动作只 pending_confirm；终态折叠行（confirmed/declined/expired）
+             ——declined/expired 显「未扣减」删除线（积分诚实：未发生扣费）。 -->
+        <div v-if="part.status === 'pending_confirm'" class="actions">
+          <button
+            type="button"
+            class="btn-primary"
+            data-test="confirm"
+            @click="onConfirmProposal(part.nodeId)"
+          >落锚生成</button>
+          <button
+            type="button"
+            class="icon-btn"
+            data-test="tune"
+            title="参数微调"
+            aria-label="参数微调"
+            @click="onOpenTune(part.nodeId)"
+          ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="7" x2="20" y2="7"/><circle cx="9" cy="7" r="2.4"/><line x1="4" y1="17" x2="20" y2="17"/><circle cx="15" cy="17" r="2.4"/></svg></button>
+          <button
+            type="button"
+            class="icon-btn"
+            data-test="cancel"
+            title="取消"
+            aria-label="取消"
+            @click="onCancelProposal(part.nodeId)"
+          ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg></button>
+          <!-- 定位收敛纪律：决策行不排定位图标——出口由页脚 tether 唯一承载
+               （同卡三入口治理 2026-11-02；artifact 卡不受此限，其 CanvasLocateButton 是唯一入口） -->
+        </div>
+        <div v-else class="genrow">
+          <span class="status-pill" :class="endStateClass(part.status)">
+            <!-- 图标随态分流（截图审查裁定）：confirmed=✓；declined=✕；expired=时钟——
+                 超时/取消不是成功，不得复用对勾（2026-10-31 终态分流教训的图形版）。 -->
+            <svg v-if="part.status === 'confirmed'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
+            <svg v-else-if="part.status === 'declined'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg>
+            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+            {{ endStateLabel(part.status) }}
+          </span>
+          <!-- 积分诚实合并（截图审查裁定）：未扣减与金额一体（金额删除线），
+               不再「预计 30 积分」chip 与「未扣减」pill 两处割裂；无金额时兜底纯文字。 -->
+          <span v-if="part.status !== 'confirmed' && proposalData(part.nodeId)?.creditCost" class="status-pill credit">未扣减 <s>{{ proposalData(part.nodeId)!.creditCost }} 积分</s></span>
+          <span v-else-if="part.status !== 'confirmed'" class="status-pill credit struck">未扣减</span>
+        </div>
+
+        <button v-if="part.nodeId" type="button" class="tether" data-test="locate-link" @click="onLocate(part.nodeId)">
+          <svg class="chain" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 12h6"/><path d="M11 5h5a4 4 0 0 1 0 8h-1"/><path d="M13 19H8a4 4 0 0 1 0-8h1"/></svg>
+          在画布查看节点
+        </button>
+        </template>
       </div>
 
       <!-- question（根治规格 2026-10-28）：ask_user 等待态单一真相的内联决策点——题面 / 选项 /
@@ -451,6 +613,20 @@ const rootClass = computed(() =>
         </span>
       </div>
     </template>
+
+    <!-- R-C（2026-11-02 卡片 UX 优化）：参数微调 Sheet——挂载在 parts 循环外。
+         「调整」入口（proposal 卡 data-test=tune）经 openProposeTuneSheet 置模块级 ref
+         驱动显隐；「保存并确认」经本组件既有 confirmProposal emit 上行到 SideRail
+         （confirmProposeWait，单执行入口不变量）；「在画布精修」经 focusNode 带向画布
+         dock 既有写路径（R-B）。MobileSheet 自 teleport body，DOM 位置无关。 -->
+    <ProposeTuneSheet
+      :open="tuneSheetOpen"
+      :node-id="tuneNodeId"
+      :canvas-nodes="canvasNodes"
+      @update:open="tuneSheetOpen = $event"
+      @confirm-proposal="onConfirmProposal($event)"
+      @refine-dock="onLocate($event)"
+    />
   </div>
 </template>
 
@@ -465,5 +641,346 @@ const rootClass = computed(() =>
   max-height: min(46vh, 420px);
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+/* ============================================================
+ * proposal 卡（2026-11-02 卡片 UX 优化）——对话内决策中枢
+ * 令牌纪律：一律 --lnk-*；新增样式禁 --neo-*（neoUsageRatchet）。
+ * ============================================================ */
+
+/* 头部：眉标 + 节点名（极简定稿：眉标中性 muted，accent 不进结构位） */
+.eyebrow {
+  font-size: var(--lnk-text-2xs);
+  color: var(--lnk-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: var(--lnk-weight-semibold);
+}
+
+/* 头部锚 glyph：inline SVG stroke=currentColor，随主题反相（ledger R3：不引 png 资产） */
+.anchor-glyph {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+}
+.anchor-glyph svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+/* —— 品牌三联轨道：对话(左端) ── 锚(滑动拇指) ── 画布(右端) —— */
+.trilink-rail {
+  --p: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 10px;
+}
+.trilink-rail .end {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--lnk-text-muted);
+  transition: color var(--lnk-duration-base) var(--lnk-ease-standard);
+}
+.trilink-rail .end svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+.trilink-rail .track {
+  position: relative;
+  flex: 1;
+  height: 20px;
+  /* 锚 thumb 半宽 12px：两端各留 12px，p=0/1 时锚恰好贴住端点图标而不叠压 */
+  margin: 0 12px;
+}
+.trilink-rail .track::before {
+  content: '';
+  position: absolute;
+  inset: 50% 0 auto 0;
+  height: 2px;
+  transform: translateY(-50%);
+  background: var(--lnk-border-subtle);
+  border-radius: 2px;
+}
+.trilink-rail .trail {
+  position: absolute;
+  inset: 50% auto auto 0;
+  height: 2px;
+  width: calc(var(--p) * 100%);
+  transform: translateY(-50%);
+  /* 极简定稿（2026-11-02）：trail 一律中性灰，语义色只由 thumb 单点承载 */
+  background: color-mix(in srgb, var(--lnk-text-primary) 32%, transparent);
+  border-radius: 2px;
+  transition: width 0.6s var(--lnk-ease-standard);
+}
+.trilink-rail .thumb {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--p) * 100%);
+  width: 24px;
+  height: 24px;
+  transform: translate(-50%, -50%);
+  /* 极简定稿：锚本体恒亮（text-primary），不用色——accent 只留给主钮与链接；
+     语义色单点：done=success 绿、failed=error 红，仅此两处。 */
+  color: var(--lnk-text-primary);
+  /* 双层徽章（用户裁定：单色剪影丢了徽章的黑+白雕刻感）——
+     底层盘 = anchor-badge-disc.png（alpha 阈值剪影）× currentColor 随态变色；
+     上层雕纹 = anchor-badge-mask.png（亮度键控环+锚+翼饰）× 卡面色反向雕刻，
+     合成「珐琅徽章钉在轨道」的两色实体感。两资产同出原图 256 画布，像素级对齐。 */
+  background: currentColor;
+  -webkit-mask: url('/brand/anchor-badge-disc.png') center / contain no-repeat;
+  mask: url('/brand/anchor-badge-disc.png') center / contain no-repeat;
+  transition: left 0.6s var(--lnk-ease-standard);
+  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 0.18));
+}
+.trilink-rail .thumb::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--lnk-surface-raised);
+  -webkit-mask: url('/brand/anchor-badge-mask.png') center / contain no-repeat;
+  mask: url('/brand/anchor-badge-mask.png') center / contain no-repeat;
+}
+
+/* R-A 状态 → 锚位置映射（proposal 段 + artifact 段共用本表，Task 2b 复用）：
+ * pending_confirm 停对话端 0 → confirmed 起锚 ~18% → running 滑行 ~55%
+ * → done 落定画布 100%（绿）；declined/expired 留对话端（暗）；failed 卡中途（红）。
+ * 状态类挂在卡片根，无需逐卡内联。 */
+.state-pending_confirm .trilink-rail { --p: 0; }
+.state-confirmed .trilink-rail { --p: 0.18; }
+.state-running .trilink-rail { --p: 0.55; }
+.state-done .trilink-rail { --p: 1; }
+.state-declined .trilink-rail,
+.state-expired .trilink-rail { --p: 0; opacity: 0.5; }
+.state-failed .trilink-rail { --p: 0.5; }
+.state-done .end-canvas { color: var(--lnk-text-muted); }
+.state-running .end-canvas { color: var(--lnk-text-secondary); }
+.state-done .thumb { color: var(--lnk-success); animation: anchor-drop 0.5s var(--lnk-ease-standard); }
+/* 极简定稿（2026-11-02）：语义色单点纪律——绿/红只出现在 thumb，
+   trail/端点一律中性；done 不再全链点亮。终态凭据 thumb 熄灯 45%。 */
+.state-confirmed .thumb,
+.state-declined .thumb,
+.state-expired .thumb { color: color-mix(in srgb, var(--lnk-text-primary) 45%, transparent); }
+.state-failed .thumb { color: var(--lnk-error); animation: anchor-shake 0.45s var(--lnk-ease-standard); }
+/* running：无真实进度数据 ⇒ 不定态诚实表达——trail 流光扫过 + 锚作业脉冲。
+   墨滴进度条已退役（双进度冗余），锚轨即唯一进度载体。 */
+.state-running .trilink-rail .trail {
+  width: 34%;
+  transition: none;
+  animation: rail-flow 2.4s var(--lnk-ease-standard) infinite;
+}
+@keyframes rail-flow {
+  0% { left: 0; opacity: 0; }
+  18% { opacity: 1; }
+  82% { opacity: 1; }
+  100% { left: 66%; opacity: 0; }
+}
+.state-running .trilink-rail .thumb {
+  animation: anchor-work 2.4s var(--lnk-ease-standard) infinite;
+}
+@keyframes anchor-work {
+  0%, 100% { transform: translate(-50%, -50%) scale(1); }
+  50% { transform: translate(-50%, -50%) scale(1.09); }
+}
+@keyframes anchor-drop {
+  0% { transform: translate(-50%, -50%) scale(0.55); }
+  60% { transform: translate(-50%, -50%) scale(1.18); }
+  100% { transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes anchor-shake {
+  0%, 100% { margin-left: 0; }
+  25% { margin-left: -3px; }
+  75% { margin-left: 3px; }
+}
+
+/* —— 元信息 chips（模型·比例·积分·张数） —— */
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+.chip {
+  font-size: var(--lnk-text-xs);
+  color: var(--lnk-text-secondary);
+  background: var(--lnk-surface-sunken);
+  border: 1px solid var(--lnk-border-subtle);
+  padding: 2px 8px;
+  border-radius: var(--lnk-radius-full);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.chip.model { font-weight: var(--lnk-weight-semibold); } /* A-now 模型中性：不作成本主因强调 */
+/* 极简定稿：积分一律中性 chip/pill——琥珀底色退役，成本重要性靠文案承载 */
+.chip.credit,
+.status-pill.credit {
+  color: var(--lnk-text-secondary);
+  background: var(--lnk-surface-sunken);
+  border: 1px solid var(--lnk-border-default);
+}
+
+/* —— 提示词：仅 1 行预览（证据，非决策控件） —— */
+.prompt-preview {
+  font-size: var(--lnk-text-xs);
+  color: var(--lnk-text-secondary);
+  line-height: var(--lnk-lh-sm);
+  margin: 0 0 8px;
+}
+.prompt-preview.single-line {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* —— 操作区：落锚生成（主钮）/ 调整 / 取消 ——
+ * 触控纪律：钮高用 --lnk-touch-target(44px)，不用 mockup 桌面 40px（plan Task5 打磨项）。 */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--lnk-touch-target);
+  padding: 0 16px;
+  border-radius: var(--lnk-radius-md);
+  font-size: var(--lnk-text-sm);
+  font-weight: var(--lnk-weight-semibold);
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: var(--lnk-accent);
+  color: var(--lnk-text-on-accent);
+  /* 极简定稿：去 accent-glow，行动点靠位置与对比度表达，不靠光晕 */
+  transition: all var(--lnk-duration-fast) var(--lnk-ease-standard);
+}
+.btn-primary:hover { background: var(--lnk-accent-hover); }
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--lnk-touch-target);
+  height: var(--lnk-touch-target);
+  border-radius: var(--lnk-radius-md);
+  cursor: pointer;
+  border: 1px solid var(--lnk-border-default);
+  background: var(--lnk-surface-raised);
+  color: var(--lnk-text-secondary);
+  transition: all var(--lnk-duration-fast) var(--lnk-ease-standard);
+}
+.icon-btn:hover { border-color: var(--lnk-accent-border); color: var(--lnk-accent-text); }
+.icon-btn svg { width: 16px; height: 16px; display: block; }
+/* focus-visible 环（与 AskUserCard 同款；键盘可达性） */
+.btn-primary:focus-visible,
+.icon-btn:focus-visible,
+.btn-stop:focus-visible,
+.tether:focus-visible {
+  outline: 2px solid var(--lnk-border-focus);
+  outline-offset: 2px;
+}
+
+/* —— 终态折叠行（confirmed/declined/expired） —— */
+.genrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 6px;
+}
+/* 执行卡在场时 confirmed 提议卡塌缩为单行凭据：去掉 genrow 默认外距，
+   让 slim 卡上下留白均衡（PM 裁决 2026-11-02）。 */
+.proposal-card.folded .genrow { margin: 0; }
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--lnk-text-xs);
+  font-weight: var(--lnk-weight-semibold);
+  padding: 2px 9px;
+  border-radius: var(--lnk-radius-full);
+}
+.status-pill svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 2; }
+.status-pill.ok {
+  color: var(--lnk-success);
+  background: var(--lnk-success-bg);
+  border: 1px solid var(--lnk-success-border);
+}
+.status-pill.cancel {
+  color: var(--lnk-text-muted);
+  background: var(--lnk-surface-sunken);
+  border: 1px solid var(--lnk-border-subtle);
+}
+.status-pill.struck { text-decoration: line-through; }
+
+/* —— 定位弱链接（锚链拉拽微动） —— */
+.tether {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  font-size: var(--lnk-text-xs);
+  color: var(--lnk-text-muted);
+  text-decoration: none;
+}
+.tether:hover { color: var(--lnk-accent-text); }
+.tether svg.chain { width: 13px; height: 13px; }
+.tether:hover svg.chain { animation: link-pull 0.5s var(--lnk-ease-standard); }
+@keyframes link-pull {
+  0% { transform: translateY(-2px); }
+  50% { transform: translateY(1px); }
+  100% { transform: translateY(0); }
+}
+
+/* —— artifact 卡（2026-11-02）：执行面 —— */
+/* 引领 glyph（极简定稿：一律中性 secondary，每卡语义色只允许 thumb 单点） */
+.lead { display: grid; place-items: center; width: 16px; height: 16px; color: var(--lnk-text-secondary); }
+.lead svg { width: 16px; height: 16px; display: block; }
+
+/* 停止 / 重试（次级实心钮；重试加 danger 红描边；44px 触控目标） */
+.btn-stop {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: var(--lnk-touch-target);
+  padding: 0 14px;
+  border-radius: var(--lnk-radius-md);
+  font-size: var(--lnk-text-xs);
+  font-weight: var(--lnk-weight-semibold);
+  cursor: pointer;
+  border: 1px solid var(--lnk-border-default);
+  background: var(--lnk-surface-raised);
+  color: var(--lnk-text-secondary);
+  transition: all var(--lnk-duration-fast) var(--lnk-ease-standard);
+}
+.btn-stop:hover { border-color: var(--lnk-accent-border); color: var(--lnk-accent-text); }
+.btn-stop.danger { border-color: var(--lnk-error-border); color: var(--lnk-error); }
+.btn-stop.danger:hover { background: var(--lnk-error-bg); }
+
+/* 查看结果↗（强调版锚链回链） */
+.view-result { color: var(--lnk-accent-text); font-weight: var(--lnk-weight-semibold); }
+.view-result:hover { color: var(--lnk-accent); }
+
+/* 预扣积分 pill（半透明 soft 变体，与消耗 pill 区分） */
+.status-pill.credit.soft { opacity: 0.75; }
+
+/* 降低动态：锚瞬移 + 动效关闭，文字标签保真（A13） */
+@media (prefers-reduced-motion: reduce) {
+  .trilink-rail .trail,
+  .trilink-rail .thumb,
+  .trilink-rail .end { transition: none; }
+  .state-done .thumb,
+  .state-failed .thumb,
+  .state-running .thumb { animation: none; }
+  .state-running .trilink-rail .trail { animation: none; width: 55%; }
+  .tether:hover svg.chain { animation: none; }
 }
 </style>

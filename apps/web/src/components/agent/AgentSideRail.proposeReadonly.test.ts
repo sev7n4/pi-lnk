@@ -126,10 +126,12 @@ describe('根治规格：propose 等待的单一真相 = 时间线 proposal part
     // 状态行已整条退役（用户裁决：只保留 SSE 对话流）——等待呈现只允许来自时间线 part
     expect(w.find('[data-testid="turn-status-line"]').exists()).toBe(false)
 
-    // 对话流内联卡：决策点在时间线内（title + 等待提示 + 确认按钮）
+    // 对话流内联卡：决策点在时间线内（2026-11-02 新契约：标题 + 待确认 + 落锚生成；
+    // 自相矛盾的「等待你在画布上确认生成」文案已随卡片重构退役）
     expect(w.text()).toContain('提议生成')
-    expect(w.text()).toContain('等待你在画布上确认生成')
-    const confirmBtn = w.findAll('button').find((b) => b.text() === '确认生成')
+    expect(w.text()).toContain('待确认')
+    expect(w.text()).not.toContain('等待你在画布上确认生成')
+    const confirmBtn = w.findAll('button').find((b) => b.text() === '落锚生成')
     expect(confirmBtn).toBeTruthy()
   })
 
@@ -137,14 +139,13 @@ describe('根治规格：propose 等待的单一真相 = 时间线 proposal part
     const w = await mountRail()
     seedTimelineProposal()
     await flushPromises()
-    expect(w.text()).toContain('等待你在画布上确认生成')
+    expect(w.text()).toContain('落锚生成')
 
     const agent = useAgentStore()
     agent.trackWaitingUser({ status: 'resolved', toolName: 'propose_generation' })
     await flushPromises()
 
-    // resolved 后：等待文案与「确认生成」按钮同步解除（单一真相 = proposal part 状态）
-    expect(w.text()).not.toContain('等待你在画布上确认生成')
-    expect(w.findAll('button').map((b) => b.text())).not.toContain('确认生成')
+    // resolved 后：「落锚生成」按钮同步解除（单一真相 = proposal part 状态翻面）
+    expect(w.findAll('button').map((b) => b.text())).not.toContain('落锚生成')
   })
 })

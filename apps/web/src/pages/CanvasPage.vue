@@ -2604,9 +2604,20 @@ function renameNodeById(nodeId: string, title: string) {
 provide(CANVAS_NODE_LOCATE_FLASH_KEY, locateFlashNodeIds)
 provide(CANVAS_NODE_RENAME_KEY, renameNodeById)
 
-function patchNodeMediaById(nodeId: string, patch: Record<string, unknown>) {
+/**
+ * 节点参数 patch 通路（承诺形态，2026-11-02 提议微调真写回）：
+ * 先本地 patch 再 await 落库——「保存并确认」类消费方（ProposeTuneSheet）必须
+ * 拿到落库结果才能放行确认，杜绝生成读到旧参数；即发即忘消费方（节点组件）
+ * 不受影响（void 语义兼容）。
+ */
+async function patchNodeMediaById(nodeId: string, patch: Record<string, unknown>) {
   patchNodeData(nodeId, patch)
-  persistUserEdit()
+  try {
+    await persistUserEditAsync()
+    return true
+  } catch {
+    return false
+  }
 }
 
 provide(CANVAS_NODE_PATCH_KEY, patchNodeMediaById)

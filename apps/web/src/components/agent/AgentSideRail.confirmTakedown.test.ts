@@ -121,9 +121,12 @@ function seedProposeWait(opts: { callId?: string; nodeId?: string } = {}) {
   })
 }
 
-/** 内联 proposal 卡的取消按钮（对话流内决策点，取代对话流外浮卡）。 */
-function findInlineCancelButton(w: { findAll: (s: string) => Array<{ text: () => string; trigger: (e: string) => Promise<void> }> }) {
-  return w.findAll('button').find((b) => b.text().trim() === '取消')
+/** 内联 proposal 卡的取消按钮（对话流内决策点，取代对话流外浮卡）。
+ *  2026-11-02 卡片重构：取消改为 icon 钮 + aria-label（a11y），文本匹配补 aria 通道。 */
+function findInlineCancelButton(w: { findAll: (s: string) => Array<{ text: () => string; attributes: (a: string) => string | undefined; trigger: (e: string) => Promise<void> }> }) {
+  return w
+    .findAll('button')
+    .find((b) => b.text().trim() === '取消' || b.attributes('aria-label') === '取消')
 }
 
 /** 确认型卡片的 DOM 出口（全部应与本次下线一起消失）。 */
@@ -191,7 +194,8 @@ describe('① 确认型确认卡片全下线（回归锁）', () => {
     await flushPromises()
 
     // 决策点 = 时间线内联卡（浮卡已下线）：定位 + 取消可达
-    expect(w.find('button[title="在画布中定位"]').exists()).toBe(true)
+    // 定位收敛纪律（2026-11-02）：入口=页脚 tether button（每卡一个）
+    expect(w.find('button[data-test="locate-link"]').exists()).toBe(true)
     expect(findInlineCancelButton(w)).toBeTruthy()
     for (const sel of CONFIRM_CARD_SELECTORS) {
       expect(w.find(sel).exists(), `不该再出现 ${sel}`).toBe(false)
@@ -280,8 +284,8 @@ describe('③ proposeWait 传送门（2026-10-15：整句文案即「点击定�
     seedProposeWait({ callId: 'call-1', nodeId: 'node-1' })
     await flushPromises()
 
-    const portal = w.find('button[title="在画布中定位"]')
-    expect(portal.exists(), '定位入口 = 时间线内联卡的 CanvasLocateButton').toBe(true)
+    const portal = w.find('button[data-test="locate-link"]')
+    expect(portal.exists(), '定位入口 = 时间线内联卡页脚 tether button（每卡一个）').toBe(true)
     expect(portal.element.tagName).toBe('BUTTON')
     await portal.trigger('click')
     await flushPromises()

@@ -58,3 +58,24 @@ export function resolveProposeCancelCallId(wait: ProposeWaitLike): string | null
   const callId = typeof wait.callId === 'string' ? wait.callId.trim() : ''
   return callId ? callId : null
 }
+
+/**
+ * 参数微调 Sheet 显隐（2026-11-02 卡片 UX 优化 · R9，与上方守卫同域就近存放）：
+ * 模块级 ref 而非组件级 state——「调整」入口在 AgentTurnTimeline proposal 卡内，
+ * Sheet 本体挂同组件 parts 循环外（R-C），跨渲染点共享一个显隐真相。
+ * 只管开/关与目标节点，不含任何写路径（R-B 预览-only）。
+ */
+import { ref } from 'vue'
+
+export const tuneSheetOpen = ref(false)
+export const tuneNodeId = ref<string | null>(null)
+
+export function openProposeTuneSheet(nodeId: string): void {
+  tuneNodeId.value = nodeId
+  tuneSheetOpen.value = true
+}
+
+export function closeProposeTuneSheet(): void {
+  tuneSheetOpen.value = false
+  tuneNodeId.value = null
+}
