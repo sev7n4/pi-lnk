@@ -26,6 +26,7 @@ import {
   resolveGenerationModel,
 } from '@/constants/studioModels'
 import { estimateImageCredits } from '@/constants/credits'
+import { usePricingQuote } from '@/composables/usePricingQuote'
 import {
   TURNAROUND_PIPELINE_DOCK_HINT,
   defaultGuideCapabilities,
@@ -94,7 +95,11 @@ const readonly = computed(() =>
     status: props.node.data?.status,
   }),
 )
-const credits = computed(() => estimateImageCredits(imageCount.value, imageResolution.value))
+// 展示值单一真相源：走服务端 quote 端点（与计费同源读价目表）；离线才回落本地估算。
+const { credits } = usePricingQuote(
+  () => ({ capability: 'image', count: imageCount.value, resolution: imageResolution.value }),
+  () => estimateImageCredits(imageCount.value, imageResolution.value),
+)
 
 // 仅当节点真实运行 turnaround 管线时提示（管线由 agent workflow 显式设置）。
 // 不要按提示词关键词猜测：后端不会对普通提示词做四格补全，文案会变成虚假承诺。
