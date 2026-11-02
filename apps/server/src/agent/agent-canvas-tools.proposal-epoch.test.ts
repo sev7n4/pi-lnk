@@ -189,4 +189,34 @@ describe('AgentCanvasToolsService proposalEpoch（P1-B B6）', () => {
     expect(res.deduped).toBe(true)
     expect(res.generationRecordId).toBe('rec-legacy')
   })
+
+// ── B1 生成中守卫（2026-11-02 老黄牛死循环护栏，RCA v2 §4-B1 / §5 验收 2）────
+describe('AgentCanvasToolsService proposeGeneration 生成中守卫（B1）', () => {
+  it('generating 节点 propose ⇒ 409 且文案含行动指令（事故形态：重提议盖掉 generating）', async () => {
+    imageNode({ status: 'generating', generationRecordId: 'rec-live' })
+    await expect(
+      svc.proposeGeneration({ sessionId: 's1', userId: 'u1', nodeId: 'img-1' }),
+    ).rejects.toThrow(/已有生成在跑/)
+    await expect(
+      svc.proposeGeneration({ sessionId: 's1', userId: 'u1', nodeId: 'img-1' }),
+    ).rejects.toThrow(ConflictException)
+    // 画布状态绝不能被改写（守卫必须在落库前拒绝）
+    expect(canvas.nodes[0]!.data.status).toBe('generating')
+  })
+
+  it('fallback_pending 节点 propose ⇒ 409', async () => {
+    imageNode({ status: 'fallback_pending' })
+    await expect(
+      svc.proposeGeneration({ sessionId: 's1', userId: 'u1', nodeId: 'img-1' }),
+    ).rejects.toBeInstanceOf(ConflictException)
+  })
+
+  it('completed 节点 propose ⇒ 放行（合法重生成，epoch+1 落 pending_confirm）', async () => {
+    imageNode({ status: 'completed', generationRecordId: 'rec-old' })
+    const res = await svc.proposeGeneration({ sessionId: 's1', userId: 'u1', nodeId: 'img-1' })
+    if (!('summary' in res)) throw new Error('completed 重提议应放行')
+    expect(res.summary.proposalEpoch).toBe(1)
+    expect(canvas.nodes[0]?.data).toMatchObject({ status: 'pending_confirm' })
+  })
+})
 })

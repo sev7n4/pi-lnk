@@ -81,6 +81,7 @@ import {
 import { studioPointCategory } from '../points/point-categories'
 import { PointsService } from '../points/points.service'
 import { consumeMeta, refundMeta } from '../points/point-tx.types'
+import { CanvasNodeStatusService } from '../sessions/sessions-canvas-node-status.service'
 import { PricingService } from '../pricing/pricing.service'
 import type { PricingQuote } from '../pricing/pricing.core'
 import {
@@ -519,7 +520,36 @@ export class StudioService {
     @Inject(MediaProbeService) private readonly mediaProbe: MediaProbeService,
     @Inject(UploadService) private readonly upload: UploadService,
     @Inject(PricingService) private readonly pricing: PricingService,
+    @Inject(CanvasNodeStatusService) private readonly nodeStatus: CanvasNodeStatusService,
   ) {}
+
+  /**
+   * B2（2026-11-02 老黄牛死循环护栏，RCA v2 §4-B2）：回合外生成终态写回画布节点 SSOT。
+   * 事故根因 R4 = GenerationRecord 结算只写记录、节点 status 无人推进。fail-soft：
+   * 结算主链（扣费/退款/记录）绝不因画布写失败而失败；skip/fail 一律 warn 留痕。
+   */
+  private async syncAgentNodeStatus(
+    record: { sessionId?: string | null; nodeId?: string | null; id?: string } | null,
+    patch: Record<string, unknown>,
+  ): Promise<void> {
+    if (!record?.sessionId || !record?.nodeId) return
+    try {
+      const result = await this.nodeStatus.mergeNodeData(record.sessionId, record.nodeId, {
+        ...(record.id ? { generationRecordId: record.id } : {}),
+        ...patch,
+      })
+      if (result !== 'applied') {
+        console.warn(
+          `[node-status] sync skipped (${result}) sessionId=${record.sessionId} nodeId=${record.nodeId} status=${String(patch.status ?? '')}`,
+        )
+      }
+    } catch (err) {
+      console.warn(
+        `[node-status] sync failed (fail-soft) sessionId=${record.sessionId} nodeId=${record.nodeId}:`,
+        err,
+      )
+    }
+  }
 
   async listGenerations(userId: string, type?: string, sessionId?: string) {
     return this.prisma.generationRecord.findMany({
@@ -1218,7 +1248,10 @@ export class StudioService {
         },
       })
       if (updated.count === 0) return null
-      return this.prisma.generationRecord.findFirst({ where: { id } })
+      const settled = await this.prisma.generationRecord.findFirst({ where: { id } })
+      // B2：终态写回画布节点 SSOT（fail-soft，RCA v2 §4-B2）
+      await this.syncAgentNodeStatus(settled, { status: 'completed', url: imageUrls[0] })
+      return settled
     } catch (err) {
       console.error('Image generation failed:', err)
       const existing = await this.prisma.generationRecord.findFirst({ where: { id } })
@@ -1235,13 +1268,16 @@ export class StudioService {
             generationId: id,
           }),
         )
-        return this.prisma.generationRecord.update({
+        const fallbackRecord = await this.prisma.generationRecord.update({
           where: { id },
           data: {
             status: 'fallback_pending',
             metadata: JSON.stringify(this.byokPendingMeta(resolved, err, cost, meta)),
           },
         })
+        // B2：fallback_pending 也是节点可见状态（fail-soft）
+        await this.syncAgentNodeStatus(fallbackRecord, { status: 'fallback_pending' })
+        return fallbackRecord
       }
       await this.points.refund(
         userId,
@@ -1256,13 +1292,16 @@ export class StudioService {
         applyRefundMeta(meta, cost, 'platform_failed'),
         err,
       )
-      return this.prisma.generationRecord.update({
+      const failedRecord = await this.prisma.generationRecord.update({
         where: { id },
         data: {
           status: 'failed',
           metadata: JSON.stringify(failedMeta),
         },
       })
+      // B2：失败终态写回画布节点 SSOT（fail-soft）
+      await this.syncAgentNodeStatus(failedRecord, { status: 'failed' })
+      return failedRecord
     }
   }
 

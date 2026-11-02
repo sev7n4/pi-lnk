@@ -3,6 +3,7 @@ import { ModuleRef } from '@nestjs/core'
 import { ZodError } from 'zod'
 import { parseVisionQaJson, type ParsedVisionQaJson } from '@lnkpi/agent'
 import { CANVAS_ACTION_APPLIER, defaultCanvasActionApplier } from './canvas-action-applier'
+import { assertNodeStatusTransition } from '../sessions/sessions-canvas-node-status.service'
 import type { ProviderContext, ProviderSource } from '../provider/provider-context'
 import {
   assertTextNodeFormat,
@@ -1236,6 +1237,16 @@ export class AgentCanvasToolsService {
 
     const title = nodeTitle(node) || undefined
     const data = node.data ?? {}
+    // B1（2026-11-02 老黄牛死循环护栏，RCA v2 §4-B1）：生成在跑的节点禁止重新提议——
+    // 事故形态：propose 把 generating 盖回 pending_confirm（模型每轮读到旧状态→无限重提议）。
+    // 409 文案模型可读可行动（NestToolError → isError tool result）。终态（completed/error/failed）
+    // 允许重提议（合法重生成），迁移表见 sessions-canvas-node-status.service（B3 单一权威）。
+    const inFlightVerdict = assertNodeStatusTransition(data.status, 'pending_confirm')
+    if (!inFlightVerdict.ok) {
+      throw new ConflictException(
+        `节点已有生成在跑（当前 status=${String(data.status)}），禁止重复提议：等待生成完成或用户指示即可，不要再次 propose_generation。`,
+      )
+    }
     // P1-B B6（spec 2026-11-01-p1b-generation-job-design §4.1 幂等/epoch）：每次
     // propose（含撤回后重提）mark pending_confirm 时递增节点 proposalEpoch。撤回
     // （clear-propose）本身不动 epoch —— 重提必然再次走本方法，天然 +1。start-* 端点
