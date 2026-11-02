@@ -2736,8 +2736,44 @@ export class AgentService implements OnModuleInit {
       readMarginBp(),
       Promise.resolve(resolveFxUsdCny(process.env as NodeJS.ProcessEnv)),
     ])
-    const estimateTurnCredits = (totals: { cost?: number }): number | null =>
-      totals.cost && totals.cost > 0 ? estimateCreditsFromUsdCost(totals.cost, marginBp, fxUsdCny) : null
+    // v2 单一真相源修复（2026-11-03）：流式预估与回合结算**同引擎**。此前预估走
+    // estimateCreditsFromUsdCost（USD 成本折算），结算走 quoteTextTokens（token 反比率）
+    // ——两套公式 ⇒ 用户看到「≈1 积分（预估）」而账单实扣 14/7。现在回合开始时预读
+    // 一次价目表 token 比率（prepareTextTokenQuote），流式中途用与结算同一纯公式同步
+    // 估算（computeTextTokenCredits）——「≈N 积分（预估）」与「对话回合结算」同源同式，
+    // 改价目表两端同时生效。非 token 模型 / 价目表降级时 plan=null，回落 USD 成本预估
+    // （那正是结算的 degraded 兜底公式，口径仍一致）。
+    const textQuotePlan =
+      this.pricing && typeof this.pricing.prepareTextTokenQuote === 'function'
+        ? await this.pricing.prepareTextTokenQuote(userId, billingModelKey)
+        : null
+    const estimateTurnCredits = (totals: {
+      inputTokens?: number
+      cacheReadTokens?: number
+      cacheWriteTokens?: number
+      outputTokens?: number
+      cost?: number
+    }): number | null => {
+      if (textQuotePlan) {
+        const credits = textQuotePlan.compute({
+          inputTokens: totals.inputTokens ?? 0,
+          cacheReadTokens: totals.cacheReadTokens ?? 0,
+          cacheWriteTokens: totals.cacheWriteTokens ?? 0,
+          outputTokens: totals.outputTokens ?? 0,
+        })
+        // compute 恒 ≥1（max(1,…)）且四列有值才可信；全零 usage 不出预估（杜绝 0 假象）
+        const hasTokens =
+          (totals.inputTokens ?? 0) +
+            (totals.cacheReadTokens ?? 0) +
+            (totals.cacheWriteTokens ?? 0) +
+            (totals.outputTokens ?? 0) >
+          0
+        return hasTokens ? credits : null
+      }
+      return totals.cost && totals.cost > 0
+        ? estimateCreditsFromUsdCost(totals.cost, marginBp, fxUsdCny)
+        : null
+    }
     const usageAccumulator = createUsageAccumulator(estimateTurnCredits)
     // （F2：executionEvents / traceSeq / traceMessageIndex / pushTraceEvent /
     // textPersister 已上移到本生成器 try 之前，见 freeze 块后的收口注释。）

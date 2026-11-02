@@ -593,3 +593,77 @@ describe('PricingService.onModuleInit 自检条件化（P1-a）', () => {
     expect(findFirst).toHaveBeenCalledTimes(2)
   })
 })
+
+describe('PricingService.prepareTextTokenQuote（v2 单一真相源：流式预估==结算同引擎）', () => {
+  const TOKEN_RATIOS = {
+    'text:step-3.5-flash:in': 1000,
+    'text:step-3.5-flash:cache': 5000,
+    'text:step-3.5-flash:out': 500,
+  }
+  const USAGE = { inputTokens: 2001, cacheReadTokens: 10001, outputTokens: 999 }
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    delete process.env.PRICING_SOURCE
+  })
+
+  it('核心契约：plan.compute(usage) === quoteTextTokens(usage).credits（预估与结算同一公式）', async () => {
+    const { prisma } = fakePrisma(entryMap({ text: 5, ...TOKEN_RATIOS }))
+    const svc = new PricingService(prisma)
+    const plan = await svc.prepareTextTokenQuote(undefined, 'step-3.5-flash')
+    expect(plan).not.toBeNull()
+    const settle = await svc.quoteTextTokens(undefined, 'step-3.5-flash', USAGE)
+    expect(plan!.compute(USAGE)).toBe(settle.credits)
+    expect(plan!.ruleVersion).toBe(settle.ruleVersion)
+  })
+
+  it('多档 usage 抽样逐笔相等（含 cacheWrite 并入 in 项口径）', async () => {
+    const { prisma } = fakePrisma(entryMap({ text: 5, ...TOKEN_RATIOS }))
+    const svc = new PricingService(prisma)
+    const plan = await svc.prepareTextTokenQuote(undefined, 'step-3.5-flash')
+    expect(plan).not.toBeNull()
+    const samples = [
+      { inputTokens: 1, cacheReadTokens: 0, outputTokens: 1 },
+      { inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 7777, outputTokens: 42 },
+      { inputTokens: 500_000, cacheReadTokens: 120_000, cacheWriteTokens: 3_000, outputTokens: 8_000 },
+    ]
+    for (const u of samples) {
+      const settle = await svc.quoteTextTokens(undefined, 'step-3.5-flash', u)
+      expect(plan!.compute(u)).toBe(settle.credits)
+    }
+  })
+
+  it('cache 行缺：cacheRead 并入 in 项，两引擎仍逐笔相等', async () => {
+    const { prisma } = fakePrisma(
+      entryMap({ 'text:step-3.5-flash:in': 1000, 'text:step-3.5-flash:out': 500 }),
+    )
+    const svc = new PricingService(prisma)
+    const plan = await svc.prepareTextTokenQuote(undefined, 'step-3.5-flash')
+    expect(plan).not.toBeNull()
+    const u = { inputTokens: 2001, cacheReadTokens: 10001, outputTokens: 999 }
+    const settle = await svc.quoteTextTokens(undefined, 'step-3.5-flash', u)
+    expect(plan!.compute(u)).toBe(settle.credits)
+  })
+
+  it('非 token 计费模型 / PRICING_SOURCE=constants / DB 异常 → null（静默 fail-soft，不刷 warn）', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { prisma } = fakePrisma(entryMap({ text: 5 }))
+    const svc = new PricingService(prisma)
+    await expect(svc.prepareTextTokenQuote(undefined, 'unknown-model')).resolves.toBeNull()
+
+    process.env.PRICING_SOURCE = 'constants'
+    const { prisma: p2 } = fakePrisma(entryMap({ text: 5, ...TOKEN_RATIOS }))
+    await expect(
+      new PricingService(p2).prepareTextTokenQuote(undefined, 'step-3.5-flash'),
+    ).resolves.toBeNull()
+    delete process.env.PRICING_SOURCE
+
+    const { prisma: p3 } = fakePrisma(null, { throws: true })
+    await expect(
+      new PricingService(p3).prepareTextTokenQuote(undefined, 'step-3.5-flash'),
+    ).resolves.toBeNull()
+    // 回合级预读逐 turn 触发，降级态是合法常态（degradedTextTokenQuote 已在上游 warn）⇒
+    // 这里刻意静默：不刷日志（fail-soft 纪律）
+    expect(warn).not.toHaveBeenCalled()
+  })
+})

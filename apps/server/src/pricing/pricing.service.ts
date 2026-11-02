@@ -46,6 +46,37 @@ function isPositiveRatio(v: number | undefined): v is number {
   return typeof v === 'number' && Number.isFinite(v) && v > 0
 }
 
+/**
+ * 文本 token 计价纯公式（单一真相，v2 单一真相源修复 2026-11-03）：
+ * `quoteTextTokens`（回合结算）与 `prepareTextTokenQuote().compute`（流式预估）
+ * 共用本函数 ⇒ SSE「≈N 积分（预估）」与账单「对话回合结算」同源同式，
+ * 改价目表两端同时生效，预估与结算只差流式中途的 token 收敛。
+ *
+ * 口径（与终审 C-2 一致）：cacheWrite 恒并入 in 项；cache 行缺时 cacheRead
+ * 并入 in 项（上游未公布 cache 比率的模型），行齐则独立 ceil。
+ */
+export function computeTextTokenCredits(
+  ratios: { rIn: number; rCache?: number; rOut: number },
+  usage: {
+    inputTokens: number
+    cacheReadTokens: number
+    cacheWriteTokens?: number
+    outputTokens: number
+  },
+): number {
+  const hasCache = isPositiveRatio(ratios.rCache)
+  const inTokens =
+    positiveTokens(usage.inputTokens) +
+    positiveTokens(usage.cacheWriteTokens ?? 0) +
+    (hasCache ? 0 : positiveTokens(usage.cacheReadTokens))
+  const bIn = Math.ceil(inTokens / ratios.rIn)
+  const bCache = hasCache
+    ? Math.ceil(positiveTokens(usage.cacheReadTokens) / (ratios.rCache as number))
+    : 0
+  const bOut = Math.ceil(positiveTokens(usage.outputTokens) / ratios.rOut)
+  return Math.max(1, bIn + bCache + bOut)
+}
+
 interface PriceTable {
   id: string
   version: string
@@ -267,21 +298,27 @@ export class PricingService implements OnModuleInit {
         // 三行齐才走价目口径：in/out 缺行 = 数据事故 → degraded
         return await this.degradedTextTokenQuote(usage)
       }
-      // cache 行缺（step-2-16k 上游未公布）→ cacheRead tokens 并入 in 项；
-      // cacheWrite 恒并入 in 项（终审 C-2，与「cache 并入 in」同形态）——
-      // breakdown.in 即含 cacheWrite 部分。
-      const hasCache = isPositiveRatio(rCache)
-      const inTokens =
-        positiveTokens(usage.inputTokens) +
-        positiveTokens(usage.cacheWriteTokens ?? 0) +
-        (hasCache ? 0 : positiveTokens(usage.cacheReadTokens))
-      const bIn = Math.ceil(inTokens / rIn)
-      const bCache = hasCache ? Math.ceil(positiveTokens(usage.cacheReadTokens) / rCache) : 0
-      const bOut = Math.ceil(positiveTokens(usage.outputTokens) / rOut)
+      // 与流式预估（prepareTextTokenQuote.compute）共用同一纯公式——单一真相
+      const credits = computeTextTokenCredits(
+        { rIn, ...(isPositiveRatio(rCache) ? { rCache } : {}), rOut },
+        usage,
+      )
       const quote: PricingQuote & { breakdown: { in: number; cache: number; out: number } } = {
-        credits: Math.max(1, bIn + bCache + bOut),
+        credits,
         ruleVersion,
-        breakdown: { in: bIn, cache: bCache, out: bOut },
+        breakdown: {
+          // breakdown 供对账：按同一口径拆分（in 项含 cacheWrite 与 cache 缺行并入部分）
+          in: Math.ceil(
+            (positiveTokens(usage.inputTokens) +
+              positiveTokens(usage.cacheWriteTokens ?? 0) +
+              (isPositiveRatio(rCache) ? 0 : positiveTokens(usage.cacheReadTokens))) /
+              rIn,
+          ),
+          cache: isPositiveRatio(rCache)
+            ? Math.ceil(positiveTokens(usage.cacheReadTokens) / rCache)
+            : 0,
+          out: Math.ceil(positiveTokens(usage.outputTokens) / rOut),
+        },
       }
       if (grayReleaseId) quote.grayReleaseId = grayReleaseId // 条件写入（键不出现纪律）
       return quote
@@ -291,6 +328,82 @@ export class PricingService implements OnModuleInit {
         err instanceof Error ? err.message : err,
       )
       return this.degradedTextTokenQuote(usage)
+    }
+  }
+
+  /**
+   * 预解析文本 token 报价计划（v2 单一真相源修复 2026-11-03）。
+   *
+   * 用途：SSE 流式预估（usage_delta / turn_usage 的 estimatedCredits）。此前预估走
+   * `estimateCreditsFromUsdCost`（USD 成本×FX×毛利），与结算的 token 反比率两套公式
+   * ⇒ 用户看到「≈1 积分（预估）」而账单实扣 14/7。现在回合开始时预读一次价目表比率，
+   * 流式中途用 `compute()`（与 quoteTextTokens 同一纯公式 `computeTextTokenCredits`）
+   * 同步估算——预估与结算同源同式，只差流式中途的 token 收敛；结算仍是权威终值。
+   *
+   * 返回 null（调用方落回 USD 成本预估兜底，与 degradedTextTokenQuote 同式）：
+   * 非 token 计费模型 / PRICING_SOURCE=constants / degraded 自愈失败 / in/out 行缺 /
+   * 表读异常。永不 throw。
+   */
+  async prepareTextTokenQuote(
+    userId: string | undefined,
+    modelKey: string,
+  ): Promise<{
+    ruleVersion: string
+    grayReleaseId?: string
+    compute(usage: {
+      inputTokens: number
+      cacheReadTokens: number
+      cacheWriteTokens?: number
+      outputTokens: number
+    }): number
+  } | null> {
+    try {
+      const model = modelOptionName(String(modelKey || '')).trim().toLowerCase()
+      if (process.env.PRICING_SOURCE === 'constants' || !TEXT_TOKEN_MODELS.includes(model)) {
+        return null
+      }
+      if (this.degraded) {
+        await this.trySelfHeal()
+        if (this.degraded) return null
+      }
+      const keyOf = (spec: TextTokenSpec) => buildTextTokenMatchKey(model, spec)
+      // 灰度/-global 解析顺序与 quoteTextTokens 逐字同构（同口径才谈得上同源预估）
+      let entries: Map<string, number>
+      let ruleVersion: string
+      let grayReleaseId: string | undefined
+      const gray = userId ? await this.loadGrayTable() : null
+      if (userId && gray && gray.whitelist.has(userId)) {
+        const gi = gray.entries.get(keyOf('in'))
+        const go = gray.entries.get(keyOf('out'))
+        if (gi !== undefined && go !== undefined) {
+          entries = gray.entries
+          ruleVersion = gray.version
+          grayReleaseId = gray.releaseId
+        } else {
+          const table = await this.requireGlobalTable()
+          entries = table.entries
+          ruleVersion = table.version
+        }
+      } else {
+        const table = await this.requireGlobalTable()
+        entries = table.entries
+        ruleVersion = table.version
+      }
+      const rIn = entries.get(keyOf('in'))
+      const rOut = entries.get(keyOf('out'))
+      const rCache = entries.get(keyOf('cache'))
+      if (!isPositiveRatio(rIn) || !isPositiveRatio(rOut)) return null
+      return {
+        ruleVersion,
+        ...(grayReleaseId ? { grayReleaseId } : {}),
+        compute: (usage) =>
+          computeTextTokenCredits(
+            { rIn, ...(isPositiveRatio(rCache) ? { rCache } : {}), rOut },
+            usage,
+          ),
+      }
+    } catch {
+      return null
     }
   }
 
