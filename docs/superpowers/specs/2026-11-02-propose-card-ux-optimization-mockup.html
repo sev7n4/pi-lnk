@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>提议生成卡片 · 目标态 UI 参考（iOS 极简 · 品牌三联叙事版）</title>
+<style>
+/* ============================================================
+   令牌：L1 原始层（取自 design-tokens.css，与项目 SSOT 对齐）
+   ============================================================ */
+:root,
+:root[data-theme='dark'] {
+  --lnk-ink-0:#ffffff; --lnk-ink-100:#eef0f5; --lnk-ink-200:#e2e5ec;
+  --lnk-ink-300:#c9ced6; --lnk-ink-400:#9aa3b2; --lnk-ink-500:#7a8391;
+  --lnk-ink-600:#5a6478; --lnk-ink-700:#4a5364; --lnk-ink-800:#33414d;
+  --lnk-ink-900:#1f2430; --lnk-ink-950:#1a1a21; --lnk-ink-1000:#131318; --lnk-ink-1050:#0e0e12;
+
+  --lnk-purple-300:#a89dff; --lnk-purple-400:#8a7dff; --lnk-purple-500:#6d5dfc;
+  --lnk-purple-600:#5b4ce6; --lnk-purple-700:#4a3bc4; --lnk-purple-800:#3b2f9e;
+  --lnk-cyan-400:#22d3ee; --lnk-cyan-700:#0c6377;
+  --lnk-green-400:#4ade80; --lnk-green-800:#166534;
+  --lnk-red-400:#f87171; --lnk-red-700:#b3261e;
+  --lnk-amber-400:#fbbf24; --lnk-amber-800:#8a5200;
+
+  --lnk-font-sans:'Inter','PingFang SC','Hiragino Sans GB','Microsoft YaHei',system-ui,sans-serif;
+  --lnk-text-2xs:11px; --lnk-text-xs:12px; --lnk-text-sm:13px; --lnk-text-base:14px; --lnk-text-md:16px;
+  --lnk-lh-xs:18px; --lnk-lh-sm:20px; --lnk-lh-base:22px;
+  --lnk-weight-regular:400; --lnk-weight-medium:500; --lnk-weight-semibold:600; --lnk-weight-bold:700;
+
+  --lnk-space-1:4px; --lnk-space-2:8px; --lnk-space-3:12px; --lnk-space-4:16px;
+  --lnk-space-5:20px; --lnk-space-6:24px; --lnk-space-8:32px;
+  --lnk-pad-card:20px;
+
+  --lnk-radius-sm:6px; --lnk-radius-md:10px; --lnk-radius-lg:14px; --lnk-radius-xl:18px; --lnk-radius-2xl:28px; --lnk-radius-full:9999px;
+
+  --lnk-duration-fast:150ms; --lnk-duration-base:240ms;
+  --lnk-ease-standard:cubic-bezier(0.2,0,0.2,1); --lnk-ease-decelerate:cubic-bezier(0.16,1,0.3,1);
+
+  --lnk-icon-sm:16px; --lnk-icon-md:20px; --lnk-icon-lg:24px; --lnk-icon-stroke:2px;
+  --lnk-control-md:40px; --lnk-control-lg:48px; --lnk-touch-target:44px;
+
+  /* L2 语义层 · 深色 */
+  --lnk-surface-canvas:var(--lnk-ink-1000);
+  --lnk-surface-sunken:var(--lnk-ink-1050);
+  --lnk-surface-base:var(--lnk-ink-950);
+  --lnk-surface-raised:var(--lnk-ink-900);
+  --lnk-text-primary:#f4f4f8; --lnk-text-secondary:#b9bdc9; --lnk-text-muted:#949aa8;
+  --lnk-text-on-accent:#ffffff;
+  --lnk-border-subtle:rgba(255,255,255,0.08); --lnk-border-default:rgba(255,255,255,0.12);
+  --lnk-border-strong:rgba(255,255,255,0.2); --lnk-border-focus:var(--lnk-purple-400);
+  --lnk-accent:var(--lnk-purple-500); --lnk-accent-hover:var(--lnk-purple-600); --lnk-accent-active:var(--lnk-purple-700);
+  --lnk-accent-text:var(--lnk-purple-300); --lnk-accent-subtle:rgba(109,93,252,0.16);
+  --lnk-accent-border:rgba(109,93,252,0.4); --lnk-accent-glow:0 4px 16px rgba(109,93,252,0.32);
+  --lnk-energy:var(--lnk-cyan-400); --lnk-credit:var(--lnk-amber-400); --lnk-credit-soft:rgba(245,158,11,0.16);
+  --lnk-success:var(--lnk-green-400); --lnk-error:var(--lnk-red-400); --lnk-warning:var(--lnk-amber-400);
+  --lnk-success-bg:rgba(74,222,128,0.14); --lnk-error-bg:rgba(248,113,113,0.14); --lnk-warning-bg:rgba(251,191,36,0.14);
+  --lnk-success-border:rgba(74,222,128,0.38); --lnk-error-border:rgba(248,113,113,0.42); --lnk-warning-border:rgba(251,191,36,0.38);
+  --lnk-hover-overlay:rgba(255,255,255,0.06); --lnk-pressed-overlay:rgba(255,255,255,0.1);
+  --lnk-hi-bg:#ffffff; --lnk-hi-text:#17181d;
+  --lnk-edge:rgba(148,151,180,0.3); --lnk-node-border:rgba(255,255,255,0.08);
+}
+:root[data-theme='light'] {
+  --lnk-surface-canvas:var(--lnk-ink-100);
+  --lnk-surface-sunken:var(--lnk-ink-0);
+  --lnk-surface-base:var(--lnk-ink-100);
+  --lnk-surface-raised:var(--lnk-ink-0);
+  --lnk-text-primary:#17181d; --lnk-text-secondary:#3f4654; --lnk-text-muted:#5a6478;
+  --lnk-text-on-accent:#ffffff;
+  --lnk-border-subtle:rgba(0,0,0,0.08); --lnk-border-default:rgba(0,0,0,0.12);
+  --lnk-border-strong:rgba(0,0,0,0.2); --lnk-border-focus:var(--lnk-purple-600);
+  --lnk-accent:var(--lnk-purple-600); --lnk-accent-hover:var(--lnk-purple-700); --lnk-accent-active:var(--lnk-purple-800);
+  --lnk-accent-text:var(--lnk-purple-700); --lnk-accent-subtle:rgba(91,76,230,0.12);
+  --lnk-accent-border:rgba(91,76,230,0.4); --lnk-accent-glow:0 4px 16px rgba(91,76,230,0.24);
+  --lnk-energy:var(--lnk-cyan-700); --lnk-credit:var(--lnk-amber-800); --lnk-credit-soft:rgba(138,82,0,0.12);
+  --lnk-success:var(--lnk-green-800); --lnk-error:var(--lnk-red-700); --lnk-warning:var(--lnk-amber-800);
+  --lnk-success-bg:rgba(22,101,52,0.12); --lnk-error-bg:rgba(179,38,30,0.1); --lnk-warning-bg:rgba(138,82,0,0.1);
+  --lnk-success-border:rgba(22,101,52,0.34); --lnk-error-border:rgba(179,38,30,0.36); --lnk-warning-border:rgba(138,82,0,0.34);
+  --lnk-hover-overlay:rgba(0,0,0,0.04); --lnk-pressed-overlay:rgba(0,0,0,0.08);
+  --lnk-hi-bg:#17181d; --lnk-hi-text:#ffffff;
+  --lnk-edge:rgba(60,64,90,0.35); --lnk-node-border:rgba(0,0,0,0.1);
+}
+
+/* ============================================================
+   页面
+   ============================================================ */
+* { box-sizing:border-box; }
+body { margin:0; background:var(--lnk-surface-canvas); color:var(--lnk-text-primary);
+  font-family:var(--lnk-font-sans); font-size:var(--lnk-text-base); line-height:var(--lnk-lh-base);
+  -webkit-font-smoothing:antialiased; padding:32px 20px 80px; }
+.wrap { max-width:880px; margin:0 auto; }
+header.top { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+h1 { font-size:22px; font-weight:var(--lnk-weight-bold); letter-spacing:-0.01em; margin:0; }
+.sub { color:var(--lnk-text-muted); font-size:var(--lnk-text-sm); margin:4px 0 28px; }
+section { margin:40px 0; }
+h2 { font-size:16px; font-weight:var(--lnk-weight-semibold); margin:0 0 14px; display:flex; align-items:center; gap:8px; }
+.tag { font-size:10px; font-weight:var(--lnk-weight-semibold); color:var(--lnk-accent-text);
+  background:var(--lnk-accent-subtle); border:1px solid var(--lnk-accent-border); padding:2px 8px; border-radius:var(--lnk-radius-full); }
+.desc { color:var(--lnk-text-secondary); font-size:var(--lnk-text-sm); line-height:var(--lnk-lh-sm); margin:0 0 18px; }
+.note { color:var(--lnk-text-muted); font-size:var(--lnk-text-xs); line-height:var(--lnk-lh-xs); margin:12px 0 0; }
+.theme-toggle { display:inline-flex; align-items:center; gap:6px; font-size:var(--lnk-text-xs); color:var(--lnk-text-secondary);
+  background:var(--lnk-surface-raised); border:1px solid var(--lnk-border-default); padding:7px 12px; border-radius:var(--lnk-radius-full); cursor:pointer; }
+.theme-toggle:hover { background:var(--lnk-hover-overlay); }
+
+/* ============================================================
+   对话卡（目标态）— 紧凑、恒高、锚 glyph 引领
+   ============================================================ */
+.card { background:var(--lnk-surface-raised); border:1px solid var(--lnk-border-default);
+  border-radius:var(--lnk-radius-xl); padding:var(--lnk-pad-card); margin:0 0 16px;
+  box-shadow:0 1px 2px rgba(0,0,0,0.18); }
+.card-head { display:flex; align-items:center; gap:12px; }
+.lead { width:46px; height:46px; border-radius:var(--lnk-radius-lg); flex:0 0 auto; display:flex; align-items:center; justify-content:center;
+  background:color-mix(in srgb,var(--lnk-accent) 16%,transparent); color:var(--lnk-accent); }
+.lead svg { width:24px; height:24px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+.ttl { min-width:0; }
+.eyebrow { font-size:var(--lnk-text-2xs); color:var(--lnk-text-muted); text-transform:uppercase; letter-spacing:0.08em; font-weight:var(--lnk-weight-semibold); }
+.name { font-size:var(--lnk-text-base); font-weight:var(--lnk-weight-semibold); margin:2px 0 0; }
+
+/* —— 品牌三联叙事轨道：对话(左端) ── 锚(滑动拇指) ── 画布(右端) —— */
+.trilink-rail { --p:0; display:flex; align-items:center; gap:10px; margin:10px 0 14px; }
+.trilink-rail .end { width:20px; height:20px; flex:none; display:grid; place-items:center; color:var(--lnk-text-muted); transition:color var(--lnk-duration-base) var(--lnk-ease-standard); }
+.trilink-rail .end svg { width:18px; height:18px; display:block; }
+.trilink-rail .track { position:relative; flex:1; height:20px; margin:0 12px; }
+.trilink-rail .track::before { content:""; position:absolute; inset:50% 0 auto 0; height:2px; transform:translateY(-50%); background:var(--lnk-border-subtle); border-radius:2px; }
+.trilink-rail .trail { position:absolute; inset:50% auto auto 0; height:2px; width:calc(var(--p) * 100%); transform:translateY(-50%); background:color-mix(in srgb,var(--lnk-text-primary) 32%, transparent); border-radius:2px; transition:width .6s var(--lnk-ease-standard); }
+/* 极简定稿（2026-11-02）：双层雕刻品牌徽章 thumb（与组件实现同源资产）；
+   锚本体恒亮 text-primary，语义色单点：completed 绿 / failed 红仅 thumb 承载 */
+.trilink-rail .thumb { position:absolute; top:50%; left:calc(var(--p) * 100%); width:24px; height:24px; transform:translate(-50%,-50%); color:var(--lnk-text-primary); display:grid; place-items:center; transition:left .6s var(--lnk-ease-standard); filter:drop-shadow(0 1px 1px rgba(0,0,0,.18)); background:currentColor; -webkit-mask:url('../../../apps/web/public/brand/anchor-badge-disc.png') center/contain no-repeat; mask:url('../../../apps/web/public/brand/anchor-badge-disc.png') center/contain no-repeat; }
+.trilink-rail .thumb::after { content:""; position:absolute; inset:0; background:var(--lnk-surface-raised); -webkit-mask:url('../../../apps/web/public/brand/anchor-badge-mask.png') center/contain no-repeat; mask:url('../../../apps/web/public/brand/anchor-badge-mask.png') center/contain no-repeat; }
+.trilink-rail .thumb svg { display:none; }
+/* 状态驱动锚位置（卡片根 state-* 类，无需逐卡内联） */
+.state-pending    .trilink-rail { --p:0; }
+.state-generating .trilink-rail { --p:.55; }
+.state-completed  .trilink-rail { --p:1; }
+.state-declined   .trilink-rail,
+.state-expired    .trilink-rail { --p:0; opacity:.5; }
+.state-failed     .trilink-rail { --p:.5; }
+.state-completed .end-canvas { color:var(--lnk-text-muted); }
+.state-generating .end-canvas { color:var(--lnk-text-secondary); }
+.state-completed .thumb { color:var(--lnk-success); animation:anchorDrop .5s var(--lnk-ease-standard); }
+.state-confirmed .thumb,
+.state-declined .thumb,
+.state-expired .thumb { color:color-mix(in srgb,var(--lnk-text-primary) 45%, transparent); }
+.state-failed   .thumb { color:var(--lnk-danger); animation:anchorShake .45s var(--lnk-ease-standard); }
+@keyframes anchorDrop { 0%{ transform:translate(-50%,-50%) scale(.55);} 60%{ transform:translate(-50%,-50%) scale(1.18);} 100%{ transform:translate(-50%,-50%) scale(1);} }
+@keyframes anchorShake { 0%,100%{ margin-left:0;} 25%{ margin-left:-3px;} 75%{ margin-left:3px;} }
+/* 交互演示区 */
+.demo { margin:16px 0 4px; padding:14px 16px; background:var(--lnk-surface-sunken); border:1px solid var(--lnk-border-subtle); border-radius:var(--lnk-radius-lg); }
+.demo-ctrl { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 8px; }
+.demo-ctrl button { font:inherit; font-size:var(--lnk-text-xs); padding:6px 12px; border-radius:var(--lnk-radius-full); border:1px solid var(--lnk-border-default); background:var(--lnk-surface-raised); color:var(--lnk-text-secondary); cursor:pointer; }
+.demo-ctrl button:hover { border-color:var(--lnk-accent); color:var(--lnk-accent-text); }
+.demo-slider { width:100%; accent-color:var(--lnk-accent); margin:6px 0 4px; }
+.demo-label { font-size:var(--lnk-text-sm); color:var(--lnk-text-secondary); margin:2px 0 0; }
+
+/* —— 元信息：模型 · 比例 · 积分（决策关键信息恒可见） —— */
+.meta { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 10px; }
+.chip { font-size:var(--lnk-text-xs); color:var(--lnk-text-secondary); background:var(--lnk-surface-sunken);
+  border:1px solid var(--lnk-border-subtle); padding:4px 10px; border-radius:var(--lnk-radius-full); display:inline-flex; align-items:center; gap:5px; }
+.chip.model { font-weight:var(--lnk-weight-semibold); } /* A-now 模型中性：不作成本主因强调 */
+.chip svg { width:13px; height:13px; stroke:currentColor; fill:none; stroke-width:1.8; }
+.cost { font-size:var(--lnk-text-xs); color:var(--lnk-text-secondary); background:var(--lnk-surface-sunken); border:1px solid var(--lnk-border-default);
+  padding:4px 10px; border-radius:var(--lnk-radius-full); display:inline-flex; align-items:center; gap:5px; font-weight:var(--lnk-weight-semibold); }
+.cost svg { width:13px; height:13px; stroke:currentColor; fill:none; stroke-width:1.8; }
+.cost.struck { color:var(--lnk-text-muted); background:transparent; border-color:var(--lnk-border-subtle); text-decoration:line-through; }
+
+/* —— 提示词：仅 1 行预览（证据，非决策控件） —— */
+.prompt { font-size:var(--lnk-text-sm); color:var(--lnk-text-secondary); line-height:var(--lnk-lh-sm);
+  margin:0 0 14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+/* —— 操作区：确认(落锚) / 调整 / 取消 三动作同框 —— */
+.actions { display:flex; align-items:center; gap:10px; }
+.btn { display:inline-flex; align-items:center; gap:7px; height:var(--lnk-control-md); padding:0 16px;
+  border-radius:var(--lnk-radius-md); font-size:var(--lnk-text-sm); font-weight:var(--lnk-weight-semibold); cursor:pointer; border:1px solid transparent; transition:all var(--lnk-duration-fast) var(--lnk-ease-standard); }
+.btn svg { width:18px; height:18px; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+.btn-primary { background:var(--lnk-accent); color:var(--lnk-text-on-accent); }
+.btn-primary:hover { background:var(--lnk-accent-hover); }
+.btn-primary:active { background:var(--lnk-accent-active); transform:translateY(1px); }
+.btn-primary:focus-visible { outline:2px solid var(--lnk-border-focus); outline-offset:2px; }
+.btn-primary[disabled] { background:var(--lnk-surface-sunken); color:var(--lnk-text-disabled,#7a8391); box-shadow:none; cursor:not-allowed; }
+.btn-primary.loading { position:relative; color:transparent; pointer-events:none; }
+.btn-primary.loading::after { content:''; position:absolute; left:50%; top:50%; width:16px; height:16px; margin:-8px 0 0 -8px;
+  border:2px solid rgba(255,255,255,0.4); border-top-color:#fff; border-radius:50%; animation:spin .7s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+.icon-btn { width:var(--lnk-control-md); height:var(--lnk-control-md); border-radius:var(--lnk-radius-md);
+  display:inline-flex; align-items:center; justify-content:center; background:transparent; border:1px solid var(--lnk-border-default); color:var(--lnk-text-secondary); cursor:pointer; transition:all var(--lnk-duration-fast); }
+.icon-btn:hover { background:var(--lnk-hover-overlay); color:var(--lnk-text-primary); }
+.icon-btn:active { background:var(--lnk-pressed-overlay); }
+.icon-btn svg { width:18px; height:18px; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+
+/* —— 锚链定位（弱链接，强化窗口隐喻） —— */
+.tether { display:inline-flex; align-items:center; gap:5px; margin-top:13px; font-size:var(--lnk-text-sm); color:var(--lnk-text-secondary); text-decoration:none; cursor:pointer; }
+.tether:hover { color:var(--lnk-accent-text); }
+.tether svg { width:15px; height:15px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+.tether:hover .chain { animation:linkpull .5s var(--lnk-ease-standard); }
+@keyframes linkpull { 0%{ transform:translateY(-2px);} 50%{ transform:translateY(1px);} 100%{ transform:translateY(0);} }
+
+/* —— 生成中：墨滴进度（替代通用进度条） —— */
+.inkfill { flex:1; height:6px; border-radius:var(--lnk-radius-full); background:var(--lnk-surface-sunken); overflow:hidden; border:1px solid var(--lnk-border-subtle); min-width:80px; }
+.inkfill > i { display:block; height:100%; width:46%; background:linear-gradient(90deg,var(--lnk-accent-subtle),var(--lnk-accent));
+  border-radius:var(--lnk-radius-full); position:relative; }
+.inkfill > i::after { content:''; position:absolute; right:-3px; top:50%; width:9px; height:9px; margin-top:-4.5px; border-radius:50% 50% 50% 0;
+  background:var(--lnk-accent); transform:rotate(45deg); }
+.genrow { display:flex; align-items:center; gap:12px; margin:2px 0 4px; }
+
+/* —— 状态 pill —— */
+.status-pill { display:inline-flex; align-items:center; gap:6px; font-size:var(--lnk-text-xs); font-weight:var(--lnk-weight-semibold);
+  padding:5px 11px; border-radius:var(--lnk-radius-full); }
+.status-pill svg { width:14px; height:14px; stroke:currentColor; fill:none; stroke-width:2; }
+.status-pill.gen { color:var(--lnk-energy); background:color-mix(in srgb,var(--lnk-energy) 14%,transparent); border:1px solid color-mix(in srgb,var(--lnk-energy) 38%,transparent); }
+.status-pill.ok { color:var(--lnk-success); background:var(--lnk-success-bg); border:1px solid var(--lnk-success-border); }
+.status-pill.cancel { color:var(--lnk-text-muted); background:var(--lnk-surface-sunken); border:1px solid var(--lnk-border-subtle); }
+.status-pill.credit { color:var(--lnk-text-secondary); background:var(--lnk-surface-sunken); border:1px solid var(--lnk-border-default); }
+
+/* ============================================================
+   现状对照卡（before）
+   ============================================================ */
+.before { background:var(--lnk-surface-raised); border:1px dashed var(--lnk-border-strong); border-radius:var(--lnk-radius-xl); padding:var(--lnk-pad-card); margin-bottom:18px; }
+.b-head { display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+.b-icon { width:38px; height:38px; border-radius:var(--lnk-radius-md); background:var(--lnk-warning-bg); color:var(--lnk-warning); display:flex; align-items:center; justify-content:center; }
+.b-icon svg { width:20px; height:20px; stroke:currentColor; fill:none; stroke-width:2; }
+.b-title { font-size:var(--lnk-text-base); font-weight:var(--lnk-weight-semibold); }
+.b-hint { font-size:11px; color:var(--lnk-error); margin:0 0 10px; }
+.b-miss { font-size:var(--lnk-text-xs); color:var(--lnk-text-muted); line-height:var(--lnk-lh-xs); margin:10px 0 0; }
+.b-miss b { color:var(--lnk-error); font-weight:var(--lnk-weight-semibold); }
+
+/* ============================================================
+   主按钮六态
+   ============================================================ */
+.six { display:flex; flex-wrap:wrap; gap:14px; }
+.six .cell { text-align:center; }
+.six .lab { font-size:10px; color:var(--lnk-text-muted); margin-top:7px; }
+
+/* ============================================================
+   参数微调 Sheet
+   ============================================================ */
+.sheet-backdrop { position:fixed; inset:0; background:rgba(8,8,12,0.5); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+  display:none; align-items:flex-end; justify-content:center; z-index:50; }
+.sheet-backdrop.show { display:flex; animation:fade .2s ease; }
+@keyframes fade { from{opacity:0;} to{opacity:1;} }
+.sheet { width:min(480px,100%); max-height:82vh; overflow:auto; background:var(--lnk-surface-raised); border:1px solid var(--lnk-border-default);
+  border-radius:var(--lnk-radius-2xl) var(--lnk-radius-2xl) 0 0; padding:10px 20px 24px; animation:slideup .26s var(--lnk-ease-decelerate); }
+:root[data-theme='light'] .sheet-backdrop { background:rgba(20,20,30,0.32); }
+@keyframes slideup { from{ transform:translateY(24px); opacity:.6; } to{ transform:translateY(0); opacity:1; } }
+.grabber { width:38px; height:5px; border-radius:var(--lnk-radius-full); background:var(--lnk-border-strong); margin:6px auto 12px; }
+.sheet-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+.sheet-head span { font-size:var(--lnk-text-md); font-weight:var(--lnk-weight-semibold); }
+.field { margin-bottom:16px; }
+.field > label { display:block; font-size:var(--lnk-text-xs); color:var(--lnk-text-muted); text-transform:uppercase; letter-spacing:.05em; margin-bottom:7px; font-weight:var(--lnk-weight-semibold); }
+.seg-ctl { display:flex; gap:8px; flex-wrap:wrap; }
+.seg-ctl button { flex:1; min-width:64px; font-family:inherit; font-size:var(--lnk-text-sm); color:var(--lnk-text-secondary);
+  background:var(--lnk-surface-sunken); border:1px solid var(--lnk-border-default); border-radius:var(--lnk-radius-md); padding:9px 8px; cursor:pointer; transition:all var(--lnk-duration-fast); }
+.seg-ctl button:hover { background:var(--lnk-hover-overlay); }
+.seg-ctl button.on { color:var(--lnk-text-on-accent); background:var(--lnk-accent); border-color:var(--lnk-accent); font-weight:var(--lnk-weight-semibold); }
+.hint { display:inline-block; font-size:10px; color:var(--lnk-text-muted); margin-top:6px; }
+/* 模型/比例下拉（与实装 ProposeTuneSheet .sel 同族：中性控件 + 44px 触控高） */
+.sel-ctl { width:100%; height:var(--lnk-touch-target); font-family:inherit; font-size:var(--lnk-text-sm); color:var(--lnk-text-primary);
+  background:var(--lnk-surface-sunken); border:1px solid var(--lnk-border-default); border-radius:var(--lnk-radius-md); padding:0 10px; cursor:pointer; }
+.ro-val { font-size:var(--lnk-text-sm); color:var(--lnk-text-secondary); }
+.sheet-notice { font-size:var(--lnk-text-xs); color:var(--lnk-text-muted); margin:4px 0; }
+.prompt-edit textarea { width:100%; margin-top:8px; min-height:72px; resize:vertical; font-family:inherit; font-size:var(--lnk-text-sm);
+  color:var(--lnk-text-primary); background:var(--lnk-surface-sunken); border:1px solid var(--lnk-border-default); border-radius:var(--lnk-radius-md); padding:10px 12px; }
+.sheet-credit { font-size:var(--lnk-text-sm); color:var(--lnk-text-secondary); margin:6px 0 16px; }
+.sheet-credit b { color:var(--lnk-credit); font-size:var(--lnk-text-md); }
+.sheet-foot { display:flex; gap:10px; }
+.sheet-foot .btn { flex:1; justify-content:center; }
+.btn-ghost { background:transparent; border:1px solid var(--lnk-border-default); color:var(--lnk-text-secondary); }
+.btn-ghost:hover { background:var(--lnk-hover-overlay); }
+
+/* ============================================================
+   品牌三联叙事说明区
+   ============================================================ */
+.triad { background:linear-gradient(135deg,color-mix(in srgb,var(--lnk-accent) 10%,transparent),transparent 70%); border:1px solid var(--lnk-accent-border); border-radius:var(--lnk-radius-xl); padding:22px 24px; }
+.triad-flow { display:flex; align-items:center; justify-content:center; gap:14px; margin:18px 0 6px; flex-wrap:wrap; }
+.tnode { display:flex; flex-direction:column; align-items:center; gap:8px; text-align:center; }
+.tglyph { width:54px; height:54px; border-radius:var(--lnk-radius-lg); display:flex; align-items:center; justify-content:center; }
+.tglyph svg { width:28px; height:28px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+.tglyph.conv { background:color-mix(in srgb,var(--lnk-ink-400) 18%,transparent); color:var(--lnk-ink-300); }
+.tglyph.anchor { background:color-mix(in srgb,var(--lnk-accent) 18%,transparent); color:var(--lnk-accent); }
+.tglyph.canvas { background:color-mix(in srgb,var(--lnk-success) 16%,transparent); color:var(--lnk-success); }
+.tname { font-size:var(--lnk-text-sm); font-weight:var(--lnk-weight-semibold); }
+.tsub { font-size:10px; color:var(--lnk-text-muted); max-width:120px; line-height:1.4; }
+.tarrow { font-size:20px; color:var(--lnk-border-strong); }
+.triad table { width:100%; border-collapse:collapse; margin-top:16px; font-size:var(--lnk-text-sm); }
+.triad th, .triad td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--lnk-border-subtle); }
+.triad th { color:var(--lnk-text-muted); font-weight:var(--lnk-weight-semibold); font-size:var(--lnk-text-xs); text-transform:uppercase; letter-spacing:.04em; }
+.triad td b { color:var(--lnk-accent-text); }
+.slogan { font-size:var(--lnk-text-sm); color:var(--lnk-text-secondary); margin-top:14px; padding:12px 14px; background:var(--lnk-surface-sunken); border-radius:var(--lnk-radius-md); border-left:3px solid var(--lnk-accent); line-height:var(--lnk-lh-sm); }
+.slogan b { color:var(--lnk-text-primary); }
+
+/* 移动端框 */
+.phone { width:390px; max-width:100%; margin:0 auto; border:8px solid var(--lnk-ink-800); border-radius:36px; padding:14px; background:var(--lnk-surface-canvas); }
+.phone .card { margin:0; }
+footer { margin-top:48px; padding-top:20px; border-top:1px solid var(--lnk-border-subtle); color:var(--lnk-text-muted); font-size:var(--lnk-text-xs); line-height:var(--lnk-lh-xs); }
+code { font-family:'SF Mono',ui-monospace,monospace; font-size:.9em; color:var(--lnk-accent-text); background:var(--lnk-accent-subtle); padding:1px 5px; border-radius:4px; }
+
+/* ============================================================
+   降低动态（prefers-reduced-motion）：落地必须支持
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration:0.001ms !important; animation-iteration-count:1 !important; transition-duration:0.001ms !important; }
+  .sheet-backdrop.show { animation:none; }
+  .sheet { animation:none; }
+  .btn-primary.loading::after { animation:none; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>提议生成卡片 · 目标态 UI 参考</h1>
+      <div class="sub">iOS 极简 · 紧凑恒高 · 品牌三联叙事「对话 › 锚 › 画布」承载于卡片</div>
+    </div>
+    <button class="theme-toggle" id="themeToggle">◐ 切换深 / 浅</button>
+  </header>
+
+  <!-- ============ A. 现状对照 + 目标态定位 ============ -->
+  <section>
+    <h2>一、现状 vs 目标态 <span class="tag">before / after</span></h2>
+    <p class="desc">现状卡是「去画布吧」的传声筒，标题常为提示词复述，确认即对成本一无所知，确认后对话失联——这正是「拧巴」根源。目标态把卡片扶正为<b style="color:var(--lnk-accent-text)">对话内的「提案预览 + 决策中枢」</b>，并让它成为品牌三联叙事里<b style="color:var(--lnk-accent-text)">唯一的「锚」</b>：承接上游对话之墨，启动下游画布之落。</p>
+
+    <div class="before">
+      <div class="b-head">
+        <div class="b-icon"><svg viewBox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></div>
+        <div class="b-title">现状：读写分离的传声筒（拧巴）</div>
+      </div>
+      <p class="b-hint">⚠ 等待你在画布上确认生成　·　确认钮却贴在旁边</p>
+      <div class="b-miss">
+        <b>缺失：</b>模型 / 提示词 / 参数 / 积分消耗 / 结果回链，以及<b>品牌叙事</b>。<br>
+        标题常是提示词复述（与正文重复、且非节点名）→ 对话流里读完标题像复读机；确认前对「用哪个模型、花多少积分、落向哪个节点」一无所知；确认后卡片死寂，对话与画布两断。
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ B. 五态目标卡 ============ -->
+  <section>
+    <h2>二、目标态各态卡（含终态） <span class="tag">对话 › 锚 › 画布</span></h2>
+    <p class="desc">每张卡用<b style="color:var(--lnk-accent-text)">品牌锚 glyph</b>作引领图标（生产走 <code>anchor-generate.png</code>），其下一条<b style="color:var(--lnk-accent-text)">三联叙事轨道</b>：左端对话、右端画布、中央<b style="color:var(--lnk-accent-text)">锚图标即进度拇指</b>——随状态从对话端滑向画布端（pending 停在对话端 → generating 滑行 → completed 落定画布）。整卡恒定 ≈150px，旋钮收进 Sheet。</p>
+
+    <!-- pending 默认 1 张 -->
+    <div class="card state-pending">
+      <div class="card-head">
+        <div class="lead" title="锚定 · 品牌中心动作"><svg viewBox="0 0 24 24"><circle cx="12" cy="4.4" r="2.2"/><path d="M12 6.6 V19"/><path d="M7.6 11 H16.4"/><path d="M7.6 13.2 C5.2 15.6 5.2 18.2 8.4 19.6"/><path d="M16.4 13.2 C19.2 15.6 19.2 18.2 15.6 19.6"/></svg></div>
+        <div class="ttl"><div class="eyebrow">画布节点</div><div class="name">产品主图</div></div>
+      </div>
+      <div class="trilink-rail" role="img" aria-label="品牌链条：对话 → 锚（滑动）→ 画布">
+        <span class="end end-conv" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-12.4 7.4L3 21l2.1-5.5A8.5 8.5 0 1 1 21 11.5z"/></svg></span>
+        <span class="track"><span class="trail"></span><span class="thumb" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/></svg></span></span>
+        <span class="end end-canvas" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.8"/><rect x="14" y="14" width="7" height="7" rx="1.8"/><path d="M10 6.5h7.5V14"/></svg></span>
+      </div>
+      <div class="meta">
+        <span class="chip model"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>写实大模型 v2</span>
+        <span class="chip">1:1</span>
+        <span class="chip">1024×1024</span>
+        <span class="cost"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="7" rx="7" ry="3"/><path d="M5 7v5c0 1.7 3.1 3 7 3s7-1.3 7-3V7M5 12v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5"/></svg>预计 10 积分</span>
+      </div>
+      <p class="prompt">一张极简风格的电竞耳机产品主图，深空灰背景，单侧主光勾勒金属质感，左下角留白放 logo。</p>
+      <div class="actions">
+        <span class="btn btn-primary"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>落锚生成</span>
+        <button class="icon-btn js-tune" title="参数微调"><svg viewBox="0 0 24 24"><path d="M4 8h10M18 8h2M4 16h2M10 16h10"/><circle cx="16" cy="8" r="2"/><circle cx="8" cy="16" r="2"/></svg></button>
+        <button class="icon-btn" title="取消"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+      <a class="tether" title="锚链 · 跳到画布节点"><svg class="chain" viewBox="0 0 24 24"><path d="M12 3v18M5 7l7-4 7 4M5 17l7 4 7-4"/></svg>拉起锚链 · 在画布查看节点</a>
+      <p class="note">创意就绪 · 落锚即洒向画布。张数默认 1 不显，&gt;1 才作 chip。整卡 ≈150px 对后续消息零挤压；「调整」打开下方 Sheet 才展示全部旋钮。</p>
+    </div>
+
+    <!-- pending 多张 -->
+    <div class="card state-pending">
+      <div class="card-head">
+        <div class="lead" title="锚定 · 品牌中心动作"><svg viewBox="0 0 24 24"><circle cx="12" cy="4.4" r="2.2"/><path d="M12 6.6 V19"/><path d="M7.6 11 H16.4"/><path d="M7.6 13.2 C5.2 15.6 5.2 18.2 8.4 19.6"/><path d="M16.4 13.2 C19.2 15.6 19.2 18.2 15.6 19.6"/></svg></div>
+        <div class="ttl"><div class="eyebrow">画布节点</div><div class="name">Banner 变体</div></div>
+      </div>
+      <div class="trilink-rail" role="img" aria-label="品牌链条：对话 → 锚（滑动）→ 画布">
+        <span class="end end-conv" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-12.4 7.4L3 21l2.1-5.5A8.5 8.5 0 1 1 21 11.5z"/></svg></span>
+        <span class="track"><span class="trail"></span><span class="thumb" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/></svg></span></span>
+        <span class="end end-canvas" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.8"/><rect x="14" y="14" width="7" height="7" rx="1.8"/><path d="M10 6.5h7.5V14"/></svg></span>
+      </div>
+      <div class="meta">
+        <span class="chip model"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>概念大模型 v3</span>
+        <span class="chip">16:9</span>
+        <span class="chip">2048×2048</span>
+        <span class="chip">张数 4</span>
+        <span class="cost"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="7" rx="7" ry="3"/><path d="M5 7v5c0 1.7 3.1 3 7 3s7-1.3 7-3V7M5 12v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5"/></svg>预计 80 积分</span>
+      </div>
+      <p class="prompt">一组品牌 banner 变体，统一主视觉但构图各异，用于 A/B 投放测试。</p>
+      <div class="actions">
+        <span class="btn btn-primary"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>落锚生成</span>
+        <button class="icon-btn js-tune" title="参数微调"><svg viewBox="0 0 24 24"><path d="M4 8h10M18 8h2M4 16h2M10 16h10"/><circle cx="16" cy="8" r="2"/><circle cx="8" cy="16" r="2"/></svg></button>
+        <button class="icon-btn" title="取消"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+      <a class="tether" title="锚链 · 跳到画布节点"><svg class="chain" viewBox="0 0 24 24"><path d="M12 3v18M5 7l7-4 7 4M5 17l7 4 7-4"/></svg>拉起锚链 · 在画布查看节点</a>
+      <p class="note">张数 4 触发 chip 出现；积分随「分辨率×张数」联动（超清 20×4 = 80）。<b>模型维度当前不计入积分</b>（A-now 诚实口径；C-later 服务端下发 creditCost 后模型才成为成本主因）。</p>
+    </div>
+
+    <!-- generating -->
+    <div class="card state-generating">
+      <div class="card-head">
+        <div class="lead" style="background:color-mix(in srgb,var(--lnk-energy) 16%,transparent);color:var(--lnk-energy)" title="生成中"><svg viewBox="0 0 24 24"><circle cx="12" cy="4.4" r="2.2"/><path d="M12 6.6 V19"/><path d="M7.6 11 H16.4"/><path d="M7.6 13.2 C5.2 15.6 5.2 18.2 8.4 19.6"/><path d="M16.4 13.2 C19.2 15.6 19.2 18.2 15.6 19.6"/></svg></div>
+        <div class="ttl"><div class="eyebrow">画布节点</div><div class="name">产品主图</div></div>
+      </div>
+      <div class="trilink-rail" role="img" aria-label="品牌链条：对话 → 锚（滑动）→ 画布">
+        <span class="end end-conv" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-12.4 7.4L3 21l2.1-5.5A8.5 8.5 0 1 1 21 11.5z"/></svg></span>
+        <span class="track"><span class="trail"></span><span class="thumb" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/></svg></span></span>
+        <span class="end end-canvas" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.8"/><rect x="14" y="14" width="7" height="7" rx="1.8"/><path d="M10 6.5h7.5V14"/></svg></span>
+      </div>
+      <div class="genrow">
+        <span class="status-pill gen"><svg viewBox="0 0 24 24"><path d="M12 3v3m0 12v3M3 12h3m12 0h3"/><circle cx="12" cy="12" r="4"/></svg>生成中</span>
+        <div class="inkfill"><i></i></div>
+        <span class="status-pill credit"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="7" rx="7" ry="3"/><path d="M5 7v5c0 1.7 3.1 3 7 3s7-1.3 7-3V7M5 12v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5"/></svg>预扣 10 积分</span>
+      </div>
+      <p class="prompt">一张极简风格的电竞耳机产品主图，深空灰背景，单侧主光勾勒金属质感，左下角留白放 logo。</p>
+      <div class="actions">
+        <span class="btn btn-primary loading" disabled>生成中</span>
+        <button class="icon-btn" title="停止生成" style="border-color:var(--lnk-error-border);color:var(--lnk-error)"><svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
+      </div>
+      <a class="tether" title="锚链 · 跳到画布节点"><svg class="chain" viewBox="0 0 24 24"><path d="M12 3v18M5 7l7-4 7 4M5 17l7 4 7-4"/></svg>拉起锚链 · 在画布实时盯生成</a>
+      <p class="note">锚定完成 · 一点一滴洒在画布。主钮转 loading 禁用，SSE 断流不误报（P0-5 判据 3）；墨滴进度替代通用进度条；积分预扣，失败/中止自动回填。</p>
+    </div>
+
+    <!-- completed -->
+    <div class="card state-completed">
+      <div class="card-head">
+        <div class="lead" style="background:color-mix(in srgb,var(--lnk-success) 16%,transparent);color:var(--lnk-success)" title="已落画布"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></div>
+        <div class="ttl"><div class="eyebrow">画布节点</div><div class="name">产品主图</div></div>
+      </div>
+      <div class="trilink-rail" role="img" aria-label="品牌链条：对话 → 锚（滑动）→ 画布">
+        <span class="end end-conv" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-12.4 7.4L3 21l2.1-5.5A8.5 8.5 0 1 1 21 11.5z"/></svg></span>
+        <span class="track"><span class="trail"></span><span class="thumb" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/></svg></span></span>
+        <span class="end end-canvas" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.8"/><rect x="14" y="14" width="7" height="7" rx="1.8"/><path d="M10 6.5h7.5V14"/></svg></span>
+      </div>
+      <div class="genrow">
+        <span class="status-pill ok"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>已生成</span>
+        <span class="status-pill credit"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="7" rx="7" ry="3"/><path d="M5 7v5c0 1.7 3.1 3 7 3s7-1.3 7-3V7M5 12v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5"/></svg>消耗 12 积分</span>
+      </div>
+      <p class="prompt">一张极简风格的电竞耳机产品主图，深空灰背景，单侧主光勾勒金属质感，左下角留白放 logo。</p>
+      <a class="tether" href="#" style="color:var(--lnk-accent-text)" title="查看结果节点"><svg viewBox="0 0 24 24"><path d="M7 17 17 7M9 7h8v8"/></svg>查看结果 ↗ 让世界记住你的模样</a>
+      <p class="note">三联链全部点亮（对话墨→锚→画布落定）。「查看结果 ↗」即定位到结果节点——对话不再失联，完成即回链。</p>
+    </div>
+
+    <!-- declined / expired -->
+    <div class="card state-declined">
+      <div class="card-head">
+        <div class="lead" style="opacity:.55" title="已起锚"><svg viewBox="0 0 24 24"><circle cx="12" cy="4.4" r="2.2"/><path d="M12 6.6 V19"/><path d="M7.6 11 H16.4"/><path d="M7.6 13.2 C5.2 15.6 5.2 18.2 8.4 19.6"/><path d="M16.4 13.2 C19.2 15.6 19.2 18.2 15.6 19.6"/></svg></div>
+        <div class="ttl"><div class="eyebrow">画布节点</div><div class="name">产品主图</div></div>
+      </div>
+      <div class="trilink-rail" role="img" aria-label="品牌链条：对话 → 锚（滑动）→ 画布">
+        <span class="end end-conv" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-12.4 7.4L3 21l2.1-5.5A8.5 8.5 0 1 1 21 11.5z"/></svg></span>
+        <span class="track"><span class="trail"></span><span class="thumb" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/></svg></span></span>
+        <span class="end end-canvas" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.8"/><rect x="14" y="14" width="7" height="7" rx="1.8"/><path d="M10 6.5h7.5V14"/></svg></span>
+      </div>
+      <div class="genrow">
+        <span class="status-pill cancel">已取消</span>
+        <span class="status-pill credit struck"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="7" rx="7" ry="3"/><path d="M5 7v5c0 1.7 3.1 3 7 3s7-1.3 7-3V7M5 12v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5"/></svg>未扣减</span>
+      </div>
+      <p class="prompt">一张极简风格的电竞耳机产品主图，深空灰背景，单侧主光勾勒金属质感，左下角留白放 logo。</p>
+      <a class="tether" title="锚链 · 跳到画布节点"><svg class="chain" viewBox="0 0 24 24"><path d="M12 3v18M5 7l7-4 7 4M5 17l7 4 7-4"/></svg>拉起锚链 · 在画布查看节点</a>
+      <p class="note">已起锚 · 本次未生成。终态显式呈现（answered→已确认 / aborted→已取消 / timeout→已超时），操作禁用，积分不扣减，保留复盘。</p>
+    </div>
+
+    <!-- expired（mockup 此前缺此态） -->
+    <div class="card state-expired">
+      <div class="card-head">
+        <div class="lead" style="opacity:.55" title="已起锚"><svg viewBox="0 0 24 24"><circle cx="12" cy="4.4" r="2.2"/><path d="M12 6.6 V19"/><path d="M7.6 11 H16.4"/><path d="M7.6 13.2 C5.2 15.6 5.2 18.2 8.4 19.6"/><path d="M16.4 13.2 C19.2 15.6 19.2 18.2 15.6 19.6"/></svg></div>
+        <div class="ttl"><div class="eyebrow">画布节点</div><div class="name">产品主图</div></div>
+      </div>
+      <div class="trilink-rail" role="img" aria-label="品牌链条：对话 → 锚（滑动）→ 画布">
+        <span class="end end-conv" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-12.4 7.4L3 21l2.1-5.5A8.5 8.5 0 1 1 21 11.5z"/></svg></span>
+        <span class="track"><span class="trail"></span><span class="thumb" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/></svg></span></span>
+        <span class="end end-canvas" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.8"/><rect x="14" y="14" width="7" height="7" rx="1.8"/><path d="M10 6.5h7.5V14"/></svg></span>
+      </div>
+      <div class="genrow">
+        <span class="status-pill cancel">已超时</span>
+        <span class="status-pill credit struck"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="7" rx="7" ry="3"/><path d="M5 7v5c0 1.7 3.1 3 7 3s7-1.3 7-3V7M5 12v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5"/></svg>未扣减</span>
+      </div>
+      <p class="prompt">一张极简风格的电竞耳机产品主图，深空灰背景，单侧主光勾勒金属质感，左下角留白放 logo。</p>
+      <a class="tether" title="锚链 · 跳到画布节点"><svg class="chain" viewBox="0 0 24 24"><path d="M12 3v18M5 7l7-4 7 4M5 17l7 4 7-4"/></svg>拉起锚链 · 在画布查看节点</a>
+      <p class="note">已超时 · 本次未生成。timeout 由 capMs 兜底（P1-3 挂起持久化后精确判定）。操作禁用，积分不扣减。</p>
+    </div>
+
+    <!-- failed（artifact 失败态，mockup 此前缺此态） -->
+    <div class="card state-failed">
+      <div class="card-head">
+        <div class="lead" style="background:color-mix(in srgb,var(--lnk-error) 16%,transparent);color:var(--lnk-error)" title="生成失败"><svg viewBox="0 0 24 24"><path d="M12 8v5m0 3h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></div>
+        <div class="ttl"><div class="eyebrow">画布节点</div><div class="name">产品主图</div></div>
+      </div>
+      <div class="trilink-rail" role="img" aria-label="品牌链条：对话 → 锚（滑动）→ 画布">
+        <span class="end end-conv" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-12.4 7.4L3 21l2.1-5.5A8.5 8.5 0 1 1 21 11.5z"/></svg></span>
+        <span class="track"><span class="trail"></span><span class="thumb" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/></svg></span></span>
+        <span class="end end-canvas" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.8"/><rect x="14" y="14" width="7" height="7" rx="1.8"/><path d="M10 6.5h7.5V14"/></svg></span>
+      </div>
+      <div class="genrow">
+        <span class="status-pill cancel" style="color:var(--lnk-error);background:var(--lnk-error-bg);border-color:var(--lnk-error-border)">生成失败</span>
+        <span class="status-pill credit struck"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="7" rx="7" ry="3"/><path d="M5 7v5c0 1.7 3.1 3 7 3s7-1.3 7-3V7M5 12v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5"/></svg>未扣减</span>
+      </div>
+      <p class="prompt">一张极简风格的电竞耳机产品主图，深空灰背景，单侧主光勾勒金属质感，左下角留白放 logo。</p>
+      <div class="actions">
+        <span class="btn btn-primary"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>重试</span>
+        <a class="tether" title="锚链 · 跳到画布节点"><svg class="chain" viewBox="0 0 24 24"><path d="M12 3v18M5 7l7-4 7 4M5 17l7 4 7-4"/></svg>拉起锚链 · 在画布查看节点</a>
+      </div>
+      <p class="note">生成失败 · 重试重新 propose/生成（emit retryNode）；失败不扣减，预扣积分自动回填（P0-5 判据）。</p>
+    </div>
+  </section>
+
+  <!-- ============ C. 长提示词处理 ============ -->
+  <section>
+    <h2>三、长提示词处理 <span class="tag">progressive disclosure</span></h2>
+    <p class="desc">提示词是「证据」不是「决策控件」——确认决策不依赖读完它。模型 / 参数 / 积分始终可见、独立于提示词长度；长提示词默认单行 ellipsis，完整文本留在画布（窗口隐喻）。</p>
+    <div class="card state-pending">
+      <div class="card-head">
+        <div class="lead" title="锚定 · 品牌中心动作"><svg viewBox="0 0 24 24"><circle cx="12" cy="4.4" r="2.2"/><path d="M12 6.6 V19"/><path d="M7.6 11 H16.4"/><path d="M7.6 13.2 C5.2 15.6 5.2 18.2 8.4 19.6"/><path d="M16.4 13.2 C19.2 15.6 19.2 18.2 15.6 19.6"/></svg></div>
+        <div class="ttl"><div class="eyebrow">画布节点</div><div class="name">海边橘猫</div></div>
+      </div>
+      <div class="trilink-rail" role="img" aria-label="品牌链条：对话 → 锚（滑动）→ 画布">
+        <span class="end end-conv" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-12.4 7.4L3 21l2.1-5.5A8.5 8.5 0 1 1 21 11.5z"/></svg></span>
+        <span class="track"><span class="trail"></span><span class="thumb" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/></svg></span></span>
+        <span class="end end-canvas" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.8"/><rect x="14" y="14" width="7" height="7" rx="1.8"/><path d="M10 6.5h7.5V14"/></svg></span>
+      </div>
+      <div class="meta">
+        <span class="chip model"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>写实大模型 v2</span>
+        <span class="chip">3:4</span>
+        <span class="chip">1536×1024</span>
+        <span class="cost"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="7" rx="7" ry="3"/><path d="M5 7v5c0 1.7 3.1 3 7 3s7-1.3 7-3V7M5 12v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5"/></svg>预计 15 积分</span>
+      </div>
+      <p class="prompt">一只胖橘猫慵懒地趴在黄昏的海边礁石上，海浪轻拍脚边，逆光勾勒蓬松毛发的金边，远处帆影点点，整体暖橙色调，电影感宽幅构图，细节丰富、质感真实。</p>
+      <div class="actions">
+        <span class="btn btn-primary"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>落锚生成</span>
+        <button class="icon-btn js-tune" title="参数微调"><svg viewBox="0 0 24 24"><path d="M4 8h10M18 8h2M4 16h2M10 16h10"/><circle cx="16" cy="8" r="2"/><circle cx="8" cy="16" r="2"/></svg></button>
+        <button class="icon-btn" title="取消"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+      <a class="tether" title="锚链 · 跳到画布节点"><svg class="chain" viewBox="0 0 24 24"><path d="M12 3v18M5 7l7-4 7 4M5 17l7 4 7-4"/></svg>拉起锚链 · 在画布查看完整提示词</a>
+      <p class="note">无论提示词多长，卡高恒定（≈150px）；完整文本在「调整 → 编辑提示词」或画布节点里查看/编辑。</p>
+    </div>
+  </section>
+
+  <!-- ============ D. 主按钮六态 ============ -->
+  <section>
+    <h2>四、主按钮六态 <span class="tag">落锚生成</span></h2>
+    <p class="desc">「落锚生成」主钮满足 默认 / hover / active / focus-visible / disabled / loading 六态，紫色仅此一处点睛（与 iOS 单一强调色一致）。</p>
+    <div class="six">
+      <div class="cell"><span class="btn btn-primary"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>落锚生成</span><div class="lab">默认</div></div>
+      <div class="cell"><span class="btn btn-primary" style="background:var(--lnk-accent-hover)"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>落锚生成</span><div class="lab">hover</div></div>
+      <div class="cell"><span class="btn btn-primary" style="background:var(--lnk-accent-active);transform:translateY(1px)"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>落锚生成</span><div class="lab">active</div></div>
+      <div class="cell"><span class="btn btn-primary" style="outline:2px solid var(--lnk-border-focus);outline-offset:2px"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>落锚生成</span><div class="lab">focus</div></div>
+      <div class="cell"><span class="btn btn-primary" disabled style="background:var(--lnk-surface-sunken);color:var(--lnk-text-muted);box-shadow:none"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>落锚生成</span><div class="lab">disabled</div></div>
+      <div class="cell"><span class="btn btn-primary loading" style="color:transparent">落锚生成</span><div class="lab">loading</div></div>
+    </div>
+  </section>
+
+  <!-- ============ E. 品牌三联叙事 ============ -->
+  <section>
+    <h2>五、品牌三联叙事「对话 › 锚 › 画布」</h2>
+    <div class="triad">
+      <p class="desc" style="margin-bottom:0">本项目的品牌内核（取自 <code>constants/brand.ts</code> 与锚图标计划）：用户「体内一囊墨」以自然语言流出（<b style="color:var(--lnk-text-primary)">对话</b>），经品牌中心动作「<b style="color:var(--lnk-accent-text)">锚定</b>」凝成承诺（<b style="color:var(--lnk-accent-text)">锚</b>＝这张卡片），再<b style="color:var(--lnk-success)">一点一滴洒在画布</b>（<b style="color:var(--lnk-success)">画布</b>）。对话与画布各有归属界面，唯独「锚」没有专属界面——它正是这张卡片。故卡片是传递品牌叙事的关键铰链。而本版把「锚」进一步做成<b style="color:var(--lnk-accent-text)">可滑动的进度拇指</b>：卡片下方的品牌轨道里，锚图标从左端「对话」一路滑向右端「画布」——抛出、滑行、落定，正是「锚定→洒在画布」的可视化。</p>
+      <div class="triad-flow">
+        <div class="tnode"><div class="tglyph conv"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.3 7.3L4 20l1-4.7A8 8 0 1 1 21 12z"/></svg></div><div class="tname">对话</div><div class="tsub">用户创意之墨以自然语言流出</div></div>
+        <div class="tarrow">›</div>
+        <div class="tnode"><div class="tglyph anchor"><svg viewBox="0 0 24 24"><circle cx="12" cy="4.4" r="2.2"/><path d="M12 6.6 V19"/><path d="M7.6 11 H16.4"/><path d="M7.6 13.2 C5.2 15.6 5.2 18.2 8.4 19.6"/><path d="M16.4 13.2 C19.2 15.6 19.2 18.2 15.6 19.6"/></svg></div><div class="tname">锚（本卡）</div><div class="tsub">锚定＝把流动创意凝成承诺</div></div>
+        <div class="tarrow">›</div>
+        <div class="tnode"><div class="tglyph canvas"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg></div><div class="tname">画布</div><div class="tsub">墨滴落之处 · 作品走出画布</div></div>
+      </div>
+      <!-- 交互演示：锚沿「对话 → 画布」轨道滑动 -->
+      <div class="demo">
+        <p class="desc" style="margin:14px 0 8px">下面这条轨道就是卡片上的品牌三联叙事：<b>左端＝对话</b>、<b>右端＝画布</b>、<b style="color:var(--lnk-accent-text)">中央锚图标＝进度拇指</b>。点状态按钮或拖动滑块，看锚如何「抛出 → 滑行 → 落定」；declined/expired 锚留对话端并暗化、done 画布端变绿、failed 锚卡中途抖红。</p>
+        <div class="demo-stage" id="demoStage">
+          <div class="trilink-rail demo-rail" id="demoRail" style="--p:0" role="img" aria-label="品牌轨道演示">
+            <span class="end end-conv" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-12.4 7.4L3 21l2.1-5.5A8.5 8.5 0 1 1 21 11.5z"/></svg></span>
+            <span class="track"><span class="trail"></span><span class="thumb" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/></svg></span></span>
+            <span class="end end-canvas" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.8"/><rect x="14" y="14" width="7" height="7" rx="1.8"/><path d="M10 6.5h7.5V14"/></svg></span>
+          </div>
+        </div>
+        <div class="demo-ctrl">
+          <button data-p="0" data-state="state-pending" data-label="待落锚 · 锚停在对话端（0%）">pending</button>
+          <button data-p=".18" data-label="已起锚 · 锚离对话端（18%）">confirmed</button>
+          <button data-p=".55" data-state="state-generating" data-label="生成中 · 锚滑行向画布（55%）">generating</button>
+          <button data-p="1" data-state="state-completed" data-label="落定画布 · 墨滴落点（100%·绿）">done</button>
+          <button data-p="0" data-state="state-declined" data-label="已取消 · 锚未离对话端（0%·暗）">declined</button>
+          <button data-p=".5" data-state="state-failed" data-label="落点未成 · 锚卡中途（50%·红）">failed</button>
+        </div>
+        <input class="demo-slider" id="demoSlider" type="range" min="0" max="100" value="0" aria-label="拖动预览锚位置">
+        <p class="demo-label" id="demoLabel">待落锚 · 锚停在对话端（0%）</p>
+      </div>
+      <table>
+        <thead><tr><th>链环</th><th>品牌语义</th><th>卡片上的表达机制</th></tr></thead>
+        <tbody>
+          <tr><td><b>对话</b></td><td>「一囊墨」的自然语言流</td><td>卡片之上的对话流；三联链首段「对话」在 pending 即点亮（墨已流出）</td></tr>
+          <tr><td><b>锚</b></td><td>品牌中心动词「锚定」；Logo 本体＝锚</td><td>① 引领图标＝品牌锚 glyph（<code>anchor-generate.png</code>）；② 主钮文案「落锚生成」；③ <b style="color:var(--lnk-accent-text)">锚图标即卡片品牌轨道的进度拇指</b>——由卡片根 state-* 类驱动，沿「对话→画布」轨道滑动（pending 停在对话端 → generating 滑行 → done 落定画布）；④ 「在画布查看节点」＝拉起锚链</td></tr>
+          <tr><td><b>画布</b></td><td>「一点一滴洒在画布」</td><td>① 品牌轨道右端「画布」图标，随锚滑入 completed 变绿（墨滴落定）；② 墨滴进度替代通用条；③ completed「查看结果 ↗ 让世界记住你的模样」直接回链节点</td></tr>
+        </tbody>
+      </table>
+      <div class="slogan"><b>品牌 slogan：</b>「你体内早就有一囊墨，只是…没有找到你的锚。墨鱼π，<b>锚定</b>你的创意，一点一滴洒在画布，让世界记住你的模样。」——卡片在 completed 态闭合这一句，是品牌情绪落点。</div>
+    </div>
+  </section>
+
+  <!-- ============ F. 状态机审计 ============ -->
+  <section>
+    <h2>六、逐状态按钮审计 <span class="tag">七维闭环</span></h2>
+    <table style="width:100%;border-collapse:collapse;margin:0 0 20px;font-size:var(--lnk-text-sm)">
+      <thead><tr style="text-align:left;color:var(--lnk-text-muted)">
+        <th style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-default)">状态</th>
+        <th style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-default)">落锚生成</th>
+        <th style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-default)">参数微调</th>
+        <th style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-default)">取消 / 停止</th>
+        <th style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-default)">在画布查看（定位）</th>
+        <th style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-default)">三联链</th>
+        <th style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-default)">其他</th>
+      </tr></thead>
+      <tbody style="color:var(--lnk-text-secondary)">
+        <tr><td style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-subtle)"><b style="color:var(--lnk-text-primary)">pending</b></td><td style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-subtle)">✓ 主钮</td><td style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-subtle)">✓ 调整</td><td style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-subtle)">✓ 取消（×）</td><td style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-subtle)">✓ 拉起锚链</td><td style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-subtle)">锚停对话端(0%)</td><td style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-subtle)">—</td></tr>
+        <tr><td style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-subtle)"><b style="color:var(--lnk-text-primary)">generating</b></td><td style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-subtle)">◌ loading 禁用</td><td style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-subtle)">✗ 禁用</td><td style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-subtle)">✓ 停止生成</td><td style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-subtle)">✓ 拉起锚链</td><td style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-subtle)">锚滑行→画布(55%)</td><td style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-subtle)">墨滴进度</td></tr>
+        <tr><td style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-subtle)"><b style="color:var(--lnk-text-primary)">completed</b></td><td style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-subtle)">✗ 已生成</td><td style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-subtle)">✗</td><td style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-subtle)">N/A</td><td style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-subtle)">✓ 查看结果 ↗</td><td style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-subtle)">锚落画布(100%·绿)</td><td style="padding:9px 12px;border-bottom:1px solid var(--lnk-border-subtle)">消耗 10 积分</td></tr>
+        <tr><td style="padding:9px 12px"><b style="color:var(--lnk-text-primary)">declined</b></td><td style="padding:9px 12px">✗ 禁用</td><td style="padding:9px 12px">✗</td><td style="padding:9px 12px">已取消</td><td style="padding:9px 12px">✓ 拉起锚链</td><td style="padding:9px 12px">锚停对话端(0%·暗)</td><td style="padding:9px 12px">未扣减</td></tr>
+        <tr><td style="padding:9px 12px"><b style="color:var(--lnk-text-primary)">expired</b></td><td style="padding:9px 12px">✗ 禁用</td><td style="padding:9px 12px">✗</td><td style="padding:9px 12px">已超时</td><td style="padding:9px 12px">✓ 拉起锚链</td><td style="padding:9px 12px">锚停对话端(0%·暗)</td><td style="padding:9px 12px">未扣减</td></tr>
+        <tr><td style="padding:9px 12px"><b style="color:var(--lnk-text-primary)">failed</b></td><td style="padding:9px 12px">✗</td><td style="padding:9px 12px">✗</td><td style="padding:9px 12px">✓ 重试</td><td style="padding:9px 12px">✓ 拉起锚链</td><td style="padding:9px 12px">锚卡中途(50%·红)</td><td style="padding:9px 12px">未扣减</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ============ G. 移动端 ============ -->
+  <section>
+    <h2>七、移动端视图 <span class="tag">44px 触控</span></h2>
+    <div class="phone">
+      <div class="card state-pending" style="background:var(--lnk-surface-raised)">
+        <div class="card-head">
+          <div class="lead" style="width:var(--lnk-touch-target);height:var(--lnk-touch-target)" title="锚定 · 品牌中心动作"><svg viewBox="0 0 24 24"><circle cx="12" cy="4.4" r="2.2"/><path d="M12 6.6 V19"/><path d="M7.6 11 H16.4"/><path d="M7.6 13.2 C5.2 15.6 5.2 18.2 8.4 19.6"/><path d="M16.4 13.2 C19.2 15.6 19.2 18.2 15.6 19.6"/></svg></div>
+          <div class="ttl"><div class="eyebrow">画布节点</div><div class="name">产品主图</div></div>
+        </div>
+        <div class="trilink">
+          <span class="seg s-conv"><span class="dot"></span><span class="lab">对话</span></span>
+          <span class="arrow">›</span>
+          <span class="seg s-anchor"><span class="dot"></span><span class="lab">锚</span></span>
+          <span class="arrow">›</span>
+          <span class="seg s-canvas"><span class="dot"></span><span class="lab">画布</span></span>
+        </div>
+        <div class="meta">
+          <span class="chip model"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3"/><path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/></svg>写实大模型 v2</span>
+          <span class="chip">1:1</span>
+          <span class="cost"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="7" rx="7" ry="3"/><path d="M5 7v5c0 1.7 3.1 3 7 3s7-1.3 7-3V7M5 12v5c0 1.7 3.1 3 7 3s7-1.3 7-3v-5"/></svg>10 积分</span>
+        </div>
+        <p class="prompt">一张极简风格的电竞耳机产品主图，深空灰背景，单侧主光勾勒金属质感。</p>
+        <div class="actions">
+          <span class="btn btn-primary" style="min-height:var(--lnk-touch-target);flex:1;justify-content:center"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14"/></svg>落锚生成</span>
+          <button class="icon-btn js-tune" style="width:var(--lnk-touch-target);height:var(--lnk-touch-target)" title="参数微调"><svg viewBox="0 0 24 24"><path d="M4 8h10M18 8h2M4 16h2M10 16h10"/><circle cx="16" cy="8" r="2"/><circle cx="8" cy="16" r="2"/></svg></button>
+          <button class="icon-btn" style="width:var(--lnk-touch-target);height:var(--lnk-touch-target)" title="取消"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+        </div>
+        <a class="tether" title="锚链 · 跳到画布节点"><svg class="chain" viewBox="0 0 24 24"><path d="M12 3v18M5 7l7-4 7 4M5 17l7 4 7-4"/></svg>拉起锚链 · 在画布查看节点</a>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    令牌全部来自 <code>design-tokens.css</code>（L1/L2 语义层，墨流体系）。品牌三联叙事表达机制：① 引领图标＝既有 <code>anchor-generate.png</code> 品牌锚 glyph（生产走 mask/currentColor，随主题反相）；② <b style="color:var(--lnk-accent-text)">锚图标即品牌轨道的进度拇指</b>，由卡片根 <code>state-*</code> 类驱动沿「对话→画布」轨道滑动；③ 主钮文案「落锚生成」复用品牌中心动词「锚定」；④ 墨滴进度替代通用进度条（呼应「一点一滴洒在画布」）；⑤ 「在画布查看节点」＝拉起锚链（窗口隐喻的视觉兑现）。iOS 极简要点：对话卡紧凑恒定（≈150px），所有旋钮收进 Sheet；积分用 <code>--lnk-credit</code>（琥珀橙＝积分/消耗）；模型 chip A-now 中性（积分暂不含模型维度，待 C-later 服务端下发 creditCost）。本页为静态参考原型，交互逻辑以规格 §7 文件级清单落地。
+  </footer>
+</div>
+
+<!-- ============ 参数微调 Sheet ============ -->
+<div class="sheet-backdrop" id="liveSheet">
+  <div class="sheet" role="dialog" aria-label="参数微调">
+    <div class="grabber"></div>
+    <div class="sheet-head"><span>参数微调</span><button class="icon-btn js-sheet-close" style="width:32px;height:32px" title="关闭"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <div class="sheet-body">
+      <div class="field">
+        <label>模型</label>
+        <select class="sel-ctl" data-live="model">
+          <option>Navo Pro</option><option selected>Agnes Image 2.1 Flash</option><option>Image2</option><option>Seedream 5.0 Pro</option>
+        </select>
+        <span class="hint">catalog 按模态派生（listModels(modality)）；A-now 积分暂不含模型维度</span>
+      </div>
+      <div class="field">
+        <label>比例</label>
+        <select class="sel-ctl" data-live="ratio">
+          <option selected>1:1</option><option>16:9</option><option>9:16</option><option>4:3</option><option>3:4</option><option>3:2</option><option>2:3</option><option>21:9</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>分辨率</label>
+        <div class="seg-ctl" data-live="res"><button>1K</button><button class="on">2K</button><button>4K</button></div>
+      </div>
+      <div class="field">
+        <label>张数</label>
+        <div class="seg-ctl" data-live="count"><button class="on">1</button><button>2</button><button>4</button></div>
+      </div>
+      <div class="field">
+        <label>风格</label>
+        <span class="ro-val">写实</span>
+        <span class="hint">只读：自由文本无枚举，与画布 dock 风格联动语境强耦合</span>
+      </div>
+      <div class="field prompt-edit">
+        <label>提示词</label>
+        <textarea>一张极简风格的电竞耳机产品主图，深空灰背景，单侧主光勾勒金属质感，左下角留白放 logo。</textarea>
+        <span class="hint">清空视为未修改（空 prompt 必然生成失败，不写回）</span>
+      </div>
+      <div class="sheet-credit">本次预计消耗 <b id="liveCredit">15</b> 积分<span class="hint">（暂不含模型维度）</span></div>
+      <p class="sheet-notice">全部修改将随确认生效（确认前真写回节点并落库）；风格与产物二次编辑请回画布精修。</p>
+      <p class="sheet-notice">模态感知：video 提议卡=模型+提示词可编辑、比例/分辨率/时长只读真值；audio=模型+提示词可编辑、类型只读（capability / voice 交集逻辑 C-later）。</p>
+    </div>
+    <div class="sheet-foot">
+      <span class="btn btn-ghost">在画布精修</span>
+      <span class="btn btn-primary">保存修改并确认</span>
+    </div>
+  </div>
+</div>
+
+<script>
+  // 主题切换
+  const root = document.documentElement;
+  document.getElementById('themeToggle').addEventListener('click', () => {
+    root.setAttribute('data-theme', root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+  });
+
+  // Sheet 唤起 / 关闭
+  const liveSheet = document.getElementById('liveSheet');
+  document.querySelectorAll('.js-tune').forEach(b => b.addEventListener('click', () => liveSheet.classList.add('show')));
+  document.querySelectorAll('.js-sheet-close').forEach(b => b.addEventListener('click', () => liveSheet.classList.remove('show')));
+  liveSheet.addEventListener('click', (e) => { if (e.target === liveSheet) liveSheet.classList.remove('show'); });
+
+  // 实时积分联动（A-now：仅 分辨率 × 张数；模型维度忽略，与 estimateImageCredits 一致；
+  // shared 单一真源档位 1K=10 / 2K=15 / 4K=20 每张）
+  const resBase = { '1K':10, '2K':15, '4K':20 };
+  const countMul = { '1':1, '2':2, '4':4 };
+  const live = { model:'Agnes Image 2.1 Flash', res:'2K', count:'1' };
+  function recompute() {
+    const c = (resBase[live.res] ?? 10) * (countMul[live.count] ?? 1);
+    document.getElementById('liveCredit').textContent = c;
+  }
+  liveSheet.querySelectorAll('.seg-ctl').forEach(group => {
+    group.addEventListener('click', (e) => {
+      const btn = e.target.closest('button'); if (!btn) return;
+      group.querySelectorAll('button').forEach(b => b.classList.remove('on'));
+      btn.classList.add('on');
+      const key = group.getAttribute('data-live');
+      if (key === 'model') live.model = btn.textContent;
+      if (key === 'res') live.res = btn.textContent;
+      if (key === 'count') live.count = btn.textContent;
+      recompute();
+    });
+  });
+
+  // 品牌轨道演示：锚沿对话→画布滑动
+  const demoRail = document.getElementById('demoRail');
+  const demoStage = document.getElementById('demoStage');
+  const demoSlider = document.getElementById('demoSlider');
+  const demoLabel = document.getElementById('demoLabel');
+  function setDemo(p, state, txt){
+    demoStage.className = 'demo-stage' + (state ? ' ' + state : '');
+    demoRail.style.setProperty('--p', p);
+    if (txt) demoLabel.textContent = txt;
+    demoSlider.value = Math.round(parseFloat(p) * 100);
+  }
+  if (demoSlider) demoSlider.addEventListener('input', () => {
+    demoStage.className = 'demo-stage';
+    demoRail.style.setProperty('--p', demoSlider.value / 100);
+    demoLabel.textContent = '拖动预览 · 锚位 ' + demoSlider.value + '%';
+  });
+  document.querySelectorAll('.demo-ctrl button').forEach(b => b.addEventListener('click', () => setDemo(b.dataset.p, b.dataset.state, b.dataset.label)));
+</script>
+</body>
+</html>

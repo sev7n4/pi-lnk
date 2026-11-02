@@ -2,7 +2,16 @@ import type { InjectionKey, Ref } from 'vue'
 import type { GroupDragDelta, GroupHandleDir } from './useCanvasGrouping'
 
 export type CanvasNodeRenameFn = (nodeId: string, title: string) => void
-export type CanvasNodePatchFn = (nodeId: string, patch: Record<string, unknown>) => void
+/**
+ * 页面级节点 patch 通路（唯一合法的组件侧写节点方式）。
+ * 返回语义（2026-11-02 提议微调真写回）：void = 即发即忘（既有消费方不变）；
+ * Promise<boolean> = 提供方承诺落库结果，true=已持久化、false=失败——
+ * 确认生成前的参数写回必须走承诺形态（先落库后确认，杜绝读旧参数）。
+ */
+export type CanvasNodePatchFn = (
+  nodeId: string,
+  patch: Record<string, unknown>,
+) => void | Promise<boolean>
 
 export const CANVAS_NODE_RENAME_KEY: InjectionKey<CanvasNodeRenameFn> = Symbol('canvasNodeRename')
 export const CANVAS_NODE_PATCH_KEY: InjectionKey<CanvasNodePatchFn> = Symbol('canvasNodePatch')

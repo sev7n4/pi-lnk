@@ -4353,6 +4353,7 @@ defineExpose({
                   :parts="msg.timeline!.parts"
                   :streaming="Boolean(msg.streaming)"
                   :resolve-node-url="resolveCanvasNodeUrl"
+                  :canvas-nodes="canvasNodes"
                   @retry-node="emit('generateNode', $event)"
                   @focus-node="onFocusNode($event)"
                   @confirm-proposal="onInlineConfirmProposal($event)"
@@ -4627,6 +4628,7 @@ defineExpose({
               class="agent-live-trace mb-1"
               :parts="liveTimeline.parts"
               :resolve-node-url="resolveCanvasNodeUrl"
+              :canvas-nodes="canvasNodes"
               :streaming="agent.isStreaming"
               dense
               @retry-node="onLiveTimelineRetry"
@@ -4741,6 +4743,7 @@ defineExpose({
                 class="agent-live-trace mx-0.5 mb-1"
                 :parts="liveTimeline.parts"
                 :resolve-node-url="resolveCanvasNodeUrl"
+                :canvas-nodes="canvasNodes"
                 :streaming="agent.isStreaming"
                 dense
                 @retry-node="onLiveTimelineRetry"
