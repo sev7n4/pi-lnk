@@ -23,7 +23,7 @@ function makePrisma(records: Array<Record<string, unknown>>, threads: Record<str
 		},
 		agentThread: {
 			findFirst: async ({ where }: { where: { sessionId: string } }) =>
-				threads[where.sessionId] ? { threadId: threads[where.sessionId] } : null,
+				threads[where.sessionId] ? { id: threads[where.sessionId] } : null,
 		},
 	} as unknown as LateNotifyPrisma & { updated: string[] };
 	return { prisma: prisma as LateNotifyPrisma, updated };
@@ -208,5 +208,64 @@ describe("扫描失败降级（不刷屏）", () => {
 		expect(handled).toBe(0);
 		expect(warnings).toHaveLength(1);
 		expect(warnings[0]).toContain("late_generation_scan_failed");
+	});
+
+	it("⚠️ agentThread.findFirst 抛错（字段名写错等）→ 不落 no-thread 标记、下轮重试", async () => {
+		// 回归 2026-11-02 黑章鱼事件根因：此前 findFirst 的 select 误用不存在的
+		// `threadId` 列 ⇒ Prisma 抛校验错，被 `.catch(() => null)` 吞掉 ⇒ 每条记录被
+		// 永久标 no-thread（durable 去重键），完成通知永远不送达。
+		// 修复后：查询报错 ≠ 无线程，应 warn + 本记录不落标记（下轮巡检重试）。
+		const warnings: string[] = [];
+		const updated: string[] = [];
+		const prisma = {
+			generationRecord: {
+				findMany: async () => [rec()],
+				update: async ({ where }: { where: { id: string } }) => {
+					updated.push(where.id);
+					return {};
+				},
+			},
+			agentThread: {
+				findFirst: async () => {
+					throw new Error("Invalid `prisma.agentThread.findFirst()` invocation: unknown field `threadId`");
+				},
+			},
+		} as unknown as LateNotifyPrisma;
+
+		const client = {
+			notifyGeneration: async () => {
+				throw new Error("should not be called");
+			},
+		};
+
+		const handled = await notifyLateGenerationTerminals(
+			prisma,
+			client,
+			{ warn: (m: string) => warnings.push(m), log: () => undefined },
+		);
+		// 本记录未标记 ⇒ 不计入 handled，下轮重扫
+		expect(handled).toBe(0);
+		// 关键：绝不能误标 no-thread（那会永久丢掉这条完成通知）
+		expect(updated).toEqual([]);
+		expect(warnings.some((m) => m.includes("查询 agent 线程失败"))).toBe(true);
+	});
+
+	it("正常通报：findFirst 用真实字段 id 解析线程（非 threadId 列）", async () => {
+		// 直接锁定修复点：线程查回的字段是 `id`，notifyGeneration 收到的 threadId 应等于该 id。
+		const { prisma, updated } = makePrisma([rec()], { "canvas-1": "canvas-1:main" });
+		const sent: Array<{ sessionId: string; payload: Record<string, unknown> }> = [];
+		const client = {
+			notifyGeneration: async (sessionId: string, payload: Record<string, unknown>) => {
+				sent.push({ sessionId, payload });
+				return { delivered: true };
+			},
+		};
+		const handled = await notifyLateGenerationTerminals(prisma, client, silentLogger);
+		expect(handled).toBe(1);
+		expect(updated).toEqual(["rec-1"]);
+		expect(sent).toHaveLength(1);
+		// 此处 sessionId 实为 thread.id（即 canvas-1:main）
+		expect(sent[0].sessionId).toBe("canvas-1:main");
+		expect(sent[0].payload).toMatchObject({ nodeId: "node-1", status: "completed", kind: "视频", url: "https://x/v.mp4" });
 	});
 });
