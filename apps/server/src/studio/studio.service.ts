@@ -6,6 +6,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common'
 import {
@@ -520,7 +521,11 @@ export class StudioService {
     @Inject(MediaProbeService) private readonly mediaProbe: MediaProbeService,
     @Inject(UploadService) private readonly upload: UploadService,
     @Inject(PricingService) private readonly pricing: PricingService,
-    @Inject(CanvasNodeStatusService) private readonly nodeStatus: CanvasNodeStatusService,
+    // @Optional：测试装配（RootTestModule）普遍不提供该依赖；生产由 SessionsModule 导入解析。
+    // 缺失时 syncAgentNodeStatus 静默跳过（fail-soft，与 generation-reaper 同模式）。
+    @Optional()
+    @Inject(CanvasNodeStatusService)
+    private readonly nodeStatus?: CanvasNodeStatusService,
   ) {}
 
   /**
@@ -533,6 +538,7 @@ export class StudioService {
     patch: Record<string, unknown>,
   ): Promise<void> {
     if (!record?.sessionId || !record?.nodeId) return
+    if (!this.nodeStatus) return // 测试装配无该依赖：静默跳过（fail-soft）
     try {
       const result = await this.nodeStatus.mergeNodeData(record.sessionId, record.nodeId, {
         ...(record.id ? { generationRecordId: record.id } : {}),
