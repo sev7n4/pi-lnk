@@ -7,6 +7,7 @@ import {
 	recordUpsertedNode,
 	registerCanvasIdBindingHooks,
 	resetIdBindingForTest,
+	resetIdBindingRewritesForTest,
 } from "./canvas-id-binding.js";
 import type { AgentHarness } from "@earendil-works/pi-agent-core";
 import type { LnkpiToolContext } from "./types.js";
@@ -221,5 +222,93 @@ describe("canvas-id-binding: 钩子注册与 kill switch（spec P1b）", () => {
 			console.warn = originalWarn;
 			resetIdBindingForTest();
 		}
+	});
+});
+
+// ── A3 改写留痕（2026-11-02 老黄牛死循环护栏，RCA v2 §4-A3 / 根因 R1）─────────
+describe("canvas-id-binding: A3 改写留痕（rewrite 必须模型可见）", () => {
+	function stubHarness() {
+		const handlers = new Map<string, (event: never) => Promise<unknown>>();
+		const harness = {
+			hooks: {
+				on: (name: string, fn: never) => {
+					handlers.set(name, fn as never);
+				},
+			},
+		} as unknown as AgentHarness<LnkpiToolContext>;
+		return { harness, handlers };
+	}
+
+	it("rewrite 后同 callId 结算 → content 尾部追加纠偏说明（含旧 id 与新 id）", async () => {
+		resetIdBindingForTest();
+		resetIdBindingRewritesForTest();
+		const { harness, handlers } = stubHarness();
+		registerCanvasIdBindingHooks(harness);
+		const afterTool = handlers.get("after_tool")!;
+		const beforeTool = handlers.get("before_tool")!;
+
+		await afterTool({
+			runId: "rA3",
+			toolName: "upsert_media_node",
+			isError: false,
+			content: upsertContent("image-new"),
+		} as never);
+		const rewritten = (await beforeTool({
+			runId: "rA3",
+			toolCallId: "callA3",
+			toolName: "propose_generation",
+			args: { node_id: "image-old" },
+		} as never)) as { args?: Record<string, unknown> };
+		assert.deepEqual(rewritten, { args: { node_id: "image-new" } });
+
+		const patched = (await afterTool({
+			runId: "rA3",
+			toolCallId: "callA3",
+			toolName: "propose_generation",
+			isError: false,
+			args: { node_id: "image-new" },
+			content: [{ type: "text", text: '{"ok":true}' }],
+		} as never)) as { content: Array<{ type: string; text: string }> } | undefined;
+		assert.ok(patched, "改写过的调用结算必须带留痕 patch");
+		const trace = patched.content.at(-1);
+		assert.ok(trace?.text.includes("image-old") && trace?.text.includes("image-new"), `留痕须含新旧 id：${trace?.text}`);
+		assert.ok(trace?.text.includes("自动纠偏") && trace?.text.includes("不要对它重复提议"));
+	});
+
+	it("留痕一次性：取后即删，同 callId 再结算不重复追加", async () => {
+		resetIdBindingForTest();
+		resetIdBindingRewritesForTest();
+		const { harness, handlers } = stubHarness();
+		registerCanvasIdBindingHooks(harness);
+		const afterTool = handlers.get("after_tool")!;
+		const beforeTool = handlers.get("before_tool")!;
+		await afterTool({ runId: "rA4", toolName: "upsert_media_node", isError: false, content: upsertContent("image-new") } as never);
+		await beforeTool({ runId: "rA4", toolCallId: "callA4", toolName: "propose_generation", args: { node_id: "image-old" } } as never);
+		const event = {
+			runId: "rA4",
+			toolCallId: "callA4",
+			toolName: "propose_generation",
+			isError: false,
+			args: { node_id: "image-new" },
+			content: [{ type: "text", text: "{}" }],
+		} as never;
+		assert.ok(await afterTool(event));
+		assert.equal(await afterTool(event), undefined, "第二次结算不得再追加");
+	});
+
+	it("无改写的结算 → 逐字节旧行为（return undefined）", async () => {
+		resetIdBindingForTest();
+		resetIdBindingRewritesForTest();
+		const { harness, handlers } = stubHarness();
+		registerCanvasIdBindingHooks(harness);
+		const out = await handlers.get("after_tool")!({
+			runId: "rA5",
+			toolCallId: "callA5",
+			toolName: "propose_generation",
+			isError: false,
+			args: { node_id: "n1" },
+			content: [{ type: "text", text: "{}" }],
+		} as never);
+		assert.equal(out, undefined);
 	});
 });

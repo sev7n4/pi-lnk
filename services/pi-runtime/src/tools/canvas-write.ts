@@ -585,8 +585,12 @@ export function createCanvasWriteTools(
 								confirmed: false,
 								reason: outcome.reason,
 								message:
+									// A2（2026-11-02 老黄牛死循环护栏 RCA v2 §4-A2）：timeout = 终局（LangGraph
+									// HITL 纪律：超时必须有终局行为，绝不「超时=再试」）。旧文案「请等待用户
+									// 后续指示」+ _signal「调整参数后重试」正是事故循环燃料（模型照办重提议
+									// ×5，args 恒 {node_id} 无参可调）。
 									outcome.reason === "timeout"
-										? "用户未在时限内确认，请等待用户后续指示，不要自行执行 run_*。"
+										? "用户未在时限内确认。不要再次 propose_generation：结束本轮，等待用户指示（用户可能稍后确认提议卡、在画布上操作或回复新消息）。"
 									: outcome.reason === "aborted"
 										? // §17.8（2026-10-27）：批注流锚带回 ⇒ decline 携带批注意见，
 											// 明说「反馈正从对话发来」，防模型抢在截图到达前凭空重提议。
@@ -596,7 +600,9 @@ export function createCanvasWriteTools(
 											: outcome.reason?.startsWith("stale_status:")
 												// 2026-10-12 事故形态：状态被 stale 覆盖回旧终态，零生成。
 												// 必须明说「未启动」，禁止模型复述「正在出图」。
-												? `未检测到生成启动（节点状态为 ${outcome.reason.slice("stale_status:".length)} 但无新生成证据），不要声称正在出图或已启动生成，不要执行 run_*；请重新 propose_generation 或请用户在画布节点上确认。`
+												// A2：旧文案的「重新提议」指令是死循环文本诱导源（RCA v2 R3），
+												// 改为终局引导；重提议闸由 propose-gate latch 兜底。
+												? `未检测到生成启动（节点状态为 ${outcome.reason.slice("stale_status:".length)} 但无新生成证据），不要声称正在出图或已启动生成，不要执行 run_*；请等待用户在画布节点上确认或回复指示，不要再次 propose_generation。`
 												// rejected 是**推断**（SSOT 连续两次停 draft）而非事实，文案不得替用户
 												// 下定论：2026-10-06 生产事故里用户点了生成，模型却照此复述「用户取消了生成确认」。
 												: "未检测到该节点的生成确认（节点已回到草稿状态），不要执行 run_*；请先向用户确认是继续生成还是调整参数，不要断定用户已取消。",
@@ -698,7 +704,7 @@ export function createCanvasWriteTools(
 								ok: false,
 								confirmed: true,
 								started: false,
-								message: `生成确认已收到，但服务端启动生成失败：${detail}。请如实告知用户生成未能启动，不要声称正在出图；可建议用户在画布节点上手动生成，或稍后重新确认。`,
+								message: `生成确认已收到，但服务端启动生成失败：${detail}。请如实告知用户生成未能启动，不要声称正在出图；向用户说明情况并等待用户指示，不要自行重试 propose_generation。`,
 							}),
 						}],
 						details: {

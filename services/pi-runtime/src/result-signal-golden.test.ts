@@ -67,9 +67,11 @@ describe("golden cases（spec §6）", () => {
 		);
 	});
 
-	it("② propose_generation 缺 confirmed → partial + 调参重试提示（confirmed 契约键保留）", async () => {
+	it("② propose_generation 缺 confirmed → partial + 终局引导行（confirmed 契约键保留）", async () => {
 		// 真实病例：模型把缺 confirmed 当执行成功/盲目 run_*。分支真实产出（含 _signal）
 		// 由 canvas-write.test.ts「取消路径」用例锁；此处锁 listener 渲染契约。
+		// A2（2026-11-02 RCA v2）：propose 非 ok 一律「终局引导」，禁止调参/退避重试诱导
+		// （旧文案是死循环燃料：模型照「调整参数后重试」对同节点重提议 ×5）。
 		const { patch, text } = await dispatch({
 			toolCallId: "t2",
 			toolName: "propose_generation",
@@ -89,7 +91,9 @@ describe("golden cases（spec §6）", () => {
 		});
 		assert.ok(patch, "缺 confirmed 必须出 patch");
 		assert.ok(text.includes("⚠️[write_light]"), `tier 标签应入 content：${text}`);
-		assert.ok(text.includes("调整参数后重试"), `调参重试提示应入 content：${text}`);
+		assert.ok(text.includes("不要再次 propose_generation"), `propose 终局引导应入 content：${text}`);
+		assert.ok(!text.includes("调整参数后重试"), "propose 结算不得出现调参重试诱导（RCA v2 A2）");
+		assert.ok(!text.includes("可退避重试"), "propose 结算不得出现退避重试诱导（RCA v2 A2）");
 		assert.equal(patch?.details?.confirmed, false, "confirmed 是 gate 消费契约，绝不能被 patch 抹掉");
 	});
 

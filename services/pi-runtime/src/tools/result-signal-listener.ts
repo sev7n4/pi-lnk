@@ -61,12 +61,17 @@ export function signalFromErrorContent(content: SignalContentBlock[]): ToolResul
 	return undefined;
 }
 
-/** 按信号内容组装告警行（15-30 token 预算；自解释——prompt 预算仅剩 3 字符，禁止外加解读规则）。 */
-function signalLines(sig: ToolResultSignal, tier: string, extraLine: string | undefined): string[] {
+/** 按信号内容组装告警行（15-30 token 预算；自解释——prompt 预算仅剩 3 字符，禁止外加解读规则）。
+ *  A2（2026-11-02 死循环护栏 RCA v2 §4-A2）：propose_generation 的非 ok 结算一律替换为
+ *  「终局引导」行——旧的「调整参数后重试 / 可退避重试」正是事故循环燃料（模型照办重提议 ×5）。
+ *  重提议闸由 propose-gate latch 兜底，信号行与闸必须同一口径：不重试，交还用户。 */
+function signalLines(sig: ToolResultSignal, tier: string, extraLine: string | undefined, toolName?: string): string[] {
 	const lines: string[] = [];
 	const tag = `⚠️[${tier}]`;
 	if (sig.status !== "ok") {
-		if (sig.retryable === true) {
+		if (toolName === "propose_generation") {
+			lines.push(`${tag} 提议未获用户确认或未生效：不要再次 propose_generation，结束本轮等待用户指示`);
+		} else if (sig.retryable === true) {
 			// §5 三态：确知可重试（vendor 判 429 限流/5xx/timeout 类）→ 退避提示。
 			lines.push(`${tag} ${sig.errorCode ?? "上游请求失败"}：瞬时失败，可退避重试`);
 		} else if (sig.retryable === false) {
@@ -102,7 +107,7 @@ function signalLines(sig: ToolResultSignal, tier: string, extraLine: string | un
  * @param extraLine 对账告警（reconcileAffected 产物），与信号行一起统一追加。
  */
 export function appendSignalLine(
-	_toolName: string,
+	toolName: string,
 	tier: string,
 	isError: boolean,
 	content: SignalContentBlock[],
@@ -111,7 +116,7 @@ export function appendSignalLine(
 ): SignalPatch | undefined {
 	const sig = readSignal(details) ?? (isError ? signalFromErrorContent(content) : undefined);
 	if (!sig) return undefined;
-	const lines = signalLines(sig, tier, extraLine);
+	const lines = signalLines(sig, tier, extraLine, toolName);
 	if (lines.length === 0) return undefined;
 
 	const signalText = `\n${lines.join("\n")}`;
