@@ -313,55 +313,83 @@ export class AgentService implements OnModuleInit {
    */
   private readonly outOfTurnProjecting = new Set<string>()
 
+  /**
+   * armed 状态（2026-11-03 Layer 3 订阅时序竞态）：订阅已挂、SSE 已 open，
+   * 等 reaper 的 notify-generation 触发简报轮。
+   *
+   * 为什么需要两段式（arm → project）：runtime 在 notify-generation handler 内
+   **同步** drain 开简报轮（followUp → void drainQueued → lane.prompt），agent_start
+   * 在 notify 响应返回**之前**就已发出；后置订阅（旧 onDelivered 单段式）经 prisma
+   * 归属查询再挂 SSE，实测晚 ~500ms+ ⇒ `from=now` 错过 agent_start ⇒ 因果围栏
+   * 静默丢弃整轮（蓝老虎复测生产实证：pi transcript seq 435→653 简报完整存在、
+   * Nest 零落库）。arm 把订阅挂载挪到 notify **之前**并等 SSE open（与主流
+   * 「先订阅再 prompt」同一严格时序），project 只负责生命周期与落库。
+   */
+  private readonly outOfTurnArmed = new Map<
+    string,
+    {
+      unsubscribe: () => void
+      acceptor: ReturnType<typeof createOutOfTurnRunAcceptor>
+      thread: { id: string; sessionId: string }
+      userId: string | undefined
+      clock: { lastActivityAt: number }
+      armedAt: number
+    }
+  >()
+
   /** P0-A 看门狗参数：全部收束后安静多久退订 / 订阅总上限。 */
   private static readonly OUT_OF_TURN_QUIET_MS = 30_000
   private static readonly OUT_OF_TURN_CAP_MS = 5 * 60_000
+  /** arm 等 SSE open 的上限：超时放弃预挂（notify 照发，退化回后置订阅旧行为）。 */
+  private static readonly OUT_OF_TURN_OPEN_TIMEOUT_MS = 3_000
+  /**
+   * armed 自愈 TTL：notify 一直不来（被 tool-wait 抑制 / 通报失败）⇒ 到点退订，
+   * 防订阅悬挂。> 一次 notify HTTP 往返（秒级）即可，10s 足够宽裕。
+   */
+  private static readonly OUT_OF_TURN_ARM_TTL_MS = 10_000
 
   onModuleInit(): void {
     // 钩子注册 fail-soft：reaper 缺席（单测/降级装配）= 只通报不投影（行为同今天）。
     if (!this.generationReaper) return
+    this.generationReaper.outOfTurnArmHook = (threadId) => this.armOutOfTurnProjection(threadId)
     this.generationReaper.outOfTurnProjectionHook = (threadId) =>
       this.projectOutOfTurnRuns(threadId)
   }
 
   /**
-   * 回合外投影记账者（P0-A，2026-11-02 天鹅事故）。
+   * 阶段一：预挂回合外投影订阅（P0-A Layer 3，2026-11-03 蓝老虎复测）。
    *
-   * 触发：reaper → notify-generation `delivered:true` 后（Layer 2 drain 修复 PR #679
-   * 保证简报轮会在 pi 侧跑起来，但该 run 无 Nest 主流 ⇒ 无人落库）。
+   * 由 reaper 在 notify-generation **之前** await（late-generation-notify 的
+   * `onBeforeNotify`）。生产实证（thread cmvzixb8k0018pc01ktoxthpy）：runtime 在
+   * notify handler 内**同步** drain 开简报轮，agent_start 在 notify 响应返回前
+   * 就已发出；旧单段式（onDelivered 后置订阅）经 prisma 归属查询再挂 SSE 实测晚
+   * ~500ms+ ⇒ `from=now` 错过 agent_start ⇒ 因果围栏静默丢弃整轮。
    *
-   * 做什么：挂一条**短命**事件订阅（`live:true` from=now 只收未来 + `retryOnMissing`
-   * 等 lane 出现——两档语义都是上游 `streamEvents` 内建，零新增传输层），按 runId
-   * 分桶累积（`createOutOfTurnRunAcceptor`），run 收束即经 `finalizeTurn` 落库：
-   * - `runId` 进 `(threadId, runId)` 唯一索引 ⇒ 与主流写者/重复重放天然防重；
-   * - `metadata.outOfTurn: true` ⇒ 前端渲染独立气泡、历史恢复识别「回合外来信」；
-   * - 只记账**自己见到 agent_start 的 run**（因果围栏，不冒充全量）。
+   * 做什么：prisma 归属查询 → 挂事件订阅（`live:true` + `retryOnMissing`，均为
+   * 上游 `streamEvents` 内建语义）→ 等 SSE open（≤3s）。open 意味着 runtime 已
+   * 注册本订阅 ⇒ 此后到达的 notify 触发的简报轮 agent_start **必然**落在窗口内
+   * （与主流「先订阅再 prompt」同一严格时序，见 streamConversation 同构注释）。
    *
-   * 生命周期：全部收束后安静 30s 退订；总上限 5min（防订阅悬挂）。
-   * 不补偿「错过 agent_start 的在跑 run」——notify 先于 drain 启动，正常时序必然
-   * 赶得上；错过说明时序已坏，宁可丢简报也不落残缺账（N4）。
+   * armed 期间若简报轮意外抢先收束（竞态极小），acceptor 产出照常落库——
+   * (threadId,runId) 唯一索引防重，与 activate 后的记账互不冲突。
    *
-   * `opts.quietMs/capMs/tickMs` 仅测试注入（生产用静态默认值）。
+   * fail-soft：任何失败只 warn，通报照发（退化回后置订阅旧行为）。
    */
-  async projectOutOfTurnRuns(
+  async armOutOfTurnProjection(
     threadKey: string,
-    opts?: { quietMs?: number; capMs?: number; tickMs?: number },
+    opts?: { openTimeoutMs?: number; armTtlMs?: number },
   ): Promise<void> {
     const piUrl = this.getPiRuntimeUrl()
     if (!piUrl) return
-    if (this.outOfTurnProjecting.has(threadKey)) return
-    this.outOfTurnProjecting.add(threadKey)
+    if (this.outOfTurnProjecting.has(threadKey)) return // 在飞投影已覆盖本线程
+    if (this.outOfTurnArmed.has(threadKey)) return // 已武装（同轮多条记录接连 notify）
     try {
-      // 线程归属：AgentMessage 落库需要 sessionId（画布上下文）与 userId（归属）。
-      // 线程行不存在 = 会话已删/键不对 ⇒ 无处落账，直接放弃（warn 留痕）。
       const thread = await this.prisma?.agentThread?.findFirst?.({
         where: { id: threadKey },
         select: { id: true, sessionId: true },
       })
       if (!thread?.sessionId) {
-        this.piLogger?.warn?.(
-          `out_of_turn_projection skipped (thread not found, key=${threadKey})`,
-        )
+        this.piLogger?.warn?.(`out_of_turn_projection arm skipped (thread not found, key=${threadKey})`)
         return
       }
       const session = await this.prisma?.session?.findUnique?.({
@@ -370,19 +398,135 @@ export class AgentService implements OnModuleInit {
       })
       const client = this.createPiRuntimeClient(piUrl)
       const acceptor = createOutOfTurnRunAcceptor()
-      let lastActivityAt = Date.now()
+      const clock = { lastActivityAt: Date.now() }
+      let opened = false
       const unsubscribe = client.streamEvents(
         threadKey,
         (event: PiRuntimeEvent) => {
-          lastActivityAt = Date.now()
+          clock.lastActivityAt = Date.now()
           const snapshot = acceptor.feed(event)
           if (!snapshot) return
-          // fire-and-forget：落库失败只影响可见性，不拖垮订阅（其余 run 照常记账）。
+          // fire-and-forget：落库失败只影响可见性，不拖垮订阅（(threadId,runId) 唯一索引防重）。
           void this.persistOutOfTurnTurn(thread.sessionId, threadKey, session?.userId, snapshot)
         },
         () => {},
-        { live: true, retryOnMissing: true },
+        {
+          live: true,
+          retryOnMissing: true,
+          onOpen: () => {
+            clock.lastActivityAt = Date.now()
+            opened = true
+          },
+        },
       )
+      const openDeadline =
+        Date.now() + (opts?.openTimeoutMs ?? AgentService.OUT_OF_TURN_OPEN_TIMEOUT_MS)
+      while (!opened && Date.now() < openDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
+      if (!opened) {
+        unsubscribe()
+        this.piLogger?.warn?.(`out_of_turn_projection arm timeout (key=${threadKey})`)
+        return
+      }
+      const armedAt = Date.now()
+      this.outOfTurnArmed.set(threadKey, {
+        unsubscribe,
+        acceptor,
+        thread,
+        userId: session?.userId,
+        clock,
+        armedAt,
+      })
+      // 武装自愈 TTL：notify 一直不来（tool-wait 抑制 / 通报失败）⇒ 到点退订防悬挂。
+      const ttl = setTimeout(
+        () => {
+          const ctx = this.outOfTurnArmed.get(threadKey)
+          if (ctx && ctx.armedAt === armedAt) {
+            ctx.unsubscribe()
+            this.outOfTurnArmed.delete(threadKey)
+            this.piLogger?.log?.(`out_of_turn_projection arm expired (key=${threadKey})`)
+          }
+        },
+        opts?.armTtlMs ?? AgentService.OUT_OF_TURN_ARM_TTL_MS,
+      )
+      ttl.unref?.()
+    } catch (err) {
+      this.piLogger?.warn?.(
+        `out_of_turn_projection arm failed (key=${threadKey}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      )
+    }
+  }
+
+  /**
+   * 阶段二：回合外投影记账者（P0-A，2026-11-02 天鹅事故）。
+   *
+   * 触发：reaper → notify-generation `delivered:true` 后。正常路径消费
+   * {@link armOutOfTurnProjection} 预挂的订阅（agent_start 已在窗口内）；
+   * 直接调用/测试/未武装时现场挂订阅兜底（旧行为）。
+   *
+   * 记账语义（与 arm 共用 acceptor）：按 runId 分桶累积
+   * （`createOutOfTurnRunAcceptor`），run 收束即经 `finalizeTurn` 落库：
+   * - `runId` 进 `(threadId, runId)` 唯一索引 ⇒ 与主流写者/重复重放天然防重；
+   * - `metadata.outOfTurn: true` ⇒ 前端渲染独立气泡、历史恢复识别「回合外来信」；
+   * - 只记账**自己见到 agent_start 的 run**（因果围栏，不冒充全量）——预挂保证
+   *   围栏不再误伤正常简报轮（见 arm 注释）。
+   *
+   * 生命周期：全部收束后安静 30s 退订；总上限 5min（防订阅悬挂）。
+   *
+   * `opts.quietMs/capMs/tickMs` 仅测试注入（生产用静态默认值）。
+   */
+  async projectOutOfTurnRuns(
+    threadKey: string,
+    opts?: { quietMs?: number; capMs?: number; tickMs?: number },
+  ): Promise<void> {
+    if (this.outOfTurnProjecting.has(threadKey)) return
+    const armed = this.outOfTurnArmed.get(threadKey)
+    this.outOfTurnArmed.delete(threadKey)
+    const piUrl = this.getPiRuntimeUrl()
+    if (!piUrl && !armed) return
+    this.outOfTurnProjecting.add(threadKey)
+    try {
+      // 优先消费 armed 上下文（预挂订阅 + 已累积的 acceptor + 归属信息）；
+      // 未武装（直接调用/测试路径）现场挂订阅兜底——不等待 open，行为同旧单段式。
+      let thread = armed?.thread
+      let sessionUserId = armed?.userId
+      let acceptor = armed?.acceptor
+      let unsubscribe = armed?.unsubscribe
+      const clock = armed?.clock ?? { lastActivityAt: Date.now() }
+      if (!armed) {
+        const found = await this.prisma?.agentThread?.findFirst?.({
+          where: { id: threadKey },
+          select: { id: true, sessionId: true },
+        })
+        if (!found?.sessionId) {
+          this.piLogger?.warn?.(
+            `out_of_turn_projection skipped (thread not found, key=${threadKey})`,
+          )
+          return
+        }
+        const session = await this.prisma?.session?.findUnique?.({
+          where: { id: found.sessionId },
+          select: { userId: true },
+        })
+        const client = this.createPiRuntimeClient(piUrl!)
+        acceptor = createOutOfTurnRunAcceptor()
+        thread = found
+        sessionUserId = session?.userId
+        unsubscribe = client.streamEvents(
+          threadKey,
+          (event: PiRuntimeEvent) => {
+            clock.lastActivityAt = Date.now()
+            const snapshot = acceptor!.feed(event)
+            if (!snapshot) return
+            void this.persistOutOfTurnTurn(found.sessionId, threadKey, sessionUserId, snapshot)
+          },
+          () => {},
+          { live: true, retryOnMissing: true },
+        )
+      }
       const deadline = Date.now() + (opts?.capMs ?? AgentService.OUT_OF_TURN_CAP_MS)
       const tickMs = opts?.tickMs ?? 5_000
       const quietMs = opts?.quietMs ?? AgentService.OUT_OF_TURN_QUIET_MS
@@ -390,10 +534,10 @@ export class AgentService implements OnModuleInit {
         while (Date.now() < deadline) {
           await new Promise((resolve) => setTimeout(resolve, tickMs))
           // 30s 无任何事件（含 drain 未发生的情形）即收摊；个别 run 悬挂由 5min 上限兜底。
-          if (Date.now() - lastActivityAt >= quietMs) break
+          if (Date.now() - clock.lastActivityAt >= quietMs) break
         }
       } finally {
-        unsubscribe()
+        unsubscribe?.()
       }
     } catch (err) {
       this.piLogger?.warn?.(

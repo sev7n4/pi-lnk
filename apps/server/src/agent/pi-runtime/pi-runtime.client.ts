@@ -659,7 +659,7 @@ export class PiRuntimeClient {
 		sessionId: string,
 		onEvent: (event: PiRuntimeEvent) => void,
 		onError?: (err: unknown) => void,
-		opts?: { live?: boolean; lastEventId?: string; retryOnMissing?: boolean },
+		opts?: { live?: boolean; lastEventId?: string; retryOnMissing?: boolean; onOpen?: () => void },
 	): () => void {
 		const controller = new AbortController();
 		const RECONNECT_BUDGET_MS = 120_000;
@@ -721,6 +721,22 @@ export class PiRuntimeClient {
 					}
 					backoff = 250; // 连接成功即重置退避与失败窗口
 					firstFailureAt = undefined;
+					// 连接建立信号（2026-11-03 回合外投影 Layer 3）：服务端此刻已注册本订阅，
+					// 「订阅先于触发」范式的关键锚点——调用方 await 本回调后再发 trigger
+					// （如 notify-generation），保证被触发的 run 的 agent_start 落在
+					// from=now 窗口内。重连也会再次触发（幂等由调用方自理）；
+					// 回调抛错不可当网络错误重试（重连会重放已处理事件），只吞掉记 warn。
+					if (opts?.onOpen) {
+						try {
+							opts.onOpen()
+						} catch (err) {
+							console.warn(
+								`[pi-runtime] streamEvents onOpen callback failed: ${
+									err instanceof Error ? err.message : String(err)
+								}`,
+							)
+						}
+					}
 					for await (const frame of parseSseFrames(res.body)) {
 						if (frame.id !== undefined) lastEventId = frame.id;
 						if (frame.event && frame.data !== undefined) {

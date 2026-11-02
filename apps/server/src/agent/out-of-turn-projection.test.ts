@@ -110,6 +110,8 @@ describe('AgentService projectOutOfTurnRuns', () => {
   const sessionFindUnique = vi.fn()
   let service: AgentService
   let pi: PiClientStub
+  /** 每个 stub 的流式回调集合（onEvent / onOpen），测试按序回放事件。 */
+  let streamCalls: Array<{ onEvent: (e: PiRuntimeEvent) => void; onOpen?: () => void }>
 
   beforeEach(() => {
     vi.restoreAllMocks()
@@ -132,29 +134,54 @@ describe('AgentService projectOutOfTurnRuns', () => {
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
     )
+    streamCalls = []
     pi = {
       ...({} as object),
-      streamEvents: vi.fn((_key: string, onEvent: (e: PiRuntimeEvent) => void) => {
-        // 模拟简报轮：notify 先于 drain，订阅挂上后 run 才开始。
-        onEvent(runEvent('agent_start', {}, 'run-brief-1'))
-        onEvent(
-          runEvent('message_update', { event: { type: 'text_delta', delta: '白色天鹅图片已生成完成，可在画布节点中查看。' } }, 'run-brief-1'),
-        )
-        onEvent(runEvent('agent_end', { status: 'completed' }, 'run-brief-1'))
-        return () => {}
-      }),
+      streamEvents: vi.fn(
+        (
+          _key: string,
+          onEvent: (e: PiRuntimeEvent) => void,
+          _onError?: unknown,
+          opts?: { onOpen?: () => void },
+        ) => {
+          streamCalls.push({ onEvent, onOpen: opts?.onOpen })
+          return () => {}
+        },
+      ),
     } as unknown as PiClientStub
     vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
   })
 
-  it('简报轮落库：runId 进唯一键 + metadata.outOfTurn 标记', async () => {
-    await service.projectOutOfTurnRuns('s1:t1', { tickMs: 5, quietMs: 20, capMs: 300 })
+  /** 模拟简报轮完整事件序列（notify 触发 drain 后 runtime 侧的产出）。 */
+  function replayBriefRun(runId = 'run-brief-1', text = '白色天鹅图片已生成完成，可在画布节点中查看。') {
+    const call = streamCalls.at(-1)
+    call?.onEvent(runEvent('agent_start', {}, runId))
+    call?.onEvent(runEvent('message_update', { event: { type: 'text_delta', delta: text } }, runId))
+    call?.onEvent(runEvent('agent_end', { status: 'completed' }, runId))
+  }
 
+  /** 等 project 现场挂上订阅（arm 是 async：prisma 查询后才调 streamEvents）。 */
+  async function waitSubscribed(min = 1) {
+    await vi.waitFor(() => expect(streamCalls.length).toBeGreaterThanOrEqual(min))
+  }
+
+  it('简报轮落库：runId 进唯一键 + metadata.outOfTurn 标记', async () => {
+    const p = service.projectOutOfTurnRuns('s1:t1', { tickMs: 5, quietMs: 20, capMs: 300 })
+    await waitSubscribed()
+    replayBriefRun()
+    await p
+
+    // persist 是 fire-and-forget（finalizeTurn 异步链），quiet 退订后仍可能未落完 ⇒ 轮询断言
+    await vi.waitFor(() => {
+      const persistCall = agentMessageCreate.mock.calls
+        .map((call) => call[0] as { data: { runId?: string; metadata?: string } })
+        .find((arg) => arg?.data?.runId === 'run-brief-1')
+      expect(persistCall).toBeDefined()
+    })
     const persistCall = agentMessageCreate.mock.calls
       .map((call) => call[0] as { data: { runId?: string; metadata?: string } })
-      .find((arg) => arg?.data?.runId === 'run-brief-1')
-    expect(persistCall).toBeDefined()
-    const metadata = JSON.parse(persistCall!.data.metadata ?? '{}')
+      .find((arg) => arg?.data?.runId === 'run-brief-1')!
+    const metadata = JSON.parse(persistCall.data.metadata ?? '{}')
     expect(metadata.outOfTurn).toBe(true)
   })
 
@@ -194,3 +221,164 @@ describe('AgentService projectOutOfTurnRuns', () => {
     expect(() => service.onModuleInit()).not.toThrow()
   })
 })
+
+// ── 2026-11-03 Layer 3（蓝老虎复测）：订阅先于触发（arm/project 两段式）──────
+//
+// 生产实证（thread cmvzixb8k0018pc01ktoxthpy）：runtime 在 notify handler 内同步
+// drain 开简报轮，agent_start 在响应返回前发出 ⇒ 后置订阅（旧单段式）经 prisma
+// 归属查询再挂 SSE 晚 ~500ms+ ⇒ from=now 错过 agent_start ⇒ 因果围栏静默丢整轮
+// （pi transcript seq 435→653 简报完整存在、Nest 零落库、out_of_turn_turn_persisted
+// 零命中）。修复：arm 在 notify 之前挂订阅并等 SSE open，project 消费 armed 上下文。
+
+describe('AgentService armOutOfTurnProjection（订阅先于 notify）', () => {
+  const agentMessageCreate = vi.fn()
+  const agentThreadFindFirst = vi.fn()
+  const sessionFindUnique = vi.fn()
+  let service: AgentService
+  let pi: PiClientStub
+  let streamCalls: Array<{ onEvent: (e: PiRuntimeEvent) => void; onOpen?: () => void; unsubscribe: () => void }>
+  let unsubscribed: string[]
+
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+
+    agentMessageCreate.mockReset().mockResolvedValue({})
+    agentThreadFindFirst.mockReset().mockResolvedValue({ id: 's1:t1', sessionId: 's1' })
+    sessionFindUnique.mockReset().mockResolvedValue({ userId: 'u1' })
+
+    service = new AgentService(
+      {
+        agentMessage: { create: agentMessageCreate, findFirst: vi.fn(), findMany: vi.fn() },
+        agentThread: { findFirst: agentThreadFindFirst, findUnique: vi.fn(), upsert: vi.fn(), update: vi.fn() },
+        session: { findUnique: sessionFindUnique, update: vi.fn() },
+        idempotencyRecord: { create: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn() },
+        marginPolicy: { findFirst: vi.fn().mockResolvedValue(null) },
+      } as never,
+      { createFromAgent: vi.fn() } as never,
+      { resolveForGeneration: vi.fn() } as never,
+    )
+    streamCalls = []
+    unsubscribed = []
+    pi = {
+      ...({} as object),
+      streamEvents: vi.fn(
+        (
+          _key: string,
+          onEvent: (e: PiRuntimeEvent) => void,
+          _onError?: unknown,
+          opts?: { onOpen?: () => void },
+        ) => {
+          const entry = { onEvent, onOpen: opts?.onOpen, unsubscribe: () => unsubscribed.push(_key) }
+          streamCalls.push(entry)
+          return () => entry.unsubscribe()
+        },
+      ),
+    } as unknown as PiClientStub
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+  })
+
+  /** 等 arm 挂上订阅（async：prisma 查询后才调 streamEvents）。 */
+  async function waitSubscribed(min = 1) {
+    await vi.waitFor(() => expect(streamCalls.length).toBeGreaterThanOrEqual(min))
+  }
+
+  it('⚠️ arm 等 SSE open 后才返回；project 消费 armed 订阅不再新开', async () => {
+    // open 由 stub 在 arm 挂上订阅后触发（模拟 fetch resolve → onOpen）
+    const armed = service.armOutOfTurnProjection('s1:t1', { openTimeoutMs: 2_000, armTtlMs: 60_000 })
+    await waitSubscribed()
+    streamCalls.at(-1)?.onOpen?.()
+    await armed
+    expect(pi.streamEvents).toHaveBeenCalledTimes(1) // arm 挂了订阅
+
+    // notify 之后 project 激活：复用 armed 订阅（不新开第二条）→ 简报轮事件全部记账
+    const projecting = service.projectOutOfTurnRuns('s1:t1', { tickMs: 5, quietMs: 20, capMs: 300 })
+    // 简报轮事件在 activate 后到达（正常时序：notify → runtime drain → agent_start…）
+    streamCalls.at(-1)?.onEvent(runEvent('agent_start', {}, 'run-l3'))
+    streamCalls.at(-1)?.onEvent(
+      runEvent('message_update', { event: { type: 'text_delta', delta: '蓝色老虎已出图' } }, 'run-l3'),
+    )
+    streamCalls.at(-1)?.onEvent(runEvent('agent_end', { status: 'completed' }, 'run-l3'))
+    await projecting
+
+    expect(pi.streamEvents).toHaveBeenCalledTimes(1) // ⭐ 旧代码（无 arm）此断言红：project 现场再开一条
+    const persistCall = agentMessageCreate.mock.calls
+      .map((c) => c[0] as { data: { runId?: string } })
+      .find((arg) => arg?.data?.runId === 'run-l3')
+    expect(persistCall).toBeDefined()
+  })
+
+  it('armed 期间简报轮抢先收束也照常落库（唯一索引防重，不丢）', async () => {
+    const armed = service.armOutOfTurnProjection('s1:t1', { openTimeoutMs: 2_000, armTtlMs: 60_000 })
+    await waitSubscribed()
+    const entry = streamCalls.at(-1)
+    entry?.onOpen?.()
+    // 竞态极小但理论存在：notify 尚未发出，简报轮事件已在 armed 窗口内收束
+    entry?.onEvent(runEvent('agent_start', {}, 'run-early'))
+    entry?.onEvent(runEvent('message_update', { event: { type: 'text_delta', delta: '抢先完成' } }, 'run-early'))
+    entry?.onEvent(runEvent('agent_end', {}, 'run-early'))
+    await armed
+
+    const projecting = service.projectOutOfTurnRuns('s1:t1', { tickMs: 5, quietMs: 20, capMs: 300 })
+    await projecting
+    expect(
+      agentMessageCreate.mock.calls.some(
+        (c) => (c[0] as { data: { runId?: string } })?.data?.runId === 'run-early',
+      ),
+    ).toBe(true)
+  })
+
+  it('arm 等 open 超时 ⇒ 退订放弃预挂（notify 照发的退化路径不悬挂）', async () => {
+    const armed = service.armOutOfTurnProjection('s1:t1', { openTimeoutMs: 60, armTtlMs: 60_000 })
+    await waitSubscribed()
+    await armed // stub 不触发 onOpen ⇒ 60ms 超时
+    expect(unsubscribed).toEqual(['s1:t1'])
+
+    // project 未武装 ⇒ 现场挂订阅兜底（旧行为）
+    const projecting = service.projectOutOfTurnRuns('s1:t1', { tickMs: 5, quietMs: 20, capMs: 300 })
+    await waitSubscribed(2)
+    replayBrief(streamCalls)
+    await projecting
+    expect(pi.streamEvents).toHaveBeenCalledTimes(2)
+  })
+
+  it('armed TTL 自愈：notify 一直不来（tool-wait 抑制）⇒ 到点退订防悬挂', async () => {
+    vi.useFakeTimers()
+    try {
+      const armed = service.armOutOfTurnProjection('s1:t1', { openTimeoutMs: 60_000, armTtlMs: 100 })
+      // fake 时钟下用 advance(0/1) 推微任务直到 arm 挂上订阅（不可用真实 waitFor）
+      for (let i = 0; i < 50 && streamCalls.length === 0; i++) await vi.advanceTimersByTimeAsync(1)
+      expect(streamCalls.length).toBe(1)
+      streamCalls.at(-1)?.onOpen?.()
+      await vi.advanceTimersByTimeAsync(50) // arm 轮询循环检测到 opened 退出
+      await armed
+      expect(pi.streamEvents).toHaveBeenCalledTimes(1)
+
+      await vi.advanceTimersByTimeAsync(150) // TTL 100ms 到点，notify 从未到达
+      expect(unsubscribed).toEqual(['s1:t1'])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('arm 双守卫：同 thread 已武装 ⇒ 不重复开订阅', async () => {
+    const armed = service.armOutOfTurnProjection('s1:t1', { openTimeoutMs: 2_000, armTtlMs: 60_000 })
+    await waitSubscribed()
+    streamCalls.at(-1)?.onOpen?.()
+    await armed
+    await service.armOutOfTurnProjection('s1:t1', { openTimeoutMs: 2_000, armTtlMs: 60_000 })
+    expect(pi.streamEvents).toHaveBeenCalledTimes(1)
+  })
+})
+
+/** 未武装兜底路径用：在最新订阅上回放一轮完整简报。 */
+function replayBrief(
+  streamCalls: Array<{ onEvent: (e: PiRuntimeEvent) => void }>,
+  runId = 'run-brief-1',
+) {
+  const call = streamCalls.at(-1)
+  call?.onEvent(runEvent('agent_start', {}, runId))
+  call?.onEvent(runEvent('message_update', { event: { type: 'text_delta', delta: '简报正文' } }, runId))
+  call?.onEvent(runEvent('agent_end', { status: 'completed' }, runId))
+}

@@ -162,6 +162,24 @@ export async function notifyLateGenerationTerminals(
 		 * 不影响通报去重主链路）。
 		 */
 		onDelivered?: (threadId: string) => void
+		/**
+		 * 投影订阅**预挂**钩子（2026-11-03 蓝老虎复测 Layer 3：订阅时序竞态）。
+		 *
+		 * 生产实证（thread cmvzixb8k0018pc01ktoxthpy）：runtime 在 notify-generation
+		 * handler 内同步启动 drain（followUp → void drainQueued → lane.prompt 通报文案），
+		 * 简报轮 agent_start 在 notify **响应返回前**就已发出；而 Nest 侧 onDelivered
+		 * 要等响应回来再经 prisma 归属查询才挂订阅（实测晚 ~500ms+）⇒ `from=now`
+		 * 错过 agent_start ⇒ 因果围栏（只记账自己见到 agent_start 的 run）把简报轮
+		 * 全部事件静默丢弃 ⇒ P0-A 形同虚设（简报在 pi transcript 里存在、Nest 永远不可见）。
+		 *
+		 * 语义：**在 client.notifyGeneration 之前**对该线程 await 调用一次——实现方
+		 * （AgentService.armOutOfTurnProjection）挂事件订阅并等 SSE open，使被触发
+		 * 简报轮的 agent_start 必然落在 from=now 窗口内（与主流「先订阅再 prompt」
+		 * 同一严格时序，agent.service.ts:2394 同构注释）。
+		 * fail-open：抛错只 warn、通报照发（退化回 onDelivered 后置订阅的旧行为，
+		 * 最坏丢一次简报落库，不影响通报去重主链路）。
+		 */
+		onBeforeNotify?: (threadId: string) => Promise<void> | void
 	},
 ): Promise<number> {
 	// 回看窗：默认 10min（> reaper 5min 巡检间隔，覆盖窗口无缝；终态后 10min 内必被扫到）。
@@ -236,6 +254,16 @@ export async function notifyLateGenerationTerminals(
 			rec.status !== 'completed' && typeof meta.userMessage === 'string' && meta.userMessage
 				? meta.userMessage
 				: undefined
+		// ⭐ 订阅先于触发（Layer 3）：先让投影方把事件订阅挂上并等 SSE open，
+		// 再发 notify——runtime 收到 notify 同步开简报轮，agent_start 必然落在
+		// 订阅窗口内。arm 失败 fail-open（照常通报，退化回旧行为）。
+		if (opts?.onBeforeNotify) {
+			try {
+				await opts.onBeforeNotify(thread.id)
+			} catch (err) {
+				logger.warn(`[late-notify] 投影订阅预挂失败（照常通报）: ${errMessage(err)}`)
+			}
+		}
 		try {
 			const result = await client.notifyGeneration(thread.id, {
 				nodeId: rec.nodeId,
