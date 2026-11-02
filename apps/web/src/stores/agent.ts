@@ -593,6 +593,8 @@ export const useAgentStore = defineStore('agent', () => {
     released?: boolean
   }) {
     ensureExecutionTrace()
+    // 设计意图缺口补位：回合结算权威值到达即清掉流式预估态，杜绝「预估」残留为最终数字。
+    liveEstimatedCredits.value = null
     const last = lastAssistant()
     if (last?.executionTrace) applyTurnSettled(last.executionTrace, data)
     void useAuthStore().refreshPoints()
