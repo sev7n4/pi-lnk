@@ -4,6 +4,7 @@ import {
   Inject,
   Injectable,
   Logger,
+  OnModuleInit,
   Optional,
 } from '@nestjs/common'
 import { ModuleRef } from '@nestjs/core'
@@ -95,7 +96,8 @@ import { resolveForceSkills } from './pi-runtime/resolve-force-skills'
 import { stripPlanMarkers } from './planMarkers'
 import { normalizeAssistantText } from './text-normalize'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
-import { createThinkingAccumulator, createTextSegmentPersister, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, extractTaskEvents, extractTextEnd, mapPiEventToUiEvent, classifyPiRunError, type PiRuntimeEvent } from './pi-runtime/pi-events'
+import { createThinkingAccumulator, createTextSegmentPersister, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, extractTaskEvents, extractTextDelta, extractTextEnd, mapPiEventToUiEvent, classifyPiRunError, type PiRuntimeEvent } from './pi-runtime/pi-events'
+import { GenerationReaperService } from '../studio/generation-reaper.service'
 import { estimateCreditsFromUsdCost, resolveFxUsdCny } from '../pricing/pricing.core'
 import { InsufficientPointsError, PointsService } from '../points/points.service'
 import { PricingService } from '../pricing/pricing.service'
@@ -175,6 +177,69 @@ export function deriveLinkedOutputs(actions: CanvasAction[]): LinkedCanvasOutput
     }))
 }
 
+/** 回合外 run 收束快照（P0-A 记账者产出，供 finalizeTurn 落库）。 */
+export interface OutOfTurnRunSnapshot {
+  runId: string
+  assistantText: string
+  canvasActions: CanvasAction[]
+}
+
+/**
+ * 回合外 run 接收器（P0-A 纯逻辑，2026-11-02 天鹅事故）。
+ *
+ * 背景：生成 job 终态的「回合外简报轮」不属于任何用户 turn ⇒ Nest 主流不存在
+ * ⇒ 无人落库（AgentMessage 是展示层 SSOT）⇒ 刷新即失。记账者（`projectOutOfTurnRuns`）
+ * 在 reaper notify-generation 送达后挂短命订阅，用本接收器按 runId 分桶累积，
+ * run 收束时产出快照走 `finalizeTurn`（唯一索引防重，与主流写者互不冲突）。
+ *
+ * 因果断据（对齐账本完整性 N5 的「因果围栏」纪律）：**只记账自己见到
+ * `agent_start` 的 run**——半路接入的 run（buckets 里无起点）不产出快照，
+ * 防止把前缀冒充全量（那比缺行更糟，N4）。
+ *
+ * 输入 = **裸 `PiRuntimeEvent`**（与主流同一输入层）：画布动作提取
+ * （`extractCanvasActions`）与主流同源同形状；文本/收束语义经
+ * `mapPiEventToUiEvent` 归一（text_delta / done / error），run 身份用 `runId`
+ * （runtime 给所有 run 内事件兜底打戳，session-manager.ts:3219）。
+ */
+export function createOutOfTurnRunAcceptor() {
+  const buckets = new Map<
+    string,
+    { text: string; canvasActions: CanvasAction[]; sawStart: boolean; done: boolean }
+  >()
+  return {
+    /** 喂入一条裸 pi 事件；当且仅当某 run 刚收束且可落库时返回其快照。 */
+    feed(event: PiRuntimeEvent): OutOfTurnRunSnapshot | null {
+      const runId = event.runId
+      if (!runId) return null
+      if (event.type === 'agent_start') {
+        buckets.set(runId, { text: '', canvasActions: [], sawStart: true, done: false })
+        return null
+      }
+      const bucket = buckets.get(runId)
+      if (!bucket || bucket.done) return null
+      // 画布动作提取与主流逐事件同源（简报轮一般不产动作，但 drain 是完整 agent run）。
+      for (const action of extractCanvasActions(event)) {
+        bucket.canvasActions.push(action)
+      }
+      const ui = mapPiEventToUiEvent(event)
+      if (!ui) return null
+      if (ui.type === 'text_delta') {
+        // 与主流一致应剥 plan 内联标记；简报轮不产 plan（无 turn 上下文），直取正文。
+        bucket.text += (ui.data as { text?: string })?.text ?? ''
+        return null
+      }
+      if (ui.type === 'done' || ui.type === 'error') {
+        // done=agent_end（权威收束）；error 也是收束（失败轮，落什么算什么）。
+        bucket.done = true
+        buckets.delete(runId)
+        if (!bucket.sawStart) return null
+        return { runId, assistantText: bucket.text, canvasActions: bucket.canvasActions }
+      }
+      return null
+    },
+  }
+}
+
 /**
  * Prisma 唯一约束冲突（P2002）——`(threadId, runId)` 唯一索引的裁决信号。
  *
@@ -195,7 +260,7 @@ interface TurnPointHold {
 }
 
 @Injectable()
-export class AgentService {
+export class AgentService implements OnModuleInit {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(MaterialService) private readonly materialService: MaterialService,
@@ -233,7 +298,143 @@ export class AgentService {
     @Optional()
     @Inject(ModuleRef)
     private readonly moduleRef?: ModuleRef,
+    // 回合外投影记账者接线（2026-11-02 天鹅事故 P0-A）：@Optional 注入 reaper（经
+    // StudioModule 导出；AgentModule imports StudioModule ⇒ 依赖方向安全零环），
+    // onModuleInit 把投影回调注册上去。缺省（单测/未装配）= 只通报不投影，行为不变。
+    @Optional()
+    @Inject(GenerationReaperService)
+    private readonly generationReaper?: GenerationReaperService,
   ) {}
+
+  /**
+   * 回合外投影记账者的在飞守卫：同一 threadKey 只挂一条订阅。
+   * reaper 5min 节拍可能对同会话多条记录接连 notify，简报轮是同一 drain 窗口，
+   * 第二条 notify 无需（也不该）再开一条订阅。
+   */
+  private readonly outOfTurnProjecting = new Set<string>()
+
+  /** P0-A 看门狗参数：全部收束后安静多久退订 / 订阅总上限。 */
+  private static readonly OUT_OF_TURN_QUIET_MS = 30_000
+  private static readonly OUT_OF_TURN_CAP_MS = 5 * 60_000
+
+  onModuleInit(): void {
+    // 钩子注册 fail-soft：reaper 缺席（单测/降级装配）= 只通报不投影（行为同今天）。
+    if (!this.generationReaper) return
+    this.generationReaper.outOfTurnProjectionHook = (threadId) =>
+      this.projectOutOfTurnRuns(threadId)
+  }
+
+  /**
+   * 回合外投影记账者（P0-A，2026-11-02 天鹅事故）。
+   *
+   * 触发：reaper → notify-generation `delivered:true` 后（Layer 2 drain 修复 PR #679
+   * 保证简报轮会在 pi 侧跑起来，但该 run 无 Nest 主流 ⇒ 无人落库）。
+   *
+   * 做什么：挂一条**短命**事件订阅（`live:true` from=now 只收未来 + `retryOnMissing`
+   * 等 lane 出现——两档语义都是上游 `streamEvents` 内建，零新增传输层），按 runId
+   * 分桶累积（`createOutOfTurnRunAcceptor`），run 收束即经 `finalizeTurn` 落库：
+   * - `runId` 进 `(threadId, runId)` 唯一索引 ⇒ 与主流写者/重复重放天然防重；
+   * - `metadata.outOfTurn: true` ⇒ 前端渲染独立气泡、历史恢复识别「回合外来信」；
+   * - 只记账**自己见到 agent_start 的 run**（因果围栏，不冒充全量）。
+   *
+   * 生命周期：全部收束后安静 30s 退订；总上限 5min（防订阅悬挂）。
+   * 不补偿「错过 agent_start 的在跑 run」——notify 先于 drain 启动，正常时序必然
+   * 赶得上；错过说明时序已坏，宁可丢简报也不落残缺账（N4）。
+   *
+   * `opts.quietMs/capMs/tickMs` 仅测试注入（生产用静态默认值）。
+   */
+  async projectOutOfTurnRuns(
+    threadKey: string,
+    opts?: { quietMs?: number; capMs?: number; tickMs?: number },
+  ): Promise<void> {
+    const piUrl = this.getPiRuntimeUrl()
+    if (!piUrl) return
+    if (this.outOfTurnProjecting.has(threadKey)) return
+    this.outOfTurnProjecting.add(threadKey)
+    try {
+      // 线程归属：AgentMessage 落库需要 sessionId（画布上下文）与 userId（归属）。
+      // 线程行不存在 = 会话已删/键不对 ⇒ 无处落账，直接放弃（warn 留痕）。
+      const thread = await this.prisma?.agentThread?.findFirst?.({
+        where: { id: threadKey },
+        select: { id: true, sessionId: true },
+      })
+      if (!thread?.sessionId) {
+        this.piLogger?.warn?.(
+          `out_of_turn_projection skipped (thread not found, key=${threadKey})`,
+        )
+        return
+      }
+      const session = await this.prisma?.session?.findUnique?.({
+        where: { id: thread.sessionId },
+        select: { userId: true },
+      })
+      const client = this.createPiRuntimeClient(piUrl)
+      const acceptor = createOutOfTurnRunAcceptor()
+      let lastActivityAt = Date.now()
+      const unsubscribe = client.streamEvents(
+        threadKey,
+        (event: PiRuntimeEvent) => {
+          lastActivityAt = Date.now()
+          const snapshot = acceptor.feed(event)
+          if (!snapshot) return
+          // fire-and-forget：落库失败只影响可见性，不拖垮订阅（其余 run 照常记账）。
+          void this.persistOutOfTurnTurn(thread.sessionId, threadKey, session?.userId, snapshot)
+        },
+        () => {},
+        { live: true, retryOnMissing: true },
+      )
+      const deadline = Date.now() + (opts?.capMs ?? AgentService.OUT_OF_TURN_CAP_MS)
+      const tickMs = opts?.tickMs ?? 5_000
+      const quietMs = opts?.quietMs ?? AgentService.OUT_OF_TURN_QUIET_MS
+      try {
+        while (Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, tickMs))
+          // 30s 无任何事件（含 drain 未发生的情形）即收摊；个别 run 悬挂由 5min 上限兜底。
+          if (Date.now() - lastActivityAt >= quietMs) break
+        }
+      } finally {
+        unsubscribe()
+      }
+    } catch (err) {
+      this.piLogger?.warn?.(
+        `out_of_turn_projection failed (key=${threadKey}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      )
+    } finally {
+      this.outOfTurnProjecting.delete(threadKey)
+    }
+  }
+
+  /** 回合外 run 落库（fail-soft：失败 warn，不影响通报/订阅主链路）。 */
+  private async persistOutOfTurnTurn(
+    sessionId: string,
+    threadKey: string,
+    userId: string | undefined,
+    snapshot: OutOfTurnRunSnapshot,
+  ): Promise<void> {
+    try {
+      await this.finalizeTurn(sessionId, threadKey, userId, snapshot.assistantText, snapshot.canvasActions, {
+        // 简报轮可能产画布动作（drain 是完整 agent run）⇒ 照常持久化画布实体，
+        // 但不重写 canvasData 主通道（Nest 内部工具已直写）。
+        rewriteCanvasData: false,
+        linkedOutputs: deriveLinkedOutputs(snapshot.canvasActions),
+        metadata: { outOfTurn: true },
+        runId: snapshot.runId,
+        sawTerminalEvent: true,
+        runStarted: true,
+      })
+      this.piLogger?.log?.(
+        `out_of_turn_turn_persisted key=${threadKey} runId=${snapshot.runId} len=${snapshot.assistantText.length}`,
+      )
+    } catch (err) {
+      this.piLogger?.warn?.(
+        `out_of_turn_turn persist failed (key=${threadKey}, runId=${snapshot.runId}): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      )
+    }
+  }
 
   /**
    * 批次 3.2：运行时惰性解析自动续跑服务（构造环见构造器注）。
@@ -2419,10 +2620,42 @@ export class AgentService {
       while (!done) {
         const { value: event, done: streamClosed } = await iterator.next()
         if (streamClosed || !event) break
+        // ── P0-B 回合围栏（2026-11-02 天鹅事故）────────────────────────────
+        //
+        // 本流是**新 run 的 owner**（prompt 被接受、turnMode='run'）时，以 prompt 后
+        // **首个 agent_start** 的 runId 锁定回合身份；此后一切归属其他 run 的事件
+        // （回合外 drain 简报轮等，runtime 给所有 run 内事件兜底打 runId 戳，
+        // session-manager.ts:3219）**整条跳过**——不进文本、不进 executionEvents、
+        // 不 yield 给前端、更不能让它的 agent_end 提前终止本流。
+        //
+        // 旧行为两个病灶（生产实证：黑天鹅简报整段黏进蓝天鹅的 AgentMessage 行）：
+        // ① `turnRunId` 取「最后出现的非空值」⇒ 中途插入的回合外 run 会顶掉本流
+        //    身份，其 text_delta 被并进本流正文落库（跨 run 黏连）；
+        // ② 任意 `agent_end` 都置 done ⇒ 回合外简报轮先收束时主流被提前掐断。
+        //
+        // ⚠️ 只对 owner-of-new-run 生效：shadow/steer/followup 是**半路接入在跑
+        // run** 的流（没有自己的 agent_start 可认），保持旧语义（首个带身份事件
+        // 即归属 run；其 agent_end 终止本流也是既有契约）——它们的重复落库由
+        // `(threadId, runId)` 唯一索引兜底（D2/PR2 既有裁决）。
+        //
+        // ⚠️ 残余竞态（接受）：本流订阅（from=now）与 prompt 202 之间若有回合外
+        // run 恰好 agent_start，身份会误锁到它（毫秒级窗口；reaper 5min 节拍下
+        // 概率可忽略）。识别手段（payload 返回 operationId）上游暂未提供，见
+        // pi-runtime.client.prompt() 返回 void——未来上游补身份回传时应优先采用。
+        if (turnMode === 'run') {
+          if (event.type === 'agent_start' && event.runId && turnRunId === undefined) {
+            turnRunId = event.runId
+            sawRunStart = true
+          }
+          if (turnRunId !== undefined && event.runId !== undefined && event.runId !== turnRunId) {
+            continue
+          }
+        } else {
+          if (event.runId) turnRunId = event.runId
+          if (event.type === 'agent_start') sawRunStart = true
+        }
         // P0-1：本轮落库事件共享这个事件的全局 seq（见 pushTraceEvent 的 gSeq）。
         currentPiEvent = event
-        if (event.runId) turnRunId = event.runId
-        if (event.type === 'agent_start') sawRunStart = true
         if (firstSeq === undefined && typeof event.seq === 'number') firstSeq = event.seq
         if (event.type === 'agent_end' || event.type === 'error') {
           done = true

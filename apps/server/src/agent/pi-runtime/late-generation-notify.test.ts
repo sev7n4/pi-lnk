@@ -62,6 +62,26 @@ describe("notifyLateGenerationTerminals", () => {
 		expect(sent[0].payload).toMatchObject({ nodeId: "node-1", status: "completed", kind: "视频", url: "https://x/v.mp4" });
 	});
 
+	it("delivered:true → onDelivered 收到线程 id（P0-A 投影记账者派发点）", async () => {
+		const { prisma } = makePrisma([rec()], { "canvas-1": "canvas-1:main" });
+		const client = { notifyGeneration: async () => ({ delivered: true }) };
+		const delivered: string[] = [];
+		await notifyLateGenerationTerminals(prisma, client, silentLogger, {
+			onDelivered: (threadId) => delivered.push(threadId),
+		});
+		expect(delivered).toEqual(["canvas-1:main"]);
+	});
+
+	it("delivered:false（抑制）→ onDelivered 不派发", async () => {
+		const { prisma } = makePrisma([rec()], { "canvas-1": "canvas-1:main" });
+		const client = { notifyGeneration: async () => ({ delivered: false, reason: "tool-wait-active" }) };
+		const delivered: string[] = [];
+		await notifyLateGenerationTerminals(prisma, client, silentLogger, {
+			onDelivered: (threadId) => delivered.push(threadId),
+		});
+		expect(delivered).toEqual([]);
+	});
+
 	it("已被通报过（agentTurnNotified 在 metadata）→ 跳过不重发", async () => {
 		const { prisma } = makePrisma([rec({ metadata: JSON.stringify({ agentTurnNotified: "delivered" }) })]);
 		const client = {

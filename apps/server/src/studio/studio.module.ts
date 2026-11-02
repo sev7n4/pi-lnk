@@ -26,6 +26,8 @@ import { VideoGenerationOrchestrator } from './video-generation.orchestrator'
   ],
   controllers: [StudioController],
   providers: [StudioService, VideoGenerationOrchestrator, ImageSliceService, GenerationReaperService],
-  exports: [StudioService, VideoGenerationOrchestrator, ImageSliceService],
+  // GenerationReaperService 导出（2026-11-02 P0-A）：AgentService 经 @Optional 构造器
+  // 注入并注册回合外投影钩子（AgentModule imports 本模块 ⇒ 无环）。
+  exports: [StudioService, VideoGenerationOrchestrator, ImageSliceService, GenerationReaperService],
 })
 export class StudioModule {}

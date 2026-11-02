@@ -67,6 +67,13 @@ export interface AgentMessageMetadata {
   truncated?: boolean
   /** PR4 历史修复：本行被判定为影子行时指向 owner 消息 id；读取出口据此过滤。 */
   supersededBy?: string
+  /**
+   * 回合外投影（2026-11-02 天鹅事故 P0-A）：本行由「回合外投影记账者」落库——
+   * 该 run 不是任何用户 turn 的一部分（生成 job 终态的回合外简报轮等），Nest 侧
+   * 没有主流写者 ⇒ reaper notify-generation 送达后挂短命订阅记账。前端可据此
+   * 渲染为独立气泡（严禁与进行中消息拼接）；历史恢复据此识别「回合外来信」。
+   */
+  outOfTurn?: boolean
 }
 
 export type ExecutionEventKind =

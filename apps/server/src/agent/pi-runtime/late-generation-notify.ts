@@ -146,7 +146,23 @@ export async function notifyLateGenerationTerminals(
 	prisma: LateNotifyPrisma,
 	client: LateNotifyClient,
 	logger: { warn(msg: string): unknown; log(msg: string): unknown },
-	opts?: { lookbackMs?: number; batch?: number },
+	opts?: {
+		lookbackMs?: number
+		batch?: number
+		/**
+		 * 回合外投影记账者钩子（2026-11-02 天鹅事故 P0-A）。
+		 *
+		 * 背景：notify delivered 只保证「简报轮会在 pi 侧跑起来」（Layer 2 drain 修复
+		 * PR #679），但该 run 不属于任何用户 turn ⇒ Nest 主流不存在 ⇒ 简报**零落库**
+		 * （AgentMessage 是展示层 SSOT）⇒ 刷新/历史恢复永远看不到，在线旁听也归因混乱。
+		 *
+		 * 语义：仅在 `delivered: true` 后对**该线程**调用一次；实现方（AgentService，
+		 * 经 reaper 的 outOfTurnProjectionHook 注入）挂短命事件订阅记账到 agent_end。
+		 * fire-and-forget：本函数不 await、不感知其成败（投影失败只影响可见性，
+		 * 不影响通报去重主链路）。
+		 */
+		onDelivered?: (threadId: string) => void
+	},
 ): Promise<number> {
 	// 回看窗：默认 10min（> reaper 5min 巡检间隔，覆盖窗口无缝；终态后 10min 内必被扫到）。
 	const lookbackMs = opts?.lookbackMs ?? 10 * 60_000
@@ -232,6 +248,7 @@ export async function notifyLateGenerationTerminals(
 			// delivered=false（工具仍在等 / 会话不在本实例）也是确定性结果，落标记防重发。
 			await markNotified(prisma, rec.id, meta, result.delivered ? 'delivered' : `suppressed:${result.reason ?? 'unknown'}`)
 			handled += 1
+			if (result.delivered) opts?.onDelivered?.(thread.id)
 			logger.log(
 				`[late-notify] ${rec.type} ${rec.id} node=${rec.nodeId} → thread=${thread.id} ` +
 					`delivered=${result.delivered}${result.reason ? ` (${result.reason})` : ''}`,

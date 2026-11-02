@@ -156,6 +156,15 @@ interface StuckRecord {
 export class GenerationReaperService implements OnModuleInit {
   private readonly logger = new Logger(GenerationReaperService.name)
 
+  /**
+   * 回合外投影记账者钩子（2026-11-02 天鹅事故 P0-A）。
+   *
+   * 由 AgentService onModuleInit 注册（AgentService 经 @Optional 注入本服务——
+   * AgentModule imports StudioModule，方向安全、零环；缺省 = 未装配 = 只通报不投影，
+   * 行为与今天一致）。签名 = pi-runtime 的**原始 threadKey**（AgentThread.id）。
+   */
+  outOfTurnProjectionHook?: (threadId: string) => Promise<void> | void
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(PointsService) private readonly points: PointsService,
@@ -247,6 +256,20 @@ export class GenerationReaperService implements OnModuleInit {
           this.prisma as unknown as LateNotifyPrisma,
           client,
           this.logger,
+          {
+            // 回合外投影记账者（2026-11-02 天鹅事故 P0-A）：delivered 后由 AgentService
+            // 挂短命订阅把简报轮落库（AgentMessage 是展示层 SSOT，不落库 = 刷新即失）。
+            // 钩子由 AgentService onModuleInit 注册（AgentModule imports StudioModule，
+            // 复用既有依赖方向，不新增模块/端口）；未注册 = 行为与今天逐字节一致。
+            onDelivered: (threadId) => {
+              try {
+                const hook = this.outOfTurnProjectionHook
+                if (hook) void hook(threadId)
+              } catch (err) {
+                this.logger.warn(`[late-notify] 投影记账者派发失败（不影响通报）: ${errMessage(err)}`)
+              }
+            },
+          },
         )
         if (notified > 0) {
           this.logger.log(`[${reason}] 回合外生成终态通报已处理 ${notified} 条`)
