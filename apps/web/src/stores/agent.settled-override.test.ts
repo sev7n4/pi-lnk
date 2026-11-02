@@ -13,7 +13,8 @@ describe('trackTurnSettled 预估覆盖（修复规格 2026-11-02-points-display
     vi.spyOn(auth, 'refreshPoints').mockResolvedValue(100)
     const store = useAgentStore()
     store.startAssistantMessage()
-    store.trackTurnUsage({ inputTokens: 100, outputTokens: 50, estimatedCredits: 2 })
+    // live 通道：流式预估经 usage_delta 注入（trackTurnUsage 落 trace 后本就清实时态）
+    store.trackUsageDelta({ estimatedCredits: 2 })
     expect(store.liveEstimatedCredits).toBe(2)
     store.trackTurnSettled({ holdId: 'h', credits: 14 })
     expect(store.liveEstimatedCredits).toBeNull()
