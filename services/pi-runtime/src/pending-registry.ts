@@ -46,6 +46,8 @@ interface PendingEntry {
 	resolve: (r: PendingResolution) => void;
 	timer: NodeJS.Timeout;
 	settled: boolean;
+	/** A1（2026-11-02 propose 单飞护栏）：waitForUser 的 meta 留底，供按 nodeId 查询在途提议。 */
+	meta?: Record<string, unknown>;
 }
 
 /**
@@ -126,6 +128,7 @@ export class PendingToolRegistry {
 		return new Promise<PendingResolution>((resolve) => {
 			const entry: PendingEntry = {
 				toolName,
+				meta,
 				resolve: (r) => {
 					if (entry.settled) return;
 					entry.settled = true;
@@ -234,6 +237,21 @@ export class PendingToolRegistry {
 
 	hasPending(sessionId: string): boolean {
 		return (this.entries.get(sessionId)?.size ?? 0) > 0;
+	}
+
+	/**
+	 * A1（2026-11-02 propose 单飞护栏）：该会话下指定节点是否已有**在途**阻塞提议。
+	 * 用途：before_tool 层拦「同节点重复 propose」——latch（settle 后）与本查询（settle 前）
+	 * 合起来覆盖提议生命周期的全程。meta.nodeId 由 propose_generation 的 waitForUser 传入。
+	 */
+	hasPendingForNode(sessionId: string, nodeId: string, toolName = "propose_generation"): boolean {
+		const byCall = this.entries.get(sessionId);
+		if (!byCall) return false;
+		for (const entry of byCall.values()) {
+			if (entry.toolName !== toolName) continue;
+			if (entry.meta?.["nodeId"] === nodeId) return true;
+		}
+		return false;
 	}
 
 	pendingInfo(sessionId: string): PendingInfo | null {

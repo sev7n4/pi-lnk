@@ -14,6 +14,7 @@ import { resolveToolsWithClient } from "./tools/config.js";
 import { GenerationGateStore, checkGenerationGate } from "./gate/generation-gate.js";
 import { clearPlanRunFlag } from "./gate/plan-gate.js";
 import { registerPlanGateHooks } from "./gate/plan-gate-wiring.js";
+import { registerProposeGateHooks } from "./gate/propose-gate.js";
 import { registerCanvasIdBindingHooks } from "./tools/canvas-id-binding.js";
 import { SubagentCoordinator } from "./gate/subagent.js";
 import { PendingToolRegistry } from "./pending-registry.js";
@@ -114,8 +115,20 @@ const manager = new SessionManager(
 					} else {
 						// B-2：阻塞确认后 details.confirmed=true → gate 视同跨轮放行（spec §4.3）
 						const confirmed = readBooleanField(event.details, "confirmed", "after_tool.details");
+						// A1（2026-11-02 死循环护栏）：无副作用失败（missing_refs）不锁重提议——
+						// 模型补绑 refs 后必须能在同轮重提议；其余结算一律锁到本 user turn 结束。
+						let transient = false;
+						const drec = readRecord(event.details, "after_tool.details");
+						if (drec.ok) {
+							const sig = readRecord(drec.value._signal, "after_tool.details._signal");
+							if (sig.ok) {
+								const ec = readStringField(sig.value, "errorCode", "after_tool.details._signal.errorCode");
+								if (ec.ok && ec.value === "missing_refs") transient = true;
+							}
+						}
 						gateStore.markProposed(sessionId, nodeId.value, {
 							confirmed: confirmed.ok && confirmed.value,
+							transient,
 						});
 					}
 				}
@@ -198,6 +211,18 @@ const manager = new SessionManager(
 			}
 			if (!nestClient) return undefined; // 纯文本模式无工具，Gate 无用武之地
 			const gateClient = nestClient;
+			// A1 propose 单飞门（2026-11-02 老黄牛死循环护栏，RCA v2 §4-A1）：同节点同时刻
+			// 至多一个未结算提议、同 user turn 至多一次 propose 结算。必须在
+			// registerCanvasIdBindingHooks（上方）之后注册——before_tool 链式 replace，
+			// 本门要看到改写后的正确 node_id。与 generation-gate（run_* 门禁）并存不合并。
+			registerProposeGateHooks(harness, {
+				sessionKey: sessionId,
+				store: gateStore,
+				registry,
+				client: gateClient,
+				canvasKey: () => manager.getCanvasSessionId(sessionId) ?? sessionId,
+				metrics,
+			});
 			harness.hooks.on("before_tool", async (event) => {
 				const check = await checkGenerationGate(gateStore, gateClient, sessionId, event.toolName, event.args, {
 					// #74 解耦语义：SSOT 查询必须带画布会话 id —— 本闭包只有 pi 会话键，

@@ -308,3 +308,9 @@ export function planGateEnabled(env: Record<string, string | undefined> = proces
 export function canvasIdBindingEnabled(env: Record<string, string | undefined> = process.env): boolean {
 	return parseBool(env.PI_RUNTIME_CANVAS_ID_BINDING, true);
 }
+
+/** A1 propose 单飞门开关（2026-11-02 老黄牛死循环护栏，RCA v2 §4-A1）：off = before_tool
+ *  拦截不注册（结算文案与改写留痕不受此开关影响，属独立纪律）。回滚出口仿 plan-gate。 */
+export function proposeGateEnabled(env: Record<string, string | undefined> = process.env): boolean {
+	return parseBool(env.PI_RUNTIME_PROPOSE_GATE, true);
+}

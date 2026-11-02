@@ -5,15 +5,24 @@
  * B4 每轮 deleteSession 重建 → resetSession 清态，不影响跨轮放行逻辑。
  */
 export class GenerationGateStore {
-	private readonly proposals = new Map<string, Map<string, { turn: number; confirmed: boolean }>>();
+	private readonly proposals = new Map<
+		string,
+		Map<string, { turn: number; confirmed: boolean; transient?: boolean }>
+	>();
 	private readonly turns = new Map<string, number>();
 	private readonly runs = new Map<string, Map<string, number>>(); // 会话 → 节点 → 已放行 run 次数（V-γ）
 
-	/** propose_generation 成功后由 after_tool hook 调用，记录 {turn, confirmed}。 */
-	markProposed(sessionId: string, nodeId: string, opts: { confirmed?: boolean } = {}): void {
+	/** propose_generation 成功后由 after_tool hook 调用，记录 {turn, confirmed}。
+	 *  A1（2026-11-02 propose 死循环护栏）：`transient` = 无副作用失败（missing_refs）——
+	 *  不锁重提议（模型修完 refs 需在同轮重提议），其余结算一律锁到本 user turn 结束。 */
+	markProposed(
+		sessionId: string,
+		nodeId: string,
+		opts: { confirmed?: boolean; transient?: boolean } = {},
+	): void {
 		const turn = this.turns.get(sessionId) ?? 0;
-		const map = this.proposals.get(sessionId) ?? new Map<string, { turn: number; confirmed: boolean }>();
-		map.set(nodeId, { turn, confirmed: opts.confirmed === true });
+		const map = this.proposals.get(sessionId) ?? new Map<string, { turn: number; confirmed: boolean; transient?: boolean }>();
+		map.set(nodeId, { turn, confirmed: opts.confirmed === true, transient: opts.transient === true });
 		this.proposals.set(sessionId, map);
 	}
 
@@ -28,6 +37,19 @@ export class GenerationGateStore {
 	/** 每次用户 prompt 进入时 turn +1（SessionManager.prompt 调用）。 */
 	bumpUserTurn(sessionId: string): void {
 		this.turns.set(sessionId, (this.turns.get(sessionId) ?? 0) + 1);
+	}
+
+	/**
+	 * A1 propose 单飞不变量（2026-11-02 老黄牛死循环护栏，RCA v2 §4-A1）：
+	 * 本 user turn 内该节点已结算过一次 propose 且非无副作用失败（missing_refs）→ 拦重提议。
+	 * 事故形态：propose 确认成功后模型对同一节点再次 propose（纠正自己不知道的 id 改写 /
+	 * 文案诱导），每次阻塞 5min 直到超时，run 永不结束。fail-closed：宁可误拦（用户下一条
+	 * 消息即解锁），绝不放行第二次同节点提议。
+	 */
+	shouldBlockRePropose(sessionId: string, nodeId: string): boolean {
+		const turn = this.turns.get(sessionId) ?? 0;
+		const rec = this.proposals.get(sessionId)?.get(nodeId);
+		return !!rec && rec.turn === turn && !rec.transient;
 	}
 
 	/** V-γ：该会话该节点已放行的 run 次数（0/1/2）。 */

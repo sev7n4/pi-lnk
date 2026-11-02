@@ -41,6 +41,23 @@ export function resetIdBindingForTest(): void {
 	windows.clear();
 }
 
+/**
+ * A3 改写留痕（2026-11-02 老黄牛死循环护栏，RCA v2 §4-A3，根因 R1）：
+ * rewrite 是模型不可见的静默纠偏——事故中模型以为首次 propose 提的是乌龟，2 秒后
+ * 「纠正性」再次 propose 老黄牛，触发 5min 超时死循环。修法：before_tool 记录改写
+ * （键=toolCallId，before_tool/after_tool 事件都携带），after_tool 结算时把改写事实
+ * 追加进模型可见的 content 尾部——保留「零重试」优点的同时消除认知分叉。
+ * 泄漏面：改写后被后序 gate block 的 callId 不会有 after_tool → 记录残留。有界化：
+ * 超过 256 条整表清空（键是 callId，跨 run 不可能复现同名，残留只影响不可达的追溯）。
+ */
+const rewrites = new Map<string, { original: string; corrected: string }>();
+const REWRITES_CAP = 256;
+
+/** 测试隔离：清空改写留痕记录。 */
+export function resetIdBindingRewritesForTest(): void {
+	rewrites.clear();
+}
+
 function safeParse(text: string): unknown {
 	try {
 		return JSON.parse(text);
@@ -121,7 +138,14 @@ export function registerCanvasIdBindingHooks(harness: AgentHarness<LnkpiToolCont
 		if (event.toolName === UPSERT_TOOL && !event.isError) {
 			recordUpsertedNode(event.runId, event.content);
 		}
-		return undefined; // 只捕获不改写：content patch（截断/纠偏）归 index.ts 既有 listener
+		// A3 改写留痕：目标工具结算时把改写事实追加进模型可见 content（一次性，取后即删）。
+		const rw = rewrites.get(event.toolCallId);
+		if (rw && BINDING_TARGETS.has(event.toolName)) {
+			rewrites.delete(event.toolCallId);
+			const trace = `📎 节点定位已由平台自动纠偏：你传入的 node_id「${rw.original}」并非本批新建节点，实际已作用于「${rw.corrected}」。后续引用该节点请一律使用「${rw.corrected}」，不要对它重复提议。`;
+			return { content: [...event.content, { type: "text", text: trace }] };
+		}
+		return undefined; // 其余只捕获不改写：content patch（截断/纠偏）归 index.ts 既有 listener
 	});
 	harness.hooks.on("before_tool", async (event) => {
 		const d = decideBinding(event.toolName, event.args, event.runId);
@@ -132,6 +156,12 @@ export function registerCanvasIdBindingHooks(harness: AgentHarness<LnkpiToolCont
 			console.warn(
 				`[pi-runtime] canvas-id-binding rewrite: runId=${event.runId} toolName=${event.toolName} node_id ${event.args?.["node_id"]} → ${d.nodeId}`,
 			);
+			// A3：记录改写（键=toolCallId），结算后由 after_tool 追加模型可见留痕（RCA v2 R1 治本）。
+			if (rewrites.size >= REWRITES_CAP) rewrites.clear();
+			rewrites.set(event.toolCallId, {
+				original: String(event.args?.["node_id"] ?? ""),
+				corrected: d.nodeId,
+			});
 			return { args: { ...event.args, node_id: d.nodeId } };
 		}
 		if (d.kind === "block") {

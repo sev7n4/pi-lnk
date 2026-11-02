@@ -374,6 +374,13 @@ export class Metrics {
 		this.planProposed += 1;
 	}
 
+	/** A1 propose 单飞门观测（2026-11-02 死循环护栏）：key = 拦截原因（latch/pending/in_flight/ssot_unavailable）。 */
+	private proposeGateBlocked = new Map<string, number>();
+
+	observeProposeGateBlocked(kind: string): void {
+		this.proposeGateBlocked.set(kind, (this.proposeGateBlocked.get(kind) ?? 0) + 1);
+	}
+
 	observePlanDecision(decision: string): void {
 		this.planDecisions.set(decision, (this.planDecisions.get(decision) ?? 0) + 1);
 	}
@@ -665,6 +672,12 @@ export class Metrics {
 	lines.push("# TYPE pi_runtime_plan_gate_blocked_total counter");
 	for (const [tool, count] of [...this.planGateBlocked.entries()].sort()) {
 		lines.push(`pi_runtime_plan_gate_blocked_total{tool="${esc(tool)}"} ${count}`);
+	}
+
+	lines.push("# HELP pi_runtime_propose_gate_blocked_total Duplicate proposes blocked by the propose single-flight gate (A1), by kind.");
+	lines.push("# TYPE pi_runtime_propose_gate_blocked_total counter");
+	for (const [kind, count] of [...this.proposeGateBlocked.entries()].sort()) {
+		lines.push(`pi_runtime_propose_gate_blocked_total{kind="${esc(kind)}"} ${count}`);
 	}
 
 	lines.push("# HELP pi_runtime_turn_budget_warned_total Turn-budget nearing-exhaustion steer warnings (C2).");
