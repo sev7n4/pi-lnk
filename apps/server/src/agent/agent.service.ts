@@ -2643,9 +2643,12 @@ export class AgentService implements OnModuleInit {
         // 概率可忽略）。识别手段（payload 返回 operationId）上游暂未提供，见
         // pi-runtime.client.prompt() 返回 void——未来上游补身份回传时应优先采用。
         if (turnMode === 'run') {
-          if (event.type === 'agent_start' && event.runId && turnRunId === undefined) {
-            turnRunId = event.runId
+          if (event.type === 'agent_start') {
+            // sawRunStart 是账本完整性的因果围栏（N5）——保持旧语义：**任意**
+            // agent_start 都置位（上游 runId 在 data 里、envelope 上可能没有，
+            // 不能把两者捆绑，否则「看到了 run 起点」被误判成头部缺口）。
             sawRunStart = true
+            if (event.runId && turnRunId === undefined) turnRunId = event.runId
           }
           if (turnRunId !== undefined && event.runId !== undefined && event.runId !== turnRunId) {
             continue
