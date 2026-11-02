@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common'
 import { DEFAULT_VIDEO_REAP_MINUTES as SHARED_VIDEO_REAP_MINUTES } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
+import { CanvasNodeStatusService } from '../sessions/sessions-canvas-node-status.service'
 import { PointsService } from '../points/points.service'
 import { AutomationSchedulerService } from '../automation/automation-scheduler.service'
 import {
@@ -158,6 +159,8 @@ export class GenerationReaperService implements OnModuleInit {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(PointsService) private readonly points: PointsService,
+    // B2：可选注入——单测直接构造时无该服务，对账扫描跳过（对账绝不影响回收主链）。
+    @Optional() @Inject(CanvasNodeStatusService) private readonly nodeStatus?: CanvasNodeStatusService,
     // C5：可选注入——单测直接构造时无 scheduler，跳过 handler 注册。
     @Optional() @Inject(AutomationSchedulerService) private readonly scheduler?: AutomationSchedulerService,
   ) {}
@@ -252,7 +255,62 @@ export class GenerationReaperService implements OnModuleInit {
         this.logger.warn(`[${reason}] 回合外终态通报扫描失败（不影响回收）: ${errMessage(err)}`)
       }
     }
+    // B2 画布节点终态对账（RCA v2 §4-B2）：与通报独立（通报可能被「工具仍在等」抑制，
+    // 节点状态修复不能跟着被抑制）。fail-soft。
+    try {
+      const fixed = await this.reconcileAgentNodeStatuses(reason)
+      if (fixed > 0) {
+        this.logger.log(`[${reason}] 画布节点终态对账已修复 ${fixed} 个`)
+      }
+    } catch (err) {
+      this.logger.warn(`[${reason}] 画布节点终态对账失败（不影响回收）: ${errMessage(err)}`)
+    }
     return reaped
+  }
+
+  /**
+   * B2 终态对账（2026-11-02 老黄牛死循环护栏，RCA v2 §4-B2）：扫「最近落终态 + 挂在画布
+   * 会话节点上」的记录，把仍处于 pre-terminal 的画布节点 status 推到记录终态。
+   *
+   * 为什么收敛在这里而不是每个结算点：studio 有 20+ 个 generationRecord 终态写点
+   * （image/variation/video/audio/text/refine），逐点挂钩 diff 大且漏一个就复发；
+   * 记录终态后 updatedAt 必然刷新 ⇒ 本扫描天然命中，节点推到终态后下轮不再命中
+   * （按状态幂等，无需 dedup 标记）。image 主路径另有 generateImage 内直写（≤秒级），
+   * 本扫描是全介质兜底（≤5min 巡检间隔）。fail-soft：绝不影响回收主链路。
+   */
+  private async reconcileAgentNodeStatuses(reason: string): Promise<number> {
+    if (!this.nodeStatus) return 0 // 单测/降级：无写者即无对账
+    const since = new Date(Date.now() - 15 * 60 * 1000)
+    const rows = await this.prisma.generationRecord.findMany({
+      where: {
+        sessionId: { not: null },
+        nodeId: { not: null },
+        updatedAt: { gte: since },
+        status: { in: ['completed', 'failed', 'error'] },
+      },
+      select: { id: true, sessionId: true, nodeId: true, status: true },
+      take: 200,
+    })
+    let fixed = 0
+    const TERMINAL = new Set(['completed', 'failed', 'error'] as const)
+    for (const r of rows) {
+      if (!r.sessionId || !r.nodeId) continue
+      if (!(TERMINAL as ReadonlySet<string>).has(r.status)) continue
+      try {
+        const res = await this.nodeStatus.reconcileTerminal(
+          r.sessionId,
+          r.nodeId,
+          r.status as 'completed' | 'failed' | 'error',
+          r.id,
+        )
+        if (res === 'applied') fixed += 1
+      } catch (err) {
+        this.logger.warn(
+          `[${reason}] 节点终态对账失败（fail-soft）record=${r.id} node=${r.nodeId}: ${errMessage(err)}`,
+        )
+      }
+    }
+    return fixed
   }
 
   /** 单条收尾：状态迁移 + 退款在同一事务，exactly-once。 */
