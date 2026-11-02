@@ -58,13 +58,16 @@ async function makeRealHarnessManager(metrics: Metrics, key: string) {
 	return { sm, faux };
 }
 
+/** snapshot 是 async ⇒ ReturnType 取到 Promise，须 Awaited + NonNullable 拿到实际快照形状。 */
+type Snap = NonNullable<Awaited<ReturnType<SessionManager["snapshot"]>>>;
+
 async function waitFor(
-	predicate: (snapRef: { current?: ReturnType<SessionManager["snapshot"]> }) => Promise<boolean>,
+	predicate: (snapRef: { current?: Snap }) => Promise<boolean>,
 	what: string,
 	timeoutMs = 20_000,
-): Promise<ReturnType<SessionManager["snapshot"]>> {
+): Promise<Snap> {
 	const deadline = Date.now() + timeoutMs;
-	const ref: { current?: ReturnType<SessionManager["snapshot"]> } = {};
+	const ref: { current?: Snap } = {};
 	let last = "";
 	while (Date.now() < deadline) {
 		let ok = false;

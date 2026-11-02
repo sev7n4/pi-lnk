@@ -170,7 +170,8 @@ export interface NodeStatusData {
  *  （propose 终态等待 13min cap 超限 / run_* HTTP 阻塞返回 timeout 后生成才完成），
  *  经 POST /sessions/:id/notify-generation 送到这里；宿主裁决：工具仍在等 ⇒ 抑制
  *  （等待者自己会把终态交还模型），否则入 lane followUp 队列——idle 时由 drainQueued
- *  空 prompt 兜底立刻开一轮，模型主动向用户简报（上游 followUp 语义，boundary.ts:106）。 */
+ *  以通报文案为非空 prompt 兜底立刻开一轮（2026-11-02 契约：空 prompt 会被 harness
+ *  验收门禁拒断），模型主动向用户简报（上游 followUp 语义，boundary.ts:106）。 */
 export interface GenerationTerminalNotice {
 	nodeId: string;
 	/** 生成记录 id（Nest 侧去重键；宿主不再重复判重）。 */
