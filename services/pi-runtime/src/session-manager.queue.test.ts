@@ -75,6 +75,29 @@ function makeFakeLane(calls: LaneCalls) {
 			calls.cancelQueued.push(entryId);
 			return { ok: true, value: { kind: "cancelled" as const } };
 		},
+		// 2026-11-02（drain 契约改为 cancel-and-reprompt）：drainQueued 不再用空 prompt，
+		// 而是先读 `watch().snapshot.queues` 取积压文案再撤回 + 非空 prompt 开一轮。
+		// fake lane 的 watch 必须把已入队的 steer/followUp 暴露成 vendor 形状的队列项，
+		// 否则 drain 读不到积压会提前退出（表现为「prompt 未被调」的假红）。
+		watch: async () => ({
+			snapshot: {
+				queues: [
+					...calls.steer.map((text, i) => ({
+						entryId: `fake-q-steer-${i}`,
+						kind: "steer",
+						type: "message",
+						message: { content: [{ type: "text", text }] },
+					})),
+					...calls.followUp.map((text, i) => ({
+						entryId: `fake-q-followUp-${i}`,
+						kind: "followUp",
+						type: "message",
+						message: { content: [{ type: "text", text }] },
+					})),
+				],
+			},
+			unsubscribe: () => {},
+		}),
 	};
 	return lane;
 }
@@ -106,9 +129,14 @@ describe("steer：用户插话走 vendor steering 队列", () => {
 		assert.equal(typeof res.entryId, "string", "必须回传 entryId，否则上层无法撤回这条");
 		assert.ok(res.entryId.length > 0);
 		assert.deepEqual(calls.steer, ["换个风格再生成一次"]);
-		// 关键：入队之后立刻有人来接（空 prompt 触发 accept 排空积压）
+		// 关键（2026-11-02 drain 契约改为 cancel-and-reprompt）：idle 排空不再用空 prompt
+		// （会被 harness 验收门禁拒断），而是撤回积压项后以**插话文案本身**作为非空 prompt 开一轮。
 		await settle();
-		assert.ok(calls.prompt.includes(""), "idle 插话后应自动开一轮排空，否则消息会一直睡着");
+		assert.ok(
+			calls.prompt.includes("换个风格再生成一次"),
+			"idle 插话后应以插话文案为非空 prompt 自动开一轮排空，否则消息会一直睡着",
+		);
+		assert.ok(calls.cancelQueued.length > 0, "排空前必须先撤回积压项，避免 prompt + inbox 双发同一句");
 	});
 
 	it("run 进行中插话：入队但不触发排空（该轮自己的边界会消费它）", async () => {
@@ -196,7 +224,13 @@ describe("cancelQueued：撤回单条已入队的插话（2026-10-20）", () => 
 		const res = await sm.cancelQueued("sq-cancel", enqueued.entryId);
 
 		assert.deepEqual(res, { outcome: "cancelled" });
-		assert.deepEqual(calls.cancelQueued, [enqueued.entryId], "必须把同一个 entryId 交给 vendor lane");
+		// 2026-11-02（drain 契约改为 cancel-and-reprompt）：idle 入队会先触发 drainQueued，
+		// 它撤回积压项（fake 键 fake-q-steer-0）后才开一轮——流水里因此多一条合法撤回。
+		// 本用例只锁「sm.cancelQueued 必须把传入的 entryId 原样交给 vendor lane」。
+		assert.ok(
+			calls.cancelQueued.includes(enqueued.entryId),
+			"必须把同一个 entryId 交给 vendor lane",
+		);
 	});
 
 	it("空 entryId 报InvalidInputError（路由层据此映射 400）", async () => {

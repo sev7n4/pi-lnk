@@ -363,7 +363,8 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 	 *
 	 * Nest 侧 generation-reaper 巡检发现「生成在回合不再等待后才落终态」时打到这里；
 	 * 宿主裁决见 `SessionManager.notifyGenerationTerminal`：工具仍持有等待 ⇒ 抑制，
-	 * 否则入 lane followUp（idle 由 drainQueued 空 prompt 兜底立刻开一轮播报）。
+	 * 否则入 lane followUp（idle 由 drainQueued 以通报文案为非空 prompt 兜底立刻开一轮播报，
+	 * 2026-11-02 契约——空 prompt 会被 harness 验收门禁拒断）。
 	 * 无鉴权：与 /steer /followup 同一信任边界（K3s 内网）。
 	 */
 	app.post<{

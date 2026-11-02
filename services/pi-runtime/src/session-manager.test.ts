@@ -1610,16 +1610,19 @@ describe("appendPromptBlocks 幂等（评审 finding 1：fork 重复拼块）", 
 describe("生成终态等待登记与回合外通报（2026-10-18 上游对齐）", () => {
 	let followUpCalls: Array<{ text: string }>;
 	let promptCalls: number;
+	let promptTexts: string[];
 	function smWithLanes() {
 		followUpCalls = [];
 		promptCalls = 0;
+		promptTexts = [];
 		const fakeHarnessFactory = async () =>
 			({
 				harness: {
 					events: { on: () => () => {} },
 					lane: async () => ({
-						prompt: async () => {
+						prompt: async (text?: string) => {
 							promptCalls += 1;
+							promptTexts.push(text ?? "");
 							return { ok: true };
 						},
 					followUp: async (text: string) => {
@@ -1629,8 +1632,18 @@ describe("生成终态等待登记与回合外通报（2026-10-18 上游对齐�
 						// `res.value.entryId` 抛 TypeError（真实 lane 一定带，见 lane.ts:1434）。
 						return { ok: true, value: { entryId: "fake-ntf-entry" } };
 					},
+						cancelQueued: async () => ({ ok: true, value: { kind: "cancelled" as const } }),
+						// 2026-11-02（drain 契约改为 cancel-and-reprompt）：watch 必须把已入队的
+						// followUp 暴露成 vendor 形状的队列项，drainQueued 才读得到积压并开一轮。
 						watch: async () => ({
-							snapshot: {},
+							snapshot: {
+								queues: followUpCalls.map((t, i) => ({
+									entryId: `fake-q-ntf-${i}`,
+									kind: "followUp",
+									type: "message",
+									message: { content: [{ type: "text", text: t.text }] },
+								})),
+							},
 							unsubscribe: () => {},
 						}),
 					}),
@@ -1681,8 +1694,16 @@ describe("生成终态等待登记与回合外通报（2026-10-18 上游对齐�
 		assert.match(followUpCalls[0]!.text, /node-9/);
 		assert.match(followUpCalls[0]!.text, /失败/);
 		assert.match(followUpCalls[0]!.text, /upstream 5xx/);
-		// idle（prompting=false）⇒ followUp 内的 drainQueued 空 prompt 兜底被触发
+		// idle（prompting=false）⇒ followUp 内的 drainQueued 以通报文案为非空 prompt 兜底开一轮
+		// （2026-11-02 契约：空 prompt 被 harness 验收门禁拒断，见 drain-empty-prompt 回归测试）。
+		// drain 是 fire-and-forget 且首跳为 async watch（读积压）⇒ prompt 在 followUp resolve
+		// 之后的微任务链里，断言前先排空一轮微任务 + setImmediate。
+		await new Promise<void>((r) => setImmediate(r));
 		assert.equal(promptCalls >= 1, true);
+		assert.ok(
+			promptTexts.some((t) => t.includes("node-9") && t.includes("失败")),
+			"drain 必须以通报文案本身作为非空 prompt 开一轮，而非空 prompt",
+		);
 	});
 
 	it("notifyGenerationTerminal：会话不存在抛 NotFoundError（Nest 侧 fail-soft）", async () => {
