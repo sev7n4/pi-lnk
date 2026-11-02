@@ -137,6 +137,13 @@ export function applyActionsToFlow(
       case 'set_viewport':
         if (action.payload.viewport) viewport = action.payload.viewport
         break
+      // P1-C C2a：侧车 op 不经实时 apply 通道——agent 不下发侧车 op（分组走
+      // groupNodes 等显式命令），web 端侧车由 saveCanvas 的 diff→PATCH 落库。
+      // 显式 case 防静默丢弃重演（2026-09-29 remove_edge/set_viewport 同源缺陷）；
+      // 未来若 agent 需实时下发侧车，须先扩展本函数返回形状。
+      case 'set_groups':
+      case 'set_composition_run_group':
+        break
     }
   }
 

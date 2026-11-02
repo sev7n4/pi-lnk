@@ -16,7 +16,9 @@
  *   服务端 merge 后该键值为 null，对可空字段等价）。
  * - 边按 id 分桶；端点变更 = remove_edge + add_edge。
  * - viewport 变化 = set_viewport op（executor 原生第 6 类 op；白名单放行）。
- * - groups / compositionRunGroup 无 op 通道 ⇒ sidecarChanged 旗标，调用方回退 PUT。
+ * - groups / compositionRunGroup 变化 = set_groups / set_composition_run_group op
+ *   （P1-C C2a 补的侧车通道；全量替换语义——侧车小而整体，无元素级 diff 必要）。
+ * - sidecarChanged 旗标退役：C1 过渡期的 PUT 回退分支已无存在必要。
  */
 import type { CanvasAction, CanvasData } from '@lnkpi/shared'
 
@@ -41,8 +43,9 @@ export interface CanvasDiffResult {
   /** 被丢弃的白名单外键变化数（测试断言 + 观测面）。 */
   droppedKeys: number
   /**
-   * 画布级侧车（groups / compositionRunGroup）发生变化——这些没有对应 op，
-   * 调用方应回退整份 PUT（C1 过渡期通道；C2 关 PUT 前须给侧车补 op，见文件尾备注）。
+   * 画布级侧车（groups / compositionRunGroup）发生变化。
+   * ⭐ C2a 起侧车变化已 op 化（set_groups / set_composition_run_group 进 ops），
+   * 本旗标仅保留作观测/断言面，调用方**不再**据此回退 PUT。
    */
   sidecarChanged: boolean
 }
@@ -73,7 +76,8 @@ function indexEdges(data: CanvasData | null | undefined): Map<string, { id: stri
  * 差异化两份画布。lastSaved 为 null（首存）⇒ 全量 add_node/add_edge。
  * viewport 变化 ⇒ set_viewport op（executor 原生支持；无法表达「删除视口键」，
  * current 无 viewport 时不产生 op——视口键留在服务端旧值，可接受）。
- * groups / compositionRunGroup 变化 ⇒ sidecarChanged=true（无 op 通道）。
+ * groups 变化 ⇒ set_groups（全量替换，清空=[]）；compositionRunGroup 变化 ⇒
+ * set_composition_run_group（null=清除，可表达删除）。
  */
 export function diffCanvasData(
   lastSaved: CanvasData | null | undefined,
@@ -81,7 +85,6 @@ export function diffCanvasData(
 ): CanvasDiffResult {
   const ops: CanvasAction[] = []
   let droppedKeys = 0
-  let sidecarChanged = false
   const savedNodes = indexNodes(lastSaved)
   const curNodes = indexNodes(current)
 
@@ -158,15 +161,26 @@ export function diffCanvasData(
     ops.push({ type: 'set_viewport', payload: { viewport: curViewport } } as CanvasAction)
   }
 
-  // 画布级侧车：无 op 通道 ⇒ 旗标交给调用方回退 PUT。
+  // 画布级侧车（C2a）：变化 ⇒ 对应 op（全量替换），旗标仅作观测面。
   const savedAny = lastSaved ?? null
   const curAny = current ?? null
-  if (
-    JSON.stringify(savedAny?.groups ?? null) !== JSON.stringify(curAny?.groups ?? null) ||
-    JSON.stringify(savedAny?.compositionRunGroup ?? null) !== JSON.stringify(curAny?.compositionRunGroup ?? null)
-  ) {
-    sidecarChanged = true
+  const groupsChanged =
+    JSON.stringify(savedAny?.groups ?? null) !== JSON.stringify(curAny?.groups ?? null)
+  const runGroupChanged =
+    JSON.stringify(savedAny?.compositionRunGroup ?? null) !==
+    JSON.stringify(curAny?.compositionRunGroup ?? null)
+  if (groupsChanged && curAny) {
+    // 清空 = 空数组（统一「设置」语义，消费方 ?? [] 等价于无组）。
+    ops.push({ type: 'set_groups', payload: { groups: curAny.groups ?? [] } } as CanvasAction)
   }
+  if (runGroupChanged && curAny) {
+    // null = 清除（applier 落 undefined 删键——比 viewport 多出的删除表达力）。
+    ops.push({
+      type: 'set_composition_run_group',
+      payload: { compositionRunGroup: curAny.compositionRunGroup ?? null },
+    } as CanvasAction)
+  }
+  const sidecarChanged = groupsChanged || runGroupChanged
 
   return { ops, droppedKeys, sidecarChanged }
 }

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { SidebarAttachmentSchema } from './sidebarAttachments'
 import { TEXT_NODE_FORMATS } from './textNodeFormat'
+import { CanvasGroupSchema } from './canvasGroup'
 // type-only：CanvasData 定义在 barrel（index.ts），仅类型引用，编译后擦除，不产生运行时循环
 import type { CanvasData } from './index'
 
@@ -25,6 +26,11 @@ export const CanvasActionTypeSchema = z.enum([
   'add_edge',
   'remove_edge',
   'set_viewport',
+  // P1-C C2a（规格 2026-11-02 §4 收口前置）：侧车 op 通道。
+  // groups / compositionRunGroup 原本无 op 表达 ⇒ web canvasDiff 遇侧车变化只能
+  // 回退整份 PUT（弃用期通道）。补这两类后侧车变化也走 ops PATCH，关 PUT 才有前提。
+  'set_groups',
+  'set_composition_run_group',
 ])
 
 export type CanvasActionType = z.infer<typeof CanvasActionTypeSchema>
@@ -70,6 +76,19 @@ export const CanvasActionSchema = z.object({
         y: z.number(),
         zoom: z.number(),
       })
+      .optional(),
+    // P1-C C2a 侧车 op 载荷：
+    // - set_groups：全量替换（清空 = 空数组，语义统一为「设置」而非「删键」）；
+    // - set_composition_run_group：全量替换，null = 清除（CanvasData 里该键可选，
+    //   applier 落 undefined 删键——与 set_viewport「无法删除」不同，这里能表达删除）。
+    groups: z.array(CanvasGroupSchema).optional(),
+    compositionRunGroup: z
+      .object({
+        nodeIds: z.array(z.string()),
+        dumpHash: z.string(),
+        createdAt: z.string(),
+      })
+      .nullable()
       .optional(),
   }),
 })

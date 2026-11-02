@@ -63,6 +63,29 @@ describe('sanitizeClientOps（C1a 纯函数）', () => {
     expect(droppedOps).toBe(3)
     warn.mockRestore()
   })
+
+  it('C2a 侧车 op：合法载荷放行，畸形载荷整体剥除', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const group = { id: 'g1', title: 't', childIds: ['n1'], position: { x: 0, y: 0 }, size: { width: 1, height: 1 } }
+    const { sanitized, droppedOps } = sanitizeClientOps([
+      { type: 'set_groups', payload: { groups: [group] } },
+      { type: 'set_groups', payload: { groups: [] } },
+      { type: 'set_composition_run_group', payload: { compositionRunGroup: { nodeIds: ['a'], dumpHash: 'h', createdAt: 't' } } },
+      { type: 'set_composition_run_group', payload: { compositionRunGroup: null } },
+      // 畸形：groups 非数组 / 缺载荷 / runGroup 缺字段
+      { type: 'set_groups', payload: { groups: 'oops' } },
+      { type: 'set_groups', payload: {} },
+      { type: 'set_composition_run_group', payload: { compositionRunGroup: { nodeIds: 'not-array' } } },
+      { type: 'set_composition_run_group', payload: {} },
+    ])
+    expect(sanitized).toHaveLength(4)
+    expect(droppedOps).toBe(4)
+    expect((sanitized[0] as { payload: { groups: unknown[] } }).payload.groups).toEqual([group])
+    expect(
+      (sanitized[3] as { payload: { compositionRunGroup: unknown } }).payload.compositionRunGroup,
+    ).toBeNull()
+    warn.mockRestore()
+  })
 })
 
 describe('SessionsService.patchCanvas（C1a 端到端）', () => {

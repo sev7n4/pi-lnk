@@ -73,6 +73,23 @@ export function applyCanvasActions(data: CanvasData, actions: CanvasAction[]): C
         if (action.payload.viewport) result.viewport = action.payload.viewport
         break
       }
+      // P1-C C2a：侧车 op（规格 2026-11-02 §4 收口前置）。此前侧车无 op 表达，
+      // web canvasDiff 遇侧车变化只能回退整份 PUT。全量替换语义：
+      // - set_groups：payload.groups 即终态（清空 = []，不删键——消费方 ?? [] 等价）；
+      // - set_composition_run_group：null = 清除（落 undefined 删键）。
+      case 'set_groups': {
+        if (Array.isArray(action.payload.groups)) result.groups = action.payload.groups
+        break
+      }
+      case 'set_composition_run_group': {
+        const group = action.payload.compositionRunGroup
+        if (group === null) {
+          delete result.compositionRunGroup
+        } else if (group) {
+          result.compositionRunGroup = group
+        }
+        break
+      }
       case 'remove_node':
         result.nodes = result.nodes.filter((n) => n.id !== action.payload.id)
         result.edges = result.edges.filter(

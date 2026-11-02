@@ -5258,50 +5258,43 @@ async function saveCanvas() {
         compositionRunGroup.value = canvasData.compositionRunGroup
       }
     }
-    // ⭐ P1-C C1b（规格 2026-11-02 §3.2）：整份 PUT → ops PATCH 主通道切换。
+    // ⭐ P1-C C1b（规格 2026-11-02 §3.2）→ C2a 收口：整份 PUT 全面退役为 ops PATCH 主通道。
     // - diff(lastSavedSnapshot, 本次落库形状) ⇒ 空 diff 且 title 未变 ⇒ 零请求；
     // - 节点/边/视口变化 ⇒ PATCH /sessions/:id/canvas（服务端白名单再收敛一次）；
-    // - groups / compositionRunGroup 侧车变化 ⇒ 无 op 通道，回退整份 PUT（C1 过渡期，
-    //   C2 关 PUT 前须给侧车补 op——已知收尾项）；
-    // - title 变化 ⇒ title-only PUT（无 canvasData ⇒ 不触发 P0-4 守卫面）。
+    // - groups / compositionRunGroup 侧车变化 ⇒ set_groups / set_composition_run_group op
+    //   （C2a 侧车通道，全量替换语义）——web 端不再有带 canvasData 的 PUT；
+    // - title 变化 ⇒ title-only update（无 canvasData ⇒ 不触发 P0-4 守卫面）。
     // - PATCH 失败 ⇒ 全量 GET 对账重建基线后放弃本次 diff（不做本地重放，
     //   fail-safe 与 canvasLoadGuard 同纪律）。
+    // - 整份 PUT 仅剩旧 web 缓存自愈（C2 观测 canvas_put_deprecated 两周清零后关）。
     const diff = diffCanvasData(lastSavedCanvasSnapshot.value, canvasData)
     const titleChanged = lastSavedTitle !== sessionTitle.value
-    if (diff.ops.length === 0 && !diff.sidecarChanged && !titleChanged) {
+    if (diff.ops.length === 0 && !titleChanged) {
       saveFailed.value = false
       return
     }
-    if (diff.sidecarChanged) {
-      await api.put(`/sessions/${sessionId.value}`, {
-        title: sessionTitle.value,
-        canvasData,
-      })
-      lastSavedTitle = sessionTitle.value
-    } else {
-      if (diff.ops.length > 0) {
+    if (diff.ops.length > 0) {
+      try {
+        await canvasApi.patchCanvas(sessionId.value, diff.ops)
+        lastSavedCanvasSnapshot.value = canvasData
+      } catch (patchErr) {
+        // 对账重建基线：服务端 SSOT 为准，丢弃本次 diff（下次保存重新 diff）
         try {
-          await canvasApi.patchCanvas(sessionId.value, diff.ops)
-          lastSavedCanvasSnapshot.value = canvasData
-        } catch (patchErr) {
-          // 对账重建基线：服务端 SSOT 为准，丢弃本次 diff（下次保存重新 diff）
-          try {
-            const { data: snap } = await api.get<{
-              data: { title: string; canvasData?: CanvasData }
-            }>(`/sessions/${sessionId.value}`)
-            lastSavedCanvasSnapshot.value = snap.data.canvasData ?? { nodes: [], edges: [] }
-            lastSavedTitle = snap.data.title
-          } catch {
-            // 对账也失败：基线置空 ⇒ 下次保存退化为全量 add（add_node 幂等，安全）
-            lastSavedCanvasSnapshot.value = { nodes: [], edges: [] }
-          }
-          throw patchErr
+          const { data: snap } = await api.get<{
+            data: { title: string; canvasData?: CanvasData }
+          }>(`/sessions/${sessionId.value}`)
+          lastSavedCanvasSnapshot.value = snap.data.canvasData ?? { nodes: [], edges: [] }
+          lastSavedTitle = snap.data.title
+        } catch {
+          // 对账也失败：基线置空 ⇒ 下次保存退化为全量 add（add_node 幂等，安全）
+          lastSavedCanvasSnapshot.value = { nodes: [], edges: [] }
         }
+        throw patchErr
       }
-      if (titleChanged) {
-        await canvasApi.update(sessionId.value, { title: sessionTitle.value })
-        lastSavedTitle = sessionTitle.value
-      }
+    }
+    if (titleChanged) {
+      await canvasApi.update(sessionId.value, { title: sessionTitle.value })
+      lastSavedTitle = sessionTitle.value
     }
     // 只在真正落库成功后清失败位——失败路径（含 demo mode 吞异常）不进这里
     saveFailed.value = false
