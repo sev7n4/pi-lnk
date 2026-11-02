@@ -596,6 +596,64 @@ describe("P0-③ streamEvents 断线重连", () => {
 		expect(calls[1]).toMatch(/\/events\?lastEventId=0$/);
 	});
 
+	// ── 2026-11-03 Layer 3（蓝老虎复测）：订阅先于触发 ──────────────────────────
+	// onOpen 是「订阅先于 notify」范式的锚点：连接建立（服务端已注册本订阅）后
+	// 触发，调用方据此保证被触发的 run 的 agent_start 落在 from=now 窗口内。
+
+	it("onOpen：连接建立即触发；404+retryOnMissing 重连成功后也触发", async () => {
+		vi.useFakeTimers();
+		try {
+			let attempt = 0;
+			const client = new PiRuntimeClient({
+				baseUrl: "http://pi",
+				fetchImpl: (async () => {
+					attempt++;
+					if (attempt === 1) return new Response("not found", { status: 404 });
+					return sseResponse([mkFrame(0, "agent_start")]);
+				}) as typeof fetch,
+			});
+			const opened: number[] = [];
+			const cancel = client.streamEvents(
+				"s1",
+				() => {},
+				() => {},
+				{ retryOnMissing: true, onOpen: () => opened.push(attempt) },
+			);
+			await vi.advanceTimersByTimeAsync(0); // 首连 404
+			expect(opened).toEqual([]); // 未建立过连接，不触发
+			await vi.advanceTimersByTimeAsync(260); // 退避 250ms 后重连成功
+			expect(opened).toEqual([2]); // 第二次尝试（重连成功）触发一次
+			await vi.advanceTimersByTimeAsync(100); // clean end 不再触发
+			expect(opened).toEqual([2]);
+			cancel();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("onOpen 回调抛错不破坏事件流（只 warn，不当作网络错误重试）", async () => {
+		const client = new PiRuntimeClient({
+			baseUrl: "http://pi",
+			fetchImpl: (async () => sseResponse([mkFrame(0, "agent_start")])) as typeof fetch,
+		});
+		const seen: string[] = [];
+		const errors: unknown[] = [];
+		const cancel = client.streamEvents(
+			"s1",
+			(e) => seen.push(e.type),
+			(e) => errors.push(e),
+			{
+				onOpen: () => {
+					throw new Error("callback bug");
+				},
+			},
+		);
+		await new Promise((r) => setTimeout(r, 50));
+		cancel();
+		expect(seen).toEqual(["agent_start"]); // 事件照常投递
+		expect(errors).toHaveLength(0);
+	});
+
 	it("404 终止不重连（会话已删除属预期终态）", async () => {
 		let calls = 0;
 		const client = new PiRuntimeClient({

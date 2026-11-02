@@ -165,6 +165,16 @@ export class GenerationReaperService implements OnModuleInit {
    */
   outOfTurnProjectionHook?: (threadId: string) => Promise<void> | void
 
+  /**
+   * 投影订阅**预挂**钩子（2026-11-03 蓝老虎复测 Layer 3：订阅时序竞态）。
+   *
+   * notify-generation 到达 runtime 的瞬间，handler 内同步 drain 开简报轮——
+   * 后置的 onDelivered 订阅必然错过 agent_start（from=now 语义）。
+   * 本钩子在 notify **之前**被 await：AgentService 挂事件订阅并等 SSE open，
+   * 使简报轮 agent_start 落在订阅窗口内。缺省 = 退化为旧行为（通报照发）。
+   */
+  outOfTurnArmHook?: (threadId: string) => Promise<void> | void
+
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(PointsService) private readonly points: PointsService,
@@ -268,6 +278,17 @@ export class GenerationReaperService implements OnModuleInit {
               } catch (err) {
                 this.logger.warn(`[late-notify] 投影记账者派发失败（不影响通报）: ${errMessage(err)}`)
               }
+            },
+            // 订阅先于触发（2026-11-03 Layer 3）：notify 前预挂投影订阅并等 SSE open，
+            // 否则 runtime 同步 drain 开的简报轮 agent_start 必然早于订阅（from=now
+            // 收不到）⇒ 因果围栏静默丢整轮（蓝老虎复测生产实证）。await 由
+            // notifyLateGenerationTerminals 负责（fail-open，arm 抛错不阻塞通报）。
+            onBeforeNotify: (threadId) => {
+              const hook = this.outOfTurnArmHook
+              if (!hook) return
+              return Promise.resolve(hook(threadId)).catch(() => {
+                /* fail-open：arm 失败在钩子内已 warn，这里不阻塞通报 */
+              })
             },
           },
         )

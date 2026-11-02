@@ -82,6 +82,56 @@ describe("notifyLateGenerationTerminals", () => {
 		expect(delivered).toEqual([]);
 	});
 
+	// ── 2026-11-03 Layer 3（蓝老虎复测）：订阅先于触发 ──────────────────────────
+	//
+	// runtime 在 notify-generation handler 内同步 drain 开简报轮，agent_start 在
+	// 响应返回前就发出 ⇒ 后置订阅（onDelivered）必然错过（from=now 语义）⇒
+	// 因果围栏静默丢整轮。修复：onBeforeNotify 在 notify 之前被 await。
+
+	it("⚠️ onBeforeNotify 必须在 notifyGeneration 之前被 await（时序即正确性）", async () => {
+		const { prisma } = makePrisma([rec()], { "canvas-1": "canvas-1:main" });
+		const order: string[] = [];
+		const client = {
+			notifyGeneration: async () => {
+				order.push("notify");
+				return { delivered: true };
+			},
+		};
+		await notifyLateGenerationTerminals(prisma, client, silentLogger, {
+			onBeforeNotify: async (threadId) => {
+				expect(threadId).toBe("canvas-1:main");
+				order.push("arm");
+			},
+		});
+		// 旧代码（无 onBeforeNotify）此断言红：order 只有 ["notify"]。
+		expect(order).toEqual(["arm", "notify"]);
+	});
+
+	it("onBeforeNotify 抛错 → fail-open：通报照发（不阻塞主链路）", async () => {
+		const { prisma } = makePrisma([rec()], { "canvas-1": "canvas-1:main" });
+		const warnings: string[] = [];
+		let notified = false;
+		const client = {
+			notifyGeneration: async () => {
+				notified = true;
+				return { delivered: true };
+			},
+		};
+		const handled = await notifyLateGenerationTerminals(
+			prisma,
+			client,
+			{ warn: (m: string) => warnings.push(m), log: () => undefined },
+			{
+				onBeforeNotify: async () => {
+					throw new Error("arm failed");
+				},
+			},
+		);
+		expect(notified).toBe(true);
+		expect(handled).toBe(1);
+		expect(warnings.some((m) => m.includes("投影订阅预挂失败"))).toBe(true);
+	});
+
 	it("已被通报过（agentTurnNotified 在 metadata）→ 跳过不重发", async () => {
 		const { prisma } = makePrisma([rec({ metadata: JSON.stringify({ agentTurnNotified: "delivered" }) })]);
 		const client = {
