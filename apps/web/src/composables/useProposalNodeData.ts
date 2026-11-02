@@ -1,4 +1,6 @@
+import { reactive } from 'vue'
 import { estimateImageCredits } from '@/constants/credits'
+import { fetchPriceQuote, type PriceQuoteQuery } from '@/services/pricing-api'
 
 export interface ProposalNodeData {
   nodeId: string
@@ -91,4 +93,76 @@ export function resolveProposalNodeData(
     videoResolution,
     audioKind,
   }
+}
+
+/* ---------------------------------------------------------------------------
+ * 积分展示权威取数（续 2026-11-02-points-display-single-source，v2）。
+ *
+ * 事故：#674 提议生成卡 / artifact 卡的积分 pill 兜底走 `estimateImageCredits`
+ * （launch-reprice 前的旧常量 10），而计费读价目表（image:1K:1=33）⇒ 展示 10 / 实扣 33。
+ *
+ * 单一真相源不变式：`node.data.creditCost`（服务端权威，#674 C-later 接管位）>
+ * `GET /api/pricing/quote`（与计费同源同表，改价只改管理后台价目表）> 本地常量估算
+ * （仅 quote 端点不可达时的瞬时兜底，与 dock 面板同策略）。
+ *
+ * 实现约束：`resolveProposalNodeData` 是渲染期纯函数（模板每帧调用），不能起 composable；
+ * 故用模块级响应式 quoteMap + 去重拉取：同步返回已缓存值或本地兜底，端点返回后经
+ * reactive Map 写回触发重渲。fetchPriceQuote 失败静默保留兜底（展示层永不抛错）。
+ * ------------------------------------------------------------------------ */
+
+const quoteMap = reactive(new Map<string, number>())
+const inflight = new Set<string>()
+
+/** 由节点数据推导报价 query（image / video / audio 三类生成节点；未知类型不报价）。 */
+function quoteQueryOf(d: ProposalNodeData): PriceQuoteQuery | null {
+  if (d.nodeType === 'video') {
+    return { capability: 'video', duration: d.videoDuration ?? 5 }
+  }
+  if (d.nodeType === 'audio') {
+    return d.audioKind ? { capability: 'audio', audioKind: d.audioKind } : null
+  }
+  return {
+    capability: 'image',
+    count: Math.max(1, d.imageCount || 1),
+    resolution: d.imageResolution || '1K',
+  }
+}
+
+function requestQuote(q: PriceQuoteQuery): void {
+  const key = JSON.stringify(q)
+  if (quoteMap.has(key) || inflight.has(key)) return
+  inflight.add(key)
+  fetchPriceQuote(q)
+    .then((r) => {
+      quoteMap.set(key, r.credits)
+    })
+    .catch(() => {
+      /* 展示层 fail-soft：保留本地兜底值，不抛错不打断渲染 */
+    })
+    .finally(() => {
+      inflight.delete(key)
+    })
+}
+
+/**
+ * 提议生成卡 / artifact 卡积分 pill 的权威取值（渲染期可调用，响应式）。
+ *
+ * 优先级：服务端 `creditCost`（`creditFromServer`）> 价目表 quote > 本地估算。
+ * image 本地兜底 = `estimateImageCredits`（与 dock 同策略）；video/audio 无本地估算，
+ * quote 未返回前返回 undefined（pill 缺省不渲染，绝不显示假数字）。
+ */
+export function proposalCreditCost(d: ProposalNodeData | null | undefined): number | undefined {
+  if (!d) return undefined
+  if (d.creditFromServer) return d.creditCost
+  const q = quoteQueryOf(d)
+  if (!q) return undefined
+  const key = JSON.stringify(q)
+  const hit = quoteMap.get(key)
+  if (hit !== undefined) return hit
+  requestQuote(q)
+  // 同步兜底：仅 image 有旧常量口径；video/audio 宁可不显示也不显示错的
+  if (q.capability === 'image') {
+    return estimateImageCredits(q.count, q.resolution)
+  }
+  return undefined
 }
