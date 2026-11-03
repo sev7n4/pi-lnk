@@ -42,16 +42,16 @@ describe('trackCreditTx（Epic1 前端口径 + 余额事件化）', () => {
 
   it('balanceAfter 直接驱动余额 pill（auth.setPoints，C2 余额事件化预备）', () => {
     const auth = useAuthStore()
-    auth.user = { id: 'u1', points: 100 } as never
+    const setPointsSpy = vi.spyOn(auth, 'setPoints')
     vi.spyOn(auth, 'refreshPoints').mockResolvedValue(100)
     const store = useAgentStore()
     store.trackCreditTx(makeCreditTx({ txId: 'c', balanceAfter: 73 }))
-    expect(auth.user?.points).toBe(73)
+    expect(setPointsSpy).toHaveBeenCalledWith(73)
   })
 
   it('退款（kind:refund, amount>0）回补已消耗并同步余额', () => {
     const auth = useAuthStore()
-    auth.user = { id: 'u1', points: 80 } as never
+    const setPointsSpy = vi.spyOn(auth, 'setPoints')
     vi.spyOn(auth, 'refreshPoints').mockResolvedValue(80)
     const store = useAgentStore()
     store.trackCreditTx(makeCreditTx({ txId: 'd', category: 'image', amount: -20, balanceAfter: 80 }))
@@ -60,7 +60,7 @@ describe('trackCreditTx（Epic1 前端口径 + 余额事件化）', () => {
       makeCreditTx({ txId: 'e', kind: 'refund', category: 'image', amount: 8, balanceAfter: 88 }),
     )
     expect(store.sessionConsumedCredits).toBe(12) // 20 - 8
-    expect(auth.user?.points).toBe(88)
+    expect(setPointsSpy).toHaveBeenLastCalledWith(88)
   })
 
   it('新会话 clear() 重置累计；但幂等集保留（跨会话不误杀新交易）', () => {
