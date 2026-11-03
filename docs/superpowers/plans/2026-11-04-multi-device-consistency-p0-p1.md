@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-21-multi-device-consistency-design.md`（2026-11-04 修订版）
 
+**执行状态（2026-11-04 Native）**：Task 1–3（P0 全部）已完成并提交（branch `feat/stream-consistency-p0p1`）；关键发现：上游 origin/master 已实现 verify-before-fail 状态机/UX 翻转/`lastMainSeq` 捕获/`deriveObserverFromSeq`（红车 T1 大半已落地），本包实际贡献 = ① reconcile 后端真相源（lane buffer 探测 + IdempotencyRecord，补 DB 历史盲区）② 前端接入 runtime 真相 + T1.4 `seedLastSeq` 游标播种。Task 4–6（P1 统一传输，flag-gated）待后续 PR。
+
 **计划整合声明（2026-11-04 自审）**：本计划**吸收并取代** `docs/superpowers/plans/2026-11-01-red-car-disconnect-misreport-duplicate-rootfix.md` 的 T0+T1+T3 批次作为 P0+P1 执行基线；该计划的 T2（意图幂等）/T4（resume）/T5（durable）分别对应后续 P3/P4/P2 包，其文档保留作为那三包的输入，不再单独执行。
 
 ## 已落地事实（自审核实，执行时不得重做）
@@ -51,9 +53,9 @@
 
 **Interfaces:** 产出：更宽松代理超时，降低误断触发率（规格 Task 1）。
 
-- [ ] **Step 1: 确认现值并修改**：`deploy/nginx.conf` 中 `proxy_read_timeout 300s;` → `1800s;`（注释注明「长任务 SSE 不被掐断，多端一致性 P0」）。
-- [ ] **Step 2: 语法校验**：`nginx -t -c $(pwd)/deploy/nginx.conf` 或 CI 校验。
-- [ ] **Step 3: Commit**：`git add deploy/nginx.conf && git commit -m "chore(nginx): proxy_read_timeout 300s->1800s for long SSE runs (P0)"`
+- [x] **Step 1: 确认现值并修改**：`deploy/nginx.conf` 中 `proxy_read_timeout 300s;` → `1800s;`（注释注明「长任务 SSE 不被掐断，多端一致性 P0」）。
+- [x] **Step 2: 语法校验**：`nginx -t -c $(pwd)/deploy/nginx.conf` 或 CI 校验。
+- [x] **Step 3: Commit**：`git add deploy/nginx.conf && git commit -m "chore(nginx): proxy_read_timeout 300s->1800s for long SSE runs (P0)"`
 
 ### Task 2 (P0, backend): reconcile 对账接口
 
@@ -78,10 +80,10 @@
 3. **GenerationRecord**：查同 thread 最近记录——`generating` ⇒ `active`；`completed/failed` ⇒ `settled`。
 4. 三源全空 ⇒ `missing`。
 
-- [ ] **Step 1: 写失败测试**（stub 注入三个源，覆盖 active/settled/missing + 探测超时降级）
-- [ ] **Step 2: `cd apps/server && npx vitest run turn-reconciliation.spec.ts` 确认 FAIL**
-- [ ] **Step 3: 实现 `reconcileLatestAssistant`（三源裁决 + 5s 探测超时）+ controller 注册到 `agent.module.ts`**
-- [ ] **Step 4: 测试 PASS → Commit** `feat(agent): reconcile endpoint for verify-before-fail (P0)`
+- [x] **Step 1: 写失败测试**（stub 注入三个源，覆盖 active/settled/missing + 探测超时降级）
+- [x] **Step 2: `cd apps/server && npx vitest run turn-reconciliation.spec.ts` 确认 FAIL**
+- [x] **Step 3: 实现 `reconcileLatestAssistant`（三源裁决 + 5s 探测超时）+ controller 注册到 `agent.module.ts`**
+- [x] **Step 4: 测试 PASS → Commit** `feat(agent): reconcile endpoint for verify-before-fail (P0)`
 
 ### Task 3 (P0, frontend): verify-before-fail 状态机 + UX 翻转
 
@@ -95,11 +97,11 @@
 - Consumes: Task 2 reconcile；`follow-up-tail.ts` 订阅（用 `deriveObserverFromSeq` 结果续接）
 - Produces: 断流后 `reconciling` 暂态 → resume（旁观流按游标续）或 `failed`（仅 missing）；UX 主按钮「继续/恢复」，次选「重新发送」
 
-- [ ] **Step 1: 写失败测试**（断流→reconciling→active→resume / missing→failed / Abort 不触发对账）
-- [ ] **Step 2: `cd apps/web && npx vitest run AgentSideRail.reconcile.test.ts networkFault.test.ts streamRecovery.test.ts` 确认 FAIL**
-- [ ] **Step 3: 实现状态机 + 中性态 + `deriveObserverFromSeq` 纯函数**
-- [ ] **Step 4: 测试 PASS + `AgentSideRail.mobileMaskTabbar.test.ts` PASS + `npx vue-tsc -b` 0 error**
-- [ ] **Step 5: Commit** `feat(web): verify-before-fail + UX flip on stream disconnect (P0)`
+- [x] **Step 1: 写失败测试**（断流→reconciling→active→resume / missing→failed / Abort 不触发对账）
+- [x] **Step 2: `cd apps/web && npx vitest run AgentSideRail.reconcile.test.ts networkFault.test.ts streamRecovery.test.ts` 确认 FAIL**
+- [x] **Step 3: 实现状态机 + 中性态 + `deriveObserverFromSeq` 纯函数**
+- [x] **Step 4: 测试 PASS + `AgentSideRail.mobileMaskTabbar.test.ts` PASS + `npx vue-tsc -b` 0 error**
+- [x] **Step 5: Commit** `feat(web): verify-before-fail + UX flip on stream disconnect (P0)`
 
 ### Task 4 (P1, backend + flag): POST 仅回 ack，run 后台执行
 
