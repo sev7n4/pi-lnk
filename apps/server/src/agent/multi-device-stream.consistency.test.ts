@@ -167,8 +167,16 @@ describe('多端一致性 P1 · 双端一致性（同一 lane buffer 双订阅�
       }
     })()
 
-    // 等 run 收束（4 事件 × 15ms + 余量）
-    await new Promise((r) => setTimeout(r, 200))
+    // 等 run 收束。⭐ 用条件轮询而非固定 sleep：AgentService 首次 streamConversation
+    // 调用有 ~2s 的 prompt 装配/manifest 计算同步成本（懒加载热身后消失），固定
+    // 200ms 会因事件循环被装配阻塞而假阴（flaky）。waitFor 只等「run 真收束」，
+    // 断言强度不变（无漏/无重/有序/终局在最后）。
+    await vi.waitFor(
+      () => {
+        expect(collected.map((e) => e.type)).toContain('done')
+      },
+      { timeout: 8_000, interval: 50 },
+    )
     const types = collected.map((e) => e.type)
     // 无漏：run 的映射事件全到（text_delta×2、done 收束）
     expect(types).toContain('text_delta')
@@ -208,7 +216,13 @@ describe('多端一致性 P1 · 双端一致性（同一 lane buffer 双订阅�
     })()
     // B2 晚挂（run 收束后才连）——纯重放补齐 ⇒ 与 B1（live 消费）逐条一致。
     // 性质：pi-runtime buffer 的重放序 == live 推送序（单调 seq 单一来源）。
-    await new Promise((r) => setTimeout(r, 150))
+    // ⭐ 条件轮询（同 test 1：首次 streamConversation 装配有 ~2s 同步成本）。
+    await vi.waitFor(
+      () => {
+        expect(b1.length).toBe(4)
+      },
+      { timeout: 8_000, interval: 50 },
+    )
     const b2: Array<{ type: string; data: unknown }> = []
     void (async () => {
       for await (const ev of service.runEventStream(THREAD, {
@@ -218,9 +232,12 @@ describe('多端一致性 P1 · 双端一致性（同一 lane buffer 双订阅�
       }
     })()
 
-    await new Promise((r) => setTimeout(r, 150))
-    expect(b1.length).toBe(4)
-    expect(b2.length).toBe(b1.length)
+    await vi.waitFor(
+      () => {
+        expect(b2.length).toBe(b1.length)
+      },
+      { timeout: 8_000, interval: 50 },
+    )
     expect(b2).toEqual(b1) // type+data（含 seq）逐条相等
   })
 
