@@ -37,13 +37,15 @@ describe('mobile bare bar structure (P1-5)', () => {
     expect(sfc).toContain("return '点按输入'")
     expect(tpl.indexOf('composer-bare-bar')).toBeLessThan(tpl.indexOf('aria-label="更多"'))
   })
-  it('system layer (mobile pinned live block & interject options) live ABOVE the bar', () => {
+  it('system layer (credits line & interject options) live ABOVE the bar', () => {
     // 2026-10-31：状态行整条退役（用户裁决：只保留 SSE 对话流），系统层顶部改为
     // 移动端钉显 live 块（时间线内联确认卡即等待呈现），仍位于 composer-bare-bar 之前。
+    // 2026-11-03 流式归一：移动端钉显 live 镜像块退役（live 回消息流内联），
+    // 系统层内容 = 会话积分常驻条（credits-line）/ 取消回执等，仍整体位于裸条之前。
     expect(tpl).toContain('class="agent-system-layer"')
     expect(tpl).toContain('composer-bare-bar')
     expect(tpl.indexOf('class="agent-system-layer"')).toBeLessThan(tpl.indexOf('composer-bare-bar'))
-    expect(tpl.indexOf('<template v-if="isMobileLayout">')).toBeGreaterThan(
+    expect(tpl.indexOf('agent-credits-line')).toBeGreaterThan(
       tpl.indexOf('class="agent-system-layer"'),
     )
   })

@@ -617,11 +617,17 @@ function shouldShowMessageBubbleText(msg: AgentStreamMessage): boolean {
   //   ⇒ 两者都要放行，否则卡片静默不可见（PR #65 同类失效）。
   // ⚠️ B3（2026-10-31 蝌蚪回合实证）：阻塞等待回合零 token，proposal/question part 是
   //   那一轮的全部用户产出（内联确认卡/题卡）——不放行 = 确认卡在对话流静默不可见。
+  // ⚠️ 流式归一（2026-11-03）：live 消息不再有钉底/镜像块兜底，timeline/trace 内容卡
+  //   （纯工具轮的执行过程、机器载荷轮的产物卡）只能活在气泡壳内——确有可渲染
+  //   part/step 时必须放行，否则整轮静默不可见。空 timeline/trace 仍不放行
+  //   ⇒ P0 白块修复不受影响（B3 覆盖 actionable wait，此条覆盖其余非空内容卡）。
   return (
     hasBubbleContent(msg) ||
     hasRenderableSvgCard(msg) ||
     hasRenderableNodeGraph(msg) ||
-    hasActionableWait(msg)
+    hasActionableWait(msg) ||
+    Boolean(msg.timeline?.parts?.length) ||
+    Boolean(msg.executionTrace?.steps?.length)
   )
 }
 
@@ -881,13 +887,10 @@ function isLiveTurnMessage(msg: AgentStreamMessage): boolean {
  * 回合收束（无流式 + 无任务卡）后沉降回气泡末尾（R1 折叠区）。
  * ⚠️ 同一个判定必须同时用在「钉底渲染」和「气泡内渲染」两处：
  * 否则收束那一瞬间过程卡会在两处各渲染一份。
+ * （历史注）2026-11-03 流式归一后 liveTrace 退役：live 消息自始至终在消息流内联渲染，
+ * 钉底/沉降双轨判定与桌面钉底块、移动端系统层镜像块一并退役——它们是移动端三象
+ * （信封割裂/中间空白/刷新前后两套渲染）与 PC 二轮回显缺口的共同根源。
  */
-const liveTrace = computed(() => {
-  const last = [...agent.messages].reverse().find((m) => m.role === 'assistant')
-  if (!last?.executionTrace) return null
-  const active = agent.isStreaming || showTaskCard.value || Boolean(last.streaming)
-  return active ? last.executionTrace : null
-})
 
 function canvasOutputsForMessage(msg: AgentStreamMessage) {
   return resolveMessageOutputs({
@@ -921,51 +924,20 @@ function useTimeline(msg: AgentStreamMessage): boolean {
 }
 
 /**
- * P2-2：活体时间线。与 `liveTrace`（旧 trace 钉底）**同判定**——本轮活跃时钉在 composer 上方，
- * 回合收束后由气泡内的 AgentTurnTimeline 接管。flag on 时用同一组件 + dense 变体渲染，
- * 消除「live dense trace vs history 气泡」两套渲染造成的布局跳变（设计 §3 现象 5）。
- * 判定必须与 liveTrace 完全一致，否则收束瞬间会在两处各渲染一份。
+ * （历史注）P2-2 的 liveTimeline / liveTrace / liveTimelineMessageId / onLiveTimelineRetry
+ * 已随 2026-11-03 流式归一整体退役：live 消息自始至终在消息流内联渲染（与历史同构），
+ * 不再有「钉底 + 气泡互斥 + 收束接管」的双轨判定面。
+ * ⭐ 2026-10-31 大章鱼回合实证仍有效并已由 creditsLineVisible 承接：挂起回合
+ * （turn_suspended 后）isStreaming/last.streaming 双双翻 false，但等待仍在进行——
+ * 「回合进行中基座」判定必须并入 mainTurnSuspended。
  */
-const liveTimeline = computed(() => {
-  const last = [...agent.messages].reverse().find((m) => m.role === 'assistant')
-  if (!last?.timeline) return null
-  // ⭐ 2026-10-31 大章鱼回合实证：挂起回合（turn_suspended 后）isStreaming/last.streaming
-  // 双双翻 false，但等待仍在进行——active 必须并入 mainTurnSuspended，否则钉底时间线
-  // （含 proposal 卡）在挂起瞬间卸载，等待期全程不可见（判定 = 回合进行中基座
-  // isStreaming ∪ mainTurnSuspended，与 all 消费方保持同一口径）。
-  const active =
-    agent.isStreaming || mainTurnSuspended.value || showTaskCard.value || Boolean(last.streaming)
-  return active ? last.timeline : null
-})
 
 /**
  * 2026-11-03 会话积分常驻条显隐（对齐 WorkBuddy「已消耗 ◇N」）：仅 turn 活跃期显示
- * （判定 = 回合进行中基座 isStreaming ∪ mainTurnSuspended，与 liveTimeline 同一口径
+ * （判定 = 回合进行中基座 isStreaming ∪ mainTurnSuspended，与原 liveTimeline 同一口径
  * ——挂起回合等待确认时也在消耗挂账期，用户须看到累计在涨）。空闲时不渲染（不盯死）。
  */
 const creditsLineVisible = computed(() => agent.isStreaming || mainTurnSuspended.value)
-
-/**
- * P2-2 修复（2026-10-14 生产实证）：钉底期间气泡内 `useTimeline(msg)` 仍对**同一条**
- * live 消息成立 ⇒ 同一回合渲染两份（截图复盘：气泡内一份 + pinned 一份）。
- * 设计注释（上）早有警告「同一判定必须用在两处」，旧 trace 气泡实例有 `!liveTrace`
- * 防线，新时间线的气泡实例漏配。此处给出钉底消息 id，供气泡内渲染按消息级互斥
- * （只抑制钉住那一条，历史消息的内联时间线不受影响）；收束后 liveTimeline 归 null，
- * 气泡内接管 —— 与设计「收束后由气泡内组件接管」闭环。
- */
-const liveTimelineMessageId = computed<string | null>(() => {
-  if (!liveTimeline.value) return null
-  for (let i = agent.messages.length - 1; i >= 0; i--) {
-    const m = agent.messages[i]
-    if (m && m.role === 'assistant') return m.id
-  }
-  return null
-})
-
-/** P2-2：活体时间线的定位/重试接线（复用既有画布能力与节点生成 emit）。 */
-function onLiveTimelineRetry(nodeId: string) {
-  if (nodeId) emit('generateNode', nodeId)
-}
 
 /** 根治规格（2026-10-28）：对话流内联 proposal 卡的确认 / 取消——复用既有确认面语义，
  *  不再走对话流外浮卡。confirmProposeWait / cancelProposeForNode 已 defineExpose 给画布节点。 */
@@ -1664,13 +1636,6 @@ function historyTraceCollapsed(msg: TraceCarrier): boolean {
 function onToggleTrace(msg: { id?: string }, collapsed: boolean) {
   if (!msg?.id) return
   traceCollapsed.value = { ...traceCollapsed.value, [msg.id]: collapsed }
-}
-
-/** 本轮活体trace 的折叠态：与历史同源，但只存一份（本轮只有一个）。 */
-const liveTraceCollapsed = ref(true)
-
-function onToggleLiveTrace(collapsed: boolean) {
-  liveTraceCollapsed.value = collapsed
 }
 
 function onFocusAll(nodeIds: string[]) {
@@ -4382,7 +4347,7 @@ defineExpose({
                      先看到过程再看总结」）。原来顺序是 文本 → 画布产出 → 执行过程，
                      读完结论才知发生了什么，且折叠区在底部很难被注意到。 -->
                 <AgentExecutionTrace
-                  v-if="msg.role === 'assistant' && msg.executionTrace && !liveTrace && !useTimeline(msg)"
+                  v-if="msg.role === 'assistant' && msg.executionTrace && !useTimeline(msg)"
                   :trace="msg.executionTrace"
                   :streaming="Boolean(msg.streaming)"
                   :collapsed="historyTraceCollapsed(msg)"
@@ -4399,8 +4364,13 @@ defineExpose({
                      由单一时间线组件承接 thinking/text/tool/canvas/artifact/notice，
                      取代下方「旧 trace + 独立正文 + 独立产物 + 独立摘要行」的槽位拼装。
                      产物（artifact）原位出现、摘要 notice 落在最末（D1/D2/现象3/4 的解）。 -->
+                <!-- 2026-11-03 流式归一：live 消息与历史走**同一条内联渲染通道**（不再钉底/镜像）。
+                     此前的 `msg.id !== liveTimelineMessageId` 抑制会把流式中的助手内容从消息流里
+                     抽走、挪到独立钉底/系统层镜像块，造成「用户气泡与 agent 回复割裂 / 中间空白 /
+                     刷新前后两套渲染」三象（2026-11-03 移动端 SSE 显示事故复盘）。
+                     现删抑制：流式中该消息照常在流内渲染 timeline，与刷新后的历史态同构。 -->
                 <AgentTurnTimeline
-                  v-if="useTimeline(msg) && msg.id !== liveTimelineMessageId"
+                  v-if="useTimeline(msg)"
                   class="mt-1.5"
                   :parts="msg.timeline!.parts"
                   :streaming="Boolean(msg.streaming)"
@@ -4661,35 +4631,13 @@ defineExpose({
                  2/2 同时把 dense 卡片限高滚动收回卡片自身（唯一允许的内嵌滚动），
                  #416 的「历史滑不动」在流内结构下不复存在（内容全在 flex-1 滚动区里）。
                  注：门控决策注释（确认入口收敛）随内容一并搬移，仍然有效。 -->
-            <!-- 活体过程卡：钉在 composer 上方（P0 决策 1）；回合收束后由上面的气泡内 trace 接管。
-                 P2-2：flag on 时改用 AgentTurnTimeline(dense)，与历史气泡同一套 parts 渲染。
-                 2026-10-31 移动端改钉系统层（见下方 agent-system-layer 内的镜像块）：
-                 滚动流内 live 会随用户上滑断跟随而落至折叠线以下（第 2 轮全盲实证）。 -->
-            <AgentExecutionTrace
-              v-if="!isMobileLayout && liveTrace && !liveTimeline"
-              class="agent-live-trace mb-1"
-              :trace="liveTrace"
-              :streaming="agent.isStreaming"
-              :collapsed="liveTraceCollapsed"
-              dense
-              @update:collapsed="onToggleLiveTrace"
-              @focus-node="onFocusNode($event)"
-            />
-            <AgentTurnTimeline
-              v-else-if="!isMobileLayout && liveTimeline"
-              class="agent-live-trace mb-1"
-              :parts="liveTimeline.parts"
-              :resolve-node-url="resolveCanvasNodeUrl"
-              :canvas-nodes="canvasNodes"
-              :streaming="agent.isStreaming"
-              dense
-              @retry-node="onLiveTimelineRetry"
-              @focus-node="onFocusNode($event)"
-              @confirm-proposal="onInlineConfirmProposal($event)"
-              @cancel-proposal="onInlineCancelProposal($event)"
-              @ask-submit="onAskSubmit"
-              @ask-cancel="onAskCancel"
-            />
+            <!-- 2026-11-03 流式归一：独立钉底块（桌面）与 agent-system-layer 镜像块（移动端）
+                 一并退役——live 消息自始至终在消息流内联渲染（见上方 AgentTurnTimeline 处注释）。
+                 退役的两段历史形态：① P0 决策 1 的桌面钉底（dense+默认折叠）；
+                 ② 2026-10-31 移动端「live 钉系统层」（第 2 轮全盲的修复尝试）。
+                 两者都是「内容脱离消息流」的双轨方案，正是移动端三象（信封割裂/中间空白/
+                 刷新前后两套渲染）与 PC 二轮回显缺口的共同根源；统一内联后由滚动跟随
+                 （followLatest 闩锁 + hasNewBelow）承接「实时可见」诉求。 -->
             <!-- 阻塞等待 propose_generation（2026-10-14 移入 dock）：等待期回合内容钉在上方
                  live 时间线、气泡内近空，提示条留在消息流会被视觉顶到内容「上面」；
              移到 live 区之下、状态行之上 = 视觉上落在回合内容「下面」、贴 composer。
@@ -4781,40 +4729,9 @@ defineExpose({
                  等待呈现由钉在上方的时间线 proposal part（内联确认/取消卡）与画布确认面承载；
                  失败仍由气泡内 ⚠️ 文本 + dock 通知卡播报，无信息丢失面。
                  turnStatus computed / settledDismissed / nowSec ticker 已随之删除。 -->
-            <!-- 2026-10-31 移动端 live 钉显：发消息后全量 SSE 过程流必须实时可见。
-                 原先 live 块在滚动流底部——用户上滑回看上一轮产出即断滚动跟随闩锁
-                 （scrollToBottom 的 !followLatest 分支只置 hasNewBelow），本轮全部内容
-                 在折叠线以下静默增长 = 猴子/仙人掌/皮皮虾回合「第 2 轮全盲」实证。
-                 移动端把 live 块移出滚动流、钉在输入区上方（进 agent-system-layer 即
-                 继承「画布视图默认隐藏 + 白名单放行」机制）；桌面维持 2026-10-15
-                 三滚动条治理决议（live 内容在主滚动流内跟随）。 -->
-            <template v-if="isMobileLayout">
-              <AgentExecutionTrace
-                v-if="liveTrace && !liveTimeline"
-                class="agent-live-trace mx-0.5 mb-1"
-                :trace="liveTrace"
-                :streaming="agent.isStreaming"
-                :collapsed="liveTraceCollapsed"
-                dense
-                @update:collapsed="onToggleLiveTrace"
-                @focus-node="onFocusNode($event)"
-              />
-              <AgentTurnTimeline
-                v-else-if="liveTimeline"
-                class="agent-live-trace mx-0.5 mb-1"
-                :parts="liveTimeline.parts"
-                :resolve-node-url="resolveCanvasNodeUrl"
-                :canvas-nodes="canvasNodes"
-                :streaming="agent.isStreaming"
-                dense
-                @retry-node="onLiveTimelineRetry"
-                @focus-node="onFocusNode($event)"
-                @confirm-proposal="onInlineConfirmProposal($event)"
-                @cancel-proposal="onInlineCancelProposal($event)"
-                @ask-submit="onAskSubmit"
-                @ask-cancel="onAskCancel"
-              />
-            </template>
+            <!-- 2026-10-31 移动端 live 钉显的镜像块已随 2026-11-03 流式归一退役：
+                 live 内容回消息流内联（与历史同构），实时可见由滚动跟随承接；
+                 「进 agent-system-layer 即继承白名单机制」的约束对本块不再适用。 -->
             <!-- 根治规格（2026-10-28）：ask_user 卡已迁至对话流内联 question part（AgentTurnTimeline），
                  与画布确认面、状态行同读一份时间线真相；此处不再有对话流外的 composer 卡。 -->
             <div
