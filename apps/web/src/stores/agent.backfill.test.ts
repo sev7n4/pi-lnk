@@ -36,9 +36,12 @@ describe('agent store — backfillTimelineNodeStatus（晚到生成状态回填�
     store.finishStreaming()
     const firstTurn = assistantMessages(store).at(-1)!
     expect(firstTurn.timeline).toBeTruthy()
+    // 2026-11-03 修复：节点创建改为「add_node 只记 meta、node_status 才建 artifact 卡」
+    // （deferred creation），故收束时还没有 artifact part，归属靠 pendingNodeMeta 识别。
     expect(
       firstTurn.timeline!.parts.find((p) => p.kind === 'artifact' && p.nodeId === 'n1'),
-    ).toBeTruthy()
+    ).toBeFalsy()
+    expect(firstTurn.timeline!.pendingNodeMeta?.['n1']).toBeTruthy()
 
     // 用户又发了一轮（新的 assistant 消息成为「最后一条」）
     store.startAssistantMessage()

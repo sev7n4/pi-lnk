@@ -178,15 +178,20 @@ describe('turnTimeline — 模型层（设计 §4 / §5-P1）', () => {
     expect(thinks[1].text).toBe('B')
   })
 
-  it('D1：update_node 不建 part；add_node 才建 artifact（按 nodeId upsert）', () => {
+  it('D1：update_node 不建 part；add_node 暂存 meta，node_status 进入生成才建 artifact（按 nodeId upsert）', () => {
     const tl = feed([
       addNode('n1'),
       { type: 'canvas_action', data: { type: 'update_node', payload: { id: 'n1', data: { title: 'X' } } } as never },
       { type: 'canvas_action', data: { type: 'add_node', payload: { id: 'n1' } } as never },
     ])
-    // update_node 不产出 part，add_node 按 nodeId upsert ⇒ 仅 1 个 artifact
-    expect(byKind(tl, 'artifact')).toHaveLength(1)
+    // update_node 不产出 part；add_node 只暂存 meta，不急切建 artifact（2026-11-03 修复：
+    // 避免确认前就露「待确认」节点卡、且与 proposal 卡重复、确认后产物卡错位顶到「新建节点」前）
+    expect(byKind(tl, 'artifact')).toHaveLength(0)
+    expect(tl.pendingNodeMeta['n1']).toBeTruthy()
     expect(byKind(tl, 'canvas')).toHaveLength(0)
+    // node_status 进入生成生命周期才用暂存 meta 建卡（按 nodeId upsert ⇒ 仍仅 1 个）
+    applyTimelineEvent(tl, { type: 'node_status', data: { nodeId: 'n1', status: 'done', url: 'https://x/a.png' } })
+    expect(byKind(tl, 'artifact')).toHaveLength(1)
   })
 
   it('D2：failed artifact 带 errorText + status failed', () => {
@@ -525,7 +530,8 @@ describe('P2 — 落库 seq 排序 + 缩略图/失败态（设计 §5-P2）', ()
     const tl = feed(events)
     // 模型层无 dense 概念 —— 断言其不存在于 TurnTimeline 形状里（回归锁：别把渲染态混入模型）
     // lastRawThinking：2026-10-14 累积快照差分游标（replay 内存态，不落库、不进事件契约）
-    expect(Object.keys(tl).sort()).toEqual(['lastRawThinking', 'parts', 'turnStartedAt'])
+    // pendingNodeMeta：2026-11-03 修复，add_node 暂存的节点创建元数据（同样内存态，不落库）
+    expect(Object.keys(tl).sort()).toEqual(['lastRawThinking', 'parts', 'pendingNodeMeta', 'turnStartedAt'])
     expect(kinds(tl)).toEqual(['thinking', 'artifact'])
   })
 })
@@ -666,9 +672,10 @@ describe('generation_progress — run_* / propose 阻塞期活体进度（2026-1
     const orphan = feed([{ type: 'generation_progress', data: { nodeId: 'ghost', elapsedMs: 1000 } }])
     expect(orphan.parts).toHaveLength(0)
 
-    // pending 态（仅 add_node、未开始生成）：不写
+    // pending 态（仅 add_node 暂存 meta、未开始生成）：不建 artifact、进度拍静默忽略
     const pending = feed([addNode('n2'), { type: 'generation_progress', data: { nodeId: 'n2', elapsedMs: 1000 } }])
-    expect(byKind(pending, 'artifact')[0].progressElapsedMs).toBeUndefined()
+    expect(byKind(pending, 'artifact')).toHaveLength(0)
+    expect(pending.pendingNodeMeta['n2']).toBeTruthy()
 
     // 非法数值：NaN/负数/Infinity 不写
     const tl = feed([addNode('n3'), { type: 'node_status', data: { nodeId: 'n3', status: 'generating' } }])
@@ -798,5 +805,76 @@ describe('waiting_user{resolved} reason → proposal 终态映射（2026-10-31 �
     const ps = byKind(tl, 'proposal')
     expect(ps.find((p) => p.callId === 'c1')?.status).toBe('pending_confirm')
     expect(ps.find((p) => p.callId === 'c2')?.status).toBe('declined')
+  })
+})
+
+describe('2026-11-03 修复：add_node 延迟建卡（Q1 去重 / Q2+Q3 产物卡归位 / 创建节点工具行保留）', () => {
+  // 真实 SSE 到达顺序：创建节点 tool_call/tool_result → add_node（暂存 meta，不急切建卡）
+  // → 提议生成 waiting_user（proposal part）→ 用户确认/取消 → node_status 进入生成生命周期才建卡。
+  function realFlow(extra: TimelineEvent[] = []): TurnTimeline {
+    return feed([
+      { type: 'tool_call', data: { toolCallId: 't1', name: 'upsert_media_node', args: { title: '蓝色狐狸' } } },
+      { type: 'tool_result', data: { toolCallId: 't1', name: 'upsert_media_node', result: { status: 'ok' } } },
+      addNode('n1', 'image', '蓝色狐狸'),
+      { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation', nodeId: 'n1', title: '提议生成' } },
+      ...extra,
+    ])
+  }
+
+  it('Q1：确认前不急切建 pending artifact ⇒ 时间线无重复「待确认」节点卡（只留 proposal）', () => {
+    const tl = realFlow()
+    expect(byKind(tl, 'artifact')).toHaveLength(0)
+    expect(Object.keys(tl.pendingNodeMeta)).toContain('n1')
+    expect(byKind(tl, 'proposal')).toHaveLength(1)
+  })
+
+  it('Q2：用户确认后 generating ⇒ 产物卡排到「提议生成」之后、且晚于创建节点工具行（不再错位顶到「新建节点」前）', () => {
+    const tl = realFlow([{ type: 'node_status', data: { nodeId: 'n1', status: 'generating' } }])
+    const toolIdx = tl.parts.findIndex((p) => p.kind === 'tool')
+    const proposalIdx = tl.parts.findIndex((p) => p.kind === 'proposal')
+    const artifactIdx = tl.parts.findIndex((p) => p.kind === 'artifact')
+    expect(toolIdx).toBeGreaterThanOrEqual(0)
+    expect(proposalIdx).toBeGreaterThan(toolIdx)
+    expect(artifactIdx).toBeGreaterThan(proposalIdx)
+    // 标题/类型来自 add_node 暂存的 meta，不退化成「未命名」
+    const art = byKind(tl, 'artifact')[0]
+    expect(art.title).toBe('蓝色狐狸')
+    expect(art.nodeType).toBe('image')
+  })
+
+  it('Q3：completed 完成态产物卡同样排在「提议生成」之后', () => {
+    const tl = realFlow([
+      { type: 'node_status', data: { nodeId: 'n1', status: 'generating' } },
+      { type: 'node_status', data: { nodeId: 'n1', status: 'done', url: 'https://cdn/fox.png' } },
+    ])
+    const proposalIdx = tl.parts.findIndex((p) => p.kind === 'proposal')
+    const artifactIdx = tl.parts.findIndex((p) => p.kind === 'artifact')
+    expect(artifactIdx).toBeGreaterThan(proposalIdx)
+    expect(byKind(tl, 'artifact')[0].status).toBe('done')
+  })
+
+  it('创建节点工具行保留（用户要求：框选「创建节点 · 蓝色狐狸」横条不收起，照常渲染）', () => {
+    const tl = realFlow()
+    const toolParts = byKind(tl, 'tool').filter((p) => p.toolName === 'upsert_media_node')
+    expect(toolParts).toHaveLength(1)
+    expect(toolParts[0].status).toBe('done')
+  })
+
+  it('用户取消（declined）：生成生命周期不启动 ⇒ 时间线始终无产物卡（无错位、无残留 pending 卡）', () => {
+    const tl = realFlow([
+      { type: 'waiting_user', data: { status: 'resolved', toolName: 'propose_generation', nodeId: 'n1', callId: 'n1', reason: 'aborted' } },
+    ])
+    expect(byKind(tl, 'artifact')).toHaveLength(0)
+    expect(byKind(tl, 'proposal')[0].status).toBe('declined')
+  })
+
+  it('晚到回填兜底：node_status 用暂存 meta 建卡（backfillTimelineNodeStatus 路径与实时路径一致）', () => {
+    // 模拟 useGenerationPolling 回填（无 tool_call 前缀的孤儿 node_status）也能命中 pendingNodeMeta
+    const tl = realFlow()
+    applyTimelineEvent(tl, { type: 'node_status', data: { nodeId: 'n1', status: 'done', url: 'https://cdn/fox.png' } })
+    const arts = byKind(tl, 'artifact')
+    expect(arts).toHaveLength(1)
+    expect(arts[0].title).toBe('蓝色狐狸')
+    expect(arts[0].status).toBe('done')
   })
 })
