@@ -128,10 +128,10 @@
 - `sinceSeq` 初始值：drain 捕获的首个带 seq 事件；ack 需在首个事件前返回——用触发时刻的「当前会话头 seq」：向 pi-runtime 发 `GET /sessions/:key/events?lastEventId=0` 只取最新 seq（或 pi-runtime 已有 head seq 端点，实现时核实，无则用探测首帧 seq-1，最差退化为 `0`=全量重放+前端按 `thread_forked`/`turn_started` 边界去重）。
 - flag off：原 `:748` 起流式分支一字不改。
 
-- [ ] **Step 1: 写失败测试**（off：SSE+`[DONE]`；on：JSON ack + 后台 run 跑完落 lane buffer + 副作用保留）
-- [ ] **Step 2: `cd apps/server && npx vitest run agent.controller.conversation-flag.spec.ts` 确认 FAIL**
-- [ ] **Step 3: 实现 flag 分支 + `startConversationRun`**
-- [ ] **Step 4: 测试 PASS（双分支）→ Commit** `feat(agent): POST /conversation returns ack, run drains server-side (P1, flag-gated)`
+- [x] **Step 1: 写失败测试**（off：SSE+`[DONE]`；on：JSON ack + 后台 run 跑完落 lane buffer + 副作用保留）
+- [x] **Step 2: 测试确认 FAIL**（`agent.controller.conversation-flag.test.ts` + `agent.service.conversation-ack.test.ts`，沿用仓库 `.test.ts` 命名）
+- [x] **Step 3: 实现 flag 分支 + `startConversationRun`**（flag 解析 SSOT=stream-main-flag.ts；sinceSeq=只读头探针 readLaneHeadSeq）
+- [x] **Step 4: 测试 PASS（双分支）→ Commit** f2509b6a（commit msg 沿用中文规范措辞）
 
 ### Task 5 (P1, frontend + flag): 主流改走 GET /runs/events
 
@@ -144,10 +144,10 @@
 - Consumes: Task 4 的 `ConversationAck`（`threadId`/`sinceSeq`）
 - Produces: 主流 ack 后以 `sinceSeq` 为游标开订阅，事件经同一 `applyTextDelta/applyCanvasAction/applyTurnEnd` 落 store；终止 = `turn_end`
 
-- [ ] **Step 1: 写失败测试**（ack→按 sinceSeq 订阅→帧含 `id:` 被解析→事件进 reducer；off 分支不受影响）
-- [ ] **Step 2: 确认 FAIL → 实现 → PASS**
-- [ ] **Step 3: `AgentSideRail.mobileMaskTabbar.test.ts` + `vue-tsc -b` 全绿**
-- [ ] **Step 4: Commit** `feat(web): main turn consumes GET /runs/events via shared listener (P1, flag-gated)`
+- [x] **Step 1: 写失败测试**（`main-turn-channel.test.ts` 行为面 + `AgentSideRail.mainStreamChannel.test.ts` 静态契约；传输交换按 Content-Type 自适应服务端 flag，偏离计划「followUpTail 显式 startSeq」见 ledger 裁决）
+- [x] **Step 2: 确认 FAIL → 实现 → PASS**（main-turn-channel.ts 纯模块 + SFC ack 分支）
+- [x] **Step 3: `AgentSideRail.mobileMaskTabbar.test.ts` + `vue-tsc -b` 全绿**（12 文件 135 例回归批）
+- [x] **Step 4: Commit** 9719a02e
 
 ### Task 6 (P1, frontend): 终止语义统一 + 回归收口
 
@@ -157,7 +157,7 @@
 
 说明：退避与游标续传**已存在**（`follow-up-tail.ts:267-354`），本任务不重写，只做终止语义对齐 + 断言 on 路径无 `[DONE]`。
 
-- [ ] **Step 1: 失败测试（on 路径 `turn_end` 结束且无 `[DONE]` 处理）→ 实现 → PASS → Commit** `feat(web): unify end-of-stream to turn_end (P1)`
+- [x] **Step 1: 失败测试（on 路径终止=回合收束帧 done/turn_ack/error/turn_not_submitted 且无 `[DONE]` 处理）→ 实现 → PASS → Commit**（并入 9719a02e；变异③「[DONE] 当终止⇒红」在 main-turn-channel.mutation.test.ts）
 
 ### Task 7 (integration): 双端一致性 + 变异测试
 
@@ -169,7 +169,7 @@
 2. A 发起后 5s 强断 A 连接——回合完整落 lane buffer，`reconcile` 非 `missing`，B 补齐。
 3. 变异：去 `id:` 帧 ⇒ 续传红；去 jitter ⇒ 退避红；on 路径出现 `[DONE]` ⇒ 红。
 
-- [ ] **Step 1: 写集成测试 → 跑 PASS → Commit** `test: multi-device stream consistency + mutation guards (P0+P1)`
+- [x] **Step 1: 写集成测试 → 跑 PASS → Commit** 69e31ff1（server 集成 3 例 + web 变异 3 例；路径沿用仓库 src/**/**.test.ts 约定）
 
 ### Task 8 (deploy gate): Canary 上线 + 行为级复测
 
