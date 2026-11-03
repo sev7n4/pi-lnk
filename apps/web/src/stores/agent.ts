@@ -879,6 +879,33 @@ export const useAgentStore = defineStore('agent', () => {
     if (freshHasSettled) void useAuthStore().refreshPoints()
   }
 
+  /**
+   * 回合外来信对账（2026-11-03 黄小龙虾复测）：用服务端权威行**采纳**（或追加）一条
+   * 回合外简报——与 loadHistory/prependHistory 共用同一 mapPersistedToMessage 映射器，
+   * 保证三条入口产出的消息同形（executionTrace/timeline/presentation 重放一致）。
+   *
+   * - `localId` 命中现有消息（旁听影子气泡）⇒ 原位替换：采纳服务端 id/content/
+   *   linkedOutputs（影子 id 是客户端临时 id，不替换则刷新后 id 变化、去重失效）；
+   *   persisted.id 已存在（双通道/重放）⇒ 只删影子，绝不出现双气泡。
+   * - `localId` 不在列表（增量没到/影子未开）⇒ 追加到尾部（id 去重）。
+   *   调用方约定：只在「该行是历史页最后一条」时传入（见 pickTrailingOutOfTurnRow），
+   *   追加天然保序。
+   */
+  function adoptPersistedRow(localId: string | null, persisted: PersistedAgentMessage) {
+    const known = messages.value.some((m) => m.id === persisted.id)
+    if (localId) {
+      const idx = messages.value.findIndex((m) => m.id === localId)
+      if (idx >= 0) {
+        const next = [...messages.value]
+        if (known) next.splice(idx, 1)
+        else next[idx] = mapPersistedToMessage(persisted)
+        messages.value = next
+        return
+      }
+    }
+    if (!known) messages.value = [...messages.value, mapPersistedToMessage(persisted)]
+  }
+
   /** P1 状态行：SSE error 事件 / 请求异常时置位本回合失败态（新回合由 addUserMessage 重置）。 */
   function markTurnError(err: unknown) {
     turnError.value = err
@@ -948,6 +975,7 @@ export const useAgentStore = defineStore('agent', () => {
     resolveQuestionPart,
     finishStreaming,
     loadHistory,
+    adoptPersistedRow,
     prependHistory,
     clear,
   }

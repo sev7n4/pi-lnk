@@ -35,6 +35,18 @@ export const AUTOMATION_DEFAULT_JOBS = [
     runOnStartup: true,
     params: '{}',
   },
+  {
+    // 终态通报快节拍（2026-11-03 黄小龙虾复测）：只跑回合外通报扫描（notifyLateGenerationTerminals，
+    // durable 去重 + 单飞守卫与 reaper 互斥），把简报延迟从最长 6min 压到 ≤1min。
+    // runOnStartup=false：启动期 catch-up 由 reaper 的 startup run 覆盖，避免双扫。
+    id: 'job-generation-notify',
+    name: '生成终态即时通报',
+    description: '1min 快巡检回合外生成终态并通报简报（reaper 5min 巡检的快节拍补充，单飞互斥）',
+    handlerKey: 'generation-notify',
+    intervalMinutes: 1,
+    runOnStartup: false,
+    params: '{}',
+  },
 ] as const
 
 export type AutomationJobRow = Awaited<ReturnType<PrismaService['automationJob']['findUniqueOrThrow']>>

@@ -5,7 +5,20 @@ import { DEFAULT_VIDEO_REAP_MINUTES, VIDEO_SERVER_WORST_MS } from '@lnkpi/shared
 import { PointsService } from '../points/points.service'
 import { PrismaService } from '../prisma/prisma.service'
 import { CanvasNodeStatusService } from '../sessions/sessions-canvas-node-status.service'
+import { AutomationSchedulerService } from '../automation/automation-scheduler.service'
 import { GenerationReaperService } from './generation-reaper.service'
+
+// 通报扫描 mock（file 级）：快节拍/单飞守卫用例需要可控的扫描桩。
+// piLateNotifyEnabled 保留真实现（env 驱动）⇒ 既有用例不设 PI_RUNTIME_URL 时
+// 通报路径天然关闭，行为不变。
+const notifyScanMock = vi.hoisted(() => vi.fn(async () => 0))
+vi.mock('../agent/pi-runtime/late-generation-notify', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../agent/pi-runtime/late-generation-notify')>()
+  return {
+    ...actual,
+    notifyLateGenerationTerminals: notifyScanMock,
+  }
+})
 
 function makeMeta(extra: Record<string, unknown> = {}) {
   return JSON.stringify({ chargedPoints: 10, ...extra })
@@ -644,3 +657,108 @@ describe('video 回收阈值 × 跨层超时预算（单一来源锁）', () => 
     )
   })
 })
+describe('GenerationReaperService 终态通报快节拍（job-generation-notify）', () => {
+  const env = { ...process.env }
+  let handlers: Map<
+    string,
+    (params: Record<string, unknown>, ctx: { runId: string; reason: string }) => Promise<unknown>
+  >
+  let svc: GenerationReaperService
+
+  beforeEach(async () => {
+    process.env = { ...env }
+    handlers = new Map()
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        GenerationReaperService,
+        { provide: PrismaService, useValue: { generationRecord: {} } },
+        { provide: PointsService, useValue: {} },
+        {
+          provide: AutomationSchedulerService,
+          useValue: {
+            registerHandler: vi.fn(
+              (
+                key: string,
+                handler: (
+                  params: Record<string, unknown>,
+                  ctx: { runId: string; reason: string },
+                ) => Promise<unknown>,
+              ) => {
+                handlers.set(key, handler)
+              },
+            ),
+          },
+        },
+      ],
+    }).compile()
+    svc = moduleRef.get(GenerationReaperService)
+  })
+
+  afterEach(() => {
+    process.env = env
+    notifyScanMock.mockReset()
+  })
+
+  function tickNotify(): Promise<unknown> {
+    const handler = handlers.get('generation-notify')
+    expect(handler, 'generation-notify handler 必须已注册').toBeDefined()
+    return handler!({}, { runId: 'run-test', reason: 'scheduled' })
+  }
+
+  it('onModuleInit 注册 generation-reaper 与 generation-notify 两个 handler', () => {
+    svc.onModuleInit()
+    expect(handlers.has('generation-reaper')).toBe(true)
+    expect(handlers.has('generation-notify')).toBe(true)
+  })
+
+  it('快节拍：扫描未通报终态记录并走同一扫描函数（含 arm/onDelivered 钩子）', async () => {
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:30100'
+    svc.onModuleInit()
+    notifyScanMock.mockResolvedValueOnce(2)
+
+    await tickNotify()
+
+    expect(notifyScanMock).toHaveBeenCalledTimes(1)
+    // 钩子签名必须齐：快节拍与 reaper 巡检共用同一组装（订阅先于触发 + 投影记账）
+    const opts = notifyScanMock.mock.calls[0][3] as {
+      onDelivered?: (threadId: string) => void
+      onBeforeNotify?: (threadId: string) => Promise<void> | void
+    }
+    expect(typeof opts?.onDelivered).toBe('function')
+    expect(typeof opts?.onBeforeNotify).toBe('function')
+    expect(opts.onDelivered).not.toThrow()
+  })
+
+  it('单飞守卫：扫描在飞时第二次调用跳过；完成后守卫释放', async () => {
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:30100'
+    svc.onModuleInit()
+    let release!: () => void
+    notifyScanMock.mockImplementationOnce(
+      () => new Promise<number>((resolve) => {
+        release = () => resolve(0)
+      }),
+    )
+
+    const first = tickNotify()
+    const second = tickNotify() // 在飞 ⇒ 直接跳过（不排队、不重入）
+    await second
+    expect(notifyScanMock).toHaveBeenCalledTimes(1)
+
+    release()
+    await first
+    expect(notifyScanMock).toHaveBeenCalledTimes(1)
+
+    await tickNotify() // 守卫已释放 ⇒ 正常再扫
+    expect(notifyScanMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('快节拍不设 PI_RUNTIME_URL ⇒ 通报关闭，零调用', async () => {
+    delete process.env.PI_RUNTIME_URL
+    svc.onModuleInit()
+
+    await tickNotify()
+
+    expect(notifyScanMock).not.toHaveBeenCalled()
+  })
+})
+

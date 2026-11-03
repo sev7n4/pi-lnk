@@ -48,8 +48,7 @@ export function looksLikeCopyWriteTurn(userText: string): boolean {
 /** Assistant reply for the latest user turn only — avoids resurrecting stale busy tips. */
 export function pickAssistantForLatestUserTurn(
   rows: Array<{ role: string; content: string }>,
-): { role: string; content: string } | null {
-  let lastUserIdx = -1
+): { role: string; content: string } | null {  let lastUserIdx = -1
   for (let i = rows.length - 1; i >= 0; i--) {
     if (rows[i].role === 'user') {
       lastUserIdx = i
@@ -73,4 +72,38 @@ export function looksLikeConfirmTurn(userText: string): boolean {
   // Long briefs that merely mention「确认」are planning turns, not confirm chips
   if (/请为|写一份|帮我设计|帮我做|帮我写/.test(t)) return false
   return t.length <= 16 && t.includes('确认')
+}
+
+export interface ReconcileRow {
+  id: string
+  role: string
+  content: string
+  metadata?: string | null
+}
+
+function isOutOfTurnMetadata(metadata: string | null | undefined): boolean {
+  if (!metadata) return false
+  try {
+    const parsed: unknown = JSON.parse(metadata)
+    return (
+      typeof parsed === 'object' && parsed !== null && (parsed as { outOfTurn?: unknown }).outOfTurn === true
+    )
+  } catch {
+    return false // 坏 JSON ≠ 回合外（与 historySanitize 的降级语义一致）
+  }
+}
+
+/**
+ * 回合外来信行（2026-11-03 黄小龙虾复测）：历史页**最后一条**若为 outOfTurn assistant
+ * ⇒ 即回合外简报（简报轮不属于任何用户 turn，服务端投影记账者打 `metadata.outOfTurn`
+ * —— 分类 SSOT 在服务端，web 不复判）。
+ *
+ * 为什么只认「最后一条」：对账期把该行**追加到本地尾部**，若它后面还有更新的消息
+ * （用户在简报轮运行期间又发了消息）追加就会错序——那种场景交给刷新后的
+ * loadHistory 全量重建（天然按 createdAt 有序），对账不做越位插入。
+ */
+export function pickTrailingOutOfTurnRow<T extends ReconcileRow>(rows: T[]): T | null {
+  const last = rows[rows.length - 1]
+  if (!last || last.role !== 'assistant' || !last.content?.trim()) return null
+  return isOutOfTurnMetadata(last.metadata) ? last : null
 }
