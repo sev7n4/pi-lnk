@@ -8,7 +8,7 @@ import type { ProposalCanvasNode } from '@/composables/useProposalNodeData'
  * proposal 卡演进两阶段：
  * - 2026-10-28 根治规格：决策点收敛进对话流内联 proposal part（取代对话流外浮卡）。
  * - 2026-11-02 卡片 UX 优化：升级为紧凑决策中枢——标题取节点名、元信息
- *   （模型·比例·预计积分·张数）恒可见、提示词 1 行预览、三动作
+ *   （模型·比例·消耗积分·张数）恒可见、提示词 1 行预览、三动作
  *   （落锚生成/调整/取消）+ 终态折叠行（未扣减删除线=积分诚实）+
  *   品牌三联「对话──锚(滑)──画布」轨道。
  *
@@ -60,7 +60,7 @@ function mountCard(overrides: { parts?: TimelinePart[]; canvasNodes?: ProposalCa
 }
 
 describe('AgentTurnTimeline — proposal 紧凑决策卡（2026-11-02）', () => {
-  it('pending_confirm：标题取节点名而非提示词，元信息含模型·比例·预计积分', () => {
+  it('pending_confirm：标题取节点名而非提示词，元信息含模型·比例·积分（消耗口径）', () => {
     const w = mountCard()
     const card = w.find('[data-test="proposal-card"]')
     expect(card.exists()).toBe(true)
@@ -69,7 +69,12 @@ describe('AgentTurnTimeline — proposal 紧凑决策卡（2026-11-02）', () =>
     expect(w.find('.name').text()).not.toContain('极简电竞耳机主图')
     expect(card.text()).toContain('realism-v2')
     expect(card.text()).toContain('1:1')
-    expect(card.text()).toMatch(/预计\s*\d+\s*积分/)
+    // 2026-11-04 4 点优化①③：无「画布节点」眉标；积分「消耗 N 积分」口径（无「预计」）
+    expect(card.text()).not.toContain('画布节点')
+    expect(card.text()).not.toContain('预计')
+    expect(card.text()).toMatch(/消耗\s*\d+\s*积分/)
+    // ③ 琥珀强调：credit chip 内含闪电 svg（与 DockCreditBadge 同语义）
+    expect(w.find('[data-test="credit-chip"] svg.bolt').exists()).toBe(true)
     expect(card.text()).toContain('待确认')
   })
 
@@ -137,14 +142,18 @@ describe('AgentTurnTimeline — proposal 紧凑决策卡（2026-11-02）', () =>
     expect(w.find('[data-test="prompt-preview"]').classes()).toContain('single-line')
   })
 
-  it('品牌锚 glyph 用 currentColor（随主题反相）；三联轨道 aria 可达', () => {
+  it('2026-11-04 4 点优化②④：头部=节点类型图标（currentColor 随主题）；pending 定位入口显性化', () => {
     const w = mountCard()
-    const glyphSvg = w.find('[data-test="anchor-glyph"] svg')
-    expect(glyphSvg.exists()).toBe(true)
-    expect(glyphSvg.attributes('stroke')).toBe('currentColor')
+    // ② 锚 glyph 退役 → 节点类型图标（DockTypeIcon，stroke=currentColor 随主题反相）
+    expect(w.find('[data-test="anchor-glyph"]').exists()).toBe(false)
+    const typeIcon = w.find('svg[data-test="node-type-icon"]')
+    expect(typeIcon.exists()).toBe(true)
+    expect(typeIcon.attributes('stroke')).toBe('currentColor')
     const rail = w.find('.trilink-rail')
     expect(rail.exists()).toBe(true)
     expect(rail.attributes('aria-label')).toContain('对话')
+    // ④ pending 态页脚定位入口 prominent（带边框按钮条，视觉显性）
+    expect(w.find('button[data-test="locate-link"]').classes()).toContain('prominent')
   })
 
   it('终态标签分流（2026-10-31 教训）：不得一律显示「已确认」', () => {
@@ -160,6 +169,8 @@ describe('AgentTurnTimeline — proposal 紧凑决策卡（2026-11-02）', () =>
       expect(w.findAll('button').map((b) => b.text())).not.toContain('落锚生成')
       if (st !== 'confirmed') expect(w.text()).toContain('未扣减')
       expect(w.find('[data-test="locate-link"]').exists()).toBe(true)
+      // ④ 终态保持弱链接（不 prominent）——执行卡才是活跃面
+      expect(w.find('button[data-test="locate-link"]').classes()).not.toContain('prominent')
     }
   })
 
