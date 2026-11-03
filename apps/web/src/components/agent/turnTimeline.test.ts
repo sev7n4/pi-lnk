@@ -236,16 +236,13 @@ describe('turnTimeline — 模型层（设计 §4 / §5-P1）', () => {
     }
   })
 
-  it('Task10 C4：流式中段（未收束）→ 摘要维持「≈N 积分（预估）」瞬时态；状态行为「估算中」口径', () => {
+  it('Task10 C4：流式中段（未收束）→ 摘要维持「≈N 积分（预估）」瞬时态；非 flag-off 文案', () => {
     const tl = feed([
       { type: 'turn_usage', data: { inputTokens: 8200, outputTokens: 400, estimatedCredits: 8 } },
     ])
-    const last = tl.parts[tl.parts.length - 1]
-    expect(last.kind).toBe('notice')
-    if (last.kind === 'notice') {
-      expect(last.text).toContain('≈8 积分（预估）')
-      expect(last.text).not.toContain('非正式结算')
-    }
+    // 未 finalize（turnEndedAt=null）：摘要走 summarizeTimeline（parts 里还没有 notice）
+    expect(summarizeTimeline(tl)).toContain('≈8 积分（预估）')
+    expect(summarizeTimeline(tl)).not.toContain('非正式结算')
   })
 
   it('Q2：无预估积分（渠道未配 pricing）→ 摘要只显示 tokens，绝不显示 0 积分假象', () => {

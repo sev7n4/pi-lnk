@@ -118,9 +118,9 @@ describe('trackCreditTx（Epic1 前端口径 + 余额事件化）', () => {
     // 本会话扣 10，余额 100→90：降幅=10=本会话扣费 ⇒ 无漂移
     store.trackCreditTx(makeCreditTx({ txId: 'd1', amount: -10, balanceAfter: 90 }))
     expect(store.crossSessionSpend).toBe(0)
-    // 本会话扣 3，但余额 90→62（降幅 27）：差额 24 来自其他会话
+    // 本会话扣 3，但余额 90→62（降幅 28）：差额 25 来自其他会话
     store.trackCreditTx(makeCreditTx({ txId: 'd2', amount: -3, balanceAfter: 62 }))
-    expect(store.crossSessionSpend).toBe(24)
+    expect(store.crossSessionSpend).toBe(25)
     // 退款令余额上升不构成漂移
     store.trackCreditTx(makeCreditTx({ txId: 'd3', kind: 'refund', amount: 5, balanceAfter: 67 }))
     expect(store.crossSessionSpend).toBe(24)
