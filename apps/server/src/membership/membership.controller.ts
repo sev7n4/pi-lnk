@@ -1,8 +1,10 @@
-import { BadRequestException, Body, Controller, Get, Inject, Post, Query, Req, UseGuards } from '@nestjs/common'
+import { BadRequestException, Body, Controller, Get, Inject, Optional, Post, Query, Req, Res, UseGuards } from '@nestjs/common'
 import { IsString } from 'class-validator'
+import type { Request, Response } from 'express'
 import { AuthGuard } from '../auth/auth.guard'
 import { PointsRangeKey } from '../points/points-range'
 import { parseShanghaiDay, parseUsageDaysRange } from '../points/points-usage-range'
+import { SessionEventBus } from '../points/session-event-bus.service'
 import { MembershipService, PointCategory, PointKind } from './membership.service'
 
 class UpgradeDto {
@@ -31,7 +33,14 @@ export function parseLimit(raw?: string): number {
 
 @Controller('membership')
 export class MembershipController {
-  constructor(@Inject(MembershipService) private readonly membershipService: MembershipService) {}
+  constructor(
+    @Inject(MembershipService) private readonly membershipService: MembershipService,
+    // Epic 2 Task 9：余额事件化 user 广播。@Optional 保持既有单测手工构造零破坏；
+    // 运行时缺省 ⇒ SSE 端点立即结束（前端退避重试，余额退化为 refreshPoints 兜底）。
+    @Optional()
+    @Inject(SessionEventBus)
+    private readonly eventBus?: SessionEventBus,
+  ) {}
 
   @Get('plans')
   getPlans() {
@@ -115,6 +124,69 @@ export class MembershipController {
       limit: parseLimit(limit),
     })
     return { code: 0, message: 'ok', data }
+  }
+
+  /**
+   * Epic 4（2026-11-04）：会话维度积分流水（跨会话聚合卡数据源）。
+   * `sessionId` 必填（防全量拉取）；`since`（ISO）增量补拉；升序、限 200。
+   */
+  @Get('point-transactions')
+  @UseGuards(AuthGuard)
+  async pointTransactions(
+    @Req() req: { user: { sub: string } },
+    @Query('sessionId') sessionId?: string,
+    @Query('since') since?: string,
+  ) {
+    if (!sessionId) throw new BadRequestException('sessionId 必填')
+    const data = await this.membershipService.listSessionTransactions(
+      req.user.sub,
+      sessionId,
+      since,
+    )
+    return { code: 0, message: 'ok', data }
+  }
+
+  /**
+   * Epic 2 Task 9（2026-11-04）：余额事件化 user 广播——SSE 长连接。
+   * 订阅 SessionEventBus 的 **user 通道**：任何会话/生成扣费或退款提交后，
+   * 该用户打开的所有标签页都实时收到 credit_tx（balanceAfter 即权威余额）。
+   * 传输纪律与 agent 旁听流同款（fetch + 手工解析，浏览器 EventSource 带不了 auth 头）：
+   * - 订阅建立立刻写注释帧（客户端拿到响应头才算连上，防「200+0 字节」静默故障）；
+   * - 15s 心跳保活（防 nginx/浏览器掐静默长连接）；credit_tx 低频，无需 idle 闸门；
+   * - `res.on('close')` 必须退订（R1：防 emitter 泄漏）；
+   * - 事件源头已由 CREDIT_TX flag 闸门（off 不 emit），本端点不重复设闸。
+   */
+  @Get('point-events')
+  @UseGuards(AuthGuard)
+  async pointEvents(@Req() req: Request & { user: { sub: string } }, @Res() res: Response) {
+    res.setHeader('Content-Type', 'text/event-stream')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.setHeader('Connection', 'keep-alive')
+    res.setHeader('X-Accel-Buffering', 'no')
+    if (!this.eventBus) {
+      // 总线未装配（如单测手工构造）→ 不建立常驻连接，前端退避重试 + refreshPoints 兜底
+      res.end()
+      return
+    }
+    res.write(': point-events-ready\n\n')
+    const heartbeat = setInterval(() => {
+      try {
+        res.write('data: {"type":"heartbeat"}\n\n')
+      } catch {
+        // 客户端已断开，close 回调会清理
+      }
+    }, 15_000)
+    const unsubscribe = this.eventBus.subscribeUser(req.user.sub, (ev) => {
+      try {
+        res.write(`data: ${JSON.stringify(ev)}\n\n`)
+      } catch {
+        // 写失败 = 连接已断，close 回调清理
+      }
+    })
+    res.on('close', () => {
+      clearInterval(heartbeat)
+      unsubscribe()
+    })
   }
 
   @Get('points-summary')

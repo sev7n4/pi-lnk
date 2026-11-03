@@ -85,4 +85,47 @@ describe('trackCreditTx（Epic1 前端口径 + 余额事件化）', () => {
     expect(store.creditSplit).toEqual({ text: 14, generation: 10 })
     expect(store.sessionConsumedCredits).toBe(24)
   })
+
+  it('Epic4 Task8：restore 模式累计但不动余额（历史行 balanceAfter 非全局最新）', () => {
+    const auth = useAuthStore()
+    const setPointsSpy = vi.spyOn(auth, 'setPoints')
+    const refreshSpy = vi.spyOn(auth, 'refreshPoints').mockResolvedValue(100)
+    const store = useAgentStore()
+    store.trackCreditTx(
+      makeCreditTx({ txId: 'r1', category: 'image', amount: -10, balanceAfter: 5 }),
+      { restore: true },
+    )
+    expect(store.sessionConsumedCredits).toBe(10) // 累计生效
+    expect(store.creditSplit).toEqual({ text: 0, generation: 10 })
+    expect(setPointsSpy).not.toHaveBeenCalled() // 不驱动余额
+    expect(refreshSpy).not.toHaveBeenCalled() // refreshPoints 由调用方在还原后统一触发
+    // restore 之后实时帧照常驱动余额（幂等集互不干扰）
+    store.trackCreditTx(makeCreditTx({ txId: 'r2', amount: -3, balanceAfter: 77 }))
+    expect(setPointsSpy).toHaveBeenCalledWith(77)
+  })
+
+  it('Epic5 Task11：漂移告警——余额降幅 > 本会话扣费 ⇒ 差额计入 crossSessionSpend（M2/M4 防御）', () => {
+    const auth = useAuthStore()
+    const setPointsSpy = vi.spyOn(auth, 'setPoints')
+    vi.spyOn(auth, 'refreshPoints').mockResolvedValue(100)
+    const store = useAgentStore()
+    // 先把余额基线设为 100（setPoints mock 直写 user.points；⚠️ 断言禁 as never——
+    // never 收窄会让后续 auth.user?.points 全线 TS2339，CI 教训 2026-11-04）
+    setPointsSpy.mockImplementation((n: number) => {
+      if (auth.user) auth.user.points = n
+    })
+    auth.user = { id: 'u1', points: 100 } as unknown as typeof auth.user
+    // 本会话扣 10，余额 100→90：降幅=10=本会话扣费 ⇒ 无漂移
+    store.trackCreditTx(makeCreditTx({ txId: 'd1', amount: -10, balanceAfter: 90 }))
+    expect(store.crossSessionSpend).toBe(0)
+    // 本会话扣 3，但余额 90→62（降幅 27）：差额 24 来自其他会话
+    store.trackCreditTx(makeCreditTx({ txId: 'd2', amount: -3, balanceAfter: 62 }))
+    expect(store.crossSessionSpend).toBe(24)
+    // 退款令余额上升不构成漂移
+    store.trackCreditTx(makeCreditTx({ txId: 'd3', kind: 'refund', amount: 5, balanceAfter: 67 }))
+    expect(store.crossSessionSpend).toBe(24)
+    // 新会话 clear() 重置漂移告警
+    store.clear()
+    expect(store.crossSessionSpend).toBe(0)
+  })
 })

@@ -57,13 +57,15 @@ describe('turnTimeline: turn_settled 结算摘要', () => {
     const tl = createTurnTimeline()
     applyTimelineEvent(tl, { type: 'turn_usage', data: { ...usage } })
     finalizeTurnTimeline(tl)
-    expect(summaryText(tl)).toContain('≈2 积分（预估）')
+    // Epic 3 Task 10（规格 §5.3 flag-off 行）：收束后仍无 settled ⇒ flag-off 终态文案
+    expect(summaryText(tl)).toContain('预计消耗 ≈2 积分（非正式结算）')
 
     applyTimelineEvent(tl, {
       type: 'turn_settled',
       data: { holdId: 'h1', credits: 14, model: 'agnes-2.5-flash' },
     })
     expect(summaryText(tl)).toContain('共消耗 14 积分 · agnes-2.5-flash')
+    expect(summaryText(tl)).not.toContain('非正式结算')
   })
 
   it('历史重放：turn_settled 随 executionEvents 回放 → 摘要出权威值（模型名还原）', () => {

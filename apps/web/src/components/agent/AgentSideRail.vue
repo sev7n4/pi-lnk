@@ -8,6 +8,8 @@ import { useAuthStore } from '@/stores/auth'
 import type { SidebarAttachment, CreditTxEvent } from '@lnkpi/shared'
 import { normalizeMentionedKeys, SIDEBAR_ATTACHMENT_MAX } from '@lnkpi/shared'
 import { apiUrl } from '@/services/api-base'
+import { membershipApi } from '@/services/users-api'
+import { connectPointEvents, type PointEventsConnection } from '@/services/points-events'
 import NeoAgentLogo from '@/components/agent/NeoAgentLogo.vue'
 import { applyPiUserMessageEvent } from '@/components/agent/queueBubbleSync'
 import AgentRefStrip from '@/components/agent/AgentRefStrip.vue'
@@ -305,6 +307,8 @@ const asidePanelWidth = computed(() => {
 const agent = useAgentStore()
 const auth = useAuthStore()
 const router = useRouter()
+// Epic 2 Task 9：余额事件化 user 广播连接（onMounted 建立常驻 SSE，onUnmounted 退订）。
+let pointEventsConn: PointEventsConnection | null = null
 const input = ref('')
 /**
  * 流式中的插话槽位（2026-10-02 重写：从「单槽字符串 + 流结束补发」改成**三态意图槽**）。
@@ -1893,11 +1897,45 @@ async function loadHistory() {
       // `ask_user` 事件收敛出 question part 单一真相接管——无需再回填组件级 ref。
     }
     historyLoadState.value = 'idle'
+    // Epic 4（2026-11-04）：历史消耗还原——credit_tx 只在飞不落 executionEvents，
+    // 重开会话的「本次消耗」由 REST 流水回放（restore 模式只累计不驱动余额，
+    // 余额随后 refreshPoints 拉权威值）。失败静默：常驻条从 0 起步，不影响主流程。
+    void restoreSessionCreditHistory(props.sessionId)
   } catch {
     ElMessage.warning('对话历史加载失败，请检查网络后刷新')
     historyLoadState.value = 'failed'
   }
   scrollToBottom(true)
+}
+
+/**
+ * Epic 4：跨会话聚合卡数据源——按会话拉积分流水喂 trackCreditTx（txId 幂等，
+ * 与 SSE 实时帧天然去重）。行升序、限 200；restore 模式不动余额，末尾 refreshPoints。
+ */
+async function restoreSessionCreditHistory(sessionId: string) {
+  try {
+    // sessionPointTransactions 为 async 包装，直接返回 rows（类型显式，无泛型解构歧义）
+    const rows = await membershipApi.sessionPointTransactions(sessionId)
+    for (const row of rows) {
+      agent.trackCreditTx(
+        {
+          txId: row.id,
+          userId: '',
+          sessionId,
+          amount: row.amount,
+          kind: row.kind as CreditTxEvent['data']['kind'],
+          category: row.category as CreditTxEvent['data']['category'],
+          reason: row.reason,
+          balanceAfter: row.balanceAfter ?? 0, // restore 不读余额；契约必填 number，undefined 会 TS2322
+          ts: new Date(row.createdAt).getTime(),
+        },
+        { restore: true },
+      )
+    }
+    if (rows.length > 0) void useAuthStore().refreshPoints()
+  } catch {
+    // 静默降级：历史流水还原失败不阻塞对话主流程
+  }
 }
 
 /** H1-a（规格 §5.2/验收 S5）：loadOlder 向前翻页取更早消息；只 prepend、不整体重建。 */
@@ -3203,6 +3241,19 @@ onMounted(() => {
   // 本端正在跑主流时（`agent.isStreaming`）不挂——那份内容主流自己会给。
   // 后台标签页（例如「在新标签页打开」）不挂：看不见就不该占着连接，切回来再补。
   if (!agent.isStreaming && document.visibilityState === 'visible') void listenFollowUpTail()
+  // Epic 2 Task 9（2026-11-04）：余额事件化 user 广播——所有标签页实时同步余额。
+  // 本会话帧同时喂 trackCreditTx（txId 幂等，与流内注入/REST 还原天然去重补帧）；
+  // 跨会话帧只驱动余额（严禁计入本会话累计——会话口径按 sessionId 隔离，C3）。
+  pointEventsConn = connectPointEvents((ev) => {
+    if (ev.type !== 'credit_tx') return
+    const data = ev.data as CreditTxEvent['data'] | undefined
+    if (!data) return
+    if (data.sessionId === props.sessionId) {
+      agent.trackCreditTx(data)
+    } else if (typeof data.balanceAfter === 'number' && Number.isFinite(data.balanceAfter)) {
+      useAuthStore().setPoints(data.balanceAfter)
+    }
+  })
 })
 
 // 会话 / 线程切换后重挂：订阅 URL 携带 threadId，线程变了旧流就在听错的对象。
@@ -3225,6 +3276,9 @@ onUnmounted(() => {
   sseSlotSubscription?.stop()
   sseSlotSubscription = null
   followUpTail.abort()
+  // Epic 2 Task 9：余额广播连接退订（服务端 close 回调同步清 user emitter）。
+  pointEventsConn?.stop()
+  pointEventsConn = null
 })
 
 async function reconnectStream() {
@@ -4891,7 +4945,7 @@ defineExpose({
               class="agent-credits-line"
               data-testid="session-credits-line"
             >
-              已消耗 ◇{{ agent.sessionConsumedCredits }} 积分<template v-if="agent.creditSplit.generation > 0">（对话 {{ agent.creditSplit.text }} · 生成 {{ agent.creditSplit.generation }}）</template>
+              已消耗 ◇{{ agent.sessionConsumedCredits }} 积分<template v-if="agent.creditSplit.generation > 0">（对话 {{ agent.creditSplit.text }} · 生成 {{ agent.creditSplit.generation }}）</template><template v-if="agent.crossSessionSpend > 0">（其他会话消耗 {{ agent.crossSessionSpend }}）</template>
             </div>
           </div>
 
