@@ -225,6 +225,10 @@ model PointTransaction {
   expiresAt    DateTime?
   /// 关联支付订单 id（purchased 池溯源用；支付闭环落地后由 Order 填充）。无支付时为 NULL。
   orderId      String?
+  /// Epic 1（spec 2026-11-03-credit-consumption-display-design）：关联会话 id。
+  /// 用于会话级 SSE 广播与「本次使用」聚合对账。可空兼容存量行、后台赠送与订阅续期；
+  /// 索引按迁移纪律延后至观察期后单独立迁移（见 spec §7.1）。
+  sessionId    String?
   createdAt    DateTime @default(now())
 
   @@index([userId, createdAt])

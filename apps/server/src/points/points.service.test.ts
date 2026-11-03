@@ -1,9 +1,15 @@
 import 'reflect-metadata'
 import { BadRequestException, ConflictException } from '@nestjs/common'
-import { describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Test } from '@nestjs/testing'
 import { PointsService, InsufficientPointsError } from './points.service'
+import { SessionEventBus } from './session-event-bus.service'
 import { PrismaService } from '../prisma/prisma.service'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
 describe('PointsService', () => {
   it('decrements points and writes negative transaction when balance is enough', async () => {
@@ -784,4 +790,220 @@ describe('PointsService reaper 接线（P2 终审 C-1：崩溃 hold 泄漏唯一
       clearIntervalSpy.mockRestore()
     }
   })
+
+  it('consume 透传 meta.sessionId 写入 pointTransaction', async () => {
+    const updateMany = vi.fn(async () => ({ count: 1 }))
+    const findUnique = vi.fn(async () => ({ points: 90 }))
+    const create = vi.fn(async (args: { data: Record<string, unknown> }) => ({ id: 'pt1', ...args.data }))
+    const $transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({ user: { updateMany, findUnique }, pointTransaction: { create } }),
+    )
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PointsService,
+        { provide: PrismaService, useValue: { $transaction } },
+      ],
+    }).compile()
+    const svc = moduleRef.get(PointsService)
+
+    await svc.consume('u1', 10, '图像生成', {
+      kind: 'consume',
+      category: 'image',
+      status: 'success',
+      model: 'seedream',
+      sessionId: 'sess-1',
+    })
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ sessionId: 'sess-1' }) }),
+    )
+  })
+
+  it('refund 透传 meta.sessionId 写入 pointTransaction', async () => {
+    const updateMany = vi.fn(async () => ({ count: 1 }))
+    const findUnique = vi.fn(async () => ({ points: 100 }))
+    const create = vi.fn(async (args: { data: Record<string, unknown> }) => ({ id: 'pt2', ...args.data }))
+    const $transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({ user: { updateMany, findUnique }, pointTransaction: { create } }),
+    )
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PointsService,
+        { provide: PrismaService, useValue: { $transaction } },
+      ],
+    }).compile()
+    const svc = moduleRef.get(PointsService)
+
+    await svc.refund('u1', 5, '生成失败退款', {
+      kind: 'refund',
+      category: 'image',
+      status: 'failed_refund',
+      sessionId: 'sess-1',
+    })
+
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ sessionId: 'sess-1' }) }),
+    )
+  })
+
+  it('schema 与迁移均含 PointTransaction.sessionId 列（Epic 1 数据关联）', () => {
+    const schema = readFileSync(resolve(__dirname, '../../prisma/schema.prisma'), 'utf-8')
+    expect(schema).toMatch(/sessionId\s+String\?/)
+    const migration = readFileSync(
+      resolve(__dirname, '../../prisma/migrations/20261103000000_add_point_transaction_session_id/migration.sql'),
+      'utf-8',
+    )
+    expect(migration).toContain('ALTER TABLE "PointTransaction" ADD COLUMN "sessionId" TEXT')
+  })
 })
+
+describe('PointsService · Epic1 credit_tx 事件化（Task 3）', () => {
+  const makeModule = (emitSpy: ReturnType<typeof vi.fn>) =>
+    Test.createTestingModule({
+      providers: [
+        PointsService,
+        { provide: PrismaService, useValue: { $transaction: async (fn: (tx: unknown) => Promise<unknown>) =>
+          fn({
+            user: { updateMany: vi.fn(async () => ({ count: 1 })), findUnique: vi.fn(async () => ({ points: 90 })) },
+            pointTransaction: { create: vi.fn(async (args: { data: Record<string, unknown> }) => ({ id: 'pt-1', ...args.data })) },
+            pointHold: {
+              findUnique: vi.fn(async () => ({ id: 'h1', status: 'held', amount: 5, userId: 'u1', settledCredits: 0 })),
+              updateMany: vi.fn(async () => ({ count: 1 })),
+            },
+          }) } },
+        { provide: SessionEventBus, useValue: { emitCreditTx: emitSpy } },
+      ],
+    }).compile()
+
+  afterEach(() => {
+    delete process.env.CREDIT_TX
+  })
+
+  it('CREDIT_TX=off 时退化为现状（不发射）', async () => {
+    const emit = vi.fn()
+    const moduleRef = await makeModule(emit)
+    const svc = moduleRef.get(PointsService)
+    await svc.consume('u1', 10, '图像生成', { kind: 'consume', category: 'image' })
+    expect(emit).not.toHaveBeenCalled()
+  })
+
+  it('consume 在事务提交后发射 credit_tx（kind/category/amount/sessionId/balanceAfter 正确）', async () => {
+    process.env.CREDIT_TX = 'on'
+    const emit = vi.fn()
+    const moduleRef = await makeModule(emit)
+    const svc = moduleRef.get(PointsService)
+    await svc.consume('u1', 10, '图像生成', { kind: 'consume', category: 'image', sessionId: 'sess-1' })
+    expect(emit).toHaveBeenCalledTimes(1)
+    const ev = emit.mock.calls[0][0]
+    expect(ev).toMatchObject({
+      txId: 'pt-1',
+      userId: 'u1',
+      sessionId: 'sess-1',
+      amount: -10,
+      kind: 'consume',
+      category: 'image',
+      balanceAfter: 90,
+    })
+  })
+
+  it('refund 发射 credit_tx（kind=refund, amount 为正）', async () => {
+    process.env.CREDIT_TX = 'on'
+    const emit = vi.fn()
+    const moduleRef = await makeModule(emit)
+    const svc = moduleRef.get(PointsService)
+    await svc.refund('u1', 7, '退款', { kind: 'refund', category: 'image', sessionId: 'sess-2' })
+    expect(emit).toHaveBeenCalledTimes(1)
+    expect(emit.mock.calls[0][0]).toMatchObject({
+      txId: 'pt-1',
+      userId: 'u1',
+      sessionId: 'sess-2',
+      amount: 7,
+      kind: 'refund',
+      category: 'image',
+    })
+  })
+
+  it('settleFromHold 发射 credit_tx（kind=consume, sessionId 透传）', async () => {
+    process.env.CREDIT_TX = 'on'
+    const emit = vi.fn()
+    const moduleRef = await makeModule(emit)
+    const svc = moduleRef.get(PointsService)
+    await svc.settleFromHold('h1', 3, '结算', { category: 'text', sessionId: 'sess-3' })
+    expect(emit).toHaveBeenCalledTimes(1)
+    expect(emit.mock.calls[0][0]).toMatchObject({
+      amount: -3,
+      kind: 'consume',
+      category: 'text',
+      sessionId: 'sess-3',
+    })
+  })
+
+  it('release（全退）发射 credit_tx（kind=release）', async () => {
+    process.env.CREDIT_TX = 'on'
+    const emit = vi.fn()
+    const moduleRef = await makeModule(emit)
+    const svc = moduleRef.get(PointsService)
+    await svc.release('h1', '释放')
+    expect(emit).toHaveBeenCalledTimes(1)
+    expect(emit.mock.calls[0][0]).toMatchObject({ kind: 'release', amount: 0 })
+  })
+
+  it('事务回滚（余额不足）时不发射事件', async () => {
+    process.env.CREDIT_TX = 'on'
+    const emit = vi.fn()
+    const $transaction = vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => {
+      // 模拟余额不足分支：updateMany 返回 0 → 回调抛错 → 事务回滚
+      await fn({
+        user: { updateMany: vi.fn(async () => ({ count: 0 })), findUnique: vi.fn(async () => ({ points: 1 })) },
+        pointTransaction: { create: vi.fn() },
+        pointHold: { findUnique: vi.fn() },
+      })
+    })
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PointsService,
+        { provide: PrismaService, useValue: { $transaction } },
+        { provide: SessionEventBus, useValue: { emitCreditTx: emit } },
+      ],
+    }).compile()
+    await expect(moduleRef.get(PointsService).consume('u1', 10, '图像生成')).rejects.toBeInstanceOf(
+      BadRequestException,
+    )
+    expect(emit).not.toHaveBeenCalled()
+  })
+
+  it('emit 抛错不回滚业务、只 warn（业务已提交，仅事件丢失）', async () => {
+    process.env.CREDIT_TX = 'on'
+    const emit = vi.fn(() => {
+      throw new Error('bus down')
+    })
+    const create = vi.fn(async (args: { data: Record<string, unknown> }) => ({ id: 'pt-1', ...args.data }))
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        PointsService,
+        {
+          provide: PrismaService,
+          useValue: {
+            $transaction: async (fn: (tx: unknown) => Promise<unknown>) =>
+              fn({
+                user: { updateMany: vi.fn(async () => ({ count: 1 })), findUnique: vi.fn(async () => ({ points: 90 })) },
+                pointTransaction: { create },
+                pointHold: { findUnique: vi.fn() },
+              }),
+          },
+        },
+        { provide: SessionEventBus, useValue: { emitCreditTx: emit } },
+      ],
+    }).compile()
+    // 不应抛错（emit 失败被吞）
+    await expect(
+      moduleRef.get(PointsService).consume('u1', 10, '图像生成', { kind: 'consume', category: 'image' }),
+    ).resolves.toBeUndefined()
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(emit).toHaveBeenCalledTimes(1)
+    expect(warnSpy).toHaveBeenCalled()
+    warnSpy.mockRestore()
+  })
+})
+

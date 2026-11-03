@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import {
   type AgentChatMessage,
   type AgentMessageMetadata,
@@ -7,6 +7,7 @@ import {
   LinkedCanvasOutputSchema,
   type LinkedCanvasOutput,
   type SidebarAttachment,
+  type CreditTxEvent,
   validateSidebarAttachments,
 } from '@lnkpi/shared'
 import { parsePersistedToolCalls } from '@/components/agent/agentCanvasOutputs'
@@ -134,6 +135,12 @@ export const useAgentStore = defineStore('agent', () => {
    * 数据随 executionEvents 重放还原（历史加载后累计值自动重建），无独立落库状态。
    */
   const sessionConsumedCredits = computed(() => {
+    if (creditTxSeen.value) {
+      // Epic 1（2026-11-03）：credit_tx 单一口径驱动（文本/生成/退款同路径）。
+      // 仍叠加当前回合实时预估（liveEstimatedCredits），结算到达即被 credit_tx 文本费替代，不重不漏。
+      const live = liveEstimatedCredits.value ?? 0
+      return Math.max(0, Math.round(-creditTxSpend.value + live))
+    }
     let total = 0
     for (const m of messages.value) {
       const settled = m.role === 'assistant' ? m.executionTrace?.settled : undefined
@@ -144,6 +151,39 @@ export const useAgentStore = defineStore('agent', () => {
     }
     if (liveEstimatedCredits.value != null) total += liveEstimatedCredits.value
     return total
+  })
+  /**
+   * Epic 1（2026-11-03）：本会话经 `credit_tx` 实时累计的**有符号净扣费**。
+   * `consume` 为负、`refund` 为正；`已消耗` 取 `-creditTxSpend` 的非负部分。
+   * 见 `trackCreditTx`；与 `sessionConsumedCredits` 旧口径互斥（同一会话只走一条），
+   * 避免文本费被 `turn_settled` 与 `credit_tx` 双重计入。
+   */
+  const creditTxSpend = ref(0)
+  /**
+   * 本会话是否已进入 `credit_tx` 模式（收到任一帧即置位）。置位后常驻条改由
+   * `credit_tx` 单一口径驱动（文本 + 生成 + 退款同路径，根治「生成费漏显 + 双计」）。
+   * flag=off 时永不置位 ⇒ 退化为旧口径，与现状一致。
+   */
+  const creditTxSeen = ref(false)
+  /**
+   * 全局幂等集：`txId` = `pointTransaction.id`；断线重连/重放不重复计入（C5）。
+   * 跨会话保留——交易主键全局唯一，新会话出现新 `txId` 不会被误杀。
+   */
+  const seenTxIds = new Set<string>()
+  /**
+   * Epic 3（2026-11-03）：按 `category` 累计本会话已消耗（绝对值），用于常驻条
+   * 「共消耗 N（对话 M · 生成 K）」拆分。consume 累加、refund 回减（C5 幂等已保证
+   * 同 txId 不重复计入，故此处无需再判重）。
+   */
+  const creditTxByCategory = reactive<Record<string, number>>({})
+  /** 常驻条摘要拆分口径：文本费 + 生成费（image/audio/video/other 合计）。 */
+  const creditSplit = computed(() => {
+    const text = creditTxByCategory['text'] ?? 0
+    const generation = ['image', 'audio', 'video', 'other'].reduce(
+      (sum, c) => sum + (creditTxByCategory[c] ?? 0),
+      0,
+    )
+    return { text: Math.round(text), generation: Math.round(generation) }
   })
   /**
    * 等待态单一真相的查询侧（根治规格 2026-10-28）：当前处于 `pending_confirm` 的
@@ -625,6 +665,27 @@ export const useAgentStore = defineStore('agent', () => {
     void useAuthStore().refreshPoints()
   }
 
+  /**
+   * Epic 1（2026-11-03）：接收服务端经 SSE 下发的 `credit_tx` 帧，作为本会话
+   * 积分口径的**单一入口**（文本/生成/退款同路径，根治「生成费漏显 + 与 turn_settled 双计」）。
+   * - 按 `txId` 全局幂等（断线重连重放不重复计入，C5）；
+   * - 有符号累计（`amount`：扣费为负、退款为正）；
+   * - `balanceAfter` 即权威余额，直接驱动 `auth.setPoints`（Epic 2 余额事件化预备，C2）。
+   */
+  function trackCreditTx(data: CreditTxEvent['data']) {
+    if (seenTxIds.has(data.txId)) return
+    seenTxIds.add(data.txId)
+    creditTxSeen.value = true
+    creditTxSpend.value += data.amount
+    // 按 category 累计（绝对值）；退款回减，避免「生成费」虚高
+    const abs = Math.abs(data.amount)
+    const base = creditTxByCategory[data.category] ?? 0
+    creditTxByCategory[data.category] = data.kind === 'refund' ? base - abs : base + abs
+    if (typeof data.balanceAfter === 'number' && Number.isFinite(data.balanceAfter)) {
+      useAuthStore().setPoints(data.balanceAfter)
+    }
+  }
+
   /** Q2：usage_delta（transient 实时预估快照）→ 状态行 running 段「预估 -N积分」。
    * 只更新 live 态，不进时间线（重放走 turn_usage.estimatedCredits）。 */
   function trackUsageDelta(data: { inputTokens?: number; outputTokens?: number; estimatedCredits?: number }) {
@@ -954,6 +1015,10 @@ export const useAgentStore = defineStore('agent', () => {
     lastTextDeltaAt.value = 0
     turnError.value = null
     turnRefusal.value = null
+    // Epic 1（2026-11-03）：新会话重置本会话累计；幂等集 seenTxIds 保留（跨会话不误杀新交易）
+    creditTxSpend.value = 0
+    creditTxSeen.value = false
+    for (const k of Object.keys(creditTxByCategory)) delete creditTxByCategory[k]
   }
 
   return {
@@ -961,6 +1026,7 @@ export const useAgentStore = defineStore('agent', () => {
     isStreaming,
     liveEstimatedCredits,
     sessionConsumedCredits,
+    creditSplit,
     pendingProposal,
     pendingQuestion,
     recovering,
@@ -995,6 +1061,7 @@ export const useAgentStore = defineStore('agent', () => {
     consumePendingDiagnosticText,
     trackTurnUsage,
     trackTurnSettled,
+    trackCreditTx,
     trackUsageDelta,
     trackWaitingUser,
     trackAskUser,

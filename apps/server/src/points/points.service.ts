@@ -5,11 +5,14 @@ import {
   Injectable,
   OnApplicationBootstrap,
   OnApplicationShutdown,
+  Optional,
 } from '@nestjs/common'
-import { PointHold, Prisma } from '@prisma/client'
+import { PointHold, PointTransaction, Prisma } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
 import type { PointTxMeta } from './point-tx.types'
 import { mapReasonToPointFields } from './reason-map'
+import { SessionEventBus } from './session-event-bus.service'
+import type { CreditTxEvent } from '@lnkpi/shared'
 
 /** reaper 扫描周期（终审 C-1）：10 分钟一轮，窗口 30min 由 releaseExpiredHolds 缺省承担。 */
 const HOLD_REAPER_INTERVAL_MS = 10 * 60_000
@@ -30,7 +33,10 @@ export class InsufficientPointsError extends BadRequestException {
 export class PointsService implements OnApplicationBootstrap, OnApplicationShutdown {
   private reaperTimer: NodeJS.Timeout | undefined
 
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(SessionEventBus) @Optional() private readonly eventBus?: SessionEventBus,
+  ) {}
 
   /**
    * 兜底 reaper 定时接线（P2 终审 C-1）：崩溃 hold 泄漏的唯一兜底。
@@ -63,8 +69,45 @@ export class PointsService implements OnApplicationBootstrap, OnApplicationShutd
     }
   }
 
+  /**
+   * Epic 1（spec §5.1）：计费事务提交后发射 `credit_tx` 领域事件。
+   *
+   * ⚠️ 必须由调用方在 `pointTransaction.create` 事务**提交之后**调用（即已从
+   * `$transaction` 返回）；emit 失败只 warn，绝不回滚业务、不冒泡。
+   * `CREDIT_TX=on` 才发射，off 时退化为现状（不发，行为等同改前）。
+   */
+  private emitCreditTxAfterCommit(record: PointTransaction | null): void {
+    if (process.env.CREDIT_TX !== 'on') return
+    if (!record) return
+    // 总线未装配（如手工构造的单测环境）→ 退化不发，与 flag-off 同语义。
+    if (!this.eventBus) return
+    const data: CreditTxEvent['data'] = {
+      txId: record.id,
+      userId: record.userId,
+      sessionId: record.sessionId ?? undefined,
+      amount: record.amount,
+      kind: record.kind as CreditTxEvent['data']['kind'],
+      category: record.category as CreditTxEvent['data']['category'],
+      reason: record.reason,
+      model: record.model,
+      generationId: record.generationId,
+      ruleVersion: record.ruleVersion,
+      balanceAfter: record.balanceAfter ?? 0,
+      ts: Date.now(),
+    }
+    try {
+      this.eventBus.emitCreditTx(data)
+    } catch (err) {
+      console.warn(
+        '[points] emitCreditTx 失败（业务已提交，仅事件丢失）：',
+        err instanceof Error ? err.message : err,
+      )
+    }
+  }
+
   async consume(userId: string, cost: number, reason: string, meta?: PointTxMeta): Promise<void> {
     if (cost <= 0) return
+    let created: PointTransaction | null = null
     await this.prisma.$transaction(async (tx) => {
       const updated = await tx.user.updateMany({
         where: { id: userId, points: { gte: cost } },
@@ -78,7 +121,7 @@ export class PointsService implements OnApplicationBootstrap, OnApplicationShutd
         select: { points: true },
       })
       const fields = meta ?? mapReasonToPointFields(reason, -cost)
-      await tx.pointTransaction.create({
+      created = await tx.pointTransaction.create({
         data: {
           userId,
           amount: -cost,
@@ -91,16 +134,20 @@ export class PointsService implements OnApplicationBootstrap, OnApplicationShutd
           balanceAfter: user?.points ?? null,
           ruleVersion: meta?.ruleVersion ?? null,
           ...(meta?.grayReleaseId ? { grayReleaseId: meta.grayReleaseId } : {}),
+        ...(meta?.sessionId ? { sessionId: meta.sessionId } : {}),
         },
       })
     })
+    this.emitCreditTxAfterCommit(created)
   }
 
   async refund(userId: string, amount: number, reason: string, meta?: PointTxMeta): Promise<void> {
     if (amount <= 0) return
+    let created: PointTransaction | null = null
     await this.prisma.$transaction(async (tx) => {
-      await this.refundInTx(tx, userId, amount, reason, meta)
+      created = await this.refundInTx(tx, userId, amount, reason, meta)
     })
+    this.emitCreditTxAfterCommit(created)
   }
 
   /**
@@ -116,7 +163,7 @@ export class PointsService implements OnApplicationBootstrap, OnApplicationShutd
     amount: number,
     reason: string,
     meta?: PointTxMeta,
-  ): Promise<void> {
+  ): Promise<PointTransaction> {
     await tx.user.updateMany({
       where: { id: userId },
       data: { points: { increment: amount } },
@@ -126,7 +173,7 @@ export class PointsService implements OnApplicationBootstrap, OnApplicationShutd
       select: { points: true },
     })
     const fields = meta ?? mapReasonToPointFields(reason, amount)
-    await tx.pointTransaction.create({
+    return tx.pointTransaction.create({
       data: {
         userId,
         amount,
@@ -139,6 +186,7 @@ export class PointsService implements OnApplicationBootstrap, OnApplicationShutd
         balanceAfter: user?.points ?? null,
         ruleVersion: meta?.ruleVersion ?? null,
         ...(meta?.grayReleaseId ? { grayReleaseId: meta.grayReleaseId } : {}),
+        ...(meta?.sessionId ? { sessionId: meta.sessionId } : {}),
       },
     })
   }
@@ -206,7 +254,8 @@ export class PointsService implements OnApplicationBootstrap, OnApplicationShutd
     if (!Number.isInteger(actualCredits) || actualCredits < 0) {
       throw new BadRequestException('结算积分必须为非负整数')
     }
-    return this.prisma.$transaction(async (tx) => {
+    let created: PointTransaction | null = null
+    const result = await this.prisma.$transaction(async (tx) => {
       const hold = await tx.pointHold.findUnique({ where: { id: holdId } })
       if (!hold) {
         throw new ConflictException('冻结单不存在')
@@ -244,7 +293,7 @@ export class PointsService implements OnApplicationBootstrap, OnApplicationShutd
         where: { id: hold.userId },
         select: { points: true },
       })
-      await tx.pointTransaction.create({
+      created = await tx.pointTransaction.create({
         data: {
           userId: hold.userId,
           amount: -actualCredits,
@@ -257,10 +306,13 @@ export class PointsService implements OnApplicationBootstrap, OnApplicationShutd
           balanceAfter: user?.points ?? null,
           ruleVersion: meta?.ruleVersion ?? null,
           ...(meta?.grayReleaseId ? { grayReleaseId: meta.grayReleaseId } : {}),
+        ...(meta?.sessionId ? { sessionId: meta.sessionId } : {}),
         },
       })
       return { settled: actualCredits, released: 0 }
     })
+    this.emitCreditTxAfterCommit(created)
+    return result
   }
 
   /**
@@ -279,7 +331,8 @@ export class PointsService implements OnApplicationBootstrap, OnApplicationShutd
    * T3 deferred 的「过报无害」计数语义修正为「实际 released 数」）。
    */
   private async releaseOnce(holdId: string, reason: string): Promise<boolean> {
-    return this.prisma.$transaction(async (tx) => {
+    let created: PointTransaction | null = null
+    const happened = await this.prisma.$transaction(async (tx) => {
       const hold = await tx.pointHold.findUnique({ where: { id: holdId } })
       if (!hold) {
         throw new ConflictException('冻结单不存在')
@@ -302,7 +355,7 @@ export class PointsService implements OnApplicationBootstrap, OnApplicationShutd
         where: { id: hold.userId },
         select: { points: true },
       })
-      await tx.pointTransaction.create({
+      created = await tx.pointTransaction.create({
         data: {
           userId: hold.userId,
           // points 余额未变（释放只回退 pointsFrozen），amount 恒等于余额增量 → 0
@@ -319,6 +372,8 @@ export class PointsService implements OnApplicationBootstrap, OnApplicationShutd
       })
       return true
     })
+    this.emitCreditTxAfterCommit(created)
+    return happened
   }
 
   /**

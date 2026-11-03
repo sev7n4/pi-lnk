@@ -5,7 +5,7 @@ import { useRouter } from 'vue-router'
 import { useAgentStore } from '@/stores/agent'
 import { useDockNoticeStore } from '@/stores/dockNotice'
 import { useAuthStore } from '@/stores/auth'
-import type { SidebarAttachment } from '@lnkpi/shared'
+import type { SidebarAttachment, CreditTxEvent } from '@lnkpi/shared'
 import { normalizeMentionedKeys, SIDEBAR_ATTACHMENT_MAX } from '@lnkpi/shared'
 import { apiUrl } from '@/services/api-base'
 import NeoAgentLogo from '@/components/agent/NeoAgentLogo.vue'
@@ -3622,6 +3622,11 @@ function handleEvent(event: { type: string; data: unknown }) {
         event.data as Parameters<typeof agent.trackTurnSettled>[0],
       )
       break
+    case 'credit_tx':
+      // Epic 1（2026-11-03）：积分变动单一入口 → 本会话累计（含生成费）+ 余额事件化（C2）。
+      // 与 turn_settled 互斥走单口径，根治「生成费漏显 + 双计」。
+      agent.trackCreditTx(event.data as CreditTxEvent['data'])
+      break
     case 'turn_suspended': {
       // turn_suspended（2026-10-31 皮皮虾回合生产实证）：主流在阻塞等待边界被 pi lane
       // 挂起收尾的显式信号。run 仍活着、正等用户在画布确认/作答 —— **挂起 ≠ 断链**：
@@ -4834,13 +4839,15 @@ defineExpose({
             >
               {{ turnLiveStatusText }}
             </div>
-            <!-- 会话积分常驻条：系统层最末（见层顶注释——紧贴输入区，WorkBuddy 同位）。 -->
+            <!-- 会话积分常驻条：系统层最末（见层顶注释——紧贴输入区，WorkBuddy 同位）。
+                 Epic 3 Task 7（2026-11-04）：生成扣费落账后追加「（对话 M · 生成 K）」拆分，
+                 回应「已消耗与余额对不上」的口径可读性诉求；纯文本回合无生成费不显示。 -->
             <div
               v-if="creditsLineVisible"
               class="agent-credits-line"
               data-testid="session-credits-line"
             >
-              已消耗 ◇{{ agent.sessionConsumedCredits }} 积分
+              已消耗 ◇{{ agent.sessionConsumedCredits }} 积分<template v-if="agent.creditSplit.generation > 0">（对话 {{ agent.creditSplit.text }} · 生成 {{ agent.creditSplit.generation }}）</template>
             </div>
           </div>
 
