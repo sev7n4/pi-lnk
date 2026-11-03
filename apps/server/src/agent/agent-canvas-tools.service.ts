@@ -3,6 +3,7 @@ import { ModuleRef } from '@nestjs/core'
 import { ZodError } from 'zod'
 import { parseVisionQaJson, type ParsedVisionQaJson } from '@lnkpi/agent'
 import { CANVAS_ACTION_APPLIER, defaultCanvasActionApplier } from './canvas-action-applier'
+import { chargedPointsFromRecord } from '../points/charge-session'
 import { assertNodeStatusTransition } from '../sessions/sessions-canvas-node-status.service'
 import type { ProviderContext, ProviderSource } from '../provider/provider-context'
 import {
@@ -2053,14 +2054,22 @@ export class AgentCanvasToolsService {
     )
 
     const recordId = record.id
+    // 积分单一真相源收尾（2026-11-03）：扣费时刻把实扣积分锁进节点 data.creditCost
+    // （applyChargeMeta 盖章的 chargedPoints），提议卡 pill 的服务端权威位（creditFromServer）
+    // 由此供数——历史卡片不随价目表改价漂移。fail-soft：无权威值时键不出现，前端走 quote。
+    const charged = chargedPointsFromRecord(record)
+    const creditPatch = {
+      generationRecordId: recordId,
+      ...(charged !== undefined ? { creditCost: charged, creditFromServer: true } : {}),
+    }
     allActions.push({
       type: 'update_node',
-      payload: { id: input.nodeId, data: { generationRecordId: recordId } },
+      payload: { id: input.nodeId, data: { ...creditPatch } },
     })
     await this.persist(input.sessionId, [
       {
         type: 'update_node',
-        payload: { id: input.nodeId, data: { generationRecordId: recordId } },
+        payload: { id: input.nodeId, data: { ...creditPatch } },
       },
     ])
 
@@ -2542,6 +2551,12 @@ export class AgentCanvasToolsService {
       )
       const recordId = record.id
       const url = typeof record.url === 'string' && record.url ? record.url : undefined
+      // 积分单一真相源收尾（2026-11-03）：同 image——实扣积分锁进节点（两个分支都写：
+      // generating 占位与终态投影都携带，提议卡权威位随时可读）。
+      const audioCharged = chargedPointsFromRecord(record)
+      const audioCreditPatch = {
+        ...(audioCharged !== undefined ? { creditCost: audioCharged, creditFromServer: true } : {}),
+      }
 
       // 🔴 异步生成（music：submit+轮询，官方 1–3 分钟）在这里就返回了
       // `status:'generating'` 且 `url` 未设 —— 终态由 studio 的 completeMusic 落库
@@ -2560,6 +2575,7 @@ export class AgentCanvasToolsService {
                 status: 'generating',
                 generationRecordId: recordId,
                 errorMessage: null,
+                ...audioCreditPatch,
               },
             },
           },
@@ -2595,6 +2611,7 @@ export class AgentCanvasToolsService {
               url,
               generationRecordId: recordId,
               errorMessage: noOutputNotice ?? (nodeTerminalStatus === 'error' ? '音频生成未完成' : null),
+              ...audioCreditPatch,
             },
           },
         },
