@@ -4,13 +4,28 @@
  *
  * ⚠️ 一律返回 `Buffer`（不是 data URL）：design 与 music 的产物体量远超内联阈值
  * （music 实测 2.2MB），调用方必须走对象存储转存。
+ *
+ * ⚠️ 2026-11-03 生产事故（蓝老虎会话 cmvzixb8k，design 管线挂死 8h+）立规：
+ * 本文件所有上游调用**必须经 `boundedFetch` 有界超时**（与 `upstreamFetch` 同一
+ * 内核，只是保留 fetchImpl 测试注入缝）。此前 `StepFunDesignProvider` 用裸 fetch，
+ * 容器经代理出网时代理对上游黑洞 ⇒ `await` 永不 settle ⇒ detached 管线静默挂死、
+ * 记录不落、节点永久 generating、取消 404。「无限等待」必须变「有界失败」。
  */
+import { boundedFetch, UPSTREAM_FETCH_TIMEOUT_MS, UPSTREAM_POLL_TIMEOUT_MS } from './upstream-fetch'
+
 export interface StepFunDesignInput {
   roles: Array<{ role: string; voice: string }>
   scripts: Array<{ role?: string; text: string }>
   instruction?: string
   responseFormat?: string
 }
+
+/**
+ * design 同步单次 POST 返回全量音频（多角色长脚本场景）。
+ * 45s 的创建类默认对它是紧的：单独立 120s 上界（调用方有记录先行 + reaper 兜底，
+ * 不会因放宽单次超时回到「永久挂死」形态）。
+ */
+export const STEPFUN_DESIGN_TIMEOUT_MS = 120_000
 
 export class StepFunDesignProvider {
   constructor(
@@ -20,7 +35,8 @@ export class StepFunDesignProvider {
   ) {}
 
   async generate(input: StepFunDesignInput): Promise<{ buffer: Buffer; contentType: string }> {
-    const res = await this.fetchImpl(`${this.baseUrl}/audio/generate`, {
+    const res = await boundedFetch(this.fetchImpl, `${this.baseUrl}/audio/generate`, {
+      timeoutMs: STEPFUN_DESIGN_TIMEOUT_MS,
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.apiKey}` },
       body: JSON.stringify({
@@ -83,7 +99,8 @@ export class StepFunMusicProvider {
   }
 
   async submit(input: StepFunMusicInput): Promise<{ taskId: string }> {
-    const res = await this.fetchImpl(`${this.baseUrl}/audio/music/submit`, {
+    const res = await boundedFetch(this.fetchImpl, `${this.baseUrl}/audio/music/submit`, {
+      timeoutMs: UPSTREAM_FETCH_TIMEOUT_MS,
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify({
@@ -110,7 +127,8 @@ export class StepFunMusicProvider {
 
   /** ⚠️ FAILED 时 HTTP 仍是 200 ⇒ 必须读 status 字段，不能只看 HTTP 码。 */
   async query(taskId: string): Promise<MusicQueryResult> {
-    const res = await this.fetchImpl(`${this.baseUrl}/audio/music/query`, {
+    const res = await boundedFetch(this.fetchImpl, `${this.baseUrl}/audio/music/query`, {
+      timeoutMs: UPSTREAM_POLL_TIMEOUT_MS,
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify({ task_id: taskId }),

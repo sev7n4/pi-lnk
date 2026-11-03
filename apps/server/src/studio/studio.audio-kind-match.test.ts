@@ -369,6 +369,8 @@ describe('generateAudio 的 BYOK 失败：客户端校验类失败不进 fallbac
     // `kind === 'design'` + BYOK + 上游 5xx 曾落进 `fallback_pending` ——
     // 而 `confirmPlatformFallback` 的 audio 分支**不读 `meta.audioKind`**，固定发
     // `POST {baseUrl}/audio/speech`，会把 `stepaudio-3-gen-preview` 当 TTS 模型发出去并标 completed。
+    // P0-b（2026-11-03 蓝老虎事故）后 design 记录先行：先建 generating 占位，
+    // 上游失败在占位记录上**就地置 failed**（update，不再 create 第二条）。
     const svc = await byokService(DESIGN_MODEL)
     designGenerate.mockRejectedValueOnce(new Error('StepFun design API 502: upstream boom'))
 
@@ -378,14 +380,39 @@ describe('generateAudio 的 BYOK 失败：客户端校验类失败不进 fallbac
 
     // 核心断言：任何一次写盘都不得是 fallback_pending（否则用户能点「用平台重试」→ 变 TTS）。
     expect(allStatuses()).not.toContain('fallback_pending')
-    const created = generationCreate.mock.calls.at(-1)![0].data as Record<string, unknown>
-    expect(created.status).toBe('failed')
+    // 记录先行：占位以 generating 建，终态 failed 由 update 就地回写（同一条记录）。
+    expect(generationCreate.mock.calls.at(-1)![0].data.status).toBe('generating')
+    expect(generationUpdate).toHaveBeenCalled()
+    const terminal = generationUpdate.mock.calls.at(-1)![0] as {
+      where: { id: string }
+      data: Record<string, unknown>
+    }
+    expect(terminal.data.status).toBe('failed')
+    expect(terminal.where.id).toBe('g-byok')
     expect(pointsRefund).toHaveBeenCalledWith(
       'u1',
       5,
       expect.stringContaining('失败退款'),
       expect.objectContaining({ kind: 'refund', category: 'audio', status: 'failed_refund' }),
     )
+  })
+
+  it('P0-b 记录先行：design 成功路径 = generating 占位 → 就地 completed（不再 create 第二条）', async () => {
+    const svc = await byokService(DESIGN_MODEL)
+
+    const record = await svc.generateAudio('u1', '一段综合音频', { kind: 'design' })
+
+    expect(generationCreate).toHaveBeenCalledTimes(1)
+    expect(generationCreate.mock.calls[0][0].data.status).toBe('generating')
+    expect(generationUpdate).toHaveBeenCalledTimes(1)
+    const terminal = generationUpdate.mock.calls[0][0] as {
+      where: { id: string }
+      data: Record<string, unknown>
+    }
+    expect(terminal.where.id).toBe('g-byok')
+    expect(terminal.data.status).toBe('completed')
+    expect(record.status).toBe('completed')
+    expect(pointsRefund).not.toHaveBeenCalled()
   })
 
   it('回归锁：BYOK 的**上游**失败（非 BadRequestException）仍走 fallback_pending + 重试入口', async () => {
