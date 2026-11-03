@@ -17,6 +17,8 @@ import {
   piLateNotifyEnabled,
   type LateNotifyPrisma,
 } from '../agent/pi-runtime/late-generation-notify'
+import { TerminalEventBus, terminalEventBus } from './terminal-events'
+import { notifyMetrics, type NotifyReason } from './notify-metrics'
 
 /**
  * 回收范围（走 detached 结算的图片侧 + 视频侧 + 文本侧记录）。
@@ -205,9 +207,18 @@ export class GenerationReaperService implements OnModuleInit {
     @Optional() @Inject(CanvasNodeStatusService) private readonly nodeStatus?: CanvasNodeStatusService,
     // C5：可选注入——单测直接构造时无 scheduler，跳过 handler 注册。
     @Optional() @Inject(AutomationSchedulerService) private readonly scheduler?: AutomationSchedulerService,
+    // E1：可选注入——terminal-write-tap 事件总线。未通过 DI 注册（leaf 单例直接导出），
+    // 故 @Optional 退化为 undefined 后回退到全局单例 terminalEventBus；单测可传本地实例隔离。
+    @Optional() private readonly bus: TerminalEventBus = terminalEventBus,
   ) {}
 
   onModuleInit(): void {
+    // E1：订阅 terminal-write-tap 事件总线 → 终态写点落库即触发即时通报扫描，
+    // 不再等 5min 回收巡检 / 1min 快节拍兜底（简报延迟从最长 6min 压到 ≤写点事务后瞬时）。
+    // 与 reaper 既有单飞守卫（notifyInFlight）天然互斥——并发扫描只跑一轮。
+    this.bus.onTerminalized(() => {
+      void this.notifyTerminalsOnce('terminal-write')
+    })
     // C5：15s 启动首扫 + 5min 巡检移交 AutomationSchedulerService（runOnStartup +
     // interval=5，见 AUTOMATION_DEFAULT_JOBS；D2/D4）。reason 映射：scheduled→periodic。
     if (!this.scheduler) return
@@ -368,6 +379,9 @@ export class GenerationReaperService implements OnModuleInit {
       )
       if (notified > 0) {
         this.logger.log(`[${reason}] 回合外生成终态通报已处理 ${notified} 条`)
+        // G-1（E1 度量口径）：按「已通报记录数」累加，而非扫描调用次数——
+        // 空扫（notified=0）不计入，避免「跑了 N 次扫描」式真空通过。
+        notifyMetrics.incrNotified(reason as NotifyReason, notified)
       }
     } catch (err) {
       this.logger.warn(`[${reason}] 回合外终态通报扫描失败（不影响回收）: ${errMessage(err)}`)
