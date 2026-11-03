@@ -7,6 +7,8 @@ import { PrismaService } from '../prisma/prisma.service'
 import { CanvasNodeStatusService } from '../sessions/sessions-canvas-node-status.service'
 import { AutomationSchedulerService } from '../automation/automation-scheduler.service'
 import { GenerationReaperService } from './generation-reaper.service'
+import { TerminalEventBus } from './terminal-events'
+import { notifyMetrics } from './notify-metrics'
 
 // 通报扫描 mock（file 级）：快节拍/单飞守卫用例需要可控的扫描桩。
 // piLateNotifyEnabled 保留真实现（env 驱动）⇒ 既有用例不设 PI_RUNTIME_URL 时
@@ -759,6 +761,75 @@ describe('GenerationReaperService 终态通报快节拍（job-generation-notify�
     await tickNotify()
 
     expect(notifyScanMock).not.toHaveBeenCalled()
+  })
+
+  describe('E1 terminal-write-tap 集成（终态写点 → 即时通报）', () => {
+    let localBus: TerminalEventBus
+    let e1Svc: GenerationReaperService
+    let e1Prisma: {
+      generationRecord: { findMany: ReturnType<typeof vi.fn> }
+      $transaction: ReturnType<typeof vi.fn>
+    }
+    let e1Refund: ReturnType<typeof vi.fn>
+    let notifySpy: ReturnType<typeof vi.spyOn>
+
+    beforeEach(() => {
+      // E1 路径需要 piLateNotifyEnabled() 为真：置 PI_RUNTIME_URL（本块不依赖真实 runtime）。
+      process.env.PI_RUNTIME_URL = 'http://localhost:9999'
+      notifyMetrics.reset()
+      localBus = new TerminalEventBus()
+      e1Refund = vi.fn(async () => {})
+      e1Prisma = {
+        generationRecord: { findMany: vi.fn(async () => []) },
+        $transaction: vi.fn(async (fn: (t: unknown) => Promise<number>) =>
+          fn({ generationRecord: { updateMany: vi.fn() } }),
+        ),
+      }
+      // 直接构造并注入本地总线实例（隔离全局单例），第 5 参 = bus。
+      e1Svc = new GenerationReaperService(
+        e1Prisma as never,
+        { refundInTx: e1Refund } as never,
+        undefined,
+        undefined,
+        localBus as never,
+      )
+      notifySpy = vi.spyOn(e1Svc as never, 'notifyTerminalsOnce')
+      notifyScanMock.mockResolvedValue(0)
+    })
+
+    it('总线 emitTerminalized → onModuleInit 订阅触发 notifyTerminalsOnce("terminal-write")', async () => {
+      e1Svc.onModuleInit()
+      localBus.emitTerminalized()
+      await vi.waitFor(() => expect(notifySpy).toHaveBeenCalledWith('terminal-write'))
+    })
+
+    it('通报命中记录数按 NotifyReason 累加（G-1 口径：计记录数非扫描次数）', async () => {
+      e1Svc.onModuleInit()
+      notifyScanMock.mockResolvedValueOnce(4)
+      localBus.emitTerminalized()
+      await vi.waitFor(() =>
+        expect(notifyMetrics.snapshot().notified['terminal-write']).toBe(4),
+      )
+      const snap = notifyMetrics.snapshot()
+      expect(snap.notified['terminal-write']).toBe(4)
+      // 扫描次数口径未启用：notified 记的是「已通报记录数」，不是「扫了几轮」。
+      expect(snap.scans['terminal-write'] ?? 0).toBe(0)
+    })
+
+    it('零命中（notify 返回 0）不计入度量，杜绝真空通过', async () => {
+      e1Svc.onModuleInit()
+      notifyScanMock.mockResolvedValueOnce(0)
+      localBus.emitTerminalized()
+      await vi.waitFor(() => expect(notifyScanMock).toHaveBeenCalled())
+      expect(notifyMetrics.snapshot().notified['terminal-write'] ?? 0).toBe(0)
+    })
+
+    it('未订阅（未调 onModuleInit）时 emit 不触发通报', async () => {
+      // 直接构造但未初始化：总线无订阅者，emit 不触发任何回调。
+      localBus.emitTerminalized()
+      await new Promise((r) => setTimeout(r, 10))
+      expect(notifySpy).not.toHaveBeenCalled()
+    })
   })
 })
 
