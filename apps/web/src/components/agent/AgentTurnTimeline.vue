@@ -531,6 +531,12 @@ const rootClass = computed(() =>
         <div v-if="proposalData(part.nodeId)" class="meta">
           <span v-if="proposalData(part.nodeId)!.modelId" class="chip model">{{ proposalData(part.nodeId)!.modelId }}</span>
           <span v-if="proposalData(part.nodeId)!.aspectRatio" class="chip">{{ proposalData(part.nodeId)!.aspectRatio }}</span>
+          <!-- 音频内联参数回执（2026-11-03 propose_inline_params）：台词段数/歌词字数/风格，
+               用户确认前可见生成内容载体（与节点 data 同源，音频 dock 面板可改） -->
+          <span v-if="proposalData(part.nodeId)!.audioScriptsSegments" class="chip">台词 {{ proposalData(part.nodeId)!.audioScriptsSegments }} 段</span>
+          <span v-if="proposalData(part.nodeId)!.audioLyricsChars" class="chip">歌词 {{ proposalData(part.nodeId)!.audioLyricsChars }} 字</span>
+          <span v-if="proposalData(part.nodeId)!.audioCaption" class="chip">{{ proposalData(part.nodeId)!.audioCaption }}</span>
+          <span v-if="proposalData(part.nodeId)!.audioInstrumental" class="chip">纯音乐</span>
           <span v-if="proposalCredit(part.nodeId)" class="chip credit">预计 {{ proposalCredit(part.nodeId) }} 积分</span>
           <span v-if="proposalData(part.nodeId)!.imageCount > 1" class="chip">{{ proposalData(part.nodeId)!.imageCount }} 张</span>
         </div>

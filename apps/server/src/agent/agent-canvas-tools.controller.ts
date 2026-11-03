@@ -1,5 +1,5 @@
 import { Body, Controller, Inject, Post, UseGuards } from '@nestjs/common'
-import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Min, ValidateNested } from 'class-validator'
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsObject, IsOptional, IsString, Length, Min, ValidateNested } from 'class-validator'
 import { Type } from 'class-transformer'
 import { TEXT_NODE_FORMATS } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
@@ -43,6 +43,82 @@ class UpsertMediaNodeDto {
   stage?: boolean
 }
 
+/**
+ * propose_generation 内联生成参数（2026-11-03 民谣音乐事故）：agent 在提议时携带的
+ * 音频参数，propose 时由服务端校验后落到节点 data（audio* 字段）——确认后的
+ * start-* 走既有「节点参数」通道自然读到，确认链路零改动。
+ * 容量上限防滥用（scripts 大段文本/巨型数组直接 400，不落库）。
+ */
+class ProposeInlineAudioScriptDto {
+  @IsOptional()
+  @IsString()
+  @Length(1, 50)
+  role?: string
+
+  @IsString()
+  @Length(1, 2000)
+  text!: string
+}
+
+class ProposeInlineAudioRoleDto {
+  @IsString()
+  @Length(1, 50)
+  role!: string
+
+  @IsString()
+  @Length(1, 100)
+  voice!: string
+}
+
+class ProposeInlineParamsDto {
+  @IsOptional()
+  @IsIn(['voice', 'design', 'music'])
+  kind?: string
+
+  @IsOptional()
+  @IsString()
+  @Length(1, 100)
+  voice?: string
+
+  @IsOptional()
+  @IsString()
+  @Length(1, 100)
+  emotion?: string
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => ProposeInlineAudioRoleDto)
+  roles?: ProposeInlineAudioRoleDto[]
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => ProposeInlineAudioScriptDto)
+  scripts?: ProposeInlineAudioScriptDto[]
+
+  @IsOptional()
+  @IsString()
+  @Length(1, 500)
+  instruction?: string
+
+  @IsOptional()
+  @IsString()
+  @Length(1, 500)
+  caption?: string
+
+  @IsOptional()
+  @IsString()
+  @Length(1, 6000)
+  lyrics?: string
+
+  @IsOptional()
+  @IsBoolean()
+  instrumental?: boolean
+}
+
 class ProposeGenerationDto {
   @IsString()
   sessionId!: string
@@ -62,6 +138,16 @@ class ProposeGenerationDto {
   @IsInt()
   @Min(0)
   sidebarImageCount?: number
+
+  /**
+   * 内联生成参数（2026-11-03）：只收音频（image/video 的参数面已有
+   * set_node_generation_params 覆盖，audio 的 scripts/roles/lyrics 是唯一缺口）。
+   * 缺省/undefined ⇒ 存量调用逐字节不变。
+   */
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ProposeInlineParamsDto)
+  params?: ProposeInlineParamsDto
 }
 
 class ClearProposeGenerationDto {
