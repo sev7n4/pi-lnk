@@ -77,12 +77,13 @@ describe('AgentTurnTimeline 卡片积分 = 价目表权威值（展示==计费�
     expect(w.text()).not.toContain('消耗 10 积分')
   })
 
-  it('proposal pending 卡「预计」chip 同源显 33', async () => {
+  it('proposal pending 卡「消耗」chip 同源显 33（2026-11-04 去「预计」字眼，琥珀强调）', async () => {
     const w = mount(AgentTurnTimeline, {
       props: { parts: [proposalPart()], canvasNodes: [node] },
     })
     await flush()
     await w.vm.$nextTick()
-    expect(w.text()).toContain('预计 33 积分')
+    expect(w.text()).toContain('消耗 33 积分')
+    expect(w.text()).not.toContain('预计')
   })
 })

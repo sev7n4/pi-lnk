@@ -508,10 +508,18 @@ const rootClass = computed(() =>
           <!-- 锚 glyph=纯品牌装饰（定位收敛纪律 2026-11-02）：定位出口每卡一个，
                由页脚 tether 唯一承载；glyph 不再可点，避免同卡三入口。 -->
           <span v-if="part.nodeId" class="lead shrink-0">
-            <span class="anchor-glyph" data-test="anchor-glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="3"/><line x1="12" y1="22" x2="12" y2="8"/><path d="M5 12H2a10 10 0 0 0 20 0h-3"/></svg></span>
+            <!-- 2026-11-04 提议卡 4 点优化②：锚 glyph（纯装饰）→ 节点类型图标——
+                 复用 artifact 卡同款 DockTypeIcon 内联 SVG（image/video/audio 24 网格
+                 stroke 体系，零第三方图标库），用户一眼识别提议的产物类型。 -->
+            <DockTypeIcon
+              :type="proposalData(part.nodeId)?.nodeType ?? 'image'"
+              :size="18"
+              class="node-type-icon"
+              data-test="node-type-icon"
+            />
           </span>
           <div class="min-w-0 flex-1">
-            <div class="eyebrow">画布节点</div>
+            <!-- 2026-11-04 4 点优化①：去掉「画布节点」眉标——卡片简化，标题只留节点名 -->
             <div class="name truncate font-medium text-[var(--lnk-text-primary)]">{{ proposalData(part.nodeId)?.title ?? '提议生成' }}</div>
           </div>
           <span
@@ -537,7 +545,13 @@ const rootClass = computed(() =>
           <span v-if="proposalData(part.nodeId)!.audioLyricsChars" class="chip">歌词 {{ proposalData(part.nodeId)!.audioLyricsChars }} 字</span>
           <span v-if="proposalData(part.nodeId)!.audioCaption" class="chip">{{ proposalData(part.nodeId)!.audioCaption }}</span>
           <span v-if="proposalData(part.nodeId)!.audioInstrumental" class="chip">纯音乐</span>
-          <span v-if="proposalCredit(part.nodeId)" class="chip credit">预计 {{ proposalCredit(part.nodeId) }} 积分</span>
+          <!-- 2026-11-04 4 点优化③：去「预计」字眼 →「⚡ 消耗 N 积分」+ 琥珀强调
+              （--lnk-credit 唯一积分语义令牌；闪电 svg 与 DockCreditBadge 同语义）。
+               金额仍走 proposalCredit（creditCost 服务端权威 → estimate* 兜底），不编造。 -->
+          <span v-if="proposalCredit(part.nodeId)" class="chip credit" data-test="credit-chip">
+            <svg class="bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            消耗 {{ proposalCredit(part.nodeId) }} 积分
+          </span>
           <span v-if="proposalData(part.nodeId)!.imageCount > 1" class="chip">{{ proposalData(part.nodeId)!.imageCount }} 张</span>
         </div>
 
@@ -587,7 +601,18 @@ const rootClass = computed(() =>
           <span v-else-if="part.status !== 'confirmed'" class="status-pill credit struck">未扣减</span>
         </div>
 
-        <button v-if="part.nodeId" type="button" class="tether" data-test="locate-link" @click="onLocate(part.nodeId)">
+        <!-- 2026-11-04 4 点优化④：pending 态定位入口「显性化」——从纯弱文字升级为
+             带边框/底色的次级按钮条（prominent），用户视觉上明确「这里是入口」；
+             终态保持弱链接（执行卡才是活跃面，不再抢视觉）。定位出口仍每卡唯一
+             （tether 承载，决策行不排定位图标——同卡三入口治理 2026-11-02 不变）。 -->
+        <button
+          v-if="part.nodeId"
+          type="button"
+          class="tether"
+          :class="{ prominent: part.status === 'pending_confirm' }"
+          data-test="locate-link"
+          @click="onLocate(part.nodeId)"
+        >
           <svg class="chain" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 12h6"/><path d="M11 5h5a4 4 0 0 1 0 8h-1"/><path d="M13 19H8a4 4 0 0 1 0-8h1"/></svg>
           在画布查看节点
         </button>
@@ -662,26 +687,11 @@ const rootClass = computed(() =>
  * 令牌纪律：一律 --lnk-*；新增样式禁 --neo-*（neoUsageRatchet）。
  * ============================================================ */
 
-/* 头部：眉标 + 节点名（极简定稿：眉标中性 muted，accent 不进结构位） */
-.eyebrow {
-  font-size: var(--lnk-text-2xs);
-  color: var(--lnk-text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-weight: var(--lnk-weight-semibold);
-}
-
-/* 头部锚 glyph：inline SVG stroke=currentColor，随主题反相（ledger R3：不引 png 资产） */
-.anchor-glyph {
-  display: grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-}
-.anchor-glyph svg {
-  width: 18px;
-  height: 18px;
-  display: block;
+/* 头部（2026-11-04 4 点优化①②）：眉标「画布节点」已去（卡片简化，标题=节点名）；
+   锚 glyph 退役 → 节点类型图标（DockTypeIcon，随主题 currentColor） */
+.node-type-icon {
+  color: var(--lnk-text-secondary);
+  flex: none;
 }
 
 /* —— 品牌三联轨道：对话(左端) ── 锚(滑动拇指) ── 画布(右端) —— */
@@ -833,8 +843,19 @@ const rootClass = computed(() =>
   gap: 4px;
 }
 .chip.model { font-weight: var(--lnk-weight-semibold); } /* A-now 模型中性：不作成本主因强调 */
-/* 极简定稿：积分一律中性 chip/pill——琥珀底色退役，成本重要性靠文案承载 */
-.chip.credit,
+/* 2026-11-04 4 点优化③（推翻 2026-11-02「琥珀退役」极简定稿——用户裁决积分需琥珀强调）：
+   pending 金额 chip 琥珀单点（--lnk-credit 唯一积分语义令牌 + 闪电 svg）；
+   终态「未扣减」pill 保持中性（删除线已表达诚实语义，琥珀只标活跃成本位）。 */
+.chip.credit {
+  color: var(--lnk-credit);
+  background: var(--lnk-surface-sunken);
+  border: 1px solid var(--lnk-border-default);
+}
+.chip.credit .bolt {
+  width: 11px;
+  height: 11px;
+  flex: none;
+}
 .status-pill.credit {
   color: var(--lnk-text-secondary);
   background: var(--lnk-surface-sunken);
@@ -948,6 +969,23 @@ const rootClass = computed(() =>
 .tether:hover { color: var(--lnk-accent-text); }
 .tether svg.chain { width: 13px; height: 13px; }
 .tether:hover svg.chain { animation: link-pull 0.5s var(--lnk-ease-standard); }
+/* 2026-11-04 4 点优化④：pending 态显性化——弱文字 → 带边框次级按钮条，
+   用户视觉上明确「这里是查看画布节点的入口」；触控目标 ≥ 32px（对话卡内非主操作，
+   不强上 44px 主触控，与 icon-btn 同档）。 */
+.tether.prominent {
+  border: 1px solid var(--lnk-border-default);
+  background: var(--lnk-surface-sunken);
+  border-radius: var(--lnk-radius-full);
+  padding: 5px 10px;
+  color: var(--lnk-text-secondary);
+  min-height: 32px;
+  transition: color var(--lnk-duration-base) var(--lnk-ease-standard),
+    border-color var(--lnk-duration-base) var(--lnk-ease-standard);
+}
+.tether.prominent:hover {
+  color: var(--lnk-accent-text);
+  border-color: var(--lnk-accent-border);
+}
 @keyframes link-pull {
   0% { transform: translateY(-2px); }
   50% { transform: translateY(1px); }
