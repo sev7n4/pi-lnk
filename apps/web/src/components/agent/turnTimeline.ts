@@ -129,6 +129,13 @@ export interface TurnTimeline {
   turnEndedAt?: number
   /** Q2（2026-10-14）：estimatedCredits = 服务端预估积分（MarginPolicy+FX 折算，纯展示）。 */
   usage?: TimelineUsage
+  /** 2026-11-03 结算摘要：turn_settled 权威值（覆盖摘要行里的「≈N 积分（预估）」段）。 */
+  settled?: {
+    credits?: number
+    model?: string
+    degraded?: boolean
+    released?: boolean
+  }
   /**
    * 2026-10-14（生产实证）：上游 thinking done 事件曾以**累积快照**下发（每段带此前
    * 全部段全文，4 段 len 220/758/822/963 同 head）。服务端已修（accumulator 段间重置），
@@ -172,6 +179,19 @@ export type TimelineEvent =
       data: { nodeId: string; elapsedMs: number }
     }
   | { type: 'turn_usage'; data: TimelineUsage & { estimatedCredits?: number } }
+  | {
+      /** 2026-11-03 结算摘要：turn_settled 权威结算进时间线（摘要行「共消耗 N 积分 · 模型名」
+       *  数据源）。随 executionEvents 落库重放，键不出现纪律同 applyTurnSettled。 */
+      type: 'turn_settled'
+      data: {
+        holdId: string
+        credits?: number
+        model?: string
+        ruleVersion?: string
+        degraded?: boolean
+        released?: boolean
+      }
+    }
   | {
       /**
        * 阻塞态事件（ADR-0011 T8，2026-10-20 协议语义对齐）。
@@ -608,6 +628,19 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
       }
       return
     }
+    case 'turn_settled': {
+      // 2026-11-03 结算摘要：权威结算写 timeline.settled（覆盖写、重放幂等），摘要 notice
+      // 若已存在（回合先收束、结算晚到——常态）则原地刷新文案。
+      const d = event.data
+      timeline.settled = {
+        ...(typeof d.credits === 'number' && Number.isFinite(d.credits) ? { credits: d.credits } : {}),
+        ...(typeof d.model === 'string' && d.model ? { model: d.model } : {}),
+        ...(d.degraded === true ? { degraded: true } : {}),
+        ...(d.released === true ? { released: true } : {}),
+      }
+      refreshTimelineSummary(timeline)
+      return
+    }
     case 'waiting_user': {
       // 2026-10-28 根治：等待态单一真相 = 时间线 part。
       // propose_generation ⇒ upsert 一个 `proposal` part（pending_confirm）；ask 等 ⇒ 保留
@@ -906,12 +939,21 @@ export function summarizeTimeline(timeline: TurnTimeline): string | null {
       timeline.usage.outputTokens
     const tokenStr = tokens < 1000 ? `${tokens}` : `${(Math.round(tokens / 100) / 10).toFixed(1)}k`
     segments.push(`消耗 ${tokenStr} tokens`)
-    // Q2（2026-10-14）：摘要把消耗收敛到**积分**单一口径（与项目计费体系一致）——
-    // USD cost 是上游内部成本口径，不再透出给用户；预估积分缺（渠道未配 pricing /
-    // MarginPolicy 不可用）时只显示 tokens，绝不显示 0 积分假象。
-    const credits = timeline.usage.estimatedCredits
-    if (typeof credits === 'number' && Number.isFinite(credits) && credits > 0) {
-      segments.push(`≈${Math.ceil(credits)} 积分（预估）`)
+    // 2026-11-03 结算摘要（对齐 WorkBuddy 回合尾静态行）：settled 到达即用**权威结算值**
+    // 收口「共消耗 N 积分 · 模型名」，预估段（≈N 积分（预估））不再出现——预估是流式
+    // 瞬时态，绝不残留为最终数字。released（预扣全退）不显示负数；credits 缺（异常形态）
+    // 回退预估段。模型名缺（旧落库事件无 model 键）时只显示积分。
+    const settled = timeline.settled
+    if (settled && !settled.released && typeof settled.credits === 'number' && Number.isFinite(settled.credits)) {
+      segments.push(`共消耗 ${settled.credits} 积分${settled.model ? ` · ${settled.model}` : ''}`)
+    } else {
+      // Q2（2026-10-14）：摘要把消耗收敛到**积分**单一口径（与项目计费体系一致）——
+      // USD cost 是上游内部成本口径，不再透出给用户；预估积分缺（渠道未配 pricing /
+      // MarginPolicy 不可用）时只显示 tokens，绝不显示 0 积分假象。
+      const credits = timeline.usage.estimatedCredits
+      if (typeof credits === 'number' && Number.isFinite(credits) && credits > 0) {
+        segments.push(`≈${Math.ceil(credits)} 积分（预估）`)
+      }
     }
   }
   return segments.length > 0 ? segments.join(' · ') : null
