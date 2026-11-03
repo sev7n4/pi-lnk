@@ -34,6 +34,7 @@ describe('PersistRemoteService', () => {
   const userAssetUpdate = vi.fn()
   const sessionFindFirst = vi.fn()
   const sessionUpdate = vi.fn()
+  const txSessionFindUnique = vi.fn()
   const generationFindFirst = vi.fn()
   const $transaction = vi.fn()
 
@@ -50,11 +51,16 @@ describe('PersistRemoteService', () => {
       metadata: null,
     }))
     generationFindFirst.mockResolvedValue(null)
+    txSessionFindUnique.mockResolvedValue(null)
     $transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
         userAsset: {
           upsert: userAssetUpsert,
           deleteMany: userAssetDeleteMany,
+        },
+        session: {
+          findUnique: txSessionFindUnique,
+          update: sessionUpdate,
         },
       }),
     )
@@ -352,6 +358,16 @@ describe('PersistRemoteService', () => {
         ],
       }),
     })
+    // C2b：落库走 transactGovernedCanvasOps，事务内读最新画布
+    txSessionFindUnique.mockResolvedValue({
+      canvasData: JSON.stringify({
+        nodes: [
+          { id: 'node-a', data: { url: original } },
+          { id: 'node-b', data: { url: 'https://other.example/x.png' } },
+        ],
+      }),
+      stagedActions: null,
+    })
     sessionUpdate.mockResolvedValue({})
 
     await service.persistRemote({
@@ -377,6 +393,74 @@ describe('PersistRemoteService', () => {
     expect(updated.nodes[0].data.upstreamUrl).toBe(original)
     expect(updated.nodes[0].data.storageTier).toBe('persisted')
     expect(updated.nodes[1].data.url).toBe('https://other.example/x.png')
+  })
+
+  // C2b（P1-C 写路径治理）：url 回写收编合规通道的行为级判据
+  it('C2b: stagedActions 在场时 url 回写退让——不写画布并留痕', async () => {
+    const original = 'https://platform-outputs.example/out2.png'
+    const publicUrl = 'https://cos.example/users/u1/assets/2026/def.png'
+    resolveDownloadSource.mockResolvedValue({
+      kind: 'remote',
+      fetchUrl: original,
+      filename: 'out2.png',
+    })
+    vi.mocked(openDownloadStream).mockResolvedValue({
+      body: Readable.from([Buffer.from('png')]),
+      contentType: 'image/png',
+    })
+    putStream.mockResolvedValue({ publicUrl })
+    userAssetUpsert.mockResolvedValue({ id: 'asset-persisted', url: publicUrl })
+    sessionFindFirst.mockResolvedValue({ id: 'sess-1', userId: 'u1', canvasData: '{"nodes":[]}' })
+    txSessionFindUnique.mockResolvedValue({
+      canvasData: '{"nodes":[]}',
+      stagedActions: JSON.stringify([{ type: 'add_node', payload: {} }]),
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await service.persistRemote({
+      userId: 'u1',
+      url: original,
+      kind: 'image',
+      sessionId: 'sess-1',
+      sourceNodeId: 'node-a',
+      replaceNodeUrl: true,
+    })
+
+    expect(sessionUpdate).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('skipped_staged'))
+    warn.mockRestore()
+  })
+
+  it('C2b: 目标节点不存在时零写入（事务内判定）', async () => {
+    const original = 'https://platform-outputs.example/out3.png'
+    const publicUrl = 'https://cos.example/users/u1/assets/2026/ghi.png'
+    resolveDownloadSource.mockResolvedValue({
+      kind: 'remote',
+      fetchUrl: original,
+      filename: 'out3.png',
+    })
+    vi.mocked(openDownloadStream).mockResolvedValue({
+      body: Readable.from([Buffer.from('png')]),
+      contentType: 'image/png',
+    })
+    putStream.mockResolvedValue({ publicUrl })
+    userAssetUpsert.mockResolvedValue({ id: 'asset-persisted', url: publicUrl })
+    sessionFindFirst.mockResolvedValue({ id: 'sess-1', userId: 'u1', canvasData: '{"nodes":[]}' })
+    txSessionFindUnique.mockResolvedValue({
+      canvasData: JSON.stringify({ nodes: [{ id: 'other', data: {} }] }),
+      stagedActions: null,
+    })
+
+    await service.persistRemote({
+      userId: 'u1',
+      url: original,
+      kind: 'image',
+      sessionId: 'sess-1',
+      sourceNodeId: 'node-a',
+      replaceNodeUrl: true,
+    })
+
+    expect(sessionUpdate).not.toHaveBeenCalled()
   })
 
   it('rejects upload path owned by another user', async () => {
