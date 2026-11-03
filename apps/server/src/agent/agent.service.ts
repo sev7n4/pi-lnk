@@ -186,6 +186,10 @@ export interface OutOfTurnRunSnapshot {
   canvasActions: CanvasAction[]
 }
 
+/** 模块内 sleep（仅 P1 startConversationRun 锚点超时兜底用）。 */
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+
 /**
  * 回合外 run 接收器（P0-A 纯逻辑，2026-11-02 天鹅事故）。
  *
@@ -1249,6 +1253,201 @@ export class AgentService implements OnModuleInit {
       return { outcome: 'none', lastSeq: sinceSeq }
     } finally {
       clearTimeout(timer)
+    }
+  }
+
+  // ─── 多端一致性 P1（计划 2026-11-04 Task 4）：POST 仅回 ack，run 后台 drain ─────────
+
+  /**
+   * 头探针：读 lane buffer 当前最大事件 seq（**只读，不触发 run**）。
+   *
+   * 实现：以 `lastEventId='0'` 订阅重放——pi-runtime 会把 buffer 里全部事件
+   * （seq > 0）**同步 flush**（app.ts `for (const event of buffered) writeEvent`）
+   * 后才进入 live 等待。因此「重放帧之间出现静默窗」即重放结束的可靠信号；
+   * head = 重放期间见到的最大 seq。随后 abort 退订，不留长连接。
+   *
+   * 退化路径（plan 已知未知的三级兜底）：
+   *  - lane 不存在（404，本线程从未跑过 run）⇒ 重放为空 ⇒ head=0：前端从 0
+   *    订阅 = 全量重放 + 前端按回合边界去重（buffer 里本来就没有别的事件）；
+   *  - 探测超时 / pi-runtime 不可达 ⇒ head=0，同上退化；
+   *  - buffer 溢出淘汰（409）⇒ 记 warn 后 head=0（409 由前端快照 resync 兜底）。
+   *
+   * ⚠️ 必须在 **prompt 触发前**调用（startConversationRun 的时序前提）：
+   * 探针读到的 head 覆盖一切「触发前」事件 ⇒ 前端以 head 订阅必然无漏。
+   */
+  private async readLaneHeadSeq(
+    threadKey: string,
+    opts?: { totalBudgetMs?: number; quietMs?: number },
+  ): Promise<number> {
+    const totalBudgetMs = opts?.totalBudgetMs ?? 1_500
+    const quietMs = opts?.quietMs ?? 150
+    const deadline = Date.now() + totalBudgetMs
+    const ac = new AbortController()
+    const abortTimer = setTimeout(() => ac.abort(), totalBudgetMs)
+    let head = -1
+    try {
+      const iterator = this.runEventStream(threadKey, {
+        lastEventId: '0',
+        signal: ac.signal,
+      })[Symbol.asyncIterator]()
+      // 下一事件 vs 静默窗竞赛：重放是同步 flush，静默窗内无新帧 ⇒ 重放已尽。
+      const nextWithTimeout = async (
+        ms: number,
+      ): Promise<IteratorResult<AgentStreamEvent> | null> => {
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const timeout = new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), ms)
+        })
+        try {
+          return await Promise.race([iterator.next(), timeout])
+        } finally {
+          if (timer) clearTimeout(timer)
+        }
+      }
+      while (Date.now() < deadline) {
+        const res = await nextWithTimeout(Math.min(quietMs, deadline - Date.now()))
+        if (!res || res.done) break
+        const seq = (res.value as unknown as { seq?: number }).seq
+        if (typeof seq === 'number' && seq > head) head = seq
+      }
+    } catch {
+      // abort / 网络错误 / 409：走退化 head（可能是已收集的部分最大值，仍安全——
+      // 它只可能小于真 head ⇒ 前端订阅多重放一点，不会漏）。
+    } finally {
+      clearTimeout(abortTimer)
+      ac.abort() // 确保底层订阅退订（retryOnMissing 语义下 runEventStream 不会自终）
+    }
+    return head < 0 ? 0 : head
+  }
+
+  /**
+   * P1 Task 4：触发一轮会话 run 并**立即返回 ack**，run 在服务端后台 drain。
+   *
+   * 与 `streamConversation` 的关系：以**完全相同的位置参数**调用它（⛔ 禁止中段
+   * 插参——~40 处按位置调用的测试会静默错值），本方法只是「换个消费者」：
+   * 事件不再经 HTTP 响应体流出，而是被后台 drain 循环完整消费（= 保留
+   * finalizeTurn / 落库 / 幂等收口等全部既有副作用，plan Review Focus 5）。
+   *
+   * ack 锚点（threadId + sinceSeq）如何做到「不漏不重」：
+   *  - **非 fork**：fork 与否在触发前不可知，但 fork 场景 lane 在**新**线程
+   *    （buffer 空）；非 fork 场景 lane 在原线程。前者经 `thread_forked` 事件
+   *    回填锚点（sinceSeq=0——新 lane 从 0 起且此刻只有本 run 在写），后者在
+   *    探针完成后即刻定锚（sinceSeq=触发前 head）⇒ 前端订阅必然无漏。
+   *  - **fork**：drain 首个事件就是 `thread_forked`（fork 先于 prompt，见
+   *    streamConversation :808），以它回填；兜底超时 5s（fork 失败时 streamConversation
+   *    会 yield error+done 后结束，anchor 在 drain 收尾处兜底回旧线程——此时前端
+   *    订阅旧线程收不到任何事件，由 P0 reconcile 的 verify-before-fail 兜住）。
+   *
+   * 失败语义：本方法**不抛**——ack 阶段的任何异常都折成「accepted 兜底锚点」，
+   * run 的真实失败由后台 drain 记日志、经既有事件面（reconcile / 旁听流）暴露。
+   */
+  async startConversationRun(
+    sessionId: string,
+    userMessage: string,
+    userId?: string,
+    threadId?: string,
+    idempotencyKey?: string,
+    skillId?: string,
+    model?: string,
+    focusNodeId?: string,
+    attachments?: SidebarAttachment[],
+    refOrder?: string[],
+    mentionedKeys?: string[],
+    thinking?: boolean,
+    thinkingEffort?: 'high' | 'max',
+    branchFromEntryId?: string,
+    selectedNodeIds?: string[],
+  ): Promise<{
+    accepted: true
+    threadId: string
+    sinceSeq: number
+    forkedThreadId?: string
+  }> {
+    const initialThreadId = threadId?.trim() || sessionId
+    const forkRequested = Boolean(branchFromEntryId?.trim())
+
+    // ① 头探针（仅非 fork；fork 的 lane 在新线程、buffer 空，sinceSeq 恒 0）。
+    //    必须先于 drain——drain 一旦开始，prompt 就触发，探针会混入本 run 的事件。
+    let head = 0
+    if (!forkRequested) {
+      head = await this.readLaneHeadSeq(initialThreadId)
+    }
+
+    // ② 锚点：非 fork 即刻定锚；fork 等 thread_forked 回填。
+    let resolveAnchor!: (v: { threadId: string; sinceSeq: number; forkedThreadId?: string }) => void
+    const anchor = new Promise<{ threadId: string; sinceSeq: number; forkedThreadId?: string }>(
+      (resolve) => {
+        resolveAnchor = resolve
+      },
+    )
+    let anchorSettled = false
+    const settleAnchor = (v: { threadId: string; sinceSeq: number; forkedThreadId?: string }) => {
+      if (anchorSettled) return
+      anchorSettled = true
+      resolveAnchor(v)
+    }
+    if (!forkRequested) {
+      settleAnchor({ threadId: initialThreadId, sinceSeq: head })
+    }
+
+    // ③ 后台 drain：`for await` 立即开始执行 ⇒ client.prompt() 被触发（plan 要点）。
+    //    消费即副作用——落库/幂等收口都在 streamConversation 内部，逐条保留。
+    void (async () => {
+      try {
+        for await (const event of this.streamConversation(
+          sessionId,
+          userMessage,
+          userId,
+          threadId,
+          idempotencyKey,
+          skillId,
+          model,
+          focusNodeId,
+          attachments,
+          refOrder,
+          mentionedKeys,
+          thinking,
+          thinkingEffort,
+          branchFromEntryId,
+          selectedNodeIds,
+        )) {
+          if (!anchorSettled && event.type === 'thread_forked') {
+            const forked = (event.data as { threadId?: string } | undefined)?.threadId
+            if (forked) {
+              settleAnchor({ threadId: forked, sinceSeq: 0, forkedThreadId: forked })
+            }
+          }
+        }
+        // 流正常收尾但 fork 锚点未定（fork 请求失败：error+done 已 yield，见上）——
+        // 兜底回旧线程：前端订不到任何事件，由 reconcile verify-before-fail 兜住。
+        settleAnchor({ threadId: initialThreadId, sinceSeq: 0 })
+      } catch (err) {
+        this.piLogger?.warn?.(
+          `conversation run drain failed (thread=${initialThreadId}): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        )
+        settleAnchor({ threadId: initialThreadId, sinceSeq: 0 })
+      }
+    })()
+
+    // ④ ack：非 fork 立即可返；fork 等锚点（≤5s，fork 是一次内网 REST，正常毫秒级）。
+    const resolved = await Promise.race([
+      anchor,
+      sleep(5_000).then(() => null),
+    ])
+    if (!resolved) {
+      // fork 场景 5s 未见到 thread_forked（极反常）：兜底旧线程 + 0。
+      this.piLogger?.warn?.(
+        `conversation run anchor timeout (thread=${initialThreadId}, fork requested)`,
+      )
+      return { accepted: true, threadId: initialThreadId, sinceSeq: 0 }
+    }
+    return {
+      accepted: true,
+      threadId: resolved.threadId,
+      sinceSeq: resolved.sinceSeq,
+      ...(resolved.forkedThreadId ? { forkedThreadId: resolved.forkedThreadId } : {}),
     }
   }
 

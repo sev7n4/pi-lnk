@@ -23,6 +23,7 @@ import { AgentMemoryService } from './agent-memory.service'
 import { AgentService } from './agent.service'
 import { normalizeIntent, isRegenerationIntent } from './intent-dedup'
 import { recordSessionSeen } from './generation-recovery/presence'
+import { isStreamMainFromPiRuntimeEnabled } from './stream-main-flag'
 import {
   loadRegistry,
   renderStatic,
@@ -765,6 +766,102 @@ export class AgentController {
     @Body() dto: ConversationDto,
     @Req() req: Request & { user: { sub: string } },
     @Res() res: Response,
+  ) {
+    // P1 统一传输（多端一致性 · 计划 2026-11-04 Task 4）：flag on ⇒ POST 仅回
+    // JSON ack（threadId + sinceSeq），run 在服务端后台 drain，前端改经
+    // GET /runs/events（权威通道，带 id: 帧 + 断点续传）消费同一事件流。
+    // 默认 off ⇒ 下方 conversationStreaming 路径行为逐字节不变（回滚 = 改 env）。
+    if (isStreamMainFromPiRuntimeEnabled()) {
+      return this.conversationAck(dto, req, res)
+    }
+    return this.conversationStreaming(dto, req, res)
+  }
+
+  /**
+   * ack 路径（flag on）：与流式路径共享同一组前置闸门，语义一一对应折成 JSON——
+   *  - 幂等键命中 ⇒ {accepted:false, reason:'idempotent_hit', status/resultSummary}
+   *    （前端展示与 off 路径相同的提示文案；命中 processing 时可另行经
+   *    GET /runs/events 订阅旁观该轮，无需重发）；
+   *  - 意图重复 ⇒ {accepted:false, reason:'not_idle'}（同 off 的 turn_not_submitted 语义）；
+   *  - 会话越权 ⇒ {accepted:false, reason:'session_forbidden'}（同 off 的 hint 语义，
+   *    不区分「不存在/无权」以免泄漏存在性）。
+   * 命中闸门时**不触发**任何 run。放行 ⇒ startConversationRun（位置参数与
+   * conversationStreaming 的 streamConversation 实参表同构，⛔ 顺序即契约）。
+   */
+  private async conversationAck(
+    dto: ConversationDto,
+    req: Request & { user: { sub: string } },
+    res: Response,
+  ) {
+    const idempotencyKey = req.headers['idempotency-key'] as string | undefined
+    if (idempotencyKey) {
+      const cached = await this.agentService.checkIdempotencyKey(idempotencyKey)
+      if (cached) {
+        return res.json({
+          code: 0,
+          message: 'ok',
+          data: {
+            accepted: false,
+            reason: 'idempotent_hit',
+            status: cached.status,
+            ...(cached.resultSummary ? { resultSummary: cached.resultSummary } : {}),
+          },
+        })
+      }
+    }
+
+    const threadKey = dto.threadId || dto.sessionId
+    const normalizedIntent = normalizeIntent(dto.message)
+    if (
+      normalizedIntent &&
+      !isRegenerationIntent(dto.message) &&
+      (await this.agentService.findDuplicateIntent(threadKey, normalizedIntent))
+    ) {
+      return res.json({
+        code: 0,
+        message: 'ok',
+        data: { accepted: false, reason: 'not_idle' },
+      })
+    }
+
+    try {
+      await this.sessionsService.findOne(dto.sessionId, req.user.sub)
+    } catch (err) {
+      if (err instanceof ForbiddenException) {
+        return res.json({
+          code: 0,
+          message: 'ok',
+          data: { accepted: false, reason: 'session_forbidden' },
+        })
+      }
+      throw err
+    }
+
+    const ack = await this.agentService.startConversationRun(
+      dto.sessionId,
+      dto.message,
+      req.user.sub,
+      dto.threadId,
+      idempotencyKey,
+      dto.skillId,
+      dto.model,
+      dto.focusNodeId,
+      dto.attachments,
+      dto.refOrder,
+      dto.mentionedKeys,
+      dto.thinking,
+      dto.thinkingEffort,
+      dto.branchFromEntryId,
+      dto.selectedNodeIds,
+    )
+    return res.json({ code: 0, message: 'ok', data: ack })
+  }
+
+  /** 流式路径（flag off，默认）：**原 conversation 方法体，逐字节未动**。 */
+  private async conversationStreaming(
+    dto: ConversationDto,
+    req: Request & { user: { sub: string } },
+    res: Response,
   ) {
     res.setHeader('Content-Type', 'text/event-stream')
     res.setHeader('Cache-Control', 'no-cache')
