@@ -856,6 +856,7 @@ export class StudioService {
         consumeMeta('text', {
           model: model ?? null,
           generationId: record.id,
+          sessionId: record.sessionId ?? undefined,
           ruleVersion: quote.ruleVersion,
           ...(quote.grayReleaseId ? { grayReleaseId: quote.grayReleaseId } : {}),
         }),
@@ -890,6 +891,7 @@ export class StudioService {
           refundMeta('text', 'cancelled_refund', {
             model: resolved.modelName,
             generationId: record.id,
+          sessionId: record.sessionId ?? undefined,
           }),
         )
         await this.prisma.generationRecord
@@ -914,6 +916,7 @@ export class StudioService {
           refundMeta('text', 'failed_refund', {
             model: resolved.modelName,
             generationId: record.id,
+          sessionId: record.sessionId ?? undefined,
           }),
         )
         const failedMeta = applyFailureDiagnosticMeta(
@@ -941,6 +944,7 @@ export class StudioService {
         refundMeta('text', 'byok_refund', {
           model: resolved.modelName,
           generationId: record.id,
+          sessionId: record.sessionId ?? undefined,
         }),
       )
       return this.prisma.generationRecord.update({
@@ -1166,6 +1170,7 @@ export class StudioService {
         consumeMeta('image', {
           model: model ?? null,
           generationId: record.id,
+          sessionId: record.sessionId ?? undefined,
           ruleVersion: quote.ruleVersion,
           ...(quote.grayReleaseId ? { grayReleaseId: quote.grayReleaseId } : {}),
         }),
@@ -1352,6 +1357,7 @@ export class StudioService {
         consumeMeta('image', {
           model: model ?? null,
           generationId: record.id,
+          sessionId: record.sessionId ?? undefined,
           ruleVersion: quote.ruleVersion,
           ...(quote.grayReleaseId ? { grayReleaseId: quote.grayReleaseId } : {}),
         }),
@@ -1382,6 +1388,7 @@ export class StudioService {
             refundMeta('image', 'cancelled_refund', {
               model: resolved.modelName,
               generationId: record.id,
+          sessionId: record.sessionId ?? undefined,
             }),
           )
           cancelMeta = applyRefundMeta(cancelMeta, cost, 'cancelled')
@@ -1414,6 +1421,7 @@ export class StudioService {
           refundMeta('image', 'failed_refund', {
             model: resolved.modelName,
             generationId: record.id,
+          sessionId: record.sessionId ?? undefined,
           }),
         )
         const failedMeta = applyFailureDiagnosticMeta(
@@ -1441,6 +1449,7 @@ export class StudioService {
         refundMeta('image', 'byok_refund', {
           model: resolved.modelName,
           generationId: record.id,
+          sessionId: record.sessionId ?? undefined,
         }),
       )
       return this.prisma.generationRecord.update({
@@ -1611,6 +1620,7 @@ export class StudioService {
         consumeMeta('image', {
           model: editModelKey,
           generationId: record.id,
+          sessionId: record.sessionId ?? undefined,
           ruleVersion: quote.ruleVersion,
           ...(quote.grayReleaseId ? { grayReleaseId: quote.grayReleaseId } : {}),
         }),
@@ -1630,6 +1640,7 @@ export class StudioService {
         refundMeta('image', 'failed_refund', {
           model: resolved.modelName,
           generationId: record.id,
+          sessionId: record.sessionId ?? undefined,
         }),
       )
       const existing = await this.prisma.generationRecord.findFirst({ where: { id: record.id } })
@@ -1662,6 +1673,7 @@ export class StudioService {
           refundMeta('image', 'cancelled_refund', {
             model: resolved.modelName,
             generationId: record.id,
+          sessionId: record.sessionId ?? undefined,
           }),
         )
         throwCancelledException(cost)
@@ -1679,6 +1691,7 @@ export class StudioService {
           refundMeta('image', 'cancelled_refund', {
             model: resolved.modelName,
             generationId: record.id,
+          sessionId: record.sessionId ?? undefined,
           }),
         )
         throwCancelledException(cost)
@@ -1704,6 +1717,7 @@ export class StudioService {
           refundMeta('image', 'cancelled_refund', {
             model: resolved.modelName,
             generationId: record.id,
+          sessionId: record.sessionId ?? undefined,
           }),
         )
         throwCancelledException(cost)
@@ -1718,6 +1732,7 @@ export class StudioService {
           refundMeta('image', 'cancelled_refund', {
             model: resolved.modelName,
             generationId: record.id,
+          sessionId: record.sessionId ?? undefined,
           }),
         )
         throwCancelledException(cost)
@@ -2289,6 +2304,7 @@ export class StudioService {
         consumeMeta('video', {
           model: model ?? null,
           generationId: record.id,
+          sessionId: record.sessionId ?? undefined,
           ruleVersion: videoQuote.ruleVersion,
           ...(videoQuote.grayReleaseId ? { grayReleaseId: videoQuote.grayReleaseId } : {}),
         }),
@@ -2454,6 +2470,7 @@ export class StudioService {
               refundMeta('audio', 'cancelled_refund', {
                 model: resolved.modelName,
                 generationId: designRecord.id,
+          sessionId: designRecord.sessionId ?? undefined,
               }),
             )
             // 占位记录就地落终态再抛取消（isCancelledException 在内/外层 catch 均放行）
@@ -2487,6 +2504,7 @@ export class StudioService {
             refundMeta('audio', 'failed_refund', {
               model: resolved.modelName,
               generationId: designRecord.id,
+          sessionId: designRecord.sessionId ?? undefined,
             }),
           )
           const failedMeta = applyFailureDiagnosticMeta(
@@ -3096,6 +3114,7 @@ export class StudioService {
         refundMeta(studioPointCategory(record.type), 'cancelled_refund', {
           model: record.model ?? null,
           generationId: record.id,
+          sessionId: record.sessionId ?? undefined,
           // 与 consume 路径同纪律：global quote 时键不出现（灰度报告 refundCount 口径）
           ...(grayReleaseId ? { grayReleaseId } : {}),
         }),
@@ -3151,6 +3170,7 @@ export class StudioService {
         refundMeta(studioPointCategory(record.type), 'cancelled_refund', {
           model: record.model ?? null,
           generationId: record.id,
+          sessionId: record.sessionId ?? undefined,
         }),
       )
       updatedMeta = applyRefundMeta(updatedMeta, cost, 'cancelled')

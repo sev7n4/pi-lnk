@@ -135,6 +135,7 @@ describe('generateImageVariation 账本对账（记录先行）', () => {
       kind: 'consume',
       category: 'image',
       generationId: 'g1',
+      sessionId: 's1',
     })
     expect((generationCreate.mock.calls[0]![0] as { data: Record<string, unknown> }).data.status).toBe(
       'generating',

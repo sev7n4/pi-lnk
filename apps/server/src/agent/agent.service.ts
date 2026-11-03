@@ -25,6 +25,7 @@ import {
   listModels,
   normalizeMentionedKeys,
   validateSidebarAttachments,
+  type CreditTxEvent,
   type GenerationType,
   type StudioModality,
   buildSelectionDigest,
@@ -33,6 +34,7 @@ import { buildSidebarBlock } from './pi-runtime/sidebar-block'
 import { decodeCursor, paginateVisibleRows } from './messages-cursor'
 import { normalizeIntent } from './intent-dedup'
 import { MaterialService } from '../canvas/material.service'
+import { SessionEventBus } from '../points/session-event-bus.service'
 import { ZodError } from 'zod'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
 import {
@@ -304,6 +306,12 @@ export class AgentService implements OnModuleInit {
     @Optional()
     @Inject(GenerationReaperService)
     private readonly generationReaper?: GenerationReaperService,
+    // Epic 1（2026-11-03-credit-consumption-display）：在飞流注入 credit_tx 的总线。
+    // @Optional 保持既有测试/未装配零破坏；运行时缺省 = 退化（flag 第二道闸，
+    // 与 PointsService 同模式）。
+    @Optional()
+    @Inject(SessionEventBus)
+    private readonly eventBus?: SessionEventBus,
   ) {}
 
   /**
@@ -1111,6 +1119,15 @@ export class AgentService implements OnModuleInit {
     const queue: AgentStreamEvent[] = []
     let notify: (() => void) | null = null
     let finished = false
+    // ── Epic 1 Task 5：旁听路径同样注入 credit_tx（多端一致，见 streamFromPiRuntime）──
+    // 直接推入本方法既有 queue（主循环已会 yield），退订在 finally。
+    let creditUnsub: (() => void) | undefined
+    if (process.env.CREDIT_TX === 'on' && this.eventBus) {
+      creditUnsub = this.eventBus.subscribeSession(sessionKey, (ev: CreditTxEvent['data']) => {
+        queue.push({ type: 'credit_tx', data: ev } as unknown as AgentStreamEvent)
+        notify?.()
+      })
+    }
     const unsubscribe = client.streamEvents(
       sessionKey,
       (event) => {
@@ -1159,6 +1176,7 @@ export class AgentService implements OnModuleInit {
     } finally {
       if (opts?.signal) opts.signal.removeEventListener('abort', onAbort)
       unsubscribe()
+      creditUnsub?.()
     }
   }
 
@@ -2540,6 +2558,17 @@ export class AgentService implements OnModuleInit {
     // （首事件不丢；⚠️ 若把 iteratePiEvents 改回惰性 async generator，此保证立即失效——
     // 见其内部注释与 turn-identity 测试 H 用例）。
     const iterator = events[Symbol.asyncIterator]()
+    // ── Epic 1 Task 5：在飞流注入 credit_tx ──
+    // 本次会话的积分变动（文本回合结算 / 生成扣费）经 SessionEventBus 推入 creditQueue，
+    // 主消费循环顶部与结算块收口处依次 yield，确保实时进 SSE 流。CREDIT_TX=off 时
+    // 完全不订阅（退化，与既有展示行为一致）。
+    const creditQueue: AgentStreamEvent[] = []
+    let creditUnsub: (() => void) | undefined
+    if (process.env.CREDIT_TX === 'on' && this.eventBus) {
+      creditUnsub = this.eventBus.subscribeSession(sessionId, (ev: CreditTxEvent['data']) => {
+        creditQueue.push({ type: 'credit_tx', data: ev } as unknown as AgentStreamEvent)
+      })
+    }
     // 可观测性专项 ④ + P1 skillId 转接：文本 /skill 命令优先，dock skillId 兜底；未知名 fail-soft 原文发送。
     // listSkills 仅在可能需要校验时调用（有命令或有 skillId），失败降级 null（fail-soft）
     // P1 标尺④修复：dock 传的是 UI 短 id（canvas/product-visual），须先经 mapUiSkillId 映射为
@@ -2798,6 +2827,10 @@ export class AgentService implements OnModuleInit {
     let sawWaitingUser = false
     try {
       while (!done) {
+        // Epic 1 Task 5：先把在飞期间到达的 credit_tx 尽数下发（生成扣费实时进对话）。
+        while (creditQueue.length > 0) {
+          yield creditQueue.shift() as AgentStreamEvent
+        }
         const { value: event, done: streamClosed } = await iterator.next()
         if (streamClosed || !event) break
         // ── P0-B 回合围栏（2026-11-02 天鹅事故）────────────────────────────
@@ -3085,6 +3118,8 @@ export class AgentService implements OnModuleInit {
       // 注意：iteratePiEvents 现在返回 AsyncIterableIterator，其 `return` 在类型上是可选的，
       // 故用可选调用（运行期恒存在，见 iteratePiEvents 内部实现）。
       await iterator.return?.(undefined)?.catch(() => {})
+      // Epic 1 Task 5：流收口退订 credit_tx 订阅，避免 emitter 泄漏（R1）。
+      creditUnsub?.()
     }
 
     // ── D4（multi-device Task 6）：流末尾回传服务端裁定的回合归属 ──
@@ -3173,6 +3208,9 @@ export class AgentService implements OnModuleInit {
               {
                 kind: 'consume',
                 category: 'text',
+                // Epic 1 Task 5：会话归属透传——settle 后 emit 的 credit_tx 经此 sessionId
+                // 精准路由到本会话在飞流（C3：仅订阅匹配的流收到，不串会话）。
+                sessionId,
                 model: billingModelKey,
                 ruleVersion: quote.ruleVersion,
                 ...(quote.grayReleaseId ? { grayReleaseId: quote.grayReleaseId } : {}),
@@ -3201,6 +3239,11 @@ export class AgentService implements OnModuleInit {
                 ...(quote.breakdown ? { breakdown: quote.breakdown } : { degraded: true }),
               }).data,
             } as AgentStreamEvent
+            // Epic 1 Task 5：回合结算 credit_tx 已随 settleFromHold 经总线入队，
+            // 此处收口下发，确保落在本流结束（done）之前、turn_settled 之后。
+            while (creditQueue.length > 0) {
+              yield creditQueue.shift() as AgentStreamEvent
+            }
           } catch (err) {
             // settle 抛 409 等 → release 全退 + warn（幂等由 points 层 exactly-once 守卫）
             this.piLogger.warn(

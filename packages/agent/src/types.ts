@@ -107,6 +107,10 @@ export interface AgentStreamEvent {
     // （/runs/events followUp tail）续传。前端据此保持等待态呈现（等待条不随
     // isStreaming 熄灭）、不弹「连接已断开」断链文案——挂起 ≠ 断链。
     | 'turn_suspended'
+    // Epic 1（2026-11-03-credit-consumption-display-design §5.1）：计费事务提交后统一下发的
+    // 积分变动。在飞 SSE 流经 SessionEventBus 订阅注入（`streamFromPiRuntime` 主路径 +
+    // `runEventStream` 旁听路径双订阅），前端据此实时累计本会话消耗并事件化刷新余额。
+    | 'credit_tx'
     | 'done'
     | 'error'
   data: unknown

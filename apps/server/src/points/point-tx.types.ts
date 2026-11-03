@@ -22,6 +22,12 @@ export interface PointTxMeta {
   grayReleaseId?: string | null
   /** 关联冻结单 id（P2 token 计费 freeze/settle 链路透传；PointTransaction 无对应列，不落库） */
   holdId?: string
+  /**
+   * Epic 1（spec 2026-11-03-credit-consumption-display-design）：关联会话 id。
+   * 经 consumeMeta/refundMeta 的 `extra` 透传，由 PointsService 写入
+   * `pointTransaction.sessionId`（键不出现纪律：缺省不落地）。
+   */
+  sessionId?: string | null
 }
 
 export function consumeMeta(
