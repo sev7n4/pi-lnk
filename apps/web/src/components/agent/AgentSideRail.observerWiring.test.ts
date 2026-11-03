@@ -76,7 +76,7 @@ describe('AgentSideRail 会话级订阅接线（multi-device 收尾 P0）', () =
     expect(
       code,
       '旁观收尾直接拉权威历史（传 0 跳过 5s×N 的终态轮询：那一轮已在另一端跑完）',
-    ).toContain('reconcileLatestAssistant(0)')
+    ).toMatch(/reconcileLatestAssistant\(0[,)]/)
   })
 
   it('⑥ 未登录不订阅（没 token 只会拿到 401，还会连带一轮无意义的退避重连）', () => {
