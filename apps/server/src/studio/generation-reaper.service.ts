@@ -44,7 +44,14 @@ import {
  * 是**历史遗留记录的清理**，不是对当前活跃作业的保护。它们留在 `REAP_TYPES`
  * 里只为清掉存量已扣未退的钱，不代表该type 还在产生新孤儿。
  *
- * ⛔ 不含 audio：audio 走同步执行链路（无 detached），无孤儿风险。
+ * 2026-11-03 五轮：纳入 `audio`（P0 配套，蓝老虎事故排查发现）。头注释旧断言
+ * 「audio 走同步执行链路（无 detached），无孤儿风险」**已过时**：① music 的
+ * `completeMusic` 是 detached（`studio.service.ts` submit + 轮询，官方 1–3min、
+ * deadline 5min），进程重启即丢，生产实测恰有 2 条 music `generating` 孤儿
+ * （2026-10-10/13，已扣未退）；② P1-B job 化后 `runAudioGeneration` 经
+ * `start-*-generation` detached 执行；③ P0-b 记录先行后 design 分支也先落
+ * `generating` 占位。阈值取图片同款 30min：music 正常最坏 5min + design 120s
+ * 上界 + voice 45s，余量充足。BYOK 退款语义由 reapOne 既有分支自动覆盖。
  *
  * ⛔ 不含 `prompt`（这是**正确的**，不是漏项，勿"补齐"）：`generatePrompt`
  * 的记录一律 `create` 成非`generating` 状态——`studio.service.ts:989/1019/1047`
@@ -53,7 +60,7 @@ import {
  * `studioPointCategory('prompt')` 映射到 `'text'` 指的是**积分分类**，
  * 与本表的**回收范围**是两件事——前者共用，后者按"会不会产生 generating 态"划分。
  */
-const REAP_TYPES = ['image', 'image_edit', 'image_upscale', 'video', 'text'] as const
+const REAP_TYPES = ['image', 'image_edit', 'image_upscale', 'video', 'text', 'audio'] as const
 
 /** 退款文案前缀，与各路径 `chargeReason` 保持一致（见 studio.service.ts）。 */
 const REAP_REASON_BY_TYPE: Record<string, string> = {
@@ -62,6 +69,7 @@ const REAP_REASON_BY_TYPE: Record<string, string> = {
   image_upscale: '图像放大',
   video: '视频生成',
   text: '文本生成',
+  audio: '音频生成',
 }
 
 /** 卡死判定阈值：超过该分钟数仍停在 generating 的图片记录视为孤儿。 */
@@ -99,6 +107,21 @@ const DEFAULT_VIDEO_REAP_MINUTES = SHARED_VIDEO_REAP_MINUTES
 const DEFAULT_TEXT_REAP_MINUTES = 10
 /** 单轮最多回收条数：控制事务批量，剩余交给下一轮。 */
 const REAP_BATCH = 50
+
+/**
+ * P0-d（2026-11-03 蓝老虎生产事故）：无生成记录的孤儿 generating 节点判定阈值。
+ *
+ * 形态：节点 `status:'generating'` 但 `generationRecordId` 缺失——detached 管线在
+ * 「persist(started) 之后、record 创建之前」挂死/崩溃留下（audio design/voice 分支
+ * 旧行为；修复后仍可能因进程崩溃出现）。B2 对账只扫「有记录」的终态回推，
+ * 对这类节点是盲区（生产实证：蓝老虎两节点卡 8h+ 无人修复，取消恒 404）。
+ * 30min 与图片记录回收阈值同源：有界超时修复后，正常管线最坏也在分钟级落终态。
+ */
+const ORPHAN_NODE_STUCK_MINUTES = 30
+/** 孤儿节点扫描的会话回看窗：孤儿会话的最后写入时刻 = 孤儿产生时刻。 */
+const ORPHAN_NODE_SCAN_WINDOW_MINUTES = 24 * 60
+/** 单轮最多处理的会话数（画布 JSON 解析开销护栏，剩余交给下一轮）。 */
+const ORPHAN_NODE_SCAN_BATCH = 500
 
 /** 解析分钟数env；缺失/非法/非正数时回落到默认值。 */
 function positiveMinutes(raw: string | undefined, fallback: number): number {
@@ -204,11 +227,13 @@ export class GenerationReaperService implements OnModuleInit {
 
   /** 单轮回收。返回成功收尾的记录数；供未来管理端点手动触发。 */
   async reapOnce(reason: 'startup' | 'periodic' | 'manual'): Promise<number> {
-    // 阈值按 type 分派：图片侧 30min、视频侧 30min（独立 env，见
+    // 阈值按 type 分派：图片/audio 侧 30min、视频侧 30min（独立 env，见
     // DEFAULT_VIDEO_REAP_MINUTES）、文本侧 10min（秒级完成的作业卡
     // 10 分钟必然是崩溃残留，共用 30min 会让文本孤儿多存活 20 分钟）。
     // 分派方式用**三次 findMany**而非统一取min()：语义更清晰，且能保证
     // 「各组用各自阈值」这件事在代码里是显式的、可被测试断言的。
+    // （audio 2026-11-03 纳入媒体组：music 正常最坏 5min / design 120s / voice 45s，
+    // 30min 阈值余量充足，见 REAP_TYPES 头注释「五轮」。）
     const mediaMinutes = positiveMinutes(
       process.env.LNKPI_GENERATION_REAP_MINUTES,
       DEFAULT_REAP_MINUTES,
@@ -276,6 +301,17 @@ export class GenerationReaperService implements OnModuleInit {
       }
     } catch (err) {
       this.logger.warn(`[${reason}] 画布节点终态对账失败（不影响回收）: ${errMessage(err)}`)
+    }
+    // P0-d 无记录孤儿 generating 节点兜底（2026-11-03 蓝老虎生产事故）：B2 对账
+    // 只覆盖「有记录」的节点；detached 管线在建记录前挂死留下的孤儿节点是盲区。
+    // fail-soft 同上。
+    try {
+      const fixed = await this.reconcileOrphanGeneratingNodes(reason)
+      if (fixed > 0) {
+        this.logger.warn(`[${reason}] 无记录孤儿 generating 节点已兜底置 error ${fixed} 个`)
+      }
+    } catch (err) {
+      this.logger.warn(`[${reason}] 孤儿 generating 节点扫描失败（不影响回收）: ${errMessage(err)}`)
     }
     return reaped
   }
@@ -380,6 +416,74 @@ export class GenerationReaperService implements OnModuleInit {
         this.logger.warn(
           `[${reason}] 节点终态对账失败（fail-soft）record=${r.id} node=${r.nodeId}: ${errMessage(err)}`,
         )
+      }
+    }
+    return fixed
+  }
+
+  /**
+   * P0-d 无记录孤儿 generating 节点兜底（2026-11-03 蓝老虎生产事故）。
+   *
+   * 形态与 B2 对账互补：B2 扫「记录已终态、节点被卡」；本扫描兜的是「**根本没有
+   * 记录**」——detached 管线在 persist(started) 之后、record 创建之前挂死/崩溃
+   * （audio design/voice 旧行为的生产实证：节点 generating 8h+，取消 404，
+   * reaper 全程失明）。判定 = 节点 `status:'generating'` + 无 `generationRecordId`
+   * + `generationStartedAt` 早于阈值 ⇒ 就地置 `error`（迁移表 generating→error 合法，
+   * 走 CanvasNodeStatusService.mergeNodeData 同一事务守卫）。
+   *
+   * 成本护栏：先用 `canvasData CONTAINS '"generating"'` 预筛（绝大多数会话无生成中
+   * 节点，JSON 解析只发生在命中会话上）+ 24h 回看窗 + 单轮 500 会话上限。
+   * 不退款：孤儿无记录无金额锚点（扣分泄漏属 P0-b 记录先行的修复范围，存量手工）。
+   * fail-soft：绝不影响回收主链路。
+   */
+  private async reconcileOrphanGeneratingNodes(reason: string): Promise<number> {
+    if (!this.nodeStatus) return 0 // 单测/降级：无写者即无对账
+    const since = new Date(Date.now() - ORPHAN_NODE_SCAN_WINDOW_MINUTES * 60 * 1000)
+    const stuckBefore = new Date(Date.now() - ORPHAN_NODE_STUCK_MINUTES * 60 * 1000)
+    const sessions = await this.prisma.session.findMany({
+      where: {
+        updatedAt: { gte: since },
+        // JSON 文本预筛：只解析画布里真的存在 generating 字样的会话
+        canvasData: { contains: '"generating"' },
+      },
+      select: { id: true, canvasData: true },
+      orderBy: { updatedAt: 'desc' },
+      take: ORPHAN_NODE_SCAN_BATCH,
+    })
+    let fixed = 0
+    for (const session of sessions) {
+      let canvas: { nodes?: Array<{ id?: unknown; data?: Record<string, unknown> }> }
+      try {
+        canvas = JSON.parse(session.canvasData ?? '{}') as typeof canvas
+      } catch {
+        continue
+      }
+      const nodes = Array.isArray(canvas?.nodes) ? canvas.nodes : []
+      for (const node of nodes) {
+        if (typeof node?.id !== 'string') continue
+        const data = node.data
+        if (!data || data.status !== 'generating') continue
+        if (typeof data.generationRecordId === 'string' && data.generationRecordId) continue
+        const startedAtMs = Date.parse(String(data.generationStartedAt ?? ''))
+        // 无 generationStartedAt（更早的历史残留）保守跳过——没有时刻证据就不判死
+        if (!Number.isFinite(startedAtMs)) continue
+        if (startedAtMs > stuckBefore.getTime()) continue
+        try {
+          const res = await this.nodeStatus.mergeNodeData(session.id, node.id, {
+            status: 'error',
+            errorMessage: '生成超时（未留下生成记录，疑似服务中断），请重试',
+          })
+          if (res === 'applied') {
+            fixed += 1
+            this.logger.warn(
+              `[${reason}] 孤儿 generating 节点置 error（无记录，startedAt=${new Date(startedAtMs).toISOString()}）session=${session.id} node=${node.id}`,
+            )
+          }
+        } catch (err) {
+          this.logger.warn(
+            `[${reason}] 孤儿 generating 节点修复失败（fail-soft）session=${session.id} node=${node.id}: ${errMessage(err)}`,
+          )
+        }
       }
     }
     return fixed

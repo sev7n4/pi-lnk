@@ -53,6 +53,56 @@ export interface UpstreamFetchInit extends RequestInit {
 }
 
 /**
+ * 有界超时内核（可注入 fetch 实现）。
+ *
+ * ⚠️ 2026-11-03 生产事故（蓝老虎会话 audio design 分支管线挂死 8h+）补的口子：
+ * `StepFunDesignProvider` / `StepFunMusicProvider` 用**裸 fetch（无 AbortSignal）**
+ * 直连上游，经代理出网时 `await` 永不 settle ⇒ detached 管线静默挂死、
+ * GenerationRecord 不落、节点永久 generating、取消 404。本内核抽出来供
+ * 「自带 fetchImpl 注入缝（测试桩）」的 provider 复用同一份超时机制——
+ * 超时机制单源，不许各 provider 手抄。
+ *
+ * - 超时 → 抛 {@link UpstreamTimeoutError}（`isRetryableUpstreamError` 判为可重试）。
+ * - 调用方自带 `signal` 时二者取**先触发者**；调用方主动中止时原样抛出，
+ *   不伪装成超时（否则「用户取消」会被重试逻辑反复重放）。
+ * - 不使用 `AbortSignal.timeout/any`：手写 `AbortController` 以兼容低版本
+ *   Node，并且能精确区分「我方超时」与「调用方中止」。
+ */
+export async function boundedFetch(
+	impl: typeof fetch,
+	url: string,
+	init: UpstreamFetchInit = {},
+): Promise<Response> {
+	const { timeoutMs = UPSTREAM_FETCH_TIMEOUT_MS, signal, ...rest } = init
+	const controller = new AbortController()
+	let timedOut = false
+
+	const timer =
+		timeoutMs > 0
+			? setTimeout(() => {
+					timedOut = true
+					controller.abort(new UpstreamTimeoutError(url, timeoutMs))
+				}, timeoutMs)
+			: undefined
+
+	const forwardAbort = () => controller.abort((signal as AbortSignal).reason)
+	if (signal) {
+		if (signal.aborted) forwardAbort()
+		else signal.addEventListener('abort', forwardAbort, { once: true })
+	}
+
+	try {
+		return await impl(url, { ...rest, signal: controller.signal })
+	} catch (err) {
+		if (timedOut) throw new UpstreamTimeoutError(url, timeoutMs)
+		throw err
+	} finally {
+		if (timer) clearTimeout(timer)
+		signal?.removeEventListener('abort', forwardAbort)
+	}
+}
+
+/**
  * `fetch` + 必然的有界超时。
  *
  * - 超时 → 抛 {@link UpstreamTimeoutError}（`isRetryableUpstreamError` 判为可重试）。
@@ -62,31 +112,5 @@ export interface UpstreamFetchInit extends RequestInit {
  *   Node，并且能精确区分「我方超时」与「调用方中止」。
  */
 export async function upstreamFetch(url: string, init: UpstreamFetchInit = {}): Promise<Response> {
-  const { timeoutMs = UPSTREAM_FETCH_TIMEOUT_MS, signal, ...rest } = init
-  const controller = new AbortController()
-  let timedOut = false
-
-  const timer =
-    timeoutMs > 0
-      ? setTimeout(() => {
-          timedOut = true
-          controller.abort(new UpstreamTimeoutError(url, timeoutMs))
-        }, timeoutMs)
-      : undefined
-
-  const forwardAbort = () => controller.abort((signal as AbortSignal).reason)
-  if (signal) {
-    if (signal.aborted) forwardAbort()
-    else signal.addEventListener('abort', forwardAbort, { once: true })
-  }
-
-  try {
-    return await fetch(url, { ...rest, signal: controller.signal })
-  } catch (err) {
-    if (timedOut) throw new UpstreamTimeoutError(url, timeoutMs)
-    throw err
-  } finally {
-    if (timer) clearTimeout(timer)
-    signal?.removeEventListener('abort', forwardAbort)
-  }
+	return boundedFetch(fetch, url, init)
 }

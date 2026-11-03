@@ -1,11 +1,12 @@
 import { createServer, type Server } from 'http'
 import type { Socket } from 'net'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { isRetryableUpstreamError } from './upstream-retry'
 import {
   UPSTREAM_FETCH_TIMEOUT_MS,
   UPSTREAM_POLL_TIMEOUT_MS,
   UpstreamTimeoutError,
+  boundedFetch,
   upstreamFetch,
 } from './upstream-fetch'
 
@@ -94,5 +95,34 @@ describe('upstreamFetch', () => {
     expect(WORST_CASE_MS).toBeLessThan(180_000)
     // 轮询上限必须明显短于单次尝试上限，否则「轮询被单次卡死吃掉」。
     expect(UPSTREAM_POLL_TIMEOUT_MS).toBeLessThan(UPSTREAM_FETCH_TIMEOUT_MS)
+  })
+})
+
+describe('boundedFetch（可注入 fetch 实现的同一超时内核）', () => {
+  it('注入实现的正常响应原样返回', async () => {
+    const impl = vi.fn(async () => new Response('injected'))
+    const res = await boundedFetch(impl, 'http://x/ok', { timeoutMs: 1000 })
+    expect(res.status).toBe(200)
+    await expect(res.text()).resolves.toBe('injected')
+  })
+
+  it('🔴 注入实现永不返回数据 ⇒ 在 timeoutMs 附近抛 UpstreamTimeoutError（2026-11-03 生产事故形态：design/music provider 裸 fetch 挂死）', async () => {
+    const started = Date.now()
+    // 桩模拟真实 fetch：连上后不返回数据，但**遵守 abort signal**（undici 语义）。
+    await expect(
+      boundedFetch(
+        vi.fn(
+          (_url: string | URL | Request, init?: RequestInit) =>
+            new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener('abort', () => reject(init.signal!.reason), {
+                once: true,
+              })
+            }),
+        ) as unknown as typeof fetch,
+        'http://x/hang',
+        { timeoutMs: 250 },
+      ),
+    ).rejects.toBeInstanceOf(UpstreamTimeoutError)
+    expect(Date.now() - started).toBeLessThan(3000)
   })
 })

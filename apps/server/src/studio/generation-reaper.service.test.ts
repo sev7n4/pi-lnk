@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing'
 import { DEFAULT_VIDEO_REAP_MINUTES, VIDEO_SERVER_WORST_MS } from '@lnkpi/shared'
 import { PointsService } from '../points/points.service'
 import { PrismaService } from '../prisma/prisma.service'
+import { CanvasNodeStatusService } from '../sessions/sessions-canvas-node-status.service'
 import { AutomationSchedulerService } from '../automation/automation-scheduler.service'
 import { GenerationReaperService } from './generation-reaper.service'
 
@@ -255,10 +256,11 @@ describe('GenerationReaperService 收尾机制', () => {
   it('回收范围含视频侧、按阈值过滤 createdAt', async () => {
     await svc.reapOnce('manual')
 
-    // 三次 findMany：图片侧一组、视频侧一组（V2b 独立阈值）、文本侧一组
+    // 三次 findMany：图片+audio 媒体组一组、视频侧一组（V2b 独立阈值）、文本侧一组
     expect(generationFindMany).toHaveBeenCalledTimes(3)
     const imageWhere = generationFindMany.mock.calls[0][0].where
-    expect(imageWhere.type).toEqual({ in: ['image', 'image_edit', 'image_upscale'] })
+    // audio 2026-11-03 纳入媒体组（music completeMusic detached + P1-B job 化）
+    expect(imageWhere.type).toEqual({ in: ['image', 'image_edit', 'image_upscale', 'audio'] })
     expect(imageWhere.status).toBe('generating')
     expect(imageWhere.createdAt.lt).toBeInstanceOf(Date)
     // 默认 30 分钟阈值（真实视频最坏 ≈22.4min = MiniMax H3 20min + V6 创建重试上界
@@ -496,13 +498,151 @@ describe('GenerationReaperService 收尾机制', () => {
     expect(refundInTx.mock.calls[0][4].category).toBe('text')
   })
 
-  it('audio 不在回收范围（同步链路无 detached）', async () => {
+  it('audio 孤儿纳入回收（2026-11-03 五轮：music completeMusic detached + P1-B job 化）', async () => {
     seed({ id: 'a1', type: 'audio', metadata: makeMeta() })
 
     const n = await svc.reapOnce('manual')
 
-    expect(n).toBe(0)
-    expect(generationUpdateMany).not.toHaveBeenCalled()
+    expect(n).toBe(1)
+    expect(generationUpdateMany).toHaveBeenCalledTimes(1)
+    expect(generationUpdateMany.mock.calls[0][0].where.id).toBe('a1')
+    // 退款文案与扣费侧同源；分类 audio（point-categories 直通映射）
+    expect(refundInTx.mock.calls[0][3]).toContain('音频生成-超时回收退款')
+    expect(refundInTx.mock.calls[0][4].category).toBe('audio')
+  })
+})
+
+describe('GenerationReaperService 无记录孤儿 generating 节点兜底（P0-d）', () => {
+  /** 画布节点（最小形态：id + data）。 */
+  interface FakeNode {
+    id: string
+    data: Record<string, unknown>
+  }
+  let svc: GenerationReaperService
+  let mergeNodeData: ReturnType<typeof vi.fn>
+  /** 会话桩：id → { canvasData, updatedAt }；scan where 的预筛在桩里如实复刻。 */
+  let sessions: Array<{ id: string; canvasData: string; updatedAt: Date }>
+  let sessionFindMany: ReturnType<typeof vi.fn>
+
+  function canvasOf(nodes: FakeNode[]): string {
+    return JSON.stringify({ nodes, edges: [] })
+  }
+
+  function seedSession(id: string, nodes: FakeNode[], updatedAtMs = Date.now() - 60 * 60_000): void {
+    sessions.push({ id, canvasData: canvasOf(nodes), updatedAt: new Date(updatedAtMs) })
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    sessions = []
+    mergeNodeData = vi.fn(async () => 'applied' as const)
+    sessionFindMany = vi.fn(
+      async (args: {
+        where: { updatedAt: { gte: Date }; canvasData: { contains: string } }
+        take: number
+      }) => {
+        // 如实复刻预筛契约：updatedAt 窗口 + canvasData 含 generating 字样
+        return sessions
+          .filter(
+            (s) =>
+              s.updatedAt >= args.where.updatedAt.gte &&
+              s.canvasData.includes(args.where.canvasData.contains),
+          )
+          .slice(0, args.take)
+          .map((s) => ({ id: s.id, canvasData: s.canvasData }))
+      },
+    )
+    const prismaMock = {
+      generationRecord: { findMany: vi.fn(async () => []) },
+      session: { findMany: sessionFindMany },
+      $transaction: vi.fn(),
+    }
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        GenerationReaperService,
+        { provide: PrismaService, useValue: prismaMock },
+        { provide: PointsService, useValue: { refundInTx: vi.fn() } },
+        // B2/孤儿对账的节点写者（Optional 注入，必须显式提供才会走扫描）
+        {
+          provide: CanvasNodeStatusService,
+          useValue: { mergeNodeData, reconcileTerminal: vi.fn(async () => 'applied' as const) },
+        },
+      ],
+    }).compile()
+    svc = moduleRef.get(GenerationReaperService)
+  })
+
+  it('孤儿 generating 节点（无 recordId + startedAt 超阈值）→ 置 error', async () => {
+    seedSession('s1', [
+      {
+        id: 'audio-1',
+        data: {
+          status: 'generating',
+          generationStartedAt: new Date(Date.now() - 2 * 60 * 60_000).toISOString(),
+        },
+      },
+    ])
+
+    const n = await svc.reapOnce('manual')
+
+    expect(n).toBe(0) // 记录回收计数不含节点兜底
+    expect(mergeNodeData).toHaveBeenCalledTimes(1)
+    expect(mergeNodeData.mock.calls[0][0]).toBe('s1')
+    expect(mergeNodeData.mock.calls[0][1]).toBe('audio-1')
+    expect(mergeNodeData.mock.calls[0][2].status).toBe('error')
+  })
+
+  it('有 generationRecordId 的 generating 节点不归本扫描管（B2 对账职责）', async () => {
+    seedSession('s1', [
+      {
+        id: 'image-1',
+        data: {
+          status: 'generating',
+          generationRecordId: 'rec-1',
+          generationStartedAt: new Date(Date.now() - 8 * 60 * 60_000).toISOString(),
+        },
+      },
+    ])
+
+    await svc.reapOnce('manual')
+
+    expect(mergeNodeData).not.toHaveBeenCalled()
+  })
+
+  it('startedAt 在阈值内（正常生成中）不动', async () => {
+    seedSession('s1', [
+      {
+        id: 'audio-1',
+        data: {
+          status: 'generating',
+          generationStartedAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+        },
+      },
+    ])
+
+    await svc.reapOnce('manual')
+
+    expect(mergeNodeData).not.toHaveBeenCalled()
+  })
+
+  it('无 generationStartedAt 的历史残留保守跳过（无时刻证据不判死）', async () => {
+    seedSession('s1', [{ id: 'audio-1', data: { status: 'generating' } }])
+
+    await svc.reapOnce('manual')
+
+    expect(mergeNodeData).not.toHaveBeenCalled()
+  })
+
+  it('completed/failed 节点不是孤儿；画布 JSON 损坏跳过不炸', async () => {
+    seedSession('s1', [
+      { id: 'audio-1', data: { status: 'completed' } },
+      { id: 'audio-2', data: { status: 'failed' } },
+    ])
+    sessions.push({ id: 's-broken', canvasData: '{not-json', updatedAt: new Date() })
+
+    await svc.reapOnce('manual')
+
+    expect(mergeNodeData).not.toHaveBeenCalled()
   })
 })
 describe('video 回收阈值 × 跨层超时预算（单一来源锁）', () => {
@@ -517,7 +657,6 @@ describe('video 回收阈值 × 跨层超时预算（单一来源锁）', () => 
     )
   })
 })
-
 describe('GenerationReaperService 终态通报快节拍（job-generation-notify）', () => {
   const env = { ...process.env }
   let handlers: Map<
@@ -622,3 +761,4 @@ describe('GenerationReaperService 终态通报快节拍（job-generation-notify�
     expect(notifyScanMock).not.toHaveBeenCalled()
   })
 })
+
