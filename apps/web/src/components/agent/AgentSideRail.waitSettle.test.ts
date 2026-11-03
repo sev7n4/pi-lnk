@@ -63,10 +63,12 @@ describe('propose 等待结算单飞 + 乐观翻态（多确认入口收敛）',
 })
 
 describe('挂起期呈现存活（turn_suspended ≠ 卸载）', () => {
-  it('liveTimeline 的 active 判据必须并入 mainTurnSuspended（钉底时间线挂起期不熄灭）', () => {
-    const block = fnBlock('const liveTimeline = computed(')
-    expect(block, '必须能定位 liveTimeline').not.toBe('')
-    expect(block, 'active 必须含挂起态').toContain('mainTurnSuspended.value')
+  it('挂起态必须并入「回合进行中基座」（流式归一后 creditsLineVisible 是唯一基座消费方）', () => {
+    // 2026-11-03 流式归一：liveTimeline 钉底退役，等待呈现由消息流内联 timeline 承接；
+    // creditsLineVisible（会话积分常驻条）是基座判定的唯一存续消费方，挂起期不得熄灭。
+    const block = fnBlock('const creditsLineVisible = computed(')
+    expect(block, '必须能定位 creditsLineVisible').not.toBe('')
+    expect(block, '基座必须含挂起态').toContain('mainTurnSuspended.value')
   })
 })
 

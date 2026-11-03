@@ -51,9 +51,13 @@ describe('AgentSideRail turn_suspended 挂起契约（挂起 ≠ 断链）', () 
     ).not.toContain('appendText')
   })
 
-  it('liveTimeline 的 active 基座必须并入挂起态（钉底时间线整个等待期存活；2026-10-31 状态行退役后本处是唯一基座）', () => {
-    const block = fnBlock('const liveTimeline = computed(() =>')
-    expect(block, 'active 必须是 isStreaming ∥ mainTurnSuspended 并集').toContain(
+  it('挂起态必须并入「回合进行中基座」（流式归一后 creditsLineVisible 是唯一基座消费方）', () => {
+    // 2026-11-03 流式归一：liveTimeline 钉底退役，等待呈现改由消息流内联 timeeline 承接
+    // （渲染不依赖 active 判定，挂起期 proposal/question 卡随消息流持续可见）；
+    // 仍依赖「isStreaming ∪ mainTurnSuspended」基座的存续消费方 = 会话积分常驻条显隐。
+    // 挂起等待期也在消耗挂账期 ⇒ 基座若丢挂起态，常驻条在等待期熄灭 = 契约回归。
+    const block = fnBlock('const creditsLineVisible = computed(() =>')
+    expect(block, '基座必须是 isStreaming ∪ mainTurnSuspended 并集').toContain(
       'agent.isStreaming || mainTurnSuspended.value',
     )
   })

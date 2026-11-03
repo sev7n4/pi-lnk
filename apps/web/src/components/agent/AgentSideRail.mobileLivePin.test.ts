@@ -38,35 +38,32 @@ describe('移动端 live 钉显 + 状态行退役（2026-10-31）', () => {
     expect(rail, 'describeActivityFromTimeline import 应删除').not.toMatch(/activityLine'/)
   })
 
-  it('② 滚动流内 live 块必须挂 !isMobileLayout 门禁（桌面行为不变）', () => {
+  it('②③ 流式归一：钉底/镜像双轨防复生（live 内容必须在消息流内联）', () => {
+    // 2026-11-03 流式归一：本用例原锁「滚动流 live 块挂 !isMobileLayout 门禁 + 系统层镜像块」
+    // （2026-10-31 第 2 轮全盲的修复形态）。该形态是移动端三象（信封割裂/中间空白/
+    // 刷新前后两套渲染）的根源，已整体退役；此处反向锁死，防止钉底/镜像双轨复生：
+    // live 消息与历史必须走同一条内联渲染通道（WorkBuddy 同构）。
     expect(
       rail,
-      'AgentExecutionTrace v-if 须含 !isMobileLayout',
-    ).toMatch(/v-if="!isMobileLayout && liveTrace && !liveTimeline"/)
+      '消息流内 live 抑制（liveTimelineMessageId 互斥）不得复生',
+    ).not.toMatch(/liveTimelineMessageId/)
     expect(
       rail,
-      'AgentTurnTimeline v-else-if 须含 !isMobileLayout',
-    ).toMatch(/v-else-if="!isMobileLayout && liveTimeline"/)
-  })
-
-  it('③ 移动端钉显镜像块存在于 agent-system-layer 内（继承画布视图默认隐藏机制）', () => {
-    const iLayer = rail.indexOf('class="agent-system-layer"')
-    expect(iLayer, '系统层容器应存在').toBeGreaterThan(-1)
-    // 钉显块必须落在系统层之后（系统层之前的 isMobileLayout template 属其他区域）
-    const iPin = rail.indexOf('<template v-if="isMobileLayout">', iLayer)
-    expect(iPin, '系统层内应有移动端钉显块').toBeGreaterThan(-1)
-    // 钉显块内是同一套 live 组件与接线（事件处理不丢）
-    // 注：断言拆成属性名/处理器名两段——完整 `attr="handler"` 连写在本仓 vitest
-    // 环境下曾出现字节一致却匹配失败的怪异现象（node 直跑同样复现），拆段后稳定。
-    const pinBlock = rail.slice(iPin, iPin + 2400)
-    expect(pinBlock).toMatch(/AgentTurnTimeline/)
-    expect(pinBlock).toMatch(/:parts="liveTimeline\.parts"/)
-    expect(pinBlock).toMatch(/@confirm-proposal/)
-    expect(pinBlock).toMatch(/onInlineConfirmProposal/)
-    expect(pinBlock).toMatch(/@cancel-proposal/)
-    expect(pinBlock).toMatch(/onInlineCancelProposal/)
-    expect(pinBlock).toMatch(/@ask-submit/)
-    expect(pinBlock).toMatch(/onAskSubmit/)
+      '桌面钉底块（!isMobileLayout && liveTrace/liveTimeline）不得复生',
+    ).not.toMatch(/!isMobileLayout && live/)
+    expect(
+      rail,
+      '移动端系统层钉显镜像块（<template v-if="isMobileLayout">）不得复生',
+    ).not.toContain('<template v-if="isMobileLayout">')
+    expect(
+      rail,
+      '钉底 dense 变体类名不得复生',
+    ).not.toMatch(/agent-live-trace/)
+    // 内联通道存续校验：消息流内 AgentTurnTimeline 不带任何消息级互斥
+    expect(
+      rail,
+      '内联 AgentTurnTimeline 必须存在且无 live 互斥',
+    ).toMatch(/v-if="useTimeline\(msg\)"/)
   })
 
   it('④ 挂起回合断链静默：catch 先判 mainTurnSuspended（turn_suspended 后断链是预期形态）', () => {
