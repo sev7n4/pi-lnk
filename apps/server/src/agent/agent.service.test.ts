@@ -737,9 +737,13 @@ describe('AgentService turn billing (P2 T6)', () => {
       tokens: { in: 8000, cache: 0, out: 500 },
       ruleVersion: 'price-v2',
     })
-    // D4（Task 6）：流末尾追加 turn_ack ⇒ 最后一个事件从 done 变为 turn_ack
-    // （done 仍是 pi 回合结束标记，由 agent_end 映射而来，位置不变）。
-    expect(events[events.length - 1]?.type).toBe('turn_ack')
+    // D4（Task 6）：流末尾追加 turn_ack（done 仍是 pi 回合结束标记，位置不变）。
+    // 2026-11-03 复测修复：turn_settled 现在还 yield 进 SSE 流（此前只落库 ⇒ live
+    // 摘要永远停在「≈N 积分（预估）」，刷新后重放才见权威值）⇒ 权威结算收口末事件。
+    expect(events[events.length - 1]?.type).toBe('turn_settled')
+    expect(events[events.length - 2]?.type).toBe('turn_ack')
+    const settledOnWire = events[events.length - 1]?.data as { credits?: number }
+    expect(settledOnWire?.credits).toBe(3)
   })
 
   it('①-m 结算摘要（2026-11-03）：turn_settled 携带回合冻结的 model（规范化小写）', async () => {
@@ -818,8 +822,9 @@ describe('AgentService turn billing (P2 T6)', () => {
       breakdown: { in: 2, cache: 0, out: 1 },
       tokens: { in: 8000, cache: 300, out: 500 },
     })
-    // D4（Task 6）：流末尾追加 turn_ack ⇒ 末事件从 done 变为 turn_ack
-    expect(events[events.length - 1]?.type).toBe('turn_ack')
+    // 2026-11-03 复测修复：末事件 = turn_settled（SSE 下发收口），次末 = turn_ack
+    expect(events[events.length - 1]?.type).toBe('turn_settled')
+    expect(events[events.length - 2]?.type).toBe('turn_ack')
   })
 
   it('①b 预扣 quote 用回合参数 model（toLowerCase 规范化）', async () => {

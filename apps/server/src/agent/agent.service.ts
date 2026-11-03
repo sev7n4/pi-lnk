@@ -3145,7 +3145,13 @@ export class AgentService implements OnModuleInit {
             `turn hold release failed (hold=${billingHold.id}): ${err instanceof Error ? err.message : String(err)}`,
           )
         }
-        pushTraceEvent('turn_settled', { holdId: billingHold.id, released: true })
+        // 2026-11-03 复测修复：turn_settled 此前只 pushTraceEvent（落库），从不 yield 进
+        // SSE 流 ⇒ live 摘要永远停在「≈N 积分（预估）」，刷新后重放才见权威值。生成器
+        // 尾部结算块可直接 yield（同 turn_ack），落库+下发共用同一 data 对象。
+        yield {
+          type: 'turn_settled',
+          data: pushTraceEvent('turn_settled', { holdId: billingHold.id, released: true }).data,
+        } as AgentStreamEvent
       } else {
         try {
           // credits 来自实际 usage（turn_usage 折叠值直取，cacheWrite 并入 in 项
@@ -3173,25 +3179,28 @@ export class AgentService implements OnModuleInit {
               } satisfies PointTxMeta,
             )
             holdOpen = false
-            pushTraceEvent('turn_settled', {
-              holdId: billingHold.id,
-              credits: settled.settled,
-              ruleVersion: quote.ruleVersion,
-              // 2026-11-03 结算摘要：模型名随结算下发（turn 摘要静态行「共消耗 N 积分 · 模型名」
-              // 数据源）；同回合内 billingModelKey 恒定（回合开始冻结），落库重放还原一致。
-              // 键不出现纪律：空值（异常形态）不带键，前端按「无模型名」缺省渲染。
-              ...(billingModelKey ? { model: billingModelKey } : {}),
-              // 终审 I-1：tokens = 原始 token 数（展示口径，千级；与计费口径
-              // cacheWrite 并入 in 可不同——此为 turn_usage 四列直取）。
-              // breakdown（积分成分，个位）留事件供未来展开，前端不再按它渲染。
-              tokens: {
-                in: usage.inputTokens ?? 0,
-                cache: usage.cacheReadTokens ?? 0,
-                out: usage.outputTokens ?? 0,
-              },
-              // 键不出现：breakdown 仅价目口径携带；degraded 仅 USD 兜底场景携带
-              ...(quote.breakdown ? { breakdown: quote.breakdown } : { degraded: true }),
-            })
+            yield {
+              type: 'turn_settled',
+              data: pushTraceEvent('turn_settled', {
+                holdId: billingHold.id,
+                credits: settled.settled,
+                ruleVersion: quote.ruleVersion,
+                // 2026-11-03 结算摘要：模型名随结算下发（turn 摘要静态行「共消耗 N 积分 · 模型名」
+                // 数据源）；同回合内 billingModelKey 恒定（回合开始冻结），落库重放还原一致。
+                // 键不出现纪律：空值（异常形态）不带键，前端按「无模型名」缺省渲染。
+                ...(billingModelKey ? { model: billingModelKey } : {}),
+                // 终审 I-1：tokens = 原始 token 数（展示口径，千级；与计费口径
+                // cacheWrite 并入 in 可不同——此为 turn_usage 四列直取）。
+                // breakdown（积分成分，个位）留事件供未来展开，前端不再按它渲染。
+                tokens: {
+                  in: usage.inputTokens ?? 0,
+                  cache: usage.cacheReadTokens ?? 0,
+                  out: usage.outputTokens ?? 0,
+                },
+                // 键不出现：breakdown 仅价目口径携带；degraded 仅 USD 兜底场景携带
+                ...(quote.breakdown ? { breakdown: quote.breakdown } : { degraded: true }),
+              }).data,
+            } as AgentStreamEvent
           } catch (err) {
             // settle 抛 409 等 → release 全退 + warn（幂等由 points 层 exactly-once 守卫）
             this.piLogger.warn(
@@ -3205,7 +3214,11 @@ export class AgentService implements OnModuleInit {
                 `turn hold release failed (hold=${billingHold.id}): ${releaseErr instanceof Error ? releaseErr.message : String(releaseErr)}`,
               )
             }
-            pushTraceEvent('turn_settled', { holdId: billingHold.id, released: true })
+            yield {
+              type: 'turn_settled',
+              data: pushTraceEvent('turn_settled', { holdId: billingHold.id, released: true })
+                .data,
+            } as AgentStreamEvent
           }
         } catch (err) {
           // quote 异常（quoteTextTokens 承诺永不 throw，此处为纵深防御）→ release 全退
@@ -3220,7 +3233,10 @@ export class AgentService implements OnModuleInit {
               `turn hold release failed (hold=${billingHold.id}): ${releaseErr instanceof Error ? releaseErr.message : String(releaseErr)}`,
             )
           }
-          pushTraceEvent('turn_settled', { holdId: billingHold.id, released: true })
+          yield {
+            type: 'turn_settled',
+            data: pushTraceEvent('turn_settled', { holdId: billingHold.id, released: true }).data,
+          } as AgentStreamEvent
         }
       }
     }
