@@ -35,7 +35,14 @@ describe('移动端 live 钉显 + 状态行退役（2026-10-31）', () => {
     expect(rail, 'settledDismissed 应删除').not.toMatch(/settledDismissed/)
     expect(rail, 'nowSec ticker 应删除').not.toMatch(/statusTicker/)
     expect(rail, 'turnStatusLine import 应删除').not.toMatch(/turnStatusBar'/)
-    expect(rail, 'describeActivityFromTimeline import 应删除').not.toMatch(/activityLine'/)
+    // 2026-11-03 审计改锚（WorkBuddy 同款灰字上线）：退役的是「播报式状态行」
+    // （turnStatusLine UI + describeActivityFromTimeline 的 tool-only 旧读数）。
+    // 新灰字 = activityLine.turnLiveStatus（时间线全谱派生、与对话流内联卡同源），
+    // 是用户裁决的新功能，非状态行复生——故只禁旧读数函数，放行 turnLiveStatus。
+    expect(rail, 'describeActivityFromTimeline import 不得复生').not.toMatch(
+      /describeActivityFromTimeline/,
+    )
+    expect(rail, 'turnLiveStatus（新灰字数据源）必须存在').toMatch(/turnLiveStatus/)
   })
 
   it('②③ 流式归一：钉底/镜像双轨防复生（live 内容必须在消息流内联）', () => {

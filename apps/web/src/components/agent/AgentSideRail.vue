@@ -104,6 +104,7 @@ import { parseRefMentions } from '@/composables/useRefMentions'
 import MentionInput, { type MentionOption } from '@/components/canvas/MentionInput.vue'
 import { copyTextToClipboard } from '@/utils/copyToClipboard'
 import { createFollowUpTailListener } from './follow-up-tail'
+import { turnLiveStatus } from './activityLine'
 import { applyTailVisibility } from './tail-visibility'
 import {
   createSharedSubscription,
@@ -621,14 +622,49 @@ function shouldShowMessageBubbleText(msg: AgentStreamMessage): boolean {
   //   （纯工具轮的执行过程、机器载荷轮的产物卡）只能活在气泡壳内——确有可渲染
   //   part/step 时必须放行，否则整轮静默不可见。空 timeline/trace 仍不放行
   //   ⇒ P0 白块修复不受影响（B3 覆盖 actionable wait，此条覆盖其余非空内容卡）。
+  // ⚠️ 流式归一补位（2026-11-03 移动端复测）：live 流式消息恒放行气泡壳——钉底块退役后
+  //   「正在准备…」兜底文案随 dense 头（AgentExecutionTrace denseHeadline）一起消失，
+  //   发消息后到首个 timeline part（【思考】）之间的空窗期什么都不渲染。
+  //   P0 语义同步演进：反对的是「空白气泡+闪烁光标」，不是「有反馈的占位」——
+  //   壳内有「正在准备…」文案（见 isPreparingPlaceholder），不再是白块；
+  //   回合结束 streaming 翻 false（finishStreaming），占位随之消失。
   return (
     hasBubbleContent(msg) ||
     hasRenderableSvgCard(msg) ||
     hasRenderableNodeGraph(msg) ||
     hasActionableWait(msg) ||
     Boolean(msg.timeline?.parts?.length) ||
-    Boolean(msg.executionTrace?.steps?.length)
+    Boolean(msg.executionTrace?.steps?.length) ||
+    Boolean(msg.streaming)
   )
+}
+
+/**
+ * 流式归一补位（2026-11-03 移动端复测）：live 且零可渲染内容时的「正在准备…」占位判定。
+ * 与门控放行（msg.streaming）成对：壳被放行但正文/内容卡都还没到时显示占位文案，
+ * 首个 part（【思考】）或正文到达后自然被取代——同一壳内换内容，无布局跳变。
+ * 排除项 = 一切「已有可见产出」的形态：正文、时间线 part、旧 trace 步骤、svg/node 卡。
+ */
+function isPreparingPlaceholder(msg: AgentStreamMessage): boolean {
+  return (
+    msg.role === 'assistant' &&
+    Boolean(msg.streaming) &&
+    !hasBubbleText(msg) &&
+    !useTimeline(msg) &&
+    !(msg.executionTrace?.steps?.length) &&
+    !hasRenderableSvgCard(msg) &&
+    !hasRenderableNodeGraph(msg)
+  )
+}
+
+/**
+ * 2026-11-03 WorkBuddy 同款轮次抬头判定：assistant turn 起点 = 首条消息，
+ * 或前一条消息不是 assistant（连续 assistant 消息属同一轮，不重复抬头）。
+ */
+function isTurnHead(msg: AgentStreamMessage, index: number): boolean {
+  if (msg.role !== 'assistant') return false
+  if (index === 0) return true
+  return agent.messages[index - 1]?.role !== 'assistant'
 }
 
 /**
@@ -938,6 +974,18 @@ function useTimeline(msg: AgentStreamMessage): boolean {
  * ——挂起回合等待确认时也在消耗挂账期，用户须看到累计在涨）。空闲时不渲染（不盯死）。
  */
 const creditsLineVisible = computed(() => agent.isStreaming || mainTurnSuspended.value)
+
+/**
+ * 2026-11-03 WorkBuddy 同款回合实时状态灰字（移动端复测追加需求）：钉在积分常驻条上沿，
+ * 实时播报「等待模型响应 / 深度思考中 / 生成回复中 / 正在<工具人话> / 等待你确认」。
+ * 数据源 = 时间线单一真相（activityLine.turnLiveStatus，与对话流内联卡同源，结构性防抢跑）；
+ * 显隐与积分条同口径（turn 活跃期 isStreaming ∪ mainTurnSuspended，空闲不盯死）。
+ */
+const turnLiveStatusText = computed(() => {
+  if (!creditsLineVisible.value) return null
+  const last = [...agent.messages].reverse().find((m) => m.role === 'assistant')
+  return turnLiveStatus(last?.timeline?.parts)
+})
 
 /** 根治规格（2026-10-28）：对话流内联 proposal 卡的确认 / 取消——复用既有确认面语义，
  *  不再走对话流外浮卡。confirmProposeWait / cancelProposeForNode 已 defineExpose 给画布节点。 */
@@ -4289,11 +4337,24 @@ defineExpose({
               @click="loadOlder()"
             >{{ historyLoadingOlder ? '加载中…' : '加载更早消息' }}</button>
             <div
-              v-for="msg in agent.messages"
+              v-for="(msg, turnIdx) in agent.messages"
               :key="msg.id"
               class="agent-turn"
               :class="msg.role === 'user' ? 'agent-turn--user' : 'agent-turn--assistant'"
             >
+              <!-- 2026-11-03 WorkBuddy 同款轮次抬头（移动端复测追加需求）：每轮 agent 回复
+                   开头一行「项目徽章 + lnk π」（徽章灰样式抄提议生成卡片 .chip）。
+                   turn 起点 = 首条消息或前一条非 assistant（连续 assistant 消息不重复抬头）。 -->
+              <div v-if="isTurnHead(msg, turnIdx)" class="agent-turn-head" data-testid="turn-head">
+                <img
+                  class="agent-turn-head__badge"
+                  :src="anchorBadge"
+                  alt=""
+                  aria-hidden="true"
+                  draggable="false"
+                >
+                <span class="agent-turn-head__name">lnk π</span>
+              </div>
               <!-- 用户气泡的二次编辑态是**同一张卡片**：同一个 .agent-bubble-user 容器，
                    宽度/底色/圆角/内边距全不变，只有底部那一排按钮换成「取消 / 发送」。
                    唯一需要额外声明的是宽度基准（agent-bubble-user--editing）：
@@ -4383,6 +4444,15 @@ defineExpose({
                   @ask-submit="onAskSubmit"
                   @ask-cancel="onAskCancel"
                 />
+                <!-- 流式归一补位（2026-11-03 移动端复测）：钉底块退役后，「发消息 → 首个
+                     timeline part（【思考】）到达」的空窗期什么都不渲染，「正在准备…」
+                     兜底文案随 dense 头一起消失。按 WorkBuddy 同款补回：live 且零可渲染
+                     内容时在气泡壳内显示占位，首个 part/正文到达后自然被取代（同壳换内容）。
+                     P0 白块语义同步演进：不再渲染的是「空白」，占位有文案即非白块。 -->
+                <p
+                  v-if="isPreparingPlaceholder(msg)"
+                  class="whitespace-pre-wrap opacity-60"
+                >正在准备…</p>
                 <p v-if="hasBubbleText(msg) && !isMessageUnderEdit(msg) && !useTimeline(msg)" class="whitespace-pre-wrap">
                   {{
                     msg.role === 'user'
@@ -4753,6 +4823,16 @@ defineExpose({
               >
                 发起新任务
               </button>
+            </div>
+            <!-- 2026-11-03 WorkBuddy 同款回合实时状态灰字（移动端复测追加需求）：
+                 时间线单一真相派生（activityLine.turnLiveStatus，与对话流内联卡同源），
+                 显隐与积分条同口径（turn 活跃期）；画布视图随层隐藏（同积分条）。 -->
+            <div
+              v-if="turnLiveStatusText"
+              class="agent-live-status-line"
+              data-testid="turn-live-status"
+            >
+              {{ turnLiveStatusText }}
             </div>
             <!-- 会话积分常驻条：系统层最末（见层顶注释——紧贴输入区，WorkBuddy 同位）。 -->
             <div
@@ -5468,6 +5548,41 @@ defineExpose({
   text-align: center;
   color: var(--lnk-text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+/* ---- 2026-11-03 回合实时状态灰字（WorkBuddy 同款，积分条上沿） ----
+ * 令牌纪律同积分条：--lnk-*、禁 px 字面量字号、不加白名单类（随层藏）。 */
+.agent-live-status-line {
+  padding: 2px 4px;
+  font-size: var(--lnk-text-2xs);
+  line-height: var(--lnk-lh-2xs);
+  text-align: center;
+  color: var(--lnk-text-muted);
+}
+
+/* ---- 2026-11-03 轮次抬头（WorkBuddy 同款：徽章 + lnk π，每轮 agent 回复开头） ----
+ * 徽章灰样式抄提议生成卡片 .chip（surface-sunken + subtle border + radius-full）；
+ * 徽标必须 <img> 原样出图（⛔ mask 会压成单色，见 composer-locate-glyph 同款纪律）。 */
+.agent-turn-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0 0 4px;
+  padding: 2px 8px 2px 4px;
+  font-size: var(--lnk-text-xs);
+  color: var(--lnk-text-secondary);
+  background: var(--lnk-surface-sunken);
+  border: 1px solid var(--lnk-border-subtle);
+  border-radius: var(--lnk-radius-full);
+}
+
+.agent-turn-head__badge {
+  width: 16px;
+  height: 16px;
+}
+
+.agent-turn-head__name {
+  font-weight: var(--lnk-weight-medium);
 }
 
 /* ---- 右边缘拖拉调宽（侧栏翻到左侧后，手柄贴其右缘邻接画布） ---- */

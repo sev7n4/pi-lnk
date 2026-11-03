@@ -27,3 +27,39 @@ export function describeActivityFromTimeline(parts?: TimelinePart[]): string | n
   }
   return null
 }
+
+/**
+ * 回合实时状态灰字（WorkBuddy 同款，2026-11-03 移动端复测）：从时间线 parts 尾扫派生。
+ *
+ * 与 describeActivityFromTimeline 的分工：那个只回答「最近一次工具在干嘛」（tool-only），
+ * 这个回答「此刻整个回合在干嘛」——覆盖 WorkBuddy 状态行全谱：
+ * 正文流式 → 生成回复中；思考运行 → 深度思考中；工具运行 → 正在<人话>（注册表同源）；
+ * 产物生成 pending/running → 正在生成产物；等待确认（proposal/question pending）→ 等待你确认；
+ * 段间静默 / 回合起步（无 parts 或无活跃段）→ 等待模型响应。
+ * 纯函数、只读时间线单一真相（与对话流内联卡同源），刷新后可从持久化 parts 重建。
+ */
+export function turnLiveStatus(parts?: TimelinePart[]): string {
+  for (let i = (parts?.length ?? 0) - 1; i >= 0; i -= 1) {
+    const p = parts![i]!
+    if (p.kind === 'text' && p.status === 'streaming') return '生成回复中'
+    if (p.kind === 'thinking' && p.status === 'running') return '深度思考中'
+    if (p.kind === 'tool' && p.status === 'running') {
+      return `正在${presentToolStep({
+        label: p.toolName,
+        kind: 'tool',
+        status: p.status,
+        meta: { toolName: p.toolName, args: p.args },
+      }).label}`
+    }
+    if (p.kind === 'artifact' && (p.status === 'pending' || p.status === 'running')) {
+      return '正在生成产物'
+    }
+    if (
+      (p.kind === 'proposal' && p.status === 'pending_confirm') ||
+      (p.kind === 'question' && p.status === 'pending_answer')
+    ) {
+      return '等待你确认'
+    }
+  }
+  return '等待模型响应'
+}
