@@ -2397,7 +2397,16 @@ export class AgentCanvasToolsService {
     // detached：管线在后台跑（含终态 persist 与 notifyTerminalNow）；本方法即返。
     // record 在管线内由 studio.generateText 创建 ⇒ job handle 无 recordId（容忍面：
     // runtime 工具即返不依赖 handle；前端经 persist 广播/对账收敛）。
-    void this.runTextGeneration(input).catch(() => undefined)
+    void this.runTextGeneration(input).catch((err) => {
+      // ⭐ P0-c（2026-11-03 蓝老虎生产事故）：detached 吞错必须留痕。此前
+      // `.catch(() => undefined)` 把管线早抛（loadOwnedSession/persist/幂等前异常）
+      // 全部静默——节点停 generating、无记录、无日志，取消 404、reaper 盲区，
+      // 排查只能靠「什么日志都没有」反推。至少 console.error 落容器日志。
+      console.error(
+        `[start-text-generation][detached] 管线异常（节点可能停在 generating）sessionId=${input.sessionId} nodeId=${input.nodeId}:`,
+        err instanceof Error ? err.stack ?? err.message : err,
+      )
+    })
     return { status: 'generating', actions: [], async: true }
   }
 
@@ -2433,7 +2442,16 @@ export class AgentCanvasToolsService {
       }
     }
     // detached：同 startTextGeneration；内联参数透传语义与 run-audio 逐字节一致
-    void this.runAudioGeneration(input).catch(() => undefined)
+    void this.runAudioGeneration(input).catch((err) => {
+      // ⭐ P0-c：同 start-text——detached 吞错必须留痕（生产事故：design 管线
+      // 上游挂死 8h+，容器日志零痕迹）。注意：管线内部的节点级异常已被
+      // runAudioGeneration 自身 catch 落成节点 error；能到这里的是 persist/
+      // loadOwnedSession 等更早的抛错。
+      console.error(
+        `[start-audio-generation][detached] 管线异常（节点可能停在 generating）sessionId=${input.sessionId} nodeId=${input.nodeId}:`,
+        err instanceof Error ? err.stack ?? err.message : err,
+      )
+    })
     return { status: 'generating', actions: [], async: true }
   }
 

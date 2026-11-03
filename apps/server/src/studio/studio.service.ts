@@ -2405,57 +2405,108 @@ export class StudioService {
       }
       if (kind === 'design') {
         // 综合音频走非 OpenAI 兼容的同步端点，返回裸字节（不是 data URL）。
-        // 平台缺 key / 上游 402 / 模型不在目录都由既有 catch 显式退款报错，不静默回落。
+        // 平台缺 key / 上游 402 / 模型不在目录都由显式退款报错，不静默回落。
         const apiKey = resolved.credentials.apiKey
         if (!apiKey) throw new Error('missing api key')
-        const { buffer, contentType } = await new StepFunDesignProvider(
-          apiKey,
-          resolved.credentials.baseUrl,
-        ).generate({
-          roles: options.roles ?? [],
-          scripts: options.scripts ?? [],
-          instruction: options.instruction,
-          responseFormat: 'mp3',
-        })
-        const stored = await this.upload.saveUserFile(userId, buffer, 'design.mp3', contentType)
-        if (cancel?.isCancelled()) {
-          await this.points.refund(
-            userId,
-            cost,
-            `${chargeReason}-取消退款`,
-            refundMeta('audio', 'cancelled_refund', {
-              model: resolved.modelName,
-              generationId: null,
-            }),
-          )
-          throwCancelledException(cost)
-        }
+        // ⭐ P0-b 记录先行（2026-11-03 蓝老虎生产事故，对齐 generateImage「记录先行」
+        // 与 music 分支）：此前 record 在 provider 返回之后才 create ⇒ 上游挂死/进程
+        // 崩溃时「节点 generating + 无记录」——取消 404（无锚点）、reaper 盲区、
+        // 扣分无痕。先建 generating 占位再调上游，终态（completed/failed/取消）就地回写。
+        const designMeta = applyChargeMeta(
+          {
+            ...built.meta,
+            skippedMerge,
+            audioKind: kind,
+            channelId: resolved.channelId,
+            roles: options.roles,
+            scripts: options.scripts,
+            instruction: options.instruction,
+          },
+          cost,
+        )
         const designRecord = await this.prisma.generationRecord.create({
           data: {
             userId,
             type: 'audio',
             prompt: mergedText,
             model: storeModel,
-            url: stored.url,
-            status: 'completed',
-            metadata: JSON.stringify(
-              applyChargeMeta(
-                {
-                  ...built.meta,
-                  skippedMerge,
-                  audioKind: kind,
-                  channelId: resolved.channelId,
-                  roles: options.roles,
-                  scripts: options.scripts,
-                  instruction: options.instruction,
-                },
-                cost,
-              ),
-            ),
+            status: 'generating',
+            metadata: JSON.stringify(designMeta),
             ...withCanvasScope(scope),
           },
         })
-        return { ...designRecord, url: stored.url }
+        try {
+          const { buffer, contentType } = await new StepFunDesignProvider(
+            apiKey,
+            resolved.credentials.baseUrl,
+          ).generate({
+            roles: options.roles ?? [],
+            scripts: options.scripts ?? [],
+            instruction: options.instruction,
+            responseFormat: 'mp3',
+          })
+          const stored = await this.upload.saveUserFile(userId, buffer, 'design.mp3', contentType)
+          if (cancel?.isCancelled()) {
+            await this.points.refund(
+              userId,
+              cost,
+              `${chargeReason}-取消退款`,
+              refundMeta('audio', 'cancelled_refund', {
+                model: resolved.modelName,
+                generationId: designRecord.id,
+              }),
+            )
+            // 占位记录就地落终态再抛取消（isCancelledException 在内/外层 catch 均放行）
+            await this.prisma.generationRecord
+              .update({
+                where: { id: designRecord.id },
+                data: {
+                  status: 'failed',
+                  metadata: JSON.stringify({ ...designMeta, cancelled: true, cancelledAt: new Date().toISOString() }),
+                },
+              })
+              .catch(() => undefined)
+            throwCancelledException(cost)
+          }
+          const completed = await this.prisma.generationRecord.update({
+            where: { id: designRecord.id },
+            data: { url: stored.url, status: 'completed' },
+          })
+          return { ...completed, url: stored.url }
+        } catch (err) {
+          if (isCancelledException(err)) throw err
+          // design 失败**自闭环**（语义与下方共享 catch 的「非 voice/BYOK」分支同源：
+          // design 不做 fallback_pending，一律退款 + failed）。差异仅在终态写法——
+          // 占位记录就地置 failed，不再 create 第二条（否则 generating 孤儿 + failed 双记录）。
+          // throwGenerationFailure 抛的 BadRequestException 带 taskKind:'generation' 标记，
+          // 外层共享 catch 顶部放行，不会二次退款。
+          await this.points.refund(
+            userId,
+            cost,
+            `${chargeReason}-失败退款`,
+            refundMeta('audio', 'failed_refund', {
+              model: resolved.modelName,
+              generationId: designRecord.id,
+            }),
+          )
+          const failedMeta = applyFailureDiagnosticMeta(
+            applyRefundMeta(designMeta, cost, 'platform_failed'),
+            err,
+            { userMessage: audioFailureMessage(kind, err, resolved.channelId) },
+          )
+          await this.prisma.generationRecord
+            .update({
+              where: { id: designRecord.id },
+              data: { status: 'failed', url: null, metadata: JSON.stringify(failedMeta) },
+            })
+            .catch(() => undefined)
+          throwGenerationFailure({
+            userMessage: String(failedMeta.userMessage ?? '生成失败'),
+            errorCode: failedMeta.errorCode as ErrorCode,
+            taskId: designRecord.id,
+            refundedPoints: cost,
+          })
+        }
       }
       if (kind === 'music') {
         // 音乐是**异步任务**：submit + 轮询 query，官方 1–3 分钟，远超一次 HTTP 请求的耐心。
@@ -2569,6 +2620,18 @@ export class StudioService {
       return { ...record, url }
     } catch (err) {
       if (isCancelledException(err)) throw err
+      // ⭐ P0-b 记录先行（design 分支）：design 的失败在其内层 catch 自闭环（退款 +
+      // 占位记录置 failed）后经 throwGenerationFailure 重抛 —— BadRequestException
+      // body 带 taskKind:'generation' 标记。此处必须放行，否则会被本共享 catch
+      // 二次处理（二次退款 / 重复 failed 记录）。
+      if (
+        err instanceof BadRequestException &&
+        typeof err.getResponse() === 'object' &&
+        err.getResponse() !== null &&
+        (err.getResponse() as { taskKind?: unknown }).taskKind === 'generation'
+      ) {
+        throw err
+      }
       // 🔴 三类失败都**不得**变成「换平台重试」的重试入口，原因各不相同：
       //
       // 1. `kind !== 'voice'`（design / music）：`confirmPlatformFallback` 的 audio 分支

@@ -1,5 +1,50 @@
 import { describe, expect, it, vi } from 'vitest'
-import { StepFunDesignProvider, StepFunMusicProvider } from './stepfun-audio'
+import {
+  STEPFUN_DESIGN_TIMEOUT_MS,
+  StepFunDesignProvider,
+  StepFunMusicProvider,
+} from './stepfun-audio'
+
+describe('有界超时契约（2026-11-03 蓝老虎事故立规）', () => {
+  it('design 单次超时上界必须有限且 ≤ 5min（裸 fetch 挂死 8h+ 的形态不允许复发）', () => {
+    expect(STEPFUN_DESIGN_TIMEOUT_MS).toBeGreaterThan(0)
+    expect(STEPFUN_DESIGN_TIMEOUT_MS).toBeLessThanOrEqual(300_000)
+  })
+
+  it('design provider 经有界内核调用：init.signal 必须在场（AbortSignal 传播契约）', async () => {
+    let sawSignal = false
+    const fetchImpl = ((_url: string | URL, init?: RequestInit) => {
+      sawSignal = init?.signal instanceof AbortSignal
+      return Promise.resolve(
+        new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'audio/mpeg' } }),
+      )
+    }) as unknown as typeof fetch
+    const p = new StepFunDesignProvider('k', 'https://api.stepfun.com/v1', fetchImpl)
+    const out = await p.generate({ roles: [], scripts: [{ text: 'x' }] })
+    expect(out.buffer.byteLength).toBe(3)
+    // 裸 fetch 不会有 signal；该断言变异（删掉 boundedFetch 改回 this.fetchImpl 直调）即红
+    expect(sawSignal).toBe(true)
+  })
+
+  it('music submit/query 同样经有界内核：init.signal 必须在场', async () => {
+    const seen: Array<boolean | undefined> = []
+    const fetchImpl = ((_url: string | URL, init?: RequestInit) => {
+      seen.push(init?.signal instanceof AbortSignal)
+      if (String(_url).endsWith('/submit')) {
+        return Promise.resolve(new Response(JSON.stringify({ task_id: 't1' }), { status: 200 }))
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ status: 'SUCCESS', audio: Buffer.from([9]).toString('base64') }), {
+          status: 200,
+        }),
+      )
+    }) as unknown as typeof fetch
+    const p = new StepFunMusicProvider('k', 'https://api.stepfun.com/v1', fetchImpl)
+    await p.generate({ caption: 'x' }, { intervalMs: 1, timeoutMs: 1_000 })
+    expect(seen.length).toBeGreaterThanOrEqual(2)
+    expect(seen.every(Boolean)).toBe(true)
+  })
+})
 
 function fakeFetch(handler: (url: string, init: RequestInit) => Response) {
   return vi.fn(async (url: string | URL, init?: RequestInit) =>
