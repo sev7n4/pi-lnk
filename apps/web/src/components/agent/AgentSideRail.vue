@@ -106,7 +106,8 @@ import { useSidebarAttachments, assignRefKeysFor, type FocusNodeLike, type Canva
 import { parseRefMentions } from '@/composables/useRefMentions'
 import MentionInput, { type MentionOption } from '@/components/canvas/MentionInput.vue'
 import { copyTextToClipboard } from '@/utils/copyToClipboard'
-import { createFollowUpTailListener } from './follow-up-tail'
+import { createFollowUpTailListener, isTurnTerminal } from './follow-up-tail'
+import { isConversationAckResponse, parseConversationAck } from './main-turn-ack'
 import { turnLiveStatus } from './activityLine'
 import { applyTailVisibility } from './tail-visibility'
 import {
@@ -2711,6 +2712,11 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
   followUpTail.abort()
   agentStream.start()
 
+  // ⭐ P1（多端一致性计划 Task 5）：ack 化主流（服务端 flag on，响应为 JSON）时置位
+  // —— finally 的「POST 响应体流」收尾职责整体不适用（ack 返回时回合才刚开始，
+  // 终态由 finishOwnTurnViaObserver 在事件通道上收口）。
+  let ackMode = false
+
   try {
     const token = localStorage.getItem('token')
     // 连接级错误（无 HTTP 状态）静默自动重试 1 次：移动端网络抖动多在秒级内恢复，
@@ -2758,6 +2764,46 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
       }
     }
     if (!res) return
+
+    // ── 多端一致性 P1（计划 Task 5）：Content-Type 分派 ──────────────────────
+    // 同一端点、同一请求：服务端 flag on ⇒ JSON ack（run 后台 drain，事件经
+    // GET /runs/events 权威通道）；flag off ⇒ SSE 响应体流（下方既有路径逐字节不变）。
+    // 前置守卫（幂等缓存 / 意图去重 / 会话鉴权）两模式都保持 SSE 形态 ⇒ 自动落回
+    // 既有处理，前端无需感知服务端 flag（分派只认响应头，不猜配置）。
+    if (isConversationAckResponse(res)) {
+      ackMode = true
+      const body: unknown = await res.json().catch(() => null)
+      const ack = parseConversationAck(body)
+      if (!ack?.accepted) {
+        // 同步拒绝（fork 切点失效等）：run 未启动，终态失败，不做对账
+        const reason = ack?.errorMessage || '发起失败，请重试'
+        agent.markTurnError({ message: reason })
+        agent.appendText(`\n\n⚠️ ${reason}`)
+        agent.finishStreaming()
+        scrollToBottom()
+        return
+      }
+      // fork：切换订阅 / 发送 / 历史的目标线程。thread_forked 是 Nest 合成事件、
+      // 不进 lane buffer（/runs/events 收不到）⇒ 新线程 id 只能从 ack 拿
+      //（动作与 handleEvent thread_forked case 完全一致）。
+      if (ack.threadId && ack.threadId !== agentThreadId.value) {
+        agentThreadId.value = ack.threadId
+        persistActiveThreadId(props.sessionId, ack.threadId)
+        persistForkedThreadId(props.sessionId, ack.threadId)
+      }
+      // 主流并入常驻订阅通道：
+      //  · **绝对游标**覆盖内部残值——隐藏页期间冻结的旧 seq 若沿用，重连会把上一轮
+      //    尾包重放进取（污染新气泡）；setLastSeq（覆盖）≠ seedLastSeq（仅空播种）。
+      //  · sinceSeq 缺省 ⇒ null ⇒ from=now（服务端 headSeq 已做不对称取舍）。
+      ownTurnViaObserver.value = true
+      followUpTail.setLastSeq(ack.sinceSeq ?? null)
+      // ack 模式没有 POST 响应体流：staleness 监测对象不存在，停掉（off 模式照旧）
+      agentStream.stop()
+      // 连接此前已为 POST 让位（abort）——重挂并按游标续放，重放覆盖 ack 前空窗。
+      // fork 时 listenFollowUpTail 内部会按新 agentThreadId 重建共享频道。
+      void listenFollowUpTail()
+      return
+    }
 
     const reader = res.body?.getReader()
     if (!reader) return
@@ -2825,6 +2871,12 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
   } finally {
     agentStream.stop()
     streamAbortController = null
+    // ⭐ P1（计划 Task 5）：ack 化主流的回合由 GET /runs/events 通道消费，终态由
+    // finishOwnTurnViaObserver 收口——下面这套「POST 响应体流」收尾职责整体不适用
+    // （ack 返回时回合才刚开始；误跑会把刚起的回合 finishStreaming 掉）。
+    // 安全性：catch 已吞掉全部异常（不 rethrow）⇒ 到达 finally 时必无 pending 异常，
+    // 此处 return 不会吞错（仅跳过 off 模式的流收尾）。
+    if (ackMode) return
     // SSE abnormal-end detection: stream broke without [DONE]
     // P0：verify-before-fail 已接管主流断流的文案（先「对账中」暂态），此处跳过以免重复提示；
     // 服务端确无终态时由下方 post-reconcile 决策统一补弹失败卡。
@@ -2944,6 +2996,18 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
 const observerTurnActive = ref(false)
 
 /**
+ * ⭐ 多端一致性 P1（计划 2026-11-04 Task 5）：本端主流已并入 GET /runs/events 通道
+ * （POST 返回 JSON ack、run 由服务端后台 drain）。置位期间：
+ *  - 订阅流的全量事件走 handleEvent（proposal / ask_user / task_* 等完整语义，
+ *    与 off 模式 POST 响应体流同一口径——这是「两端同源」的消费面收敛点）；
+ *  - 终态事件（done/turn_ack/error/turn_not_submitted）由 finishOwnTurnViaObserver
+ *    收口（off 模式的 finally 收尾职责在此对位）；
+ *  - 断线由订阅循环自带退避 + 游标续传自愈（不再依赖 POST 连接存活）。
+ * 终态收口后复位。旁观模式（false）保持既有最小面（text_delta/canvas_action/终态）。
+ */
+const ownTurnViaObserver = ref(false)
+
+/**
  * 旁观影子气泡的本地 id（2026-11-03 黄小龙虾复测）。
  *
  * 收尾对账要区分两种影子：**回合外简报**（runtime 主动开的简报轮，服务端落
@@ -3013,6 +3077,36 @@ function applyTurnEnd(): void {
   // 传 0：那一轮已在另一端跑完，不做终态轮询（否则旁观端会跟着睡 5s×N）。
   // shadowId：回合外简报按权威行原位采纳（内容启发式会把简报冲掉，见 outOfTurnShadowId）。
   void reconcileLatestAssistant(0, shadowId)
+  emit('turnComplete')
+  scrollToBottom()
+}
+
+/**
+ * ⭐ P1（计划 Task 6）：ack 化主流（ownTurnViaObserver）的回合**终态收口**——
+ * off 模式 sendMessage finally 的收尾职责在本通道的对位实现。
+ *
+ * 终态事件（done/turn_ack/error/turn_not_submitted）可能连发多次（done 后还有
+ * turn_ack）⇒ 用 ownTurnViaObserver 作幂等闸（首帧收口，后续 no-op）。
+ */
+function finishOwnTurnViaObserver(): void {
+  if (!ownTurnViaObserver.value) return
+  ownTurnViaObserver.value = false
+  const wasSuspended = mainTurnSuspended.value
+  // turn_suspended 生命周期闭合（与 applyTurnEnd 同裁决）
+  mainTurnSuspended.value = false
+  // 与 off 模式 finally 同口径：挂起回合不是「无文本回复」，补句只对普通空回合
+  const last = agent.messages[agent.messages.length - 1]
+  if (
+    !runCancelled.value &&
+    !wasSuspended &&
+    last?.role === 'assistant' &&
+    !last.content.trim()
+  ) {
+    agent.appendText('（本轮无文本回复。若还需确认，可再发「确认」；或点「新对话」后重试。）')
+  }
+  agent.finishStreaming()
+  // 服务端权威历史收口（纠偏漏帧/乱序 + canvas 节点 turnComplete→loadSession 对齐）
+  void reconcileLatestAssistant()
   emit('turnComplete')
   scrollToBottom()
 }
@@ -3154,18 +3248,31 @@ const followUpTail = createFollowUpTailListener({
     apiUrl(
       `/api/agent/runs/events?sessionId=${encodeURIComponent(props.sessionId)}&threadId=${encodeURIComponent(agentThreadId.value)}`,
     ),
-  onTextDelta: (text) => {
-    applyTextDelta(text)
-    // 转发给其他标签页（leader 才有连接 ⇒ follower 才能看到同一段）
-    sharedSubscription?.broadcast({ kind: 'text_delta', text })
-  },
-  onCanvasAction: (data) => {
-    applyCanvasAction(data)
-    sharedSubscription?.broadcast({ kind: 'canvas_action', data })
-  },
-  onTurnEnd: () => {
-    applyTurnEnd()
-    sharedSubscription?.broadcast({ kind: 'turn_end' })
+  // ⭐ P1（计划 Task 5/6）：onEvent 提供后本监听器走**排他全量分派**——
+  // ack 化主流（ownTurnViaObserver）的回合经 handleEvent 走与 POST 响应体流
+  // 完全相同的事件语义；旁观模式保持既有三回调语义（含跨标签页转发）。
+  onEvent: (payload) => {
+    if (ownTurnViaObserver.value) {
+      // 本端回合：全量事件语义（proposal / ask_user / task_* / credit_tx / …）
+      handleEvent(payload)
+      // Task 6：终止语义统一为事件终态（不再有 [DONE] —— 本路径根本没有 POST 流）
+      if (isTurnTerminal(payload.type)) finishOwnTurnViaObserver()
+      return
+    }
+    // 旁观模式：既有最小面 + 跨标签页转发（leader 才有连接 ⇒ follower 靠广播）
+    // ⛔ broadcast 实参形状保持与共享契约测试逐字一致（text / data 裸变量名）
+    if (payload.type === 'text_delta') {
+      const text = (payload.data as { text?: string } | undefined)?.text ?? ''
+      applyTextDelta(text)
+      sharedSubscription?.broadcast({ kind: 'text_delta', text })
+    } else if (payload.type === 'canvas_action') {
+      const data = payload.data
+      applyCanvasAction(data)
+      sharedSubscription?.broadcast({ kind: 'canvas_action', data })
+    } else if (isTurnTerminal(payload.type)) {
+      applyTurnEnd()
+      sharedSubscription?.broadcast({ kind: 'turn_end' })
+    }
   },
 })
 

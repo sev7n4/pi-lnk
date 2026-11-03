@@ -79,6 +79,34 @@ describe('reconcileLatestAssistant', () => {
     expect(r.lastSeq).toBe(12)
   })
 
+  it('⭐ Task 7 实证：真实映射终态（agent_end→done / turn_end→pi_turn_end）⇒ settled', async () => {
+    const service = makeService()
+    idempotencyRecordFindMany.mockResolvedValue([])
+    // runEventStream 真实产物：重放首帧非终态（turn_start 等），终态在尾 —— probe 须
+    // 消费重放至终态，首帧即返回会把完结回合误判 active（D2「跑完未落库」治不了）。
+    stubProbe(service, [
+      { type: 'pi_turn_start', seq: 6 },
+      { type: 'text_delta', seq: 7 },
+      { type: 'done', seq: 8 },
+      { type: 'pi_turn_end', seq: 9 },
+    ])
+    const r = await service.reconcileLatestAssistant('T1', 5)
+    expect(r.outcome).toBe('settled')
+    expect(r.lastSeq).toBe(8) // 终态帧（done）的 seq，pi_turn_end 未及返回
+  })
+
+  it('⭐ Task 7 实证：error 事件 = 回合失败终态 ⇒ settled（误报修复面）', async () => {
+    const service = makeService()
+    idempotencyRecordFindMany.mockResolvedValue([])
+    stubProbe(service, [
+      { type: 'pi_turn_start', seq: 6 },
+      { type: 'error', seq: 7, data: { message: 'boom' } },
+    ])
+    const r = await service.reconcileLatestAssistant('T1', 5)
+    expect(r.outcome).toBe('settled')
+    expect(r.lastSeq).toBe(7)
+  })
+
   it('探测空 + IdempotencyRecord completed ⇒ settled（带 evidence）', async () => {
     const service = makeService()
     idempotencyRecordFindMany.mockResolvedValue([

@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-21-multi-device-consistency-design.md`（2026-11-04 修订版）
 
-**执行状态（2026-11-04 Native）**：Task 1–3（P0 全部）已完成并提交（branch `feat/stream-consistency-p0p1`）；关键发现：上游 origin/master 已实现 verify-before-fail 状态机/UX 翻转/`lastMainSeq` 捕获/`deriveObserverFromSeq`（红车 T1 大半已落地），本包实际贡献 = ① reconcile 后端真相源（lane buffer 探测 + IdempotencyRecord，补 DB 历史盲区）② 前端接入 runtime 真相 + T1.4 `seedLastSeq` 游标播种。Task 4–6（P1 统一传输，flag-gated）待后续 PR。
+**执行状态（2026-11-04 Native，两次交付）**：P0（Task 1–3）经 PR #704 squash 合并（master `c7a3a80e`）；P1（Task 4–7）branch `feat/stream-consistency-p1` 提交 4285a8d7→bac54d8a。Task 7 集成测试实证并修复 P0 probe 缺陷（终态名单 vs 真实 UiEvent 产物错配 + 首帧即返回 ⇒ 完结回合恒误判 active）。关键设计落地：ack.sinceSeq=触发时刻 lane head（取锚先于 drain）；headSeq 不对称取舍（404⇒0 / 未知错误⇒省略防历史重放污染）；fork 合成事件不进 lane ⇒ ack 携带新线程 id，失败 accepted:false；前端 Content-Type 分派（不猜服务端 flag）+ setLastSeq 绝对游标 + onEvent 排他全量分派。Task 8（canary 上线）待用户单独授权。
 
 **计划整合声明（2026-11-04 自审）**：本计划**吸收并取代** `docs/superpowers/plans/2026-11-01-red-car-disconnect-misreport-duplicate-rootfix.md` 的 T0+T1+T3 批次作为 P0+P1 执行基线；该计划的 T2（意图幂等）/T4（resume）/T5（durable）分别对应后续 P3/P4/P2 包，其文档保留作为那三包的输入，不再单独执行。
 
@@ -128,10 +128,10 @@
 - `sinceSeq` 初始值：drain 捕获的首个带 seq 事件；ack 需在首个事件前返回——用触发时刻的「当前会话头 seq」：向 pi-runtime 发 `GET /sessions/:key/events?lastEventId=0` 只取最新 seq（或 pi-runtime 已有 head seq 端点，实现时核实，无则用探测首帧 seq-1，最差退化为 `0`=全量重放+前端按 `thread_forked`/`turn_started` 边界去重）。
 - flag off：原 `:748` 起流式分支一字不改。
 
-- [ ] **Step 1: 写失败测试**（off：SSE+`[DONE]`；on：JSON ack + 后台 run 跑完落 lane buffer + 副作用保留）
-- [ ] **Step 2: `cd apps/server && npx vitest run agent.controller.conversation-flag.spec.ts` 确认 FAIL**
-- [ ] **Step 3: 实现 flag 分支 + `startConversationRun`**
-- [ ] **Step 4: 测试 PASS（双分支）→ Commit** `feat(agent): POST /conversation returns ack, run drains server-side (P1, flag-gated)`
+- [x] **Step 1: 写失败测试**（off：SSE+`[DONE]`；on：JSON ack + 后台 run 跑完落 lane buffer + 副作用保留）
+- [x] **Step 2: `cd apps/server && npx vitest run agent.controller.conversation-flag.spec.ts` 确认 FAIL**
+- [x] **Step 3: 实现 flag 分支 + `startConversationRun`**
+- [x] **Step 4: 测试 PASS（双分支）→ Commit** `feat(agent): POST /conversation returns ack, run drains server-side (P1, flag-gated)`
 
 ### Task 5 (P1, frontend + flag): 主流改走 GET /runs/events
 
@@ -144,10 +144,10 @@
 - Consumes: Task 4 的 `ConversationAck`（`threadId`/`sinceSeq`）
 - Produces: 主流 ack 后以 `sinceSeq` 为游标开订阅，事件经同一 `applyTextDelta/applyCanvasAction/applyTurnEnd` 落 store；终止 = `turn_end`
 
-- [ ] **Step 1: 写失败测试**（ack→按 sinceSeq 订阅→帧含 `id:` 被解析→事件进 reducer；off 分支不受影响）
-- [ ] **Step 2: 确认 FAIL → 实现 → PASS**
-- [ ] **Step 3: `AgentSideRail.mobileMaskTabbar.test.ts` + `vue-tsc -b` 全绿**
-- [ ] **Step 4: Commit** `feat(web): main turn consumes GET /runs/events via shared listener (P1, flag-gated)`
+- [x] **Step 1: 写失败测试**（ack→按 sinceSeq 订阅→帧含 `id:` 被解析→事件进 reducer；off 分支不受影响）
+- [x] **Step 2: 确认 FAIL → 实现 → PASS**
+- [x] **Step 3: `AgentSideRail.mobileMaskTabbar.test.ts` + `vue-tsc -b` 全绿**
+- [x] **Step 4: Commit** `feat(web): main turn consumes GET /runs/events via shared listener (P1, flag-gated)`
 
 ### Task 6 (P1, frontend): 终止语义统一 + 回归收口
 
@@ -157,7 +157,7 @@
 
 说明：退避与游标续传**已存在**（`follow-up-tail.ts:267-354`），本任务不重写，只做终止语义对齐 + 断言 on 路径无 `[DONE]`。
 
-- [ ] **Step 1: 失败测试（on 路径 `turn_end` 结束且无 `[DONE]` 处理）→ 实现 → PASS → Commit** `feat(web): unify end-of-stream to turn_end (P1)`
+- [x] **Step 1: 失败测试（on 路径 `turn_end` 结束且无 `[DONE]` 处理）→ 实现 → PASS → Commit** `feat(web): unify end-of-stream to turn_end (P1)`
 
 ### Task 7 (integration): 双端一致性 + 变异测试
 
@@ -169,7 +169,7 @@
 2. A 发起后 5s 强断 A 连接——回合完整落 lane buffer，`reconcile` 非 `missing`，B 补齐。
 3. 变异：去 `id:` 帧 ⇒ 续传红；去 jitter ⇒ 退避红；on 路径出现 `[DONE]` ⇒ 红。
 
-- [ ] **Step 1: 写集成测试 → 跑 PASS → Commit** `test: multi-device stream consistency + mutation guards (P0+P1)`
+- [x] **Step 1: 写集成测试 → 跑 PASS → Commit** `test: multi-device stream consistency + mutation guards (P0+P1)`
 
 ### Task 8 (deploy gate): Canary 上线 + 行为级复测
 

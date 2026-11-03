@@ -832,6 +832,34 @@ export class AgentController {
       throw err
     }
 
+    // ─── 多端一致性 P1（计划 2026-11-04 Task 4）───────────────────────────────
+    // flag on：POST 仅回 JSON ack，run 交 `startConversationRun` 后台 drain（副作用
+    // 全保留），事件由前端经 `GET /runs/events` 权威通道按游标消费——发起端与旁观端
+    // 从此同源（带 `id:` 帧 + lastEventId 续传，[DONE]/裸 split 分叉就此消除）。
+    // ⛔ off（缺省）：下方 SSE 响应体流**逐字节不变**——兼容回滚面（Review Focus 1）。
+    // 上方前置守卫（幂等缓存 / 意图去重 / 会话鉴权）刻意留在 flag 分支之前且保持 SSE
+    // 形态：它们是「不发 run」的终态语义；前端按响应 Content-Type 分派（json ⇒ ack）。
+    if (process.env.STREAM_MAIN_FROM_PIRUNTIME === 'on') {
+      const ack = await this.agentService.startConversationRun({
+        sessionId: dto.sessionId,
+        message: dto.message,
+        userId: req.user.sub,
+        threadId: dto.threadId,
+        idempotencyKey,
+        skillId: dto.skillId,
+        model: dto.model,
+        focusNodeId: dto.focusNodeId,
+        attachments: dto.attachments,
+        refOrder: dto.refOrder,
+        mentionedKeys: dto.mentionedKeys,
+        thinking: dto.thinking,
+        thinkingEffort: dto.thinkingEffort,
+        branchFromEntryId: dto.branchFromEntryId,
+        selectedNodeIds: dto.selectedNodeIds,
+      })
+      return res.status(200).json({ code: 0, message: 'ok', data: ack })
+    }
+
     // SSE 保活（item 4）：pi 的 `: heartbeat` 注释帧被 Nest 客户端丢弃，且长任务（run_* 出图 ~3min /
     // 视频 ~11min）两轮业务事件间可能 >30s 无 data 帧 → 浏览器误判「生成服务暂时不可达」并自断。
     // 控制器每 15s 下发一个 data 帧，浏览器逐帧 touch() 重置 stale 计时（< STREAM_STALE_MS=30s）。

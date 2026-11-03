@@ -71,8 +71,14 @@ describe('AgentSideRail 会话级订阅接线（multi-device 收尾 P0）', () =
     expect(ok, '线程变了旧流就在听错的对象，必须重挂').toBe(true)
   })
 
-  it('⑤ 旁观轮必须有收束：onTurnEnd 接线 + 以服务端权威历史纠正一次（不做终态轮询）', () => {
-    expect(factoryBlock, '收束回调必须接线，否则旁观气泡永远转圈').toContain('onTurnEnd')
+  it('⑤ 旁观轮必须有收束：终态接线 + 以服务端权威历史纠正一次（不做终态轮询）', () => {
+    // ⭐ P1（2026-11-04）：收束接线从具名 onTurnEnd 回调迁入 onEvent 分派器
+    //（ack 化主流需要全量事件语义，具名回调仅旁观最小面）——契约语义不变：
+    // 旁观终态帧仍走 applyTurnEnd，且收口仍以服务端权威历史纠正（传 0 不做终态轮询）。
+    expect(
+      factoryBlock,
+      '收束回调必须接线，否则旁观气泡永远转圈（P1 起经 onEvent 分派器路由）',
+    ).toContain('applyTurnEnd()')
     expect(
       code,
       '旁观收尾直接拉权威历史（传 0 跳过 5s×N 的终态轮询：那一轮已在另一端跑完）',
