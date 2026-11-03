@@ -391,11 +391,49 @@ export function createCanvasWriteTools(
 			label: "提议生成",
 			executionMode: "sequential", // P1a（spec 2026-10-16）：同批写调用串行，见 P1b 捕获时序
 			description:
-				"Mark a media node pending user confirm for generation. Never calls run_*; wait for the user to confirm in the UI.",
-			parameters: Type.Object({ node_id: Type.String({ description: "Canvas node id" }) }),
+				"Mark a media node pending user confirm for generation. Never calls run_*; wait for the user to confirm in the UI. " +
+				"Audio inline params (optional, take precedence over node params and land on the node at propose time): " +
+				"design uses roles/scripts/instruction, music uses caption/lyrics/instrumental, voice uses voice/emotion. " +
+				"⚠️ design 类模型（综合音频）上游要求必须传 scripts（台词段）——歌词/台词务必经本参数随提议携带，" +
+				"不要只写进节点正文或 prompt（上游会 400 'director or scripts is required'）。",
+			parameters: Type.Object({
+				node_id: Type.String({ description: "Canvas node id" }),
+				kind: Type.Optional(Type.String({ description: "audio: voice | design | music" })),
+				voice: Type.Optional(Type.String({ description: "audio voice: 音色 id" })),
+				emotion: Type.Optional(Type.String({ description: "audio voice: 情绪" })),
+				roles: Type.Optional(
+					Type.Array(Type.Object({ role: Type.String(), voice: Type.String() }), {
+						description: "audio design: 角色→音色表",
+					}),
+				),
+				scripts: Type.Optional(
+					Type.Array(
+						Type.Object({
+							role: Type.Optional(Type.String()),
+							text: Type.String({ description: "台词；() 内为语气、[] 内为音效" }),
+						}),
+						{ description: "audio design: 脚本段（歌词/台词）；design 类模型必传" },
+					),
+				),
+				instruction: Type.Optional(Type.String({ description: "audio design: 整体演绎指导（≤500 字）" })),
+				caption: Type.Optional(Type.String({ description: "audio music: 风格描述" })),
+				lyrics: Type.Optional(Type.String({ description: "audio music: 歌词（可空）" })),
+				instrumental: Type.Optional(Type.Boolean({ description: "audio music: 纯音乐（无歌词）" })),
+			}),
 			execute: async (
 				id,
-				p: { node_id: string },
+				p: {
+					node_id: string;
+					kind?: string;
+					voice?: string;
+					emotion?: string;
+					roles?: Array<{ role: string; voice: string }>;
+					scripts?: Array<{ role?: string; text: string }>;
+					instruction?: string;
+					caption?: string;
+					lyrics?: string;
+					instrumental?: boolean;
+				},
 				onUpdate,
 				tc: LnkpiToolContext,
 				_invocation,
@@ -405,11 +443,30 @@ export function createCanvasWriteTools(
 				// RB-D5（spec 2026-10-13-sidebar-ref-bind-invariant-design.md）：本轮侧栏图片计数随
 				// body 上行；门禁 SSOT 在 Nest（localRefs 空 ⇒ confirmed:false missing_refs，不做状态转移）。
 				const sidebarImageCount = (tc.attachments ?? []).filter((a) => a.mediaType === "image").length;
+				// 内联生成参数（2026-11-03 民谣音乐事故）：只把调用方真的给了的字段装进
+				// params 上行——缺省 = 沿用节点参数（存量调用逐字节不变）。Nest 侧在
+				// propose 时把合法参数落到节点 data（audio* 字段），确认后的 start-* 自然读到。
+				const params: Record<string, unknown> = {};
+				for (const key of [
+					"kind",
+					"voice",
+					"emotion",
+					"roles",
+					"scripts",
+					"instruction",
+					"caption",
+					"lyrics",
+					"instrumental",
+				] as const) {
+					if (p[key] !== undefined) params[key] = p[key];
+				}
+				const hasParams = Object.keys(params).length > 0;
 				const base = await client.post("/agent/internal/propose-generation", {
 					sessionId: tc.sessionId,
 					userId: tc.userId,
 					nodeId: p.node_id,
 					sidebarImageCount,
+					...(hasParams ? { params } : {}),
 				});
 				// RB-D5 短路：Nest fail-closed ⇒ 不进阻塞等待，镜像同工具 not-confirmed 结果形状
 				// （Ruling 1：withWriteSignal 会包出 {ok:true,data} 与 fail-closed 语义矛盾）。

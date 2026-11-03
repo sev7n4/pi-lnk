@@ -2697,6 +2697,146 @@ describe('AgentCanvasToolsService', () => {
       expect(orchStart).not.toHaveBeenCalled()
     })
 
+    // ── propose 内联参数（2026-11-03 民谣音乐事故：design 类 scripts 无处安放）────────
+    it('proposeGeneration audio 内联参数落节点 data（scripts/roles/instruction/kind）', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'audio-1',
+            type: 'audio',
+            position: { x: 0, y: 0 },
+            data: {
+              title: '民谣音乐',
+              prompt: '民谣风格音乐，人声演唱',
+              status: 'draft',
+              audioModel: 'platform::stepaudio-3-gen-preview',
+            },
+          },
+        ],
+        edges: [],
+      }
+
+      const result = await svc.proposeGeneration({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'audio-1',
+        params: {
+          kind: 'design',
+          roles: [{ role: '旁白', voice: 'warm_male' }],
+          scripts: [
+            { text: '[主歌1] 清晨的雾 散在远山' },
+            { role: '旁白', text: '[副歌] 风吹过麦田' },
+          ],
+          instruction: '温暖质朴，节奏舒缓',
+        },
+      })
+
+      expect(result.status).toBe('pending_confirm')
+      const d = canvas.nodes[0].data
+      expect(d.status).toBe('pending_confirm')
+      expect(d.audioKind).toBe('design')
+      expect(d.audioRoles).toEqual([{ role: '旁白', voice: 'warm_male' }])
+      expect(d.audioScripts).toEqual([
+        { text: '[主歌1] 清晨的雾 散在远山' },
+        { role: '旁白', text: '[副歌] 风吹过麦田' },
+      ])
+      expect(d.audioInstruction).toBe('温暖质朴，节奏舒缓')
+      expect(
+        (result as { summary: { audioInline?: Record<string, unknown> } }).summary.audioInline,
+      ).toMatchObject({ kind: 'design', scriptsSegments: 2 })
+      // 与 status/proposalEpoch 同一条 update_node（服务端合规写者，一次落盘）
+      const update = result.actions.find((a) => a.type === 'update_node')
+      expect(update).toBeDefined()
+      expect((update!.payload as { data: Record<string, unknown> }).data.audioScripts).toBeDefined()
+    })
+
+    it('proposeGeneration music 内联参数落节点 data（caption/lyrics/instrumental）', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'audio-2',
+            type: 'audio',
+            position: { x: 0, y: 0 },
+            data: {
+              title: 'BGM',
+              prompt: '悬疑氛围配乐',
+              status: 'draft',
+              audioModel: 'platform::stepaudio-3-music-preview',
+            },
+          },
+        ],
+        edges: [],
+      }
+
+      const result = await svc.proposeGeneration({
+        sessionId: 's1',
+        userId: 'u1',
+        nodeId: 'audio-2',
+        params: { kind: 'music', caption: '悬疑氛围', lyrics: '当月光洒满我的心房', instrumental: false },
+      })
+
+      expect(result.status).toBe('pending_confirm')
+      const d = canvas.nodes[0].data
+      expect(d.audioKind).toBe('music')
+      expect(d.audioCaption).toBe('悬疑氛围')
+      expect(d.audioLyrics).toBe('当月光洒满我的心房')
+      expect(d.audioInstrumental).toBe(false)
+    })
+
+    it('🔴 kind 与节点模型分类不一致 → propose 即 400（R12 前置，确认卡弹出前早失败）', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'audio-3',
+            type: 'audio',
+            position: { x: 0, y: 0 },
+            data: {
+              title: '配音',
+              prompt: '一段配音',
+              status: 'draft',
+              audioModel: 'platform::minimax-speech-2.8-hd',
+            },
+          },
+        ],
+        edges: [],
+      }
+
+      await expect(
+        svc.proposeGeneration({
+          sessionId: 's1',
+          userId: 'u1',
+          nodeId: 'audio-3',
+          params: { kind: 'design', scripts: [{ text: '台词' }] },
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException)
+      // 校验失败不得做状态转移
+      expect(canvas.nodes[0].data.status).toBe('draft')
+    })
+
+    it('🔴 非 audio 节点带内联参数 → 400 显式拒绝（不静默忽略）', async () => {
+      canvas = {
+        nodes: [
+          {
+            id: 'img-9',
+            type: 'image',
+            position: { x: 0, y: 0 },
+            data: { title: '主图', prompt: '蓝天', status: 'draft', imageModel: 'platform::user-default-image' },
+          },
+        ],
+        edges: [],
+      }
+
+      await expect(
+        svc.proposeGeneration({
+          sessionId: 's1',
+          userId: 'u1',
+          nodeId: 'img-9',
+          params: { kind: 'design', scripts: [{ text: 'x' }] },
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException)
+      expect(canvas.nodes[0].data.status).toBe('draft')
+    })
+
     it('proposeGeneration rejects empty prompt without pending or generate*', async () => {
       canvas = {
         nodes: [

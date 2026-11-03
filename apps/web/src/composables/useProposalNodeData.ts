@@ -21,6 +21,11 @@ export interface ProposalNodeData {
   videoResolution?: string
   /** 音频分类（tts/singing/…，只读展示；voice/kind 编辑强耦合画布 dock，C-later） */
   audioKind?: string
+  /** 音频内联参数回执（2026-11-03 propose_inline_params：propose 落节点 data，确认卡只读展示） */
+  audioScriptsSegments?: number
+  audioLyricsChars?: number
+  audioCaption?: string
+  audioInstrumental?: boolean
 }
 
 /** 画布节点（结构化形状，与 `CanvasNodeLike` 兼容；节点数据经 props 传入，不读 store）。 */
@@ -74,6 +79,14 @@ export function resolveProposalNodeData(
   const videoAspectRatio = vs && typeof vs.aspectRatio === 'string' ? vs.aspectRatio : undefined
   const videoResolution = vs && typeof vs.resolution === 'string' ? vs.resolution : undefined
   const audioKind = typeof d.audioKind === 'string' ? d.audioKind : undefined
+  // 音频内联参数回执（2026-11-03）：propose_generation 落到节点 data 的
+  // audioScripts/audioLyrics/...，与 web 音频 dock 同名字段——确认卡据此展示
+  // 「台词 N 段 / 歌词 N 字」chip，用户确认前可见将生成的内容载体。
+  const audioScriptsSegments = Array.isArray(d.audioScripts) ? d.audioScripts.length : undefined
+  const audioLyricsChars = typeof d.audioLyrics === 'string' && d.audioLyrics ? d.audioLyrics.length : undefined
+  const audioCaption = typeof d.audioCaption === 'string' && d.audioCaption ? d.audioCaption : undefined
+  const audioInstrumental =
+    typeof d.audioInstrumental === 'boolean' ? d.audioInstrumental : undefined
 
   return {
     nodeId,
@@ -92,6 +105,10 @@ export function resolveProposalNodeData(
     videoAspectRatio,
     videoResolution,
     audioKind,
+    audioScriptsSegments,
+    audioLyricsChars,
+    audioCaption,
+    audioInstrumental,
   }
 }
 

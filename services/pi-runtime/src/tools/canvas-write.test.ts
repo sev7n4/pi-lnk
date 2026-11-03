@@ -104,6 +104,40 @@ describe("canvas-write: body 形态与条件字段", () => {
 		assert.deepEqual(calls[1].body, { sessionId: "s1", userId: "u1", nodeId: "n1", sidebarImageCount: 1 });
 	});
 
+	it("propose_generation 内联参数：只发提供的字段并装进 params（2026-11-03 民谣事故）", async () => {
+		const { client, calls } = makeClient();
+		const tools = createCanvasWriteTools(client);
+		await run(findTool(tools, "propose_generation"), {
+			node_id: "a1",
+			kind: "design",
+			scripts: [{ text: "[主歌] 清晨的雾 散在远山" }],
+			roles: [{ role: "旁白", voice: "warm_male" }],
+			instruction: "节奏舒缓",
+		});
+		assert.deepEqual(calls[0].body, {
+			sessionId: "s1",
+			userId: "u1",
+			nodeId: "a1",
+			sidebarImageCount: 1,
+			params: {
+				kind: "design",
+				scripts: [{ text: "[主歌] 清晨的雾 散在远山" }],
+				roles: [{ role: "旁白", voice: "warm_male" }],
+				instruction: "节奏舒缓",
+			},
+		});
+
+		// 未提供的字段不得出现（缺省 = 沿用节点参数，存量语义不变）
+		await run(findTool(tools, "propose_generation"), { node_id: "a1", lyrics: "当月光洒满我的心房" });
+		assert.deepEqual(calls[1].body, {
+			sessionId: "s1",
+			userId: "u1",
+			nodeId: "a1",
+			sidebarImageCount: 1,
+			params: { lyrics: "当月光洒满我的心房" },
+		});
+	});
+
 	it("duplicate_node 条件字段：includeUpstream 仅 true 才发", async () => {
 		const { client, calls } = makeClient();
 		const tools = createCanvasWriteTools(client);

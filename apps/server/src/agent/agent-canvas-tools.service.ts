@@ -45,6 +45,7 @@ import {
 import { PrismaService } from '../prisma/prisma.service'
 import { PersistRemoteService } from '../assets/persist-remote.service'
 import { PUBLIC_ASSETS } from '../assets/public-assets.data'
+import { assertAudioKindMatchesModel } from '../studio/audio-kind'
 import { MaterialService } from '../canvas/material.service'
 import { sanitizeAgentMessageContent } from './agentMessageSanitize'
 import { StudioService, type StudioRefInput } from '../studio/studio.service'
@@ -1180,6 +1181,24 @@ export class AgentCanvasToolsService {
     nodeId: string
     /** RB-D5：本轮侧栏图片附件计数；缺省/0 ⇒ 门禁关（Ruling 6）。 */
     sidebarImageCount?: number
+    /**
+     * 内联生成参数（2026-11-03 民谣音乐事故，propose_inline_params 设计）：
+     * 音频专用——design 的 scripts/roles/instruction、music 的 caption/lyrics/instrumental、
+     * voice 的 voice/emotion。propose 时经 DTO 校验后落到节点 data（audio* 字段），
+     * 确认后的 start-audio-generation 走既有节点参数通道读到，确认链路零改动。
+     * kind 与节点 audioModel 的分类一致性在 propose 时即校验（R12 前置，早失败）。
+     */
+    params?: {
+      kind?: string
+      voice?: string
+      emotion?: string
+      roles?: Array<{ role: string; voice: string }>
+      scripts?: Array<{ role?: string; text: string }>
+      instruction?: string
+      caption?: string
+      lyrics?: string
+      instrumental?: boolean
+    }
   }): Promise<
     | {
         nodeId: string
@@ -1248,6 +1267,55 @@ export class AgentCanvasToolsService {
         `节点已有生成在跑（当前 status=${String(data.status)}），禁止重复提议：等待生成完成或用户指示即可，不要再次 propose_generation。`,
       )
     }
+    // ── 内联生成参数（2026-11-03 民谣音乐事故，propose_inline_params）────────────
+    // 断裂点回顾：design 类模型（stepaudio-3-gen-preview）上游要求 scripts（台词段），
+    // 但 set_node_generation_params / 节点数据没有任何字段能承载 scripts/lyrics——
+    // 歌词只存在于节点正文/prompt，start-audio 收到空 scripts ⇒ 上游 400。
+    // 修法：propose 时把内联参数落到节点 data（audio* 字段），与 status/proposalEpoch
+    // 同一条 update_node（服务端写者 = C2b 合规通道）；确认后的 start-audio-generation
+    // 走既有「input.* ?? node.data.audio*」通道自然读到，确认链路（web dock）零改动。
+    let inlineDataPatch: Record<string, unknown> | undefined
+    let audioInlinePreview: {
+      kind?: string
+      scriptsSegments?: number
+      lyricsChars?: number
+      caption?: string
+      instrumental?: boolean
+    } | undefined
+    if (input.params) {
+      if (node.type !== 'audio') {
+        throw new BadRequestException(
+          `内联生成参数仅支持音频（audio）节点，当前节点类型为 ${node.type}；请去掉 params 后重试。`,
+        )
+      }
+      const p = input.params
+      // R12 前置：kind 与节点模型分类一致性在 propose 时即校验——早失败优于
+      // 等用户确认后才在 start-* 报 400（确认卡弹出前给模型可行动的错误）。
+      // ⚠️ 节点存的是渠道 ref（`platform::<modelKey>` / `<channelId>::<model>`），
+      // 目录查找按裸 modelKey——与 studio resolveForGeneration 解析后判定同语义。
+      if (p.kind !== undefined) {
+        const rawModel = typeof data.audioModel === 'string' ? data.audioModel : ''
+        const bareModel = rawModel.includes('::') ? (rawModel.split('::').pop() ?? '') : rawModel
+        assertAudioKindMatchesModel(p.kind, bareModel)
+      }
+      inlineDataPatch = {}
+      if (p.kind !== undefined) inlineDataPatch.audioKind = p.kind
+      if (p.voice !== undefined) inlineDataPatch.audioVoice = p.voice
+      if (p.emotion !== undefined) inlineDataPatch.audioEmotion = p.emotion
+      if (p.roles !== undefined) inlineDataPatch.audioRoles = p.roles
+      if (p.scripts !== undefined) inlineDataPatch.audioScripts = p.scripts
+      if (p.instruction !== undefined) inlineDataPatch.audioInstruction = p.instruction
+      if (p.caption !== undefined) inlineDataPatch.audioCaption = p.caption
+      if (p.lyrics !== undefined) inlineDataPatch.audioLyrics = p.lyrics
+      if (p.instrumental !== undefined) inlineDataPatch.audioInstrumental = p.instrumental
+      audioInlinePreview = {
+        ...(p.kind !== undefined ? { kind: p.kind } : {}),
+        ...(p.scripts !== undefined ? { scriptsSegments: p.scripts.length } : {}),
+        ...(p.lyrics !== undefined ? { lyricsChars: p.lyrics.length } : {}),
+        ...(p.caption !== undefined ? { caption: p.caption } : {}),
+        ...(p.instrumental !== undefined ? { instrumental: p.instrumental } : {}),
+      }
+    }
     // P1-B B6（spec 2026-11-01-p1b-generation-job-design §4.1 幂等/epoch）：每次
     // propose（含撤回后重提）mark pending_confirm 时递增节点 proposalEpoch。撤回
     // （clear-propose）本身不动 epoch —— 重提必然再次走本方法，天然 +1。start-* 端点
@@ -1270,12 +1338,21 @@ export class AgentCanvasToolsService {
       audioKind?: string
       /** P1-B B6：本次 propose 的纪元；runtime 确认臂 start 请求原样带回供 Nest 校验。 */
       proposalEpoch?: number
+      /** 内联参数回执（2026-11-03）：确认卡/模型可读的「参数已落节点」凭据。 */
+      audioInline?: {
+        kind?: string
+        scriptsSegments?: number
+        lyricsChars?: number
+        caption?: string
+        instrumental?: boolean
+      }
     } = {
       type: String(node.type),
       promptPreview,
       proposalEpoch,
       ...(title ? { title } : {}),
     }
+    if (audioInlinePreview) summary.audioInline = audioInlinePreview
     if (typeof data.imageModel === 'string' && data.imageModel) summary.imageModel = data.imageModel
     if (typeof data.videoModel === 'string' && data.videoModel) summary.videoModel = data.videoModel
     if (typeof data.textModel === 'string' && data.textModel) summary.textModel = data.textModel
@@ -1323,7 +1400,10 @@ export class AgentCanvasToolsService {
     const actions: CanvasAction[] = [
       {
         type: 'update_node',
-        payload: { id: node.id, data: { status: 'pending_confirm', proposalEpoch } },
+        payload: {
+          id: node.id,
+          data: { status: 'pending_confirm', proposalEpoch, ...(inlineDataPatch ?? {}) },
+        },
       },
     ]
     await this.applyOrStage(input.sessionId, actions, false)
@@ -2539,7 +2619,9 @@ export class AgentCanvasToolsService {
       // 实际使用参数提取（used 回读透传）：与下方调用同一取值表达式，单一事实。
       const usedAudio: { model?: string; kind?: string; voice: string } = {
         model: pickString(node.data?.audioModel, prefs.defaultAudioModel) || undefined,
-        kind: input.kind,
+        kind:
+          input.kind ??
+          (typeof node.data?.audioKind === 'string' && node.data.audioKind ? node.data.audioKind : undefined),
         voice: input.voice ?? pickString(node.data?.audioVoice, prefs.audioVoice || 'female-shaonv'),
       }
       const record = await this.studio.generateAudio(
@@ -2547,20 +2629,45 @@ export class AgentCanvasToolsService {
         text,
         {
           model: usedAudio.model,
-          // 工具内联优先：给了就用给的，没给才沿用节点/账号默认（存量取值不变）
+          // 工具内联优先：给了就用给的，没给才沿用节点/账号默认（存量取值不变）。
+          // 2026-11-03 扩展：propose_generation 内联参数已由 propose 落到节点 data
+          // （audioScripts/audioRoles/audioLyrics/...，与 web 音频 dock 同名字段）——
+          // propose→确认→start 主链路经此兜底读到，scripts 缺口闭环。
           voice: usedAudio.voice,
           emotion: input.emotion ?? pickString(node.data?.audioEmotion, 'neutral'),
           language: pickString(node.data?.audioLanguage, 'zh'),
           speed: typeof node.data?.audioSpeed === 'number' ? node.data.audioSpeed : prefs.audioSpeed ?? 1,
           volume: typeof node.data?.audioVolume === 'number' ? node.data.audioVolume : 1,
           pitch: typeof node.data?.audioPitch === 'number' ? node.data.audioPitch : 0,
-          kind: input.kind,
-          roles: input.roles,
-          scripts: input.scripts,
-          instruction: input.instruction,
-          caption: input.caption,
-          lyrics: input.lyrics,
-          instrumental: input.instrumental,
+          kind: usedAudio.kind,
+          roles:
+            input.roles ??
+            (Array.isArray(node.data?.audioRoles)
+              ? (node.data.audioRoles as Array<{ role: string; voice: string }>)
+              : undefined),
+          scripts:
+            input.scripts ??
+            (Array.isArray(node.data?.audioScripts)
+              ? (node.data.audioScripts as Array<{ role?: string; text: string }>)
+              : undefined),
+          instruction:
+            input.instruction ??
+            (typeof node.data?.audioInstruction === 'string' && node.data.audioInstruction
+              ? node.data.audioInstruction
+              : undefined),
+          caption:
+            input.caption ??
+            (typeof node.data?.audioCaption === 'string' && node.data.audioCaption
+              ? node.data.audioCaption
+              : undefined),
+          lyrics:
+            input.lyrics ??
+            (typeof node.data?.audioLyrics === 'string' && node.data.audioLyrics
+              ? node.data.audioLyrics
+              : undefined),
+          instrumental:
+            input.instrumental ??
+            (typeof node.data?.audioInstrumental === 'boolean' ? node.data.audioInstrumental : undefined),
         },
         refs,
         undefined,
