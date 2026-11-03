@@ -107,6 +107,7 @@ import { parseRefMentions } from '@/composables/useRefMentions'
 import MentionInput, { type MentionOption } from '@/components/canvas/MentionInput.vue'
 import { copyTextToClipboard } from '@/utils/copyToClipboard'
 import { createFollowUpTailListener } from './follow-up-tail'
+import { consumeMainTurnStream, parseConversationAck } from './main-turn-channel'
 import { turnLiveStatus } from './activityLine'
 import { applyTailVisibility } from './tail-visibility'
 import {
@@ -2758,6 +2759,77 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
       }
     }
     if (!res) return
+
+    // ── P1 Task 5/6（多端一致性 · 统一传输）：传输交换 ──────────────────────────
+    // flag on ⇒ 服务端返回 JSON ack（Content-Type: application/json）而非 SSE 流。
+    // 主流改按 ack 锚点订阅权威通道 GET /runs/events：与旁观流读同一份 pi-runtime
+    // lane buffer、同一 mapPiEventToUiEvent 事件契约，事件进同一主流 reducer
+    // handleEvent；终止 = 回合收束帧（done/turn_ack/error/turn_not_submitted），
+    // GET 通道无 [DONE]（那是 POST 流 legacy 帧）。断流（clean end 未收束）⇒
+    // 走既有 P0 verify-before-fail 对账路径（lastMainSeq 已由 onCursor 捕获）。
+    // flag off ⇒ 下方 POST 响应体流循环原样保留，逐字节不动。
+    const contentType = res.headers.get('content-type') ?? ''
+    if (contentType.includes('application/json')) {
+      const ack = parseConversationAck(await res.json().catch(() => null))
+      if (!ack) {
+        // 协议错误：按断流对账处理（先查真相再判失败，不直接弹卡）
+        throw new Error('conversation ack parse failed')
+      }
+      if (!ack.accepted) {
+        // Task 4 闸门折义：三态文案与 off 路径服务端下发的一一对应（措辞 SSOT 在服务端）
+        streamEndedNormally = true
+        if (ack.reason === 'idempotent_hit') {
+          agent.appendText(
+            ack.status === 'processing'
+              ? '上一轮仍在处理中，请稍候…'
+              : ack.resultSummary || '已完成',
+          )
+        } else if (ack.reason === 'not_idle') {
+          agent.appendText('检测到相同内容已在生成 / 已生成，已为你复用，无需重复发送。')
+        } else if (ack.reason === 'session_forbidden') {
+          agent.appendText(
+            '⚠️ 此画布不属于当前账号，无法写入。请返回工作台新建画布，或使用画布所有者账号登录。',
+          )
+        } else {
+          // 未知 reason（协议前向兼容）：按「未受理」如实呈现，不订阅、不判失败
+          agent.appendText('（本轮未被受理，请稍后重试。）')
+        }
+        return
+      }
+      // fork（③ 重跑）：thread_forked 是 Nest 合成事件、不进 lane buffer ⇒ GET 流
+      // 不会重放它，只能由 ack 回填。复用 handleEvent 的 thread_forked 分支
+      // （切线程 + persistForkedThreadId 一处实现），订阅 URL 随 agentThreadId 走新线程。
+      if (ack.forkedThreadId && ack.forkedThreadId !== agentThreadId.value) {
+        handleEvent({ type: 'thread_forked', data: { threadId: ack.forkedThreadId } })
+      }
+      const mainTurnUrl =
+        apiUrl(
+          `/api/agent/runs/events?sessionId=${encodeURIComponent(props.sessionId)}&threadId=${encodeURIComponent(ack.forkedThreadId || ack.threadId)}`,
+        ) + `&lastEventId=${ack.sinceSeq}`
+      const mainRes = await fetch(mainTurnUrl, {
+        signal: streamAbortController.signal,
+        headers: { ...authHeaders() },
+      })
+      if (!mainRes.ok || !mainRes.body) {
+        throw new Error(`main turn stream HTTP ${mainRes.status}`)
+      }
+      const outcome = await consumeMainTurnStream({
+        reader: mainRes.body.getReader(),
+        onEvent: (event) => {
+          agentStream.touch()
+          handleEvent(event)
+        },
+        onCursor: (seq) => {
+          // P0 断流对账游标：与 off 路径 id: 帧捕获同语义（断流后续传锚点）
+          lastMainSeq.value = seq
+        },
+        signal: streamAbortController.signal,
+      })
+      if (outcome.endedNaturally) {
+        streamEndedNormally = true
+      }
+      return
+    }
 
     const reader = res.body?.getReader()
     if (!reader) return
