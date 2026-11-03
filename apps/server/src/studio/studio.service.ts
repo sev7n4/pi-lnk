@@ -30,7 +30,6 @@ import {
   generateVisionQaJson,
   imageRefDescriptorsFromRefs,
   mergeRefsToPrompt,
-  resolvePromptGenerateText,
   Seedance1xUnsupportedError,
   StepFunDesignProvider,
   StepFunMusicProvider,
