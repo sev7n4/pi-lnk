@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -24,6 +25,7 @@ import {
   type WorkflowDocument,
 } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
+import { transactGovernedCanvasOps } from '../sessions/canvas-op-write'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
 
 const EXTRACT_INCOMPLETE = '请指明哪张是模特、哪张是服装。'
@@ -204,28 +206,47 @@ export class CompositionService {
       workflow: preview.dump,
     })
 
-    const afterImport = await this.prisma.session.findUnique({ where: { id: session.id } })
-    const canvas = parseCanvas(afterImport?.canvasData)
     const nodeIds = generatingNodeIds(preview.dump, imported.idMap)
-    canvas.compositionRunGroup = {
+    const runGroup = {
       nodeIds,
       dumpHash: input.dumpHash,
       createdAt: new Date().toISOString(),
     }
+    const landedPreview: StoredPreview = {
+      ...preview,
+      lastImportedHash: input.dumpHash,
+      lastAddedNodeIds: imported.addedNodeIds,
+      lastImportedSlotKey: slotKey,
+      lastCanvasCommands: imported.canvasCommands,
+    }
 
-    await this.prisma.session.update({
-      where: { id: session.id },
-      data: {
-        canvasData: JSON.stringify(canvas),
-        compositionPreview: JSON.stringify({
-          ...preview,
-          lastImportedHash: input.dumpHash,
-          lastAddedNodeIds: imported.addedNodeIds,
-          lastImportedSlotKey: slotKey,
-          lastCanvasCommands: imported.canvasCommands,
-        }),
-      },
-    })
+    // P1-C C2b：侧车回写收编到合规通道——原实现事务外读 afterImport 再整份写回，
+    // 与 import 落地之间的窗口会覆盖中间其他写者（丢更新），且无 stagedActions 守卫。
+    // 现改为：事务内读最新 → set_composition_run_group op（C2a 侧车通道服务端复用）
+    // → 与 compositionPreview 同事务原子落库；staged 在场 409（与 persist 家族同语义，
+    //   importWorkflow 落地时同样会被 409，行为连续）；parseCanvas 抛错语义原样保留。
+    const result = await transactGovernedCanvasOps(
+      this.prisma,
+      session.id,
+      () => ({
+        ops: [
+          {
+            type: 'set_composition_run_group',
+            payload: { compositionRunGroup: runGroup },
+          },
+        ],
+        extraUpdate: { compositionPreview: JSON.stringify(landedPreview) },
+      }),
+      { onStaged: 'conflict', parse: parseCanvas },
+    )
+    if (result.outcome === 'skipped_missing_session') {
+      throw new NotFoundException('会话不存在')
+    }
+    if (result.outcome === 'skipped_staged') {
+      throw new ConflictException(
+        'Canvas has staged actions pending commit; call commitStage or rollbackStage first',
+      )
+    }
 
     return {
       addedNodeIds: imported.addedNodeIds,

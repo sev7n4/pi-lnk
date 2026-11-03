@@ -11,6 +11,7 @@ import { randomUUID } from 'crypto'
 import { extname } from 'path'
 import { parseUploadRefPath } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
+import { transactGovernedCanvasOps } from '../sessions/canvas-op-write'
 import {
   MediaService,
   mimeFromExt,
@@ -368,6 +369,9 @@ export class PersistRemoteService {
   }) {
     if (!args.sessionId || !args.sourceNodeId) return
 
+    // 属主校验留在事务外（保持既有 NotFound 语义）；落库走 C2b 合规通道：
+    // 事务内读最新 → update_node op（storageTier/url 是服务端字段，不经客户端白名单）
+    // → stagedActions 在场时退让（用户显式暂存区，后台回写不得混入）。
     const session = await this.prisma.session.findFirst({
       where: { id: args.sessionId, userId: args.userId },
     })
@@ -375,32 +379,35 @@ export class PersistRemoteService {
       throw new NotFoundException('会话不存在')
     }
 
-    let canvas: { nodes?: Array<{ id?: string; data?: Record<string, unknown> }> }
-    try {
-      canvas = session.canvasData ? (JSON.parse(session.canvasData) as typeof canvas) : { nodes: [] }
-    } catch {
-      canvas = { nodes: [] }
+    const result = await transactGovernedCanvasOps(
+      this.prisma,
+      session.id,
+      (canvas) => {
+        const node = canvas.nodes.find((n) => n.id === args.sourceNodeId)
+        if (!node) return null
+        return {
+          ops: [
+            {
+              type: 'update_node',
+              payload: {
+                id: node.id,
+                data: {
+                  url: args.publicUrl,
+                  upstreamUrl: args.upstreamUrl,
+                  storageTier: args.storageTier,
+                },
+              },
+            },
+          ],
+        }
+      },
+      { onStaged: 'skip' },
+    )
+    if (result.outcome === 'skipped_staged') {
+      console.warn(
+        `[persist-remote] skipped_staged: 节点 url 回写退让 sessionId=${session.id} nodeId=${args.sourceNodeId}`,
+      )
     }
-
-    const nodes = canvas.nodes ?? []
-    let changed = false
-    for (const node of nodes) {
-      if (node.id !== args.sourceNodeId) continue
-      const data = { ...(node.data ?? {}) }
-      data.url = args.publicUrl
-      data.upstreamUrl = args.upstreamUrl
-      data.storageTier = args.storageTier
-      node.data = data
-      changed = true
-      break
-    }
-
-    if (!changed) return
-
-    await this.prisma.session.update({
-      where: { id: session.id },
-      data: { canvasData: JSON.stringify({ ...canvas, nodes }) },
-    })
   }
 }
 

@@ -1,5 +1,6 @@
 import 'reflect-metadata'
 import { describe, expect, it, vi } from 'vitest'
+import { ConflictException } from '@nestjs/common'
 import { COMPOSITION_BIND_MISSING, GOLD_COMPOSE_1 } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
 import { CompositionService } from './composition.service'
@@ -10,6 +11,7 @@ type SessionRow = {
   canvasData: string | null
   compositionPreview: string | null
   compositionPending: string | null
+  stagedActions?: string | null
 }
 
 const CONFIRM_ID_MAP = {
@@ -68,7 +70,10 @@ function createPrisma() {
         return next
       },
     },
+    // C2b：confirm 侧车回写走 transactGovernedCanvasOps（事务内读 → op → 写回）
+    $transaction: async (fn: (tx: unknown) => Promise<unknown>) => fn(prismaTx),
   }
+  const prismaTx = { session: prisma.session }
   return { sessions, prisma: prisma as unknown as PrismaService }
 }
 
@@ -394,6 +399,29 @@ describe('CompositionService', () => {
       response: { userMessage: '这版构图还不能放到画布，请稍后再试或简化步骤。' },
     })
     expect(sessions.get('s1')!.canvasData).toBe('{not-json')
+  })
+
+  it('C2b: stagedActions 在场时 confirm 409 且侧车不落画布', async () => {
+    const { prisma, sessions } = createPrisma()
+    const importWorkflow = mockImportWritingCanvas(sessions)
+    const svc = new CompositionService(prisma, { importWorkflow } as never)
+    const out = await svc.preview({
+      sessionId: 's1',
+      userId: 'u1',
+      utterance: GOLD_COMPOSE_1,
+      existingNodeCount: 0,
+      attachments: GOLD_SIDEBAR_ATTACHMENTS,
+    })
+    sessions.get('s1')!.stagedActions = JSON.stringify([{ type: 'add_node', payload: {} }])
+
+    await expect(
+      svc.confirm({ sessionId: 's1', userId: 'u1', dumpHash: out.dumpHash }),
+    ).rejects.toBeInstanceOf(ConflictException)
+
+    const saved = JSON.parse(sessions.get('s1')!.canvasData!) as {
+      compositionRunGroup?: unknown
+    }
+    expect(saved.compositionRunGroup).toBeUndefined()
   })
 
   it('E-B4 same slotKey second confirm replaces rather than stacking', async () => {

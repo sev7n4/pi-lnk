@@ -70,7 +70,12 @@ C0（S）→ C1（XL，分 C1a 服务端 + C1b 前端两 PR）→ C2（S，收�
 1. **PATCH 白名单守卫进 CI**：服务端单测锁「客户端 ops 提交 status ⇒ 被丢弃/拒绝」；web 侧 `canvasDiff` 单测锁「白名单外键变化不进 ops」。与 B2 双守卫（web ratchet + runtime 硬零）合并成三件套。
 2. **PUT 观测清零流程**：C1 上线后观测 `canvas_put_deprecated` 日志计数；连续两周清零 ⇒ 关闭 PUT 的 canvasData 写入（保留 title）——独立小 PR，届时另评估。
 3. **侧车 op 通道（C2a，已落地 2026-11-02）**：`set_groups` / `set_composition_run_group` 两类 op（SSOT=`packages/shared/src/agentContract.ts`；applier=`packages/agent/src/tools/executor.ts` 单实现三端共用；服务端 `sanitizeClientOps` 白名单放行 + 形状校验；web `useCanvasActions.applyActionsToFlow` 显式 no-op case 防静默丢弃）。这是第 2 条「关闭 PUT」的前置——已达成。
-4. **状态转移 API 幂等面定型**（P1-D 依赖输入）：文档化一页——节点状态全部合法转移及其幂等键（proposeEpoch / generationRecordId / P0-1 dedup / cancel 通道），作为 P1-D「审批分级」的状态机输入。
+4. **侧道写者收编（C2b，已落地 2026-11-03）**：客户端写面收编后，审计发现服务端仍残留**绕过 op 语义直接 read-modify-write 整份 canvasData** 的侧道写者。全部写者清单（`git grep` 全量核实）：合规（`agent-canvas-tools.persist*` 家族 / `agent.service.finalizeTurn` applier 分支 / `sessions-canvas-node-status`（事务+staged 守卫+状态机三全））之外，两个缺口——
+   - `assets/persist-remote.service.rewriteNodeUrl`：**无事务、无 stagedActions 守卫**的裸写（storageTier/url 回写）；
+   - `agent/composition.service.confirm`：compositionRunGroup 侧车回写**事务外读 afterImport 再整份写回**（与 import 落地之间的窗口覆盖中间写者 = 丢更新，红车事故同族形态），且无 stagedActions 守卫。
+
+   收编方式：新增共享合规落库通道 `apps/server/src/sessions/canvas-op-write.ts`（`transactGovernedCanvasOps`）——事务内读最新 → `applyCanvasActions` op 语义 → 事务内写回，stagedActions 在场按 `onStaged` 处置（`skip`=后台写者退让 / `conflict`=调用方映射 409，与 persist 家族同语义）。persist-remote 改走 `update_node` op（storageTier/url 是服务端字段 owner，不经客户端白名单——合规 = op 语义 + 事务 + staged 守卫，非白名单本身）；composition confirm 改走 `set_composition_run_group` op（C2a 侧车通道服务端复用）并与 compositionPreview 同事务原子落库，parseCanvas 抛错语义原样保留（tx 内抛 ⇒ 零写入）。行为级判据：`canvas-op-write.test.ts` 六判据 + persist-remote 两判据（staged 退让/节点缺失零写入）+ composition 409 判据。
+5. **状态转移 API 幂等面定型**（P1-D 依赖输入）：文档化一页——节点状态全部合法转移及其幂等键（proposeEpoch / generationRecordId / P0-1 dedup / cancel 通道），作为 P1-D「审批分级」的状态机输入。
 
 ## 5. 验收判据（行为级）
 
