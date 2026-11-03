@@ -21,8 +21,11 @@ import { fileURLToPath } from 'node:url'
 
 const SRC_DIR = fileURLToPath(new URL('../', import.meta.url))
 
-/** 匹配「整份画布覆盖写」：JSON.stringify 序列化，或行级 copy-through 赋值 */
-const WRITE_SITE = /canvasData\s*:\s*(JSON\.stringify\b|[A-Za-z_$][\w.$]*\.canvasData\s*(?:,|$))/
+/** 匹配「整份画布覆盖写」：JSON.stringify 序列化、行级 copy-through 赋值、
+ *  裸局部变量赋值（历史 `canvas.service.update` 用 `data: { ...data, canvasData }`
+ *  spread 形态逃过前两类签名——C2② 关 PUT 时补上，防同类形态复发） */
+const WRITE_SITE =
+  /canvasData\s*:\s*(JSON\.stringify\b|[A-Za-z_$][\w.$]*\.canvasData\s*(?:,|$)|canvasData\b\s*(?:,|$))/
 
 /** 白名单：文件（相对 apps/server/src）→ 登记写点数 → 合规理由 */
 const ALLOWLIST: Record<string, { expected: number; reason: string }> = {
@@ -39,11 +42,11 @@ const ALLOWLIST: Record<string, { expected: number; reason: string }> = {
     reason: 'finalizeTurn rewriteCanvasData 分支：applier op 语义（现无 rewriteCanvasData:true 调用方，保留兜底）',
   },
   'sessions/sessions.service.ts': {
-    expected: 3,
+    expected: 2,
     reason:
-      ':116 PUT 弃用期通道（C0 守卫 + canvas_put_deprecated 打点，~2026-11-16 关闭）；' +
-      ':177 PATCH /sessions/:id/canvas 主通道（op 语义 + 白名单）；' +
-      ':208 duplicate() 的 session.create 整份拷贝（新建，无丢更新面）',
+      ':171 PATCH /sessions/:id/canvas 主通道（op 语义 + 白名单）；' +
+      ':202 duplicate() 的 session.create 整份拷贝（新建，无丢更新面）。' +
+      '（PUT 弃用期写点已于 2026-11-03 C2② 关闭删除——带 canvasData 的 PUT 现只打 canvas_put_rejected 不落库）',
   },
   'sessions/sessions-canvas-node-status.service.ts': {
     expected: 1,
