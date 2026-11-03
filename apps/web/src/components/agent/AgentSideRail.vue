@@ -938,6 +938,13 @@ const liveTimeline = computed(() => {
 })
 
 /**
+ * 2026-11-03 会话积分常驻条显隐（对齐 WorkBuddy「已消耗 ◇N」）：仅 turn 活跃期显示
+ * （判定 = 回合进行中基座 isStreaming ∪ mainTurnSuspended，与 liveTimeline 同一口径
+ * ——挂起回合等待确认时也在消耗挂账期，用户须看到累计在涨）。空闲时不渲染（不盯死）。
+ */
+const creditsLineVisible = computed(() => agent.isStreaming || mainTurnSuspended.value)
+
+/**
  * P2-2 修复（2026-10-14 生产实证）：钉底期间气泡内 `useTimeline(msg)` 仍对**同一条**
  * live 消息成立 ⇒ 同一回合渲染两份（截图复盘：气泡内一份 + pinned 一份）。
  * 设计注释（上）早有警告「同一判定必须用在两处」，旧 trace 气泡实例有 `!liveTrace`
@@ -4711,6 +4718,19 @@ defineExpose({
                → 时间线内联 question part，跟随 chat-wrap 可见性）。
                ⚠️ 新增常显卡须重新立白名单类 + 守卫测试。 -->
           <div class="agent-system-layer">
+            <!-- 2026-11-03 会话积分常驻条（对齐 WorkBuddy 底部「已消耗 ◇N」）：仅 turn 活跃期
+                 显示，钉在系统层（滚动流之外——绝不参与 SSE 内容自动滚动/跟随，不打断
+                 scrollToBottom 闩锁）。口径单源 = agent.sessionConsumedCredits（已结算权威值
+                 累计 + 当前回合实时预估；结算到达即被权威值替代，不重不漏）。
+                 状态行 2026-10-31 整条退役，本条是用户裁决的最小复生：只播报消耗，
+                 不播报等待/失败（那些仍由时间线内联卡单一真相承载）。 -->
+            <div
+              v-if="creditsLineVisible"
+              class="agent-credits-line"
+              data-testid="session-credits-line"
+            >
+              已消耗 ◇{{ agent.sessionConsumedCredits }} 积分
+            </div>
             <!-- 根治规格（2026-10-28）：对话流外浮卡已移除——「提议生成」决策点改为时间线内联
                  proposal part（见 AgentTurnTimeline.vue），与画布节点 ProposeConfirmOverlay
                  同读一份单一真相。桌面 = 对话流内联卡；移动端画布视图 = 节点内联面。
@@ -5470,6 +5490,18 @@ defineExpose({
  * 播报式 chrome（收口状态行 / 取消回执卡）不放行：画布视图全藏（#496/#516 行为不变）。 */
 .agent-panel-mobile-dock.is-canvas-view .agent-system-layer {
   display: none;
+}
+
+/* ---- 2026-11-03 会话积分常驻条（turn 活跃期，系统层钉底；非播报卡，随层藏） ----
+ * 令牌纪律：--lnk-*（neoUsageRatchet）；不加白名单类——移动端画布视图随层隐藏
+ * （与退役状态行同口径：播报式 chrome 不进画布视图）。 */
+.agent-credits-line {
+  padding: 2px 4px 4px;
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: center;
+  color: var(--lnk-text-muted);
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---- 右边缘拖拉调宽（侧栏翻到左侧后，手柄贴其右缘邻接画布） ---- */
