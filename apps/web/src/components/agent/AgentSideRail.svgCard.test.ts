@@ -288,18 +288,23 @@ describe('AgentSideRail：svg_card 轮次的气泡门禁', () => {
     expect(w.find('[data-testid="svg-card-discarded"]').exists()).toBe(true)
   })
 
-  it('P0 回归：零文本且无卡片仍不渲染气泡（waiting_user 白块修复不得回退）', async () => {
+  it('P0 演进（流式归一补位）：零文本零卡片的 live 轮渲染「正在准备…」占位，不得是空白气泡', async () => {
     const w = await mountRail()
     const agent = seedCardOnlyTurn()
 
     expect(agent.messages[agent.messages.length - 1].presentation).toBeUndefined()
     await flushPromises()
 
-    // 只看助手轮次（用户轮次的 `.agent-bubble` 与本断言无关）：
-    // 助手轮不出现气泡容器 ⇒ 不存在空白气泡 + 闪烁光标。
+    // 2026-11-03 流式归一补位：钉底块退役后，「正在准备…」兜底文案改由消息流内联占位承接
+    // （WorkBuddy 同款，顶格贴用户气泡）。P0 反对的是「空白气泡 + 闪烁光标」，
+    // 不是「有反馈的占位」——所以断言从「无气泡」演进为「有气泡且必须带占位文案、无裸光标」。
     const assistantTurns = w.findAll('.agent-turn--assistant')
     expect(assistantTurns).toHaveLength(1)
-    expect(assistantTurns[0].find('.agent-bubble').exists()).toBe(false)
+    const bubble = assistantTurns[0].find('.agent-bubble')
+    expect(bubble.exists()).toBe(true)
+    expect(bubble.text()).toContain('正在准备…')
+    // 不得出现「只有光标没有正文」的旧白块形态：占位文案之外不得有闪烁光标块
+    expect(bubble.find('.animate-pulse').exists()).toBe(false)
     expect(w.findComponent(AgentSvgCard).exists()).toBe(false)
   })
 })
