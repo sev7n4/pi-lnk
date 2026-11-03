@@ -60,6 +60,11 @@ export interface AgentStreamEvent {
     | 'thinking'
     // P1 回合 token 实耗（message_end.usage 汇总，agent_end 前恰发一次）
     | 'turn_usage'
+    // P2 T7（2026-11-03 复测修复）：回合权威结算随流下发（此前只落库 ⇒ live 摘要
+    // 永远停在「≈N 积分（预估）」，刷新后重放才见权威值）。
+    // data: { holdId: string; credits?: number; ruleVersion?: string; model?: string;
+    //         tokens?: { in; cache; out }; degraded?/released? } —— 键不出现纪律同落库事件。
+    | 'turn_settled'
     | 'explore'
     | 'interrupt'
     | 'force_choice'
