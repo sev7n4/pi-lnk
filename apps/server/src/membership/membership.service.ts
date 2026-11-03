@@ -1,5 +1,6 @@
 import { Inject, Injectable, BadRequestException, NotFoundException } from '@nestjs/common'
 import { Prisma } from '@prisma/client'
+import type { PointTransaction } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
 import { PointsRangeKey, resolvePointsRange } from '../points/points-range'
 import { computePointsInsights, shanghaiDayKey, type PointsInsights } from '../points/points-insights'
@@ -660,6 +661,31 @@ export class MembershipService {
       from: from?.toISOString() ?? null,
       to: to.toISOString(),
     }
+  }
+
+  /**
+   * Epic 4（2026-11-04）：按会话拉取积分流水——跨会话聚合卡还原历史消耗。
+   * sessionId 过滤 + createdAt 升序（与 credit_tx 时间线一致）+ 硬上限 200。
+   * `since`（ISO Date）只取其后的行，供断线重连增量补拉；无效值 400。
+   */
+  async listSessionTransactions(
+    userId: string,
+    sessionId: string,
+    since?: string,
+  ): Promise<PointTransaction[]> {
+    const sinceDate = since ? new Date(since) : undefined
+    if (sinceDate && Number.isNaN(sinceDate.getTime())) {
+      throw new BadRequestException('无效 since')
+    }
+    return this.prisma.pointTransaction.findMany({
+      where: {
+        userId,
+        sessionId,
+        ...(sinceDate ? { createdAt: { gt: sinceDate } } : {}),
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      take: 200,
+    })
   }
 
   // Prisma SQLite DateTime is unix ms; SQLite datetime(n) treats numbers as seconds.

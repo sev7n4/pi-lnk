@@ -993,7 +993,14 @@ export function summarizeTimeline(timeline: TurnTimeline): string | null {
       // MarginPolicy 不可用）时只显示 tokens，绝不显示 0 积分假象。
       const credits = timeline.usage.estimatedCredits
       if (typeof credits === 'number' && Number.isFinite(credits) && credits > 0) {
-        segments.push(`≈${Math.ceil(credits)} 积分（预估）`)
+        // Epic 3 Task 10（规格 §5.3 flag-off 行）：回合已结束仍无 turn_settled ⇒ 服务端
+        // TEXT_TOKEN_BILLING=off（零预扣零结算）——预估段成为终态，必须显式
+        // 「预计消耗（非正式结算）」、不冒充已结算；流式中段保持「预估」瞬时态。
+        segments.push(
+          timeline.turnEndedAt != null
+            ? `预计消耗 ≈${Math.ceil(credits)} 积分（非正式结算）`
+            : `≈${Math.ceil(credits)} 积分（预估）`,
+        )
       }
     }
   }

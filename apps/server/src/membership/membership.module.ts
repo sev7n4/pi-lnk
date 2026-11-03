@@ -1,8 +1,14 @@
 import { Module } from '@nestjs/common'
 import { MembershipController } from './membership.controller'
 import { MembershipService } from './membership.service'
+import { PointsModule } from '../points/points.module'
 
 @Module({
+  imports: [
+    // Epic 2 Task 9（2026-11-04）：余额事件化 user 广播——controller SSE 端点订阅
+    // SessionEventBus 的 user 通道（PointsModule export 该 provider，共享单例）。
+    PointsModule,
+  ],
   controllers: [MembershipController],
   providers: [MembershipService],
   // PaymentModule 需注入 MembershipService（入账发分）——Nest 模块封装下

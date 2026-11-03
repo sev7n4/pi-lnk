@@ -170,6 +170,9 @@ export const useAgentStore = defineStore('agent', () => {
    * 跨会话保留——交易主键全局唯一，新会话出现新 `txId` 不会被误杀。
    */
   const seenTxIds = new Set<string>()
+  // Epic 5 Task 11（2026-11-04）：跨会话消耗漂移告警——余额降幅显著大于本会话累计
+  // 扣费 ⇒ 差额来自其他会话/后台扣费，显式提示防用户误判 bug（M2/M4 防御）。
+  const crossSessionSpend = ref(0)
   /**
    * Epic 3（2026-11-03）：按 `category` 累计本会话已消耗（绝对值），用于常驻条
    * 「共消耗 N（对话 M · 生成 K）」拆分。consume 累加、refund 回减（C5 幂等已保证
@@ -671,8 +674,11 @@ export const useAgentStore = defineStore('agent', () => {
    * - 按 `txId` 全局幂等（断线重连重放不重复计入，C5）；
    * - 有符号累计（`amount`：扣费为负、退款为正）；
    * - `balanceAfter` 即权威余额，直接驱动 `auth.setPoints`（Epic 2 余额事件化预备，C2）。
+   * Epic 4（2026-11-04）：`opts.restore` 用于历史回放（跨会话聚合卡还原）——只累计
+   * **不驱动余额**：历史行的 balanceAfter 是「该行时刻」的快照，非全局最新值，
+   * 逐行 setPoints 会把余额拉回旧值；还原后由调用方 `refreshPoints()` 同步权威余额。
    */
-  function trackCreditTx(data: CreditTxEvent['data']) {
+  function trackCreditTx(data: CreditTxEvent['data'], opts?: { restore?: boolean }) {
     if (seenTxIds.has(data.txId)) return
     seenTxIds.add(data.txId)
     creditTxSeen.value = true
@@ -681,8 +687,25 @@ export const useAgentStore = defineStore('agent', () => {
     const abs = Math.abs(data.amount)
     const base = creditTxByCategory[data.category] ?? 0
     creditTxByCategory[data.category] = data.kind === 'refund' ? base - abs : base + abs
+    if (opts?.restore) return
+    // Epic 5 Task 11：漂移检测——余额降幅 > 本笔会话扣费 ⇒ 差额来自其他会话。
+    // 只统计消耗方向（退款/充值令余额上升，不构成「凭空变少」的误判来源）。
+    const auth = useAuthStore()
+    const prevBalance = auth.user?.points
+    if (
+      typeof data.balanceAfter === 'number' &&
+      Number.isFinite(data.balanceAfter) &&
+      typeof prevBalance === 'number' &&
+      Number.isFinite(prevBalance)
+    ) {
+      const balanceDrop = prevBalance - data.balanceAfter
+      const sessionCharge = data.kind === 'refund' ? 0 : Math.max(0, -data.amount)
+      if (balanceDrop > sessionCharge && data.sessionId !== undefined) {
+        crossSessionSpend.value += balanceDrop - sessionCharge
+      }
+    }
     if (typeof data.balanceAfter === 'number' && Number.isFinite(data.balanceAfter)) {
-      useAuthStore().setPoints(data.balanceAfter)
+      auth.setPoints(data.balanceAfter)
     }
   }
 
@@ -1018,6 +1041,7 @@ export const useAgentStore = defineStore('agent', () => {
     // Epic 1（2026-11-03）：新会话重置本会话累计；幂等集 seenTxIds 保留（跨会话不误杀新交易）
     creditTxSpend.value = 0
     creditTxSeen.value = false
+    crossSessionSpend.value = 0
     for (const k of Object.keys(creditTxByCategory)) delete creditTxByCategory[k]
   }
 
@@ -1027,6 +1051,7 @@ export const useAgentStore = defineStore('agent', () => {
     liveEstimatedCredits,
     sessionConsumedCredits,
     creditSplit,
+    crossSessionSpend,
     pendingProposal,
     pendingQuestion,
     recovering,

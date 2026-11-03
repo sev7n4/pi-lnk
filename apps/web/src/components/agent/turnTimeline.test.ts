@@ -229,9 +229,20 @@ describe('turnTimeline — 模型层（设计 §4 / §5-P1）', () => {
     const last = tl.parts[tl.parts.length - 1]
     expect(last.kind).toBe('notice')
     if (last.kind === 'notice') {
-      expect(last.text).toContain('≈8 积分（预估）')
+      // Epic 3 Task 10（规格 §5.3）：finalize 后仍无 settled = flag-off 终态 →
+      // 显式「预计消耗（非正式结算）」，不冒充已结算；流式中段维持「（预估）」瞬时态。
+      expect(last.text).toContain('预计消耗 ≈8 积分（非正式结算）')
       expect(last.text).not.toContain('费用')
     }
+  })
+
+  it('Task10 C4：流式中段（未收束）→ 摘要维持「≈N 积分（预估）」瞬时态；非 flag-off 文案', () => {
+    const tl = feed([
+      { type: 'turn_usage', data: { inputTokens: 8200, outputTokens: 400, estimatedCredits: 8 } },
+    ])
+    // 未 finalize（turnEndedAt=null）：摘要走 summarizeTimeline（parts 里还没有 notice）
+    expect(summarizeTimeline(tl)).toContain('≈8 积分（预估）')
+    expect(summarizeTimeline(tl)).not.toContain('非正式结算')
   })
 
   it('Q2：无预估积分（渠道未配 pricing）→ 摘要只显示 tokens，绝不显示 0 积分假象', () => {

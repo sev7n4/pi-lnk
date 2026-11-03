@@ -33,7 +33,8 @@ export interface TurnStatusLineInput {
   recovering?: boolean
   /**
    * Q2（2026-10-14，spec §6.7-A5）：本回合实时预估积分（usage_delta 事件逐段覆盖）。
-   * running 文案拼「· 预估 -N积分」；null/undefined 时缺省不拼（「无预估」形态，绝不显示 0）。
+   * running 文案拼「· 估算中 -N积分」（Epic 3 Task 10，规格 §5.3：预估态与结算
+   * 「已结算」在文案上显式区分，C4）；null/undefined 时缺省不拼（「无预估」形态，绝不显示 0）。
    * 设计锚：积分字重 < 动词、同句非竖线 —— 用「·」弱分隔（与秒数同款式）。
    */
   estimatedCredits?: number | null
@@ -55,10 +56,11 @@ export type TurnStatusLine = {
 /** 缺省活动主语：注册表与 trace 都拿不到人话时的兜底，禁止把内部工具名吐给用户（决策 5）。 */
 export const GENERIC_ACTIVITY = '处理中'
 
-/** Q2：running 文案的预估积分尾巴——「 · 预估 -N积分」；无效值（≤0/非有限数）一律不拼。 */
+/** Q2：running 文案的预估积分尾巴——「 · 估算中 -N积分」（Epic 3 Task 10：与结算
+ * 「已结算」文案显式区分，C4）；无效值（≤0/非有限数）一律不拼。 */
 function estimateSuffix(credits: number | null | undefined): string {
   if (credits == null || !Number.isFinite(credits) || credits <= 0) return ''
-  return ` · 预估 -${Math.ceil(credits)}积分`
+  return ` · 估算中 -${Math.ceil(credits)}积分`
 }
 
 /** 剩余等待时间人话：≥60s 显示「还剩 N 分钟自动取消」，<60s 精确到秒。 */

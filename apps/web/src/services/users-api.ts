@@ -210,6 +210,20 @@ export const membershipApi = {
     }>('/membership/transactions', { params }),
   pointsSummary: (range?: PointsRangeKey) =>
     api.get<{ data: PointsSummary }>('/membership/points-summary', { params: { range } }),
+  /// Epic 4（2026-11-04）：会话维度积分流水（跨会话聚合卡还原历史）。升序、限 200；
+  /// `since`（ISO）增量补拉。⚠️ axios 无 fetch 的 cache 选项——用 no-cache 请求头
+  /// 强制每次重验。async 包装直接返回 rows：调用方类型 100% 显式，不依赖
+  /// AxiosResponse 泛型解构（CI vue-tsc 对跨文件 .data 链推断报 TS2339 的教训）。
+  sessionPointTransactions: async (sessionId: string, since?: string) => {
+    const response = await api.get<{ data: PointTransactionItem[] }>(
+      '/membership/point-transactions',
+      {
+        params: { sessionId, ...(since ? { since } : {}) },
+        headers: { 'Cache-Control': 'no-cache' },
+      },
+    )
+    return response.data.data
+  },
   usage: () => api.get<{ data: UsageOverviewResponse }>('/membership/usage'),
   usageDays: (range?: UsageDaysRangeKey) =>
     api.get<{ data: UsageDaysResponse }>('/membership/usage-days', { params: { range } }),
