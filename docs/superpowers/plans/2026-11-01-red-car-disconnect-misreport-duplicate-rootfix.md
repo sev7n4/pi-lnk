@@ -1,6 +1,6 @@
 # 「生成红色小汽车」断线误报 + 双图 根治 实施计划
 
-状态：待评审（2026-11-01）
+状态：待评审（2026-11-01）；**2026-11-04 整合声明**：本计划 T0+T1+T3 批次已并入 `2026-11-04-multi-device-consistency-p0-p1.md`（修正版 v2）作为 P0+P1 执行基线，**以该文件为准执行**；本计划保留 T2（意图幂等→P3）/T4（resume→P4）/T5（durable→P2）作为后续包输入，不再单独执行 T0/T1/T3。
 规格：`docs/superpowers/specs/2026-11-01-red-car-disconnect-misreport-duplicate-rootfix-design.md`（§9 文件级清单 = 本计划唯一输入；§4 三条不变量 = 实施判据）
 分支：`feat/red-car-disconnect-misreport-dupgen-rootfix`，**基于最新 origin/master**（先 `git -c http.proxy= -c https.proxy= fetch origin` 或 REST 对齐；本地 master 可能落后生产若干 PR）。
 部署：
