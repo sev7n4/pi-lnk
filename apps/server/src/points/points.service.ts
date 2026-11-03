@@ -79,6 +79,8 @@ export class PointsService implements OnApplicationBootstrap, OnApplicationShutd
   private emitCreditTxAfterCommit(record: PointTransaction | null): void {
     if (process.env.CREDIT_TX !== 'on') return
     if (!record) return
+    // 总线未装配（如手工构造的单测环境）→ 退化不发，与 flag-off 同语义。
+    if (!this.eventBus) return
     const data: CreditTxEvent['data'] = {
       txId: record.id,
       userId: record.userId,
