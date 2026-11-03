@@ -5493,12 +5493,12 @@ defineExpose({
 }
 
 /* ---- 2026-11-03 会话积分常驻条（turn 活跃期，系统层钉底；非播报卡，随层藏） ----
- * 令牌纪律：--lnk-*（neoUsageRatchet）；不加白名单类——移动端画布视图随层隐藏
- * （与退役状态行同口径：播报式 chrome 不进画布视图）。 */
+ * 令牌纪律：--lnk-*（neoUsageRatchet/text-token-guard：禁 px 字面量字号）；不加白名单类
+ * ——移动端画布视图随层隐藏（与退役状态行同口径：播报式 chrome 不进画布视图）。 */
 .agent-credits-line {
   padding: 2px 4px 4px;
-  font-size: 11px;
-  line-height: 1.4;
+  font-size: var(--lnk-text-2xs);
+  line-height: var(--lnk-lh-2xs);
   text-align: center;
   color: var(--lnk-text-muted);
   font-variant-numeric: tabular-nums;
