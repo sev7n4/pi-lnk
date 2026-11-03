@@ -523,9 +523,11 @@ export const useAgentStore = defineStore('agent', () => {
     for (let i = messages.value.length - 1; i >= 0; i -= 1) {
       const m = messages.value[i]
       if (!m || m.role !== 'assistant' || !m.timeline) continue
-      const owns = m.timeline.parts.some(
-        (p) => p.kind === 'artifact' && p.nodeId === data.nodeId,
-      )
+      const owns =
+        m.timeline.parts.some(
+          (p) => p.kind === 'artifact' && p.nodeId === data.nodeId,
+        ) ||
+        m.timeline.pendingNodeMeta?.[data.nodeId] !== undefined
       if (!owns) continue
       applyTimelineEvent(m.timeline, {
         type: 'node_status',

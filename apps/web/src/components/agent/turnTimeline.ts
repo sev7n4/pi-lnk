@@ -144,6 +144,14 @@ export interface TurnTimeline {
    * 仅存在于内存模型（replay 每次重建），不落库。
    */
   lastRawThinking?: string
+  /**
+   * 节点创建元数据暂存（2026-11-03 修复）：`add_node` 到达时节点刚建好、还没开始生成，
+   * 此时**不急切建 artifact 卡**（否则确认前就露一张与 proposal 重复的「待确认」节点卡，
+   * 且确认后产物卡错位顶到「新建节点」前）。只把 nodeType/title 暂存到这里，等 `node_status`
+   * 进入生成生命周期（generating/running/done/failed）才用此 meta 建卡——卡天然排在
+   * proposal 之后，时间线连续可读。内存态，replay 每次重建，不落库（executionEvents 白名单不含）。
+   */
+  pendingNodeMeta: Record<string, { nodeType: string; title: string }>
 }
 
 export type TimelineUsage = {
@@ -294,6 +302,8 @@ export function createTurnTimeline(): TurnTimeline {
   return {
     parts: [],
     turnStartedAt: Date.now(),
+    /** 节点创建元数据暂存（2026-11-03 修复）：add_node 只记 meta，node_status 进入生成生命周期才建卡。 */
+    pendingNodeMeta: {},
   }
 }
 
@@ -540,18 +550,15 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
       // D1：update_node 是内部写回，不建 part（propose 结果由 node_status 驱动 artifact）。
       if (type === 'update_node') return
       if (type === 'add_node' && nodeId) {
-        // 节点创建 ⇄ 单个 artifact part（pending，等生成或 propose 确认）
+        // 2026-11-03 修复：不再急切建 pending 态 artifact（会造成「确认前就出现待确认节点卡」
+        // 且与 proposal 卡重复、确认后产物卡错位顶到「新建节点」前）。只暂存 meta，待
+        // node_status 进入生成生命周期才真正建卡——此时卡天然排在 proposal 之后，时间线连续可读。
         const nodeType = String(action.payload?.nodeType || 'image')
         // title/prompt 都在 payload.data 里（CanvasAction 无顶层 title，见 deriveLinkedOutputs）
         const title = String(
           action.payload?.data?.title || action.payload?.data?.prompt || '未命名',
         ).slice(0, 20)
-        upsertArtifact(timeline, {
-          nodeId: String(nodeId),
-          nodeType,
-          title,
-          status: 'pending',
-        })
+        timeline.pendingNodeMeta[String(nodeId)] = { nodeType, title }
         return
       }
       // 其它 canvas 动作（remove/connect/…）走 canvas part
@@ -582,16 +589,23 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
         }
         return
       }
-      // 没有 add_node 先到（异常）：补一个 artifact 占位
+      // 没有已存在的 artifact（add_node 只记了 meta，未急切建卡）：用暂存 meta 建卡，
+      // 标题不退化成「未命名」（meta 含 add_node 时的真实标题/提示）。
+      const meta = timeline.pendingNodeMeta[d.nodeId]
       timeline.parts.push({
         kind: 'artifact',
         id: nextPartId('artifact'),
         nodeId: d.nodeId,
-        nodeType: 'image',
-        title: '未命名',
+        nodeType: meta?.nodeType ?? 'image',
+        title: meta?.title ?? '未命名',
         status,
         url: mediaUrl,
-        errorText: d.status === 'failed' ? '生成失败，可重试' : undefined,
+        errorText:
+          d.status === 'failed'
+            ? typeof d.url === 'string' && d.url
+              ? d.url
+              : '生成失败，可重试'
+            : undefined,
       })
       return
     }
