@@ -193,6 +193,14 @@ export interface FollowUpTailListener {
    * 生产事故的判据就是它：同一 thread 出现 6 条并发 SSE。
    */
   getLiveCount: () => number
+  /**
+   * T1.4 接线（多端一致性 P0，2026-11-04）：主流断开后，由宿主把主流最后 seq
+   * 播种进本监听器的游标——否则重连首连写死 from=now，主流断开到旁观重启之间的
+   * 事件窗口会整段漏掉（漏帧 = 对话缺尾）。
+   *
+   * ⭐ 仅在内部游标为空时播种：旁观流已自收帧（lastSeq 非空）说明其游标更新，不回退。
+   */
+  seedLastSeq: (seq: number | null) => void
 }
 
 export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTailListener {
@@ -467,5 +475,10 @@ export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTail
     abort,
     getState: () => state,
     getLiveCount: () => live.size,
+    seedLastSeq: (seq: number | null) => {
+      if (lastSeq === null && typeof seq === 'number' && Number.isInteger(seq) && seq >= 0) {
+        lastSeq = seq
+      }
+    },
   }
 }

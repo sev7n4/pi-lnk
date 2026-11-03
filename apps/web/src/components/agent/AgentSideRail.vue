@@ -91,6 +91,7 @@ import {
   RUNTIME_UNREACHABLE_SNIPPET,
   RECONCILE_MAX_POLLS,
   shouldKeepReconciling,
+  fetchRuntimeReconcile,
 } from '@/components/agent/streamRecovery'
 // 注：shouldPollRuntimeHealth（streamRecovery.ts）已无 SideRail 调用方——P1#11 重连改造后
 // 旧 reconcile 唯一消费点被轮询终态判定替代（该状态读取又随 H1-c 退役，现为按上限兜底）。
@@ -2825,10 +2826,39 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
           last.content = last.content.replace(/\n\n⚠️ 连接中断，正在确认生成进度…$/, '')
         }
       } else {
-        // 服务端确无终态：reconcile 已确认不会自愈，补弹失败卡（沿用历史失败文案与 dock 卡）
-        dismissFailureCard()
-        showGenerationFailureCard(streamBreakError)
+        // 服务端历史对账未自愈。⭐ 2026-11-04 P0+P1 补强：DB 权威历史查不到 ≠ 服务端无终态
+        // ——D2 缺陷（落库与 HTTP 连接耦合，规格多端一致性 Task 2）下回合可能已在
+        // pi-runtime 跑完但没落库 ⇒ 只查历史会把「其实 settled」误判失败（红车①残留路径）。
+        // 补查 transcript 层真相（lane buffer 流探测 + IdempotencyRecord，GET /chat/reconcile）：
+        //   missing ⇒ 才允许弹失败卡；settled ⇒ 清暂态补拉历史；active ⇒ 保留暂态交旁观流续呈。
+        const rt = await fetchRuntimeReconcile(agentThreadId.value, lastMainSeq.value)
+        const clearTransientText = () => {
+          const l = agent.messages[agent.messages.length - 1]
+          if (l?.role === 'assistant') {
+            l.content = l.content.replace(/\n\n⚠️ 连接中断，正在确认生成进度…$/, '')
+          }
+        }
+        if (rt?.outcome === 'missing' || rt === null) {
+          // runtime 也确认无终态（或端点异常回落）：确不会自愈，补弹失败卡
+          clearTransientText()
+          dismissFailureCard()
+          showGenerationFailureCard(streamBreakError)
+        } else if (rt.outcome === 'settled') {
+          // runtime 已完结（可能尚未落库）：清暂态，延迟补拉一次历史把权威行接回来
+          clearTransientText()
+          await new Promise((r) => setTimeout(r, 1_500))
+          await reconcileLatestAssistant(1)
+        } else {
+          // 仍在跑：不判失败、不弹卡；「正在确认进度」暂态保留，由下方已播种游标的
+          // 常驻旁观流继续呈现尾包（done 后 reconcileLatestAssistant 兜底纠正）。
+        }
       }
+    }
+    // T1.4 接线：主流断开后旁观流首连不再写死 from=now——按主流最后 seq 播种游标续拉，
+    // 补齐「断开 → 旁观重启」之间的漏帧窗口（仅播种，内部游标已有时不回退）。
+    if (streamBreakError !== null && lastMainSeq.value !== null) {
+      followUpTail.seedLastSeq(lastMainSeq.value)
+      streamBreakError = null
     }
     await refreshThreadCheckpoint()
     // canvas_action 已流内实时 emit（2026-10-01），无积压可 flush
