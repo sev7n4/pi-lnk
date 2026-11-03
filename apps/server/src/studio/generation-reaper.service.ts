@@ -191,6 +191,14 @@ export class GenerationReaperService implements OnModuleInit {
     this.scheduler.registerHandler('generation-reaper', async (_params, ctx) => {
       return this.reapOnce(ctx.reason === 'scheduled' ? 'periodic' : ctx.reason)
     })
+    // 终态通报快节拍（2026-11-03 黄小龙虾复测：图片终态写点在 studio 管线，不走
+    // agent-canvas-tools 结算点直发 ⇒ 只能等 reaper 5min 兜底，简报延迟 0~6min 随机）。
+    // 1min 快巡检只跑通报扫描（单一 findMany + durable 去重），单飞守卫与 reaper
+    // 巡检互斥——简报延迟从最长 6min 压到 ≤1min，零新增写点挂钩。
+    this.scheduler.registerHandler('generation-notify', async (_params, ctx) => {
+      await this.notifyTerminalsOnce(ctx.reason === 'scheduled' ? 'notify-tick' : ctx.reason)
+      return 0
+    })
     this.logger.log('[reaper] 回收 handler 已注册至 AutomationSchedulerService（配置见 AutomationJob）')
   }
 
@@ -258,47 +266,7 @@ export class GenerationReaperService implements OnModuleInit {
     // 扫「最近落终态 + 有画布会话 + 未通报」的记录 → pi-runtime notify-generation
     // （工具仍在等 ⇒ 抑制；否则入 lane followUp，模型主动向用户简报）。
     // 通报失败/未启用不影响回收主链路（fail-soft，下一轮巡检重试）。
-    if (piLateNotifyEnabled()) {
-      try {
-        const client = new PiRuntimeClient({ baseUrl: process.env.PI_RUNTIME_URL!.trim() })
-        // 结构子集注入：Prisma 泛型签名比窄接口宽，显式收窄（select 字段已在模块内对齐）
-        const notified = await notifyLateGenerationTerminals(
-          this.prisma as unknown as LateNotifyPrisma,
-          client,
-          this.logger,
-          {
-            // 回合外投影记账者（2026-11-02 天鹅事故 P0-A）：delivered 后由 AgentService
-            // 挂短命订阅把简报轮落库（AgentMessage 是展示层 SSOT，不落库 = 刷新即失）。
-            // 钩子由 AgentService onModuleInit 注册（AgentModule imports StudioModule，
-            // 复用既有依赖方向，不新增模块/端口）；未注册 = 行为与今天逐字节一致。
-            onDelivered: (threadId) => {
-              try {
-                const hook = this.outOfTurnProjectionHook
-                if (hook) void hook(threadId)
-              } catch (err) {
-                this.logger.warn(`[late-notify] 投影记账者派发失败（不影响通报）: ${errMessage(err)}`)
-              }
-            },
-            // 订阅先于触发（2026-11-03 Layer 3）：notify 前预挂投影订阅并等 SSE open，
-            // 否则 runtime 同步 drain 开的简报轮 agent_start 必然早于订阅（from=now
-            // 收不到）⇒ 因果围栏静默丢整轮（蓝老虎复测生产实证）。await 由
-            // notifyLateGenerationTerminals 负责（fail-open，arm 抛错不阻塞通报）。
-            onBeforeNotify: (threadId) => {
-              const hook = this.outOfTurnArmHook
-              if (!hook) return
-              return Promise.resolve(hook(threadId)).catch(() => {
-                /* fail-open：arm 失败在钩子内已 warn，这里不阻塞通报 */
-              })
-            },
-          },
-        )
-        if (notified > 0) {
-          this.logger.log(`[${reason}] 回合外生成终态通报已处理 ${notified} 条`)
-        }
-      } catch (err) {
-        this.logger.warn(`[${reason}] 回合外终态通报扫描失败（不影响回收）: ${errMessage(err)}`)
-      }
-    }
+    await this.notifyTerminalsOnce(reason)
     // B2 画布节点终态对账（RCA v2 §4-B2）：与通报独立（通报可能被「工具仍在等」抑制，
     // 节点状态修复不能跟着被抑制）。fail-soft。
     try {
@@ -310,6 +278,66 @@ export class GenerationReaperService implements OnModuleInit {
       this.logger.warn(`[${reason}] 画布节点终态对账失败（不影响回收）: ${errMessage(err)}`)
     }
     return reaped
+  }
+
+  /**
+   * 单飞守卫：通报扫描（reaper 5min 巡检 + generation-notify 1min 快节拍）互斥。
+   *
+   * notifyLateGenerationTerminals 的 durable 去重（agentTurnNotified）保证「先后两次
+   * 扫描」不重发，但**并发**两次扫描会在任一方 markNotified 前都读到未标记 ⇒ 双通报
+   * ⇒ runtime 排两条简报轮。宁可跳过一轮（未处理记录下个 tick 重扫），不赌竞态。
+   */
+  private notifyInFlight = false
+
+  /**
+   * 回合外终态通报扫描（reapOnce 与 generation-notify 快节拍共用，2026-11-03 抽出）。
+   * fail-soft：任何异常只 warn，绝不影响调用方主链路。
+   */
+  private async notifyTerminalsOnce(reason: string): Promise<void> {
+    if (!piLateNotifyEnabled()) return
+    if (this.notifyInFlight) return // 上一轮扫描还在跑：本轮跳过（单飞守卫，见上）
+    this.notifyInFlight = true
+    try {
+      const client = new PiRuntimeClient({ baseUrl: process.env.PI_RUNTIME_URL!.trim() })
+      // 结构子集注入：Prisma 泛型签名比窄接口宽，显式收窄（select 字段已在模块内对齐）
+      const notified = await notifyLateGenerationTerminals(
+        this.prisma as unknown as LateNotifyPrisma,
+        client,
+        this.logger,
+        {
+          // 回合外投影记账者（2026-11-02 天鹅事故 P0-A）：delivered 后由 AgentService
+          // 挂短命订阅把简报轮落库（AgentMessage 是展示层 SSOT，不落库 = 刷新即失）。
+          // 钩子由 AgentService onModuleInit 注册（AgentModule imports StudioModule，
+          // 复用既有依赖方向，不新增模块/端口）；未注册 = 行为与今天逐字节一致。
+          onDelivered: (threadId) => {
+            try {
+              const hook = this.outOfTurnProjectionHook
+              if (hook) void hook(threadId)
+            } catch (err) {
+              this.logger.warn(`[late-notify] 投影记账者派发失败（不影响通报）: ${errMessage(err)}`)
+            }
+          },
+          // 订阅先于触发（2026-11-03 Layer 3）：notify 前预挂投影订阅并等 SSE open，
+          // 否则 runtime 同步 drain 开的简报轮 agent_start 必然早于订阅（from=now
+          // 收不到）⇒ 因果围栏静默丢整轮（蓝老虎复测生产实证）。await 由
+          // notifyLateGenerationTerminals 负责（fail-open，arm 抛错不阻塞通报）。
+          onBeforeNotify: (threadId) => {
+            const hook = this.outOfTurnArmHook
+            if (!hook) return
+            return Promise.resolve(hook(threadId)).catch(() => {
+              /* fail-open：arm 失败在钩子内已 warn，这里不阻塞通报 */
+            })
+          },
+        },
+      )
+      if (notified > 0) {
+        this.logger.log(`[${reason}] 回合外生成终态通报已处理 ${notified} 条`)
+      }
+    } catch (err) {
+      this.logger.warn(`[${reason}] 回合外终态通报扫描失败（不影响回收）: ${errMessage(err)}`)
+    } finally {
+      this.notifyInFlight = false
+    }
   }
 
   /**

@@ -4,6 +4,7 @@ import {
   looksLikeConfirmTurn,
   looksLikeCopyWriteTurn,
   pickAssistantForLatestUserTurn,
+  pickTrailingOutOfTurnRow,
   shouldApplyReconciledAssistant,
 } from './assistantReconcile'
 
@@ -80,5 +81,55 @@ describe('looksLikeConfirmTurn', () => {
     expect(
       looksLikeConfirmTurn('请为保温杯写一份方案，写完后先等我确认。'),
     ).toBe(false)
+  })
+})
+
+describe('pickTrailingOutOfTurnRow', () => {
+  const briefRow = {
+    id: 'brief-1',
+    role: 'assistant',
+    content: '✅ 黄色小龙虾已生成完成，可在画布中查看。',
+    metadata: '{"outOfTurn":true}',
+  }
+
+  it('最后一条为 outOfTurn assistant ⇒ 返回该行', () => {
+    const rows = [
+      { id: 'u1', role: 'user', content: '帮我生成一只黄色的小龙虾' },
+      { id: 'a1', role: 'assistant', content: '已为你创建图片节点并启动生成。' },
+      briefRow,
+    ]
+    expect(pickTrailingOutOfTurnRow(rows)).toBe(briefRow)
+  })
+
+  it('最后一行是主轮 assistant（无 outOfTurn 标记）⇒ null（多端回声走既有启发式）', () => {
+    const rows = [
+      { id: 'u1', role: 'user', content: '帮我做方案' },
+      { id: 'a1', role: 'assistant', content: '主轮回答，长文本……' },
+    ]
+    expect(pickTrailingOutOfTurnRow(rows)).toBeNull()
+  })
+
+  it('outOfTurn 行后面还有更新的 user 消息 ⇒ null（不做越位插入，交给 loadHistory）', () => {
+    const rows = [
+      { id: 'u0', role: 'user', content: '生成图片' },
+      { id: 'a0', role: 'assistant', content: '生成中' },
+      briefRow,
+      { id: 'u1', role: 'user', content: '再来一只绿色的' },
+    ]
+    expect(pickTrailingOutOfTurnRow(rows)).toBeNull()
+  })
+
+  it('metadata 坏 JSON ⇒ null（降级语义与 historySanitize 一致）', () => {
+    const rows = [
+      { id: 'a1', role: 'assistant', content: '正文', metadata: '{broken' },
+    ]
+    expect(pickTrailingOutOfTurnRow(rows)).toBeNull()
+  })
+
+  it('outOfTurn 但正文为空 ⇒ null（空行不渲染）', () => {
+    const rows = [
+      { id: 'a1', role: 'assistant', content: '   ', metadata: '{"outOfTurn":true}' },
+    ]
+    expect(pickTrailingOutOfTurnRow(rows)).toBeNull()
   })
 })

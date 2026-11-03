@@ -60,6 +60,7 @@ import {
 } from '@/components/agent/taskProgressReconcile'
 import {
   pickAssistantForLatestUserTurn,
+  pickTrailingOutOfTurnRow,
   shouldApplyReconciledAssistant,
 } from '@/components/agent/assistantReconcile'
 import AgentPresentationHost from '@/components/agent/presentation/AgentPresentationHost.vue'
@@ -2855,6 +2856,17 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
 const observerTurnActive = ref(false)
 
 /**
+ * 旁观影子气泡的本地 id（2026-11-03 黄小龙虾复测）。
+ *
+ * 收尾对账要区分两种影子：**回合外简报**（runtime 主动开的简报轮，服务端落
+ * `metadata.outOfTurn` 行）与**多端回合回声**（另一端用户 turn）。前者若走旧的
+ * 「最后用户回合第一条 assistant」内容补写，主轮回答必然比简报长 ⇒ `shouldApply...`
+ * 判定替换 ⇒ 简报文字被冲掉（黄小龙虾生产实证：影子闪现即被覆盖）。
+ * 记住影子 id，收尾时优先按服务端权威行**原位采纳**（见 reconcileLatestAssistant）。
+ */
+const outOfTurnShadowId = ref<string | null>(null)
+
+/**
  * ⭐ 2026-10-26 根治：把「语义事件的应用」从订阅回调里**抽成独立函数**。
  *
  * 为什么抽：跨标签页共享转发的是**语义事件**（文本增量 / 画布动作 / 回合收束），
@@ -2883,6 +2895,9 @@ function applyTextDelta(text: string): void {
       agent.startAssistantMessage()
       agent.isStreaming = true
       observerTurnActive.value = true
+      // 记住影子 id：收尾对账按服务端权威行原位采纳（回合外简报 ≠ 多端回声，
+      // 区分依据与守卫见 outOfTurnShadowId 注释）。
+      outOfTurnShadowId.value = agent.messages[agent.messages.length - 1]?.id ?? null
     }
   }
   // 与主流的事件契约完全一致（Nest 两端共用 mapPiEventToUiEvent）。
@@ -2903,9 +2918,13 @@ function applyTurnEnd(): void {
   // turn_suspended 生命周期闭合：挂起回合已收口（等待解除/超时取消均到达 terminal 帧）
   mainTurnSuspended.value = false
   agent.finishStreaming()
+  // 影子 id 移交对账（之后清零：幂等的第二次 done/turn_ack 不再重走采纳）。
+  const shadowId = outOfTurnShadowId.value
+  outOfTurnShadowId.value = null
   // 旁观拿到的是增量片段，收尾必须以服务端权威历史为准纠正一次（漏帧/乱序的自愈口）。
   // 传 0：那一轮已在另一端跑完，不做终态轮询（否则旁观端会跟着睡 5s×N）。
-  void reconcileLatestAssistant(0)
+  // shadowId：回合外简报按权威行原位采纳（内容启发式会把简报冲掉，见 outOfTurnShadowId）。
+  void reconcileLatestAssistant(0, shadowId)
   emit('turnComplete')
   scrollToBottom()
 }
@@ -3089,6 +3108,7 @@ function hasAuthToken(): boolean {
 function releaseObserverTurn(): void {
   if (!observerTurnActive.value) return
   observerTurnActive.value = false
+  outOfTurnShadowId.value = null
   agent.finishStreaming()
 }
 
@@ -3205,7 +3225,12 @@ async function reconnectStream() {
  *   旁观端传 `0`：那一轮在**另一端**已经跑完（收到 done 才走到这里），
  *   没必要再等终态，拉一次权威历史纠正漏帧即可（多端场景下一等就是几分钟的睡循环）。
  */
-async function reconcileLatestAssistant(maxPolls = RECONCILE_MAX_POLLS) {
+async function reconcileLatestAssistant(
+  maxPolls = RECONCILE_MAX_POLLS,
+  outOfTurnShadow: string | null = null,
+) {
+  /** 本轮 pull 是否已按权威行采纳了回合外影子（true ⇒ 不再走补拉/启发式路径）。 */
+  let shadowAdopted = false
   const pull = async () => {
     const res = await fetch(
       apiUrl(
@@ -3215,7 +3240,20 @@ async function reconcileLatestAssistant(maxPolls = RECONCILE_MAX_POLLS) {
       { cache: 'no-store' },
     )
     const json = await res.json()
-    const rows = (json.data || []) as Array<{ role: string; content: string }>
+    // getMessages 不做 select 收窄 ⇒ 返回全标量行（含 metadata/attachments/linkedOutputs/
+    // toolCalls/runId），可直接按 PersistedAgentMessage 消费（缺字段由映射器的 parse* 兜底）。
+    const rows = (json.data || []) as PersistedAgentMessage[]
+    // 回合外来信（2026-11-03 黄小龙虾复测）：历史页最后一条为 outOfTurn assistant
+    // ⇒ 回合外简报。**优先于**下方内容启发式：旧路径挑「最后用户回合第一条 assistant」
+    // = 主轮回答，其长度必超简报 ⇒ shouldApply 判替换 ⇒ 简报文字被主轮内容冲掉。
+    // 服务端 metadata.outOfTurn 是分类 SSOT ⇒ 命中即按权威行采纳（影子原位替换 /
+    // 无影子追加，id 去重），多端回声（无 outOfTurn 行）不受影响。
+    const briefRow = pickTrailingOutOfTurnRow(rows)
+    if (briefRow?.id) {
+      agent.adoptPersistedRow(outOfTurnShadow, briefRow)
+      if (outOfTurnShadow) shadowAdopted = true
+      return briefRow.content
+    }
     const lastDb = pickAssistantForLatestUserTurn(rows)
     if (!lastDb?.content?.trim()) return null
     const lastLocal = agent.messages[agent.messages.length - 1]
@@ -3230,6 +3268,13 @@ async function reconcileLatestAssistant(maxPolls = RECONCILE_MAX_POLLS) {
 
   try {
     await pull()
+    // 回合外影子的落库竞态兜底：persist（服务端 done 触发）与本 fetch 并发，单次拉取
+    // 可能早于落库（简报行还没出现）⇒ 1.5s 后补拉一次。多端回声场景永远没有
+    // outOfTurn 行，同样落此路径——只多等 1.5s，无语义影响。
+    if (outOfTurnShadow && !shadowAdopted) {
+      await new Promise((r) => setTimeout(r, 1_500))
+      await pull()
+    }
     for (let i = 0; i < maxPolls; i++) {
       if (!shouldKeepReconciling(null, i)) break
       await new Promise((r) => setTimeout(r, 5_000))
