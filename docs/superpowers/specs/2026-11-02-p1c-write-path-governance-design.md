@@ -75,6 +75,8 @@ C0（S）→ C1（XL，分 C1a 服务端 + C1b 前端两 PR）→ C2（S，收�
    - `agent/composition.service.confirm`：compositionRunGroup 侧车回写**事务外读 afterImport 再整份写回**（与 import 落地之间的窗口覆盖中间写者 = 丢更新，红车事故同族形态），且无 stagedActions 守卫。
 
    收编方式：新增共享合规落库通道 `apps/server/src/sessions/canvas-op-write.ts`（`transactGovernedCanvasOps`）——事务内读最新 → `applyCanvasActions` op 语义 → 事务内写回，stagedActions 在场按 `onStaged` 处置（`skip`=后台写者退让 / `conflict`=调用方映射 409，与 persist 家族同语义）。persist-remote 改走 `update_node` op（storageTier/url 是服务端字段 owner，不经客户端白名单——合规 = op 语义 + 事务 + staged 守卫，非白名单本身）；composition confirm 改走 `set_composition_run_group` op（C2a 侧车通道服务端复用）并与 compositionPreview 同事务原子落库，parseCanvas 抛错语义原样保留（tx 内抛 ⇒ 零写入）。行为级判据：`canvas-op-write.test.ts` 六判据 + persist-remote 两判据（staged 退让/节点缺失零写入）+ composition 409 判据。
+
+   **防回退机器守卫（2026-11-03 追加）**：`apps/server/src/sessions/canvas-write-governance.test.ts`——全目录扫描（排除测试文件）所有画布写点签名（`canvasData: JSON.stringify(...)` 整份覆盖 / 行级 copy-through；`? JSON.parse` 格式化读取行不匹配），与白名单逐文件核对数量；白名单条目各带合规理由（通道本体 / persist 家族 / applier 兜底 / PUT 弃用期 / node-status / session.create 种子与拷贝），**改白名单 = 审计动作**。变异测试已验：注入伪造绕过写点 ⇒ 精确报 file:line 并指路 `transactGovernedCanvasOps`；AGENTS.md 变更影响面矩阵同步立规。
 5. **状态转移 API 幂等面定型**（P1-D 依赖输入）：文档化一页——节点状态全部合法转移及其幂等键（proposeEpoch / generationRecordId / P0-1 dedup / cancel 通道），作为 P1-D「审批分级」的状态机输入。
 
 ## 5. 验收判据（行为级）

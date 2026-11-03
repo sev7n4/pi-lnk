@@ -68,6 +68,21 @@
 
 **改什么会静默坏掉。** 下表是踩过的坑，每一行都在生产或 PR 里付出过代价。
 
+### 改服务端画布写 ⇒ 必须走治理合规通道（P1-C，机器守卫已上）
+
+服务端**新建或修改任何写 `session.canvasData` 的代码**，必须走合规通道：
+**op 语义 + 事务 + stagedActions 守卫**——优先复用 `apps/server/src/sessions/canvas-op-write.ts` 的
+`transactGovernedCanvasOps`（事务内读最新 → `applyCanvasActions` → 事务内写回，
+staged 在场 skip=退让 / conflict=409），或 persist 家族同款事务内 applier 模式。
+**禁止事务外 read-modify-write 整份 canvasData**（丢更新窗口，红车事故同族形态）。
+唯一例外：`session.create` 的种子/整份拷贝（duplicate/forkCanvas/stories 种子）。
+
+**机器守卫**：`apps/server/src/sessions/canvas-write-governance.test.ts` 全目录扫描
+所有写点签名（`canvasData: JSON.stringify(...)` / copy-through）并对白名单逐文件核对数量；
+新增未登记写点 ⇒ CI 直接红，失败信息指路合规通道。白名单条目各带合规理由，
+**改白名单 = 审计动作**，PR 必须给出依据（迁移到通道 / PUT 弃用期关闭后删条目）。
+规格：[`docs/superpowers/specs/2026-11-02-p1c-write-path-governance-design.md`](./docs/superpowers/specs/2026-11-02-p1c-write-path-governance-design.md)。
+
 ### 改提示词规则 ⇒ 同步 6 处，漏一处就静默
 
 | # | 位置 | 漏掉的后果 |
