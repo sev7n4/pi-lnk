@@ -70,8 +70,18 @@ export interface FollowUpTailDeps {
   headers: () => Record<string, string>
   /** 基础 URL（不含游标参数）；每次连接时求值，因为 threadId 可能已切换。 */
   baseUrl: () => string
-  onTextDelta: (text: string) => void
-  onCanvasAction: (data: unknown) => void
+  /**
+   * ⭐ P1（计划 2026-11-04 Task 5）：**全量事件通道**（排他分派）。
+   *
+   * 提供时，所有解析成功的 payload 一律交给它（下方三个具名回调不再触发）——
+   * ack 化主流（flag on）的**本端回合**经本通道消费，需要 proposal / ask_user /
+   * turn_suspended / task_* / credit_tx 等**全部事件语义**（与 POST 响应体流的
+   * handleEvent 同一口径），具名三回调只覆盖「旁观」所需的最小面。
+   * 宿主在 onEvent 内按模式路由：本端回合 ⇒ handleEvent 全量；旁观 ⇒ 既有三回调语义。
+   */
+  onEvent?: (payload: { type: string; data: unknown }) => void
+  onTextDelta?: (text: string) => void
+  onCanvasAction?: (data: unknown) => void
   /**
    * 回合收束（收到 `done` / `turn_ack`）：旁观轮到此为止，由宿主收尾
    * （结束 streaming、拉权威历史纠正）。可能被调用多次（done 后还有 ack）⇒ 需幂等。
@@ -166,7 +176,7 @@ function delay(ms: number, signal: AbortSignal): Promise<void> {
  * - `error` / `turn_not_submitted`：轮失败或未被受理 —— 同样是「这一轮到此为止」，
  *   不通知的话旁观端会永远停在 streaming（气泡一直转圈）。
  */
-function isTurnTerminal(type: string): boolean {
+export function isTurnTerminal(type: string): boolean {
   return type === 'done' || type === 'turn_ack' || type === 'error' || type === 'turn_not_submitted'
 }
 
@@ -201,6 +211,13 @@ export interface FollowUpTailListener {
    * ⭐ 仅在内部游标为空时播种：旁观流已自收帧（lastSeq 非空）说明其游标更新，不回退。
    */
   seedLastSeq: (seq: number | null) => void
+  /**
+   * ⭐ P1（计划 Task 5）：ack 化主流的**绝对游标设定**（区别于 seedLastSeq 的
+   * 「仅空播种」）。发起新 run 时前端持有服务端给出的精确锚点（ack.sinceSeq =
+   * 触发时刻 lane head），必须**覆盖**内部游标：内部残值（隐藏页期间冻结的旧 seq）
+   * < 锚点时若沿用，重连会把上一轮的尾包重放进取（污染新气泡）。null ⇒ from=now。
+   */
+  setLastSeq: (seq: number | null) => void
 }
 
 export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTailListener {
@@ -373,10 +390,15 @@ export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTail
               }
               if (!payload) continue
               // 与主流的事件契约完全一致（Nest 两端共用 mapPiEventToUiEvent）。
-              if (payload.type === 'text_delta') {
-                deps.onTextDelta((payload.data as { text?: string } | undefined)?.text ?? '')
+              // ⭐ P1：onEvent 提供时**排他分派**——全量 payload 交给宿主路由
+              //（ack 化主流需要全部事件语义，见 FollowUpTailDeps.onEvent 注释）；
+              // 未提供时走既有具名三回调（旁观最小面），两者不得叠加（双发）。
+              if (deps.onEvent) {
+                deps.onEvent({ type: payload.type, data: payload.data })
+              } else if (payload.type === 'text_delta') {
+                deps.onTextDelta?.((payload.data as { text?: string } | undefined)?.text ?? '')
               } else if (payload.type === 'canvas_action') {
-                deps.onCanvasAction(payload.data)
+                deps.onCanvasAction?.(payload.data)
               } else if (isTurnTerminal(payload.type)) {
                 deps.onTurnEnd?.()
               }
@@ -479,6 +501,10 @@ export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTail
       if (lastSeq === null && typeof seq === 'number' && Number.isInteger(seq) && seq >= 0) {
         lastSeq = seq
       }
+    },
+    setLastSeq: (seq: number | null) => {
+      lastSeq =
+        typeof seq === 'number' && Number.isInteger(seq) && seq >= 0 ? seq : null
     },
   }
 }

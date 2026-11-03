@@ -72,6 +72,7 @@ import { mapUiSkillId } from './agent-skill-map'
 import { sanitizeAgentMessageContent } from './agentMessageSanitize'
 import {
   PiRuntimeClient,
+  PiRuntimeError,
   type CreateSessionResult,
   type PiPromptInfo,
   type PiRetentionState,
@@ -259,6 +260,20 @@ interface TurnPointHold {
   amount: number
   status: string
   createdAt: Date
+}
+
+/**
+ * 多端一致性 P1（计划 2026-11-04 Task 4）：flag on 时 POST /chat/conversation 的响应体。
+ * `sinceSeq` 缺省（undefined）= 游标未知 ⇒ 前端 from=now（见 headSeq 注释的不对称取舍）。
+ */
+export interface ConversationAck {
+  accepted: boolean
+  /** 订阅目标线程；fork 场景 = fork 后的新线程 id。 */
+  threadId?: string
+  /** 订阅游标锚点：触发时刻 lane head seq。 */
+  sinceSeq?: number
+  /** accepted=false 时的用户可读原因（fork 切点失效等）。 */
+  errorMessage?: string
 }
 
 @Injectable()
@@ -1107,6 +1122,137 @@ export class AgentService implements OnModuleInit {
    * ⇒ controller 必须把「客户端断开」映射成 `signal.abort()`，
    *   本方法据此退订（`unsubscribe()`）并结束生成器。
    */
+  // ─── 多端一致性 P1（规格 2026-10-21 §10 / 计划 2026-11-04 Task 4）────────────
+  /**
+   * POST /chat/conversation 的 ack 化入口（flag `STREAM_MAIN_FROM_PIRUNTIME=on`）：
+   * 触发 run 后立即返回订阅锚点，事件改由 `GET /runs/events` 权威通道按游标投递
+   * ——发起端与旁观端从此同源（Claude/Codex 的「稳定 run + 独立可游标重连订阅」模型）。
+   *
+   * ⭐ 复用既有 `streamConversation`：以**末尾追加参数**方式传参（本方法有 ~40 处
+   *   按位置调用的测试，中段插参会静默错值——spec §11）；billingSource 缺省 'user'。
+   *   后台把 generator **消费到底** ⇒ 落库 / finalizeTurn / 积分 / 简报等副作用全保留
+   *   （Review Focus 5：ack 提前返回 ≠ run 半途而废）。
+   *
+   * fork 场景（branchFromEntryId）：`thread_forked` 与 fork 失败的 `error` 都是
+   * Nest 侧**合成事件，不进 lane buffer** ⇒ 前端经 /runs/events 收不到，必须在
+   * ack 里给出结论：成功 ⇒ threadId=fork 后新线程；失败 ⇒ accepted:false
+   * （否则前端订阅旧线程永远等不到帧，永久转圈）。因此 fork 时须等首个事件
+   * （一次内部 HTTP，forkAckTimeoutMs 兜底超时后保守按原线程 ack）。
+   */
+  async startConversationRun(args: {
+    sessionId: string
+    message: string
+    userId?: string
+    threadId?: string
+    idempotencyKey?: string
+    skillId?: string
+    model?: string
+    focusNodeId?: string
+    attachments?: SidebarAttachment[]
+    refOrder?: string[]
+    mentionedKeys?: string[]
+    thinking?: boolean
+    thinkingEffort?: 'high' | 'max'
+    branchFromEntryId?: string
+    selectedNodeIds?: string[]
+    /** 测试注入口：fork 首事件等待上限（默认 5000ms）。 */
+    forkAckTimeoutMs?: number
+  }): Promise<ConversationAck> {
+    const baseThreadId = args.threadId?.trim() || args.sessionId
+    // ⭐ 位置参数逐一对应 streamConversation 签名（sessionId…selectedNodeIds 共 15 个）；
+    //    上游签名末尾追加参数时，此处必须同步补位（禁止中段插参）。
+    const gen = this.streamConversation(
+      args.sessionId,
+      args.message,
+      args.userId,
+      args.threadId,
+      args.idempotencyKey,
+      args.skillId,
+      args.model,
+      args.focusNodeId,
+      args.attachments,
+      args.refOrder,
+      args.mentionedKeys,
+      args.thinking,
+      args.thinkingEffort,
+      args.branchFromEntryId,
+      args.selectedNodeIds,
+    )
+    const drain = (): void => {
+      void (async () => {
+        try {
+          for await (const _ev of gen) {
+            // 事件本体经 GET /runs/events 投递给前端；这里消费 generator 只为让
+            // 体内副作用（落库 / finalizeTurn / 积分 / 简报）完整执行。
+          }
+        } catch (err) {
+          this.piLogger?.error?.(
+            `background drain failed (thread=${baseThreadId}): ${String(err)}`,
+          )
+        }
+      })()
+    }
+
+    if (args.branchFromEntryId?.trim()) {
+      const first = await Promise.race([
+        gen.next(),
+        new Promise<null>((resolve) =>
+          setTimeout(() => resolve(null), args.forkAckTimeoutMs ?? 5000),
+        ),
+      ])
+      if (first && !first.done) {
+        const ev = first.value as AgentStreamEvent
+        if (ev.type === 'thread_forked') {
+          const forkedId = (ev.data as { threadId?: string } | null)?.threadId
+          if (forkedId) {
+            // generator 正停在 thread_forked yield 上（run 尚未启动）⇒ 此刻
+            // snapshot 新线程拿到的就是「fork 后、run 前」的干净 head。
+            const sinceSeq = await this.headSeq(forkedId)
+            drain()
+            return { accepted: true, threadId: forkedId, sinceSeq: sinceSeq ?? 0 }
+          }
+        }
+        if (ev.type === 'error') {
+          const message = (ev.data as { message?: string } | null)?.message
+          drain()
+          return { accepted: false, errorMessage: message }
+        }
+      }
+      // 超时 / 立即结束 / 首事件非 fork 语义 ⇒ 保守按原线程 ack（fork 结果经日志可查）
+    }
+
+    // ⭐ 游标锚点必须取在 drain **之前**：run 一旦开始，head 就会前进，
+    //    后取的锚点会把 run 的前几帧跳掉（漏窗 = M3 主诉）。
+    const sinceSeq = await this.headSeq(baseThreadId)
+    drain()
+    return {
+      accepted: true,
+      threadId: baseThreadId,
+      ...(sinceSeq !== null ? { sinceSeq } : {}),
+    }
+  }
+
+  /**
+   * 订阅游标锚点：线程 lane 的 head seq（`transcriptTail` 最大 seq）。
+   * - 无 lane（PiRuntimeError 404，新线程还没建）⇒ 0：lane 为空，`lastEventId=0`
+   *   的「全量重放」重放不到任何东西，且不漏 run 帧；
+   * - pi 不可达 / 其它错误 ⇒ null：ack 省略 sinceSeq ⇒ 前端 from=now。
+   *   ⭐ 宁可冒「漏掉 run 启动后 ~100ms 早帧」的险（verify-before-fail + reconcile
+   *   可自愈），也不回到 sinceSeq=0 把 500 帧历史重放进当前气泡（文本双倍污染，
+   *   不可自愈）——两者不对称，取轻。
+   */
+  private async headSeq(threadKey: string): Promise<number | null> {
+    const piUrl = this.getPiRuntimeUrl()
+    if (!piUrl) return null
+    try {
+      const snap = await this.createPiRuntimeClient(piUrl).snapshot(threadKey)
+      return snap.transcriptTail.reduce((m, e) => Math.max(m, e?.seq ?? 0), 0)
+    } catch (err) {
+      if (err instanceof PiRuntimeError && err.status === 404) return 0
+      return null
+    }
+  }
+
   async *runEventStream(
     sessionKey: string,
     opts?: { lastEventId?: string; signal?: AbortSignal },
@@ -1223,7 +1369,25 @@ export class AgentService implements OnModuleInit {
     return { outcome: 'missing', lastSeq: sinceSeq }
   }
 
-  /** 流探测：按游标续至多 timeoutMs，拿不到增量（超时/404 退避中）视为 none。 */
+  /** runEventStream 真实 UiEvent 产物里的回合终态（见 probeRunEventStream 内注释）。 */
+  private static readonly PROBE_TERMINAL_TYPES = new Set([
+    'done',
+    'turn_ack',
+    'error',
+    'turn_not_submitted',
+    'pi_turn_end',
+    'turn_settled',
+    'turn_end',
+    'agent_end',
+  ])
+
+  /**
+   * 流探测：按游标续至多 timeoutMs。语义（Task 7 集成测试实证修订）：
+   *  - 消费重放**直到终态帧** ⇒ settled（完结回合的重放首帧是 turn_start 等非终态
+   *    ——首帧即返回会把 settled 误判成 active，D2「跑完未落库」场景就治不了）；
+   *  - 有增量但超时仍无终态 ⇒ active（run 在跑，live tail 静默属正常）；
+   *  - 零增量（超时/404 退避中）⇒ none（交 IdempotencyRecord 兜底裁决）。
+   */
   private async probeRunEventStream(
     threadId: string,
     sinceSeq: number,
@@ -1231,22 +1395,27 @@ export class AgentService implements OnModuleInit {
   ): Promise<{ outcome: 'active' | 'settled' | 'none'; lastSeq: number }> {
     const ac = new AbortController()
     const timer = setTimeout(() => ac.abort(), timeoutMs)
+    let lastSeq = sinceSeq
+    let sawAny = false
     try {
       for await (const ev of this.runEventStream(threadId, {
         lastEventId: String(sinceSeq),
         signal: ac.signal,
       })) {
+        sawAny = true
         const seq =
           typeof (ev as unknown as { seq?: number }).seq === 'number'
             ? (ev as unknown as { seq: number }).seq
-            : sinceSeq
+            : lastSeq
+        if (seq > lastSeq) lastSeq = seq
         const type = (ev as unknown as { type?: string }).type
-        const terminated = type === 'turn_end' || type === 'agent_end' || type === 'turn_settled'
-        return { outcome: terminated ? 'settled' : 'active', lastSeq: seq }
+        if (type !== undefined && AgentService.PROBE_TERMINAL_TYPES.has(type)) {
+          return { outcome: 'settled', lastSeq }
+        }
       }
-      return { outcome: 'none', lastSeq: sinceSeq }
+      return { outcome: sawAny ? 'active' : 'none', lastSeq }
     } catch {
-      return { outcome: 'none', lastSeq: sinceSeq }
+      return { outcome: sawAny ? 'active' : 'none', lastSeq }
     } finally {
       clearTimeout(timer)
     }
