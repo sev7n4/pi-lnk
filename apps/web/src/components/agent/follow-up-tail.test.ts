@@ -704,3 +704,53 @@ describe('follow-up-tail：abort 立刻掐断（无幽灵订阅）', () => {
     }
   })
 })
+
+describe('seedLastSeq（T1.4：主流断开后旁观流游标播种，2026-11-04）', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('播种后首连 URL 带游标 lastEventId（不再 from=now）', async () => {
+    const deps = makeDeps()
+    const listener = createFollowUpTailListener(deps)
+    listener.seedLastSeq(42)
+    await listener.start()
+    await flush()
+    expect(deps.urls[0]).toContain('lastEventId=42')
+    expect(deps.urls[0]).not.toContain('from=now')
+  })
+
+  it('内部游标已收帧时播种不回退（落后播种被忽略）', async () => {
+    const deps = makeDeps({
+      fetchImpl: (_url, init) =>
+        Promise.resolve({
+          status: 200,
+          ok: true,
+          body: streamOf(['id: 7\ndata: {"type":"text_delta","data":{"text":"x"}}\n\n'], init.signal),
+        } as TailResponseLike),
+    })
+    const listener = createFollowUpTailListener(deps)
+    await listener.start()
+    await flush()
+    expect(deps.texts).toEqual(['x'])
+    listener.seedLastSeq(3)
+    await listener.abort()
+    await listener.start()
+    await flush()
+    expect(deps.urls.at(-1)).toContain('lastEventId=7')
+  })
+
+  it('null / 负数 / 小数播种被忽略（保持 from=now 语义）', async () => {
+    const deps = makeDeps()
+    const listener = createFollowUpTailListener(deps)
+    listener.seedLastSeq(null)
+    listener.seedLastSeq(-1)
+    listener.seedLastSeq(3.5)
+    await listener.start()
+    await flush()
+    expect(deps.urls[0]).not.toContain('lastEventId')
+  })
+})

@@ -185,3 +185,47 @@ export async function checkRuntimeHealthViaNest(): Promise<{ ok: boolean; latenc
     return null
   }
 }
+
+/**
+ * 多端一致性 P0（规格 2026-10-21 §10 / 计划 2026-11-04 Task 2+3）：断流后查
+ * pi-runtime transcript 层真相（lane buffer 流探测 + IdempotencyRecord）。
+ *
+ * ⭐ 与 `reconcileLatestAssistant`（DB 权威历史）**互补而非替代**：D2 缺陷（落库与
+ * HTTP 连接耦合）下回合可能已在 runtime 跑完但没落库 ⇒ 历史对账天然查不到 ⇒
+ * 只靠历史会把「其实 settled」误判为失败（红车① 残留路径）。
+ *
+ * 返回 null = 端点异常/非 200/形态不对（调用方回落既有失败路径，行为不劣于今天）。
+ */
+export type RuntimeReconcileOutcome = 'active' | 'settled' | 'missing'
+export type RuntimeReconcileResult = {
+  outcome: RuntimeReconcileOutcome
+  lastSeq: number
+  evidence?: { idempotencyStatus?: string }
+}
+
+export async function fetchRuntimeReconcile(
+  threadId: string,
+  sinceSeq: number | null,
+  fetchImpl: typeof fetch = fetch,
+): Promise<RuntimeReconcileResult | null> {
+  try {
+    const params = new URLSearchParams({ threadId })
+    if (typeof sinceSeq === 'number' && Number.isInteger(sinceSeq) && sinceSeq >= 0) {
+      params.set('sinceSeq', String(sinceSeq))
+    }
+    const res = await fetchImpl(apiUrl(`/api/agent/chat/reconcile?${params.toString()}`), {
+      // ⛔ 禁缓存：同 loadHistory——304 空体会让 json() 抛错、静默中断对账
+      cache: 'no-store',
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) return null
+    const json = (await res.json()) as { code?: number; data?: RuntimeReconcileResult }
+    const data = json?.data
+    if (!data || (data.outcome !== 'active' && data.outcome !== 'settled' && data.outcome !== 'missing')) {
+      return null
+    }
+    return data
+  } catch {
+    return null
+  }
+}

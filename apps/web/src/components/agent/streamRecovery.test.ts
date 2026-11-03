@@ -14,6 +14,7 @@ import {
   isStreamStale,
   shouldKeepReconciling,
   STREAM_STALE_MS,
+  fetchRuntimeReconcile,
 } from './streamRecovery'
 import { lastThreadStorageKey } from '@/utils/formatSessionTime'
 
@@ -263,3 +264,40 @@ describe('deriveObserverFromSeq（P0 断流回填尾包参数推导）', () => {
   })
 })
 
+
+describe('fetchRuntimeReconcile（P0+P1：transcript 层对账）', () => {
+  const okFetch = (data: unknown) =>
+    vi.fn().mockResolvedValue({ ok: true, json: async () => ({ code: 0, data }) })
+
+  it('解包 {code,data} 包络并透传 outcome + sinceSeq 参数', async () => {
+    const fetchMock = okFetch({ outcome: 'active', lastSeq: 9 })
+    const r = await fetchRuntimeReconcile('T1', 5, fetchMock as unknown as typeof fetch)
+    expect(r).toEqual({ outcome: 'active', lastSeq: 9 })
+    const url = fetchMock.mock.calls[0][0] as string
+    expect(url).toContain('threadId=T1')
+    expect(url).toContain('sinceSeq=5')
+  })
+
+  it('sinceSeq 为 null 时不带该参数（避免空值触发全量重放）', async () => {
+    const fetchMock = okFetch({ outcome: 'missing', lastSeq: 0 })
+    await fetchRuntimeReconcile('T1', null, fetchMock as unknown as typeof fetch)
+    const url = fetchMock.mock.calls[0][0] as string
+    expect(url).not.toContain('sinceSeq')
+  })
+
+  it('带 cache:no-store（304 空体会让 json() 抛错，静默中断对账）', async () => {
+    const fetchMock = okFetch({ outcome: 'settled', lastSeq: 1 })
+    await fetchRuntimeReconcile('T1', 1, fetchMock as unknown as typeof fetch)
+    const init = fetchMock.mock.calls[0][1] as { cache?: string }
+    expect(init.cache).toBe('no-store')
+  })
+
+  it('非 200 / 网络异常 / 非法 outcome ⇒ null（调用方回落既有失败路径）', async () => {
+    const bad = vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) })
+    expect(await fetchRuntimeReconcile('T1', 1, bad as unknown as typeof fetch)).toBeNull()
+    const thrower = vi.fn().mockRejectedValue(new Error('net'))
+    expect(await fetchRuntimeReconcile('T1', 1, thrower as unknown as typeof fetch)).toBeNull()
+    const weird = okFetch({ outcome: 'bogus' })
+    expect(await fetchRuntimeReconcile('T1', 1, weird as unknown as typeof fetch)).toBeNull()
+  })
+})

@@ -1,6 +1,6 @@
 # 多端同会话一致性 设计规格
 
-状态：待评审（2026-10-21 产出，取证驱动）
+状态：待评审（2026-10-21 产出；2026-11-04 吸收代码实证修订：内存 TTL / 有界可驱逐缓冲 / 主流无 `id:` 行 / 上游 durable 被换；取证驱动）
 前置：[`docs/superpowers/specs/2026-10-17-agent-turn-identity-design.md`](./2026-10-17-agent-turn-identity-design.md)（已上线，本规格继承其「回合身份」判据并修复其覆盖盲区）
 分支约定：实现走 feature 分支 + PR + squash merge。
 
@@ -55,6 +55,7 @@
 | `2026-10-17-agent-turn-identity-design.md`（回合身份） | **继承 + 补盲区** | 它立了 `owner`/`shadow` 单写者 + `@@unique([threadId, runId])`。但 `runId` 可空 ⇒ SQLite 下 NULL 互不冲突 ⇒ 生产 9443 条 assistant 里 **9368 条（99.2%）唯一索引完全失效**。本规格用消息级 `seq` 补上这层，且**不推翻**它的 `owner`/`shadow` 判据 |
 | `2026-10-19-propose-confirm-single-surface-design.md`（ADR-0011） | 不冲突 | 提议确认收敛为单一锚定表面，与本规格的投影面共用 `snapshot` 投影 |
 | `2026-10-17-mobile-composer-sse-boundary-design.md` | **相关，需对齐** | 它界定了 SSE 边界（stale 判定、insert-line）。本规格 Task 5 扩展同一套边界（加游标与退避），实现前须核对其既有判据不被破坏 |
+| `2026-11-03-e1-generation-terminal-write-tap-design.md`（E1 终态写点直通） | **相关，需对齐 `agentMessage` 写方契约** | 本规格 §7.1 给 `agentMessage` 加 `seq`+唯一索引；E1 链路的简报落库写方 `apps/server/src/agent/agent-canvas-tools.service.ts:3365`（经 `notifyTerminalsOnce` 的 onDelivered 钩子写入）须在索引落地前补 `seq`，否则唯一索引拒绝其 NULL 写入、简报落库崩。两规格并行开发时此接缝须在双方评审中互认（详见 §7.1 / §9） |
 | PR #534（插话补气泡，commit `43151009`，已在 master） | **前置，非重复** | #534 做了**前端气泡层**（消费时补气泡 + 修 fork 切点被冲掉），**未落 `AgentMessage` 表**。本规格 Task 8 承接其后半段；**不改 #534 的既有实现** |
 
 ## 4. 规范与判据
@@ -320,6 +321,8 @@ model AgentMessage {
 
 ⚠️ 第 4 步是不可跳过的闸门——这正是 `runId` 当年埋的坑（`schema.prisma:358-361` 注释已写明「存量零回填」，代价是唯一索引至今对 99.2% 数据失效）。
 
+⚠️ **第 4 步的 NULL 审计必须覆盖全部 `agentMessage` 写方，含跨规格接缝**：写方不止 `agent.service.ts`（:465/:890/:952/:2930），还有 `apps/server/src/agent/agent-canvas-tools.service.ts:3365`（简报落库，经 `notifyTerminalsOnce` 的 onDelivered 钩子写入——属 E1 `2026-11-03-e1-generation-terminal-write-tap-design.md` 的投影落库链路）。该写方不在本规格 §9 主体编辑清单之外——**已纳入 §9 接缝行**，step 4 加 `@@unique([threadId, seq])` 前必须确认它也已补 `seq`；否则唯一索引会拒绝其 NULL 写入、简报落库崩。此接缝与 E1 规格协同：任一方在 E1 落地或本规格迁移 step 4 前把该写方补 `seq`，并在双方评审中互认（见 §3 关系表）。
+
 ## 8. 纯函数与算法
 
 | 函数 | 位置 | 单测要求 |
@@ -334,7 +337,7 @@ model AgentMessage {
 
 | 文件 | 动作 | 归属层 | Task |
 |---|---|---|---|
-| `deploy/nginx/lnkpi.conf` | 改（timeout 300s→1800s） | 部署 | 1 |
+| `deploy/nginx.conf` | 改（timeout 300s→1800s） | 部署 | 1 |
 | `apps/server/src/agent/agent.service.ts` | 改（落库与请求解耦） | 执行面 | 2 |
 | `apps/server/src/agent/agent.controller.ts` | 改（`id:` 帧 + `lastEventId` 透传） | 观测面 | 4 |
 | `apps/server/src/agent/pi-runtime/pi-runtime.client.ts` | 改（游标透传 + jitter） | 观测面 | 4 |
@@ -343,6 +346,7 @@ model AgentMessage {
 | `apps/server/src/agent/turn-reconciliation.controller.ts` | 新增 | 投影面 | 10 |
 | `apps/server/src/agent/agent.service.ts`（ACK） | 改（`mode` 三态 + 插话落库） | 执行/队列 | 6、8 |
 | `apps/server/prisma/schema.prisma` | 改（`seq`/`clientId`/`queued`） | 数据 | 7 |
+| `apps/server/src/agent/agent-canvas-tools.service.ts` | 改（补 `seq` 写方，配合 §7.1 迁移 step 4 闸门；跨规格接缝） | 数据/投影面 | 7 | 经 `notifyTerminalsOnce` onDelivered 写入 `agentMessage`（E1 链路）；step 4 加唯一索引前必须已补 `seq`，否则简报落库被拒 |
 | `apps/web/src/stores/agent.ts` | 改（`randomUUID` + 投影重建） | 投影面 | 2（前端侧）、9 |
 | `apps/web/src/components/agent/AgentSideRail.vue` | 改（游标 + 退避 + 可见性） | 观测面 | 5 |
 | `apps/web/src/components/agent/backoff.ts` | 新增 | 观测面 | 5 |
