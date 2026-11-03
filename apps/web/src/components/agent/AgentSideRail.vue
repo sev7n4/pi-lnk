@@ -3222,13 +3222,15 @@ const followUpTail = createFollowUpTailListener({
       return
     }
     // 旁观模式：既有最小面 + 跨标签页转发（leader 才有连接 ⇒ follower 靠广播）
+    // ⛔ broadcast 实参形状保持与共享契约测试逐字一致（text / data 裸变量名）
     if (payload.type === 'text_delta') {
       const text = (payload.data as { text?: string } | undefined)?.text ?? ''
       applyTextDelta(text)
       sharedSubscription?.broadcast({ kind: 'text_delta', text })
     } else if (payload.type === 'canvas_action') {
-      applyCanvasAction(payload.data)
-      sharedSubscription?.broadcast({ kind: 'canvas_action', data: payload.data })
+      const data = payload.data
+      applyCanvasAction(data)
+      sharedSubscription?.broadcast({ kind: 'canvas_action', data })
     } else if (isTurnTerminal(payload.type)) {
       applyTurnEnd()
       sharedSubscription?.broadcast({ kind: 'turn_end' })
