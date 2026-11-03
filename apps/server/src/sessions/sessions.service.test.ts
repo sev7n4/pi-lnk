@@ -1,4 +1,5 @@
 import 'reflect-metadata'
+import { NotFoundException } from '@nestjs/common'
 import { describe, expect, it, vi } from 'vitest'
 import { Test } from '@nestjs/testing'
 import { PrismaService } from '../prisma/prisma.service'
@@ -58,33 +59,34 @@ describe('SessionsService.create —— 新建画布不种提示词节点（spec
   })
 })
 
-// ── update：pending_confirm 状态转移守卫（2026-10-13 虚假确认事故 cmv51vwpu0008p801hxaxcf8m）──
-// 浏览器整份 PUT 无权把服务端 pending_confirm 翻成旧终态（completed/error/failed）：
-// 那是 10-12 事故的直接成因（stale 全量盖写 → runtime 轮询误读为已确认）。合法出口只有
-// {pending_confirm, generating}（2026-10-30 P0-4 收紧：draft 出口随「前端自起生成」一并退役）；违规**字段级**保留服务端值，其余字段照常落库，不 409。
-describe('SessionsService.update —— pending_confirm 状态转移守卫', () => {
+// ── update：PUT canvasData 写入关闭（P1-C C2②，2026-11-03 提前于 ~11-16 执行）──
+// 前史：2026-10-13 虚假确认事故（stale 全量盖写 → runtime 误读）催生 C0 字段级守卫；
+// C1a PATCH 主通道上线后 PUT 进入弃用期；现网无真实用户 ⇒ 自愈窗前提失效，
+// C2② 提前关闭：PUT 带 canvasData ⇒ 整包忽略（不落库），title 照常，打点留痕。
+// 画布唯一合法落库通道 = PATCH /sessions/:id/canvas（op 语义 + 事务 + staged 守卫）；
+// pending_confirm 等服务端字段的客户端防线由 PATCH 白名单（sanitizeClientOps）承接。
+describe('SessionsService.update —— PUT canvasData 写入关闭（C2②）', () => {
   const prev = JSON.stringify({
     nodes: [
       { id: 'n1', type: 'image', position: { x: 0, y: 0 }, data: { status: 'pending_confirm' } },
-      { id: 'n2', type: 'image', position: { x: 1, y: 1 }, data: { status: 'completed' } },
     ],
     edges: [],
   })
 
-  function makeUpdateService() {
+  function makeUpdateService(serverCanvas: string) {
     const findUnique = vi.fn(async () => ({
       id: 's1',
       userId: 'u1',
       title: 't',
-      canvasData: prev,
+      canvasData: serverCanvas,
       createdAt: new Date('2026-10-13T00:00:00Z'),
       updatedAt: new Date('2026-10-13T00:00:00Z'),
     }))
     const update = vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
       id: 's1',
       userId: 'u1',
-      title: 't',
-      canvasData: (data.canvasData as string) ?? null,
+      title: (data.title as string) ?? 't',
+      canvasData: (data.canvasData as string | undefined) ?? serverCanvas,
       createdAt: new Date('2026-10-13T00:00:00Z'),
       updatedAt: new Date('2026-10-13T00:00:00Z'),
     }))
@@ -96,69 +98,48 @@ describe('SessionsService.update —— pending_confirm 状态转移守卫', () 
     }
   }
 
-  it('客户端把 pending_confirm 翻成 completed → 字段级丢弃，status 保留 pending_confirm，其余字段照落', async () => {
-    const { update, moduleRef } = makeUpdateService()
+  it('旧客户端越权 payload（pending_confirm → completed）⇒ 整包忽略，落库载荷不含 canvasData', async () => {
+    const { update, moduleRef } = makeUpdateService(prev)
     const svc = (await moduleRef.compile()).get(SessionsService)
-    await svc.update('s1', 'u1', {
-      canvasData: { nodes: [{ id: 'n1', type: 'image', position: { x: 0, y: 0 }, data: { status: 'completed', content: '皮克斯文本' } }], edges: [] },
+    const out = await svc.update('s1', 'u1', {
+      title: '改名',
+      canvasData: { nodes: [{ id: 'n1', type: 'image', position: { x: 0, y: 0 }, data: { status: 'completed', content: 'x' } }], edges: [] },
     })
-    const written = JSON.parse(update.mock.calls[0][0].data.canvasData as string)
-    expect(written.nodes[0].data.status).toBe('pending_confirm')
-    expect(written.nodes[0].data.content).toBe('皮克斯文本')
+    // 落库载荷只含 title（canvasData undefined ⇒ 服务端画布不被 stale 整份覆盖）
+    expect(update.mock.calls[0]![0].data).toEqual({ title: '改名' })
+    expect(update.mock.calls[0]![0].data.canvasData).toBeUndefined()
+    // 返回体带服务端现值（旧客户端下次 GET 对账即回到真值）
+    const returned = out.canvasData as { nodes: Array<{ data: { status: string } }> }
+    expect(returned.nodes[0].data.status).toBe('pending_confirm')
   })
 
-  it('error/failed 同族终态同样被丢弃（同一家族，spec P0-B）', async () => {
-    const { update, moduleRef } = makeUpdateService()
+  it('带 canvasData ⇒ 打 canvas_put_rejected 留痕；title-only ⇒ 不打', async () => {
+    const { update, moduleRef } = makeUpdateService(prev)
     const svc = (await moduleRef.compile()).get(SessionsService)
+    const loggerWarn = vi.spyOn(
+      (svc as unknown as { logger: { warn: (m: string) => void } }).logger,
+      'warn',
+    )
     await svc.update('s1', 'u1', {
-      canvasData: { nodes: [{ id: 'n1', type: 'image', position: { x: 0, y: 0 }, data: { status: 'error' } }], edges: [] },
+      canvasData: { nodes: [{ id: 'n1' }, { id: 'n2' }], edges: [] },
     })
-    expect(JSON.parse(update.mock.calls[0][0].data.canvasData as string).nodes[0].data.status).toBe('pending_confirm')
+    expect(loggerWarn).toHaveBeenCalledTimes(1)
+    expect(String(loggerWarn.mock.calls[0][0])).toMatch(/^canvas_put_rejected sessionId=s1 nodes=2$/)
+    await svc.update('s1', 'u1', { title: '只改名' })
+    expect(loggerWarn).toHaveBeenCalledTimes(1) // 不新增
+    expect(update.mock.calls[1]![0].data).toEqual({ title: '只改名' })
   })
 
-  it('合法出口放行：generating（确认启动 patch 序列）原样落库', async () => {
-    const { update, moduleRef } = makeUpdateService()
-    const svc = (await moduleRef.compile()).get(SessionsService)
-    await svc.update('s1', 'u1', {
-      canvasData: { nodes: [{ id: 'n1', type: 'image', position: { x: 0, y: 0 }, data: { status: 'generating', generationRecordId: 'rec-1' } }], edges: [] },
-    })
-    const written = JSON.parse(update.mock.calls[0][0].data.canvasData as string)
-    expect(written.nodes[0].data.status).toBe('generating')
-    expect(written.nodes[0].data.generationRecordId).toBe('rec-1')
-  })
-
-  it('P0-4 收紧：客户端把 pending_confirm 写回 draft → 字段级丢弃，status 保留 pending_confirm（取消走 decline 内部通道，不经浏览器 PUT）', async () => {
-    const { update, moduleRef } = makeUpdateService()
-    const svc = (await moduleRef.compile()).get(SessionsService)
-    await svc.update('s1', 'u1', {
-      canvasData: { nodes: [{ id: 'n1', type: 'image', position: { x: 0, y: 0 }, data: { status: 'draft' } }], edges: [] },
-    })
-    expect(JSON.parse(update.mock.calls[0][0].data.canvasData as string).nodes[0].data.status).toBe('pending_confirm')
-  })
-
-  it('非 pending_confirm 节点不受守卫影响（n2 completed → draft 自由）', async () => {
-    const { update, moduleRef } = makeUpdateService()
-    const svc = (await moduleRef.compile()).get(SessionsService)
-    await svc.update('s1', 'u1', {
-      canvasData: { nodes: [{ id: 'n2', type: 'image', position: { x: 1, y: 1 }, data: { status: 'draft' } }], edges: [] },
-    })
-    expect(JSON.parse(update.mock.calls[0][0].data.canvasData as string).nodes[0].data.status).toBe('draft')
-  })
-
-  it('旧 canvasData 是脏数据（解析失败）→ 守卫直通，保存不被阻塞', async () => {
-    const findUnique = vi.fn(async () => ({
-      id: 's1', userId: 'u1', title: 't', canvasData: '{not-json', createdAt: new Date(), updatedAt: new Date(),
-    }))
-    const update = vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
-      id: 's1', userId: 'u1', title: 't', canvasData: (data.canvasData as string) ?? null, createdAt: new Date(), updatedAt: new Date(),
-    }))
-    const svc = (await Test.createTestingModule({
-      providers: [SessionsService, { provide: PrismaService, useValue: { session: { findUnique, update } } }],
-    }).compile()).get(SessionsService)
-    await expect(
-      svc.update('s1', 'u1', { canvasData: { nodes: [{ id: 'n1', type: 'image', position: { x: 0, y: 0 }, data: { status: 'completed' } }], edges: [] } }),
-    ).resolves.toBeTruthy()
-    expect(JSON.parse(update.mock.calls[0][0].data.canvasData as string).nodes[0].data.status).toBe('completed')
+  it('PUT 404/403 语义不变（会话不存在 / 他人会话）', async () => {
+    const findUnique = vi.fn(async () => null)
+    const update = vi.fn()
+    const svc = (
+      await Test.createTestingModule({
+        providers: [SessionsService, { provide: PrismaService, useValue: { session: { findUnique, update } } }],
+      }).compile()
+    ).get(SessionsService)
+    await expect(svc.update('ghost', 'u1', { title: 'x' })).rejects.toBeInstanceOf(NotFoundException)
+    expect(update).not.toHaveBeenCalled()
   })
 })
 

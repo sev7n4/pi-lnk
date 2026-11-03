@@ -78,9 +78,12 @@ staged 在场 skip=退让 / conflict=409），或 persist 家族同款事务内 
 唯一例外：`session.create` 的种子/整份拷贝（duplicate/forkCanvas/stories 种子）。
 
 **机器守卫**：`apps/server/src/sessions/canvas-write-governance.test.ts` 全目录扫描
-所有写点签名（`canvasData: JSON.stringify(...)` / copy-through）并对白名单逐文件核对数量；
-新增未登记写点 ⇒ CI 直接红，失败信息指路合规通道。白名单条目各带合规理由，
-**改白名单 = 审计动作**，PR 必须给出依据（迁移到通道 / PUT 弃用期关闭后删条目）。
+所有写点签名（`canvasData: JSON.stringify(...)` / copy-through / 裸局部变量——历史
+`canvas.service` 用 `data: { ...data, canvasData }` spread 逃过前两类签名，C2② 时补堵）
+并对白名单逐文件核对数量；新增未登记写点 ⇒ CI 直接红，失败信息指路合规通道。
+白名单条目各带合规理由，**改白名单 = 审计动作**，PR 必须给出依据。
+⭐ 整份 PUT 的 canvasData 写入已于 2026-11-03 关闭（C2②）：两个 PUT 端点带 canvasData
+⇒ 整包忽略 + `canvas_put_rejected` 打点，画布唯一合法落库通道 = `PATCH /sessions/:id/canvas`。
 规格：[`docs/superpowers/specs/2026-11-02-p1c-write-path-governance-design.md`](./docs/superpowers/specs/2026-11-02-p1c-write-path-governance-design.md)。
 
 ### 改提示词规则 ⇒ 同步 6 处，漏一处就静默

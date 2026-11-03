@@ -8,7 +8,7 @@
  * - C1-5：同节点不同字段（或不同节点）ops 各自落库（applier 键级 merge）。
  * - remove_node 保护：generating/pending_confirm ⇒ 409；draft 可删。
  * - stagedActions 未清 ⇒ 409（与 agent persist 同语义）。
- * - PUT 弃用打点：sessions.update 带 canvasData ⇒ canvas_put_deprecated warn。
+ * - PUT canvasData 写入已关闭（C2②）：带 canvasData ⇒ canvas_put_rejected warn，不落库。
  */
 import 'reflect-metadata'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -202,8 +202,8 @@ describe('SessionsService.patchCanvas（C1a 端到端）', () => {
   })
 })
 
-describe('SessionsService.update → PUT 弃用打点（C1a）', () => {
-  it('带 canvasData ⇒ warn canvas_put_deprecated；title-only ⇒ 不打', async () => {
+describe('SessionsService.update → PUT canvasData 写入关闭（C2②）', () => {
+  it('带 canvasData ⇒ 打 canvas_put_rejected 且不落库；title-only ⇒ 不打', async () => {
     let svc: SessionsService
     const findUnique = vi.fn().mockResolvedValue({
       id: 's1',
@@ -228,9 +228,12 @@ describe('SessionsService.update → PUT 弃用打点（C1a）', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const loggerWarn = vi.spyOn((svc as unknown as { logger: { warn: (m: string) => void } }).logger, 'warn')
 
+    // 旧客户端整份 PUT ⇒ 打点留痕，但落库载荷不含 canvasData（服务端画布不被覆盖）
     await svc.update('s1', 'u1', { canvasData: { nodes: [{ id: 'a' }, { id: 'b' }] } })
     expect(loggerWarn).toHaveBeenCalledTimes(1)
-    expect(String(loggerWarn.mock.calls[0][0])).toMatch(/^canvas_put_deprecated sessionId=s1 nodes=2$/)
+    expect(String(loggerWarn.mock.calls[0][0])).toMatch(/^canvas_put_rejected sessionId=s1 nodes=2$/)
+    expect(prismaUpdate.mock.calls[0][0].data).toEqual({ title: undefined })
+    expect(prismaUpdate.mock.calls[0][0].data.canvasData).toBeUndefined()
 
     await svc.update('s1', 'u1', { title: '改名' })
     expect(loggerWarn).toHaveBeenCalledTimes(1) // 不新增

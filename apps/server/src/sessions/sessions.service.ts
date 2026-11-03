@@ -4,9 +4,6 @@ import type { CanvasData } from '@lnkpi/shared'
 import { applyCanvasActions } from '@lnkpi/agent'
 // 2026-10-25：与 `CanvasService.list` 共用同一套封面抽取口径（响应体不带 canvasData）。
 import { readCover } from '../canvas/canvas-cover'
-// P1-C C0（规格 2026-11-02-p1c-write-path-governance-design §4.1）：守卫抽共享纯函数，
-// sessions 面与 canvas 面共用同一实现，禁止漂移。
-import { guardPendingConfirmStatuses } from '../canvas/pending-confirm-guard'
 // P1-C C1a（§3.1）：PATCH ops 白名单收敛。
 import { sanitizeClientOps } from './sessions-canvas-patch'
 
@@ -100,23 +97,20 @@ export class SessionsService {
     if (!session) throw new NotFoundException('会话不存在')
     if (session.userId !== userId) throw new ForbiddenException()
 
-    // P1-C C1a（规格 §3.1）：整份 PUT 进入弃用期——打点观测（零阻塞，logger 计数），
-    // 连续两周清零后关闭 canvasData 写入（C2），期间保留作旧 web 缓存自愈通道。
+    // P1-C C2②（规格 §4.2）：整份 PUT 的 canvasData 写入已关闭——画布数据唯一合法
+    // 落库通道是 `PATCH /sessions/:id/canvas`（op 语义 + 事务 + staged 守卫）。
+    // PUT 带 canvasData ⇒ 忽略（返回 200，title 照常落库），打点 canvas_put_rejected
+    // 留痕观测残留调用方（现网无真实用户后提前于 ~11-16 执行）。
     if (data.canvasData) {
       const nodes = (data.canvasData as { nodes?: unknown[] } | null)?.nodes
       this.logger.warn(
-        `canvas_put_deprecated sessionId=${id} nodes=${Array.isArray(nodes) ? nodes.length : -1}`,
+        `canvas_put_rejected sessionId=${id} nodes=${Array.isArray(nodes) ? nodes.length : -1}`,
       )
     }
 
     const updated = await this.prisma.session.update({
       where: { id },
-      data: {
-        title: data.title,
-        canvasData: data.canvasData
-          ? JSON.stringify(guardPendingConfirmStatuses(session.canvasData, data.canvasData))
-          : undefined,
-      },
+      data: { title: data.title },
     })
     return this.formatSession(updated)
   }

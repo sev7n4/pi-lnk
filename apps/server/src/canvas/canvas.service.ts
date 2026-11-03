@@ -2,10 +2,6 @@ import { Inject, Injectable, Logger, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 // 2026-10-25：封面抽取抽到 `canvas-cover.ts`，与 `SessionsService.findAll` 共用同一口径。
 import { readCover } from './canvas-cover'
-// P1-C C0（规格 2026-11-02-p1c-write-path-governance-design §4.1）：本面整份 PUT
-// 原是 P0-4 守卫旁路（sessions 面有守卫、此面没有）。接入共享纯函数堵缺口，
-// 两面同一实现禁止漂移。
-import { guardPendingConfirmStatuses } from './pending-confirm-guard'
 
 /** create() 不传 title 时的默认落库值（IA v4 2026-10-23：项目=画布+对话，
  *  全仓文案收口到「项目」）。list 的标题兜底据此判定「未命名」——
@@ -72,22 +68,20 @@ export class CanvasService {
   async update(id: string, userId: string, data: { title?: string; canvasData?: string }) {
     const session = await this.prisma.session.findFirst({ where: { id, userId } })
     if (!session) throw new NotFoundException('Session not found')
-    // P1-C C1a：整份 PUT 弃用期打点（与 sessions 面同格式，零阻塞）。
-    let canvasData: string | undefined
+    // P1-C C2②（规格 §4.2）：整份 PUT 的 canvasData 写入已关闭——画布数据唯一合法
+    // 落库通道是 `PATCH /sessions/:id/canvas`。PUT 带 canvasData ⇒ 忽略（返回 200，
+    // title 照常落库），打点 canvas_put_rejected 留痕观测残留调用方。
     if (data.canvasData !== undefined) {
-      let next: unknown = null
+      let nodes = -1
       try {
-        next = JSON.parse(data.canvasData)
+        const next = JSON.parse(data.canvasData) as { nodes?: unknown[] } | null
+        nodes = Array.isArray(next?.nodes) ? next.nodes.length : -1
       } catch {
-        next = null
+        // 坏 JSON 同样拒绝，nodes=-1 留痕即可
       }
-      const nodes = (next as { nodes?: unknown[] } | null)?.nodes
-      this.logger.warn(
-        `canvas_put_deprecated sessionId=${id} nodes=${Array.isArray(nodes) ? nodes.length : -1}`,
-      )
-      canvasData = JSON.stringify(guardPendingConfirmStatuses(session.canvasData, next))
+      this.logger.warn(`canvas_put_rejected sessionId=${id} nodes=${nodes}`)
     }
-    return this.prisma.session.update({ where: { id }, data: { ...data, canvasData } })
+    return this.prisma.session.update({ where: { id }, data: { title: data.title } })
   }
 
   /** SP-D（ADR-0014）：浏览器侧连线端点（connect-nodes）的属主校验，与 update 同口径。 */
