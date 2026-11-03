@@ -742,6 +742,38 @@ describe('AgentService turn billing (P2 T6)', () => {
     expect(events[events.length - 1]?.type).toBe('turn_ack')
   })
 
+  it('①-m 结算摘要（2026-11-03）：turn_settled 携带回合冻结的 model（规范化小写）', async () => {
+    process.env.TEXT_TOKEN_BILLING = 'on'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([
+      msgEndWithUsage({
+        input: 8000,
+        cacheRead: 0,
+        cacheWrite: 0,
+        output: 500,
+        cost: { input: 0.01, output: 0.01, cacheRead: 0, cacheWrite: 0 },
+      }),
+      piEvent('agent_end', { status: 'completed' }),
+    ])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+    const events: Array<{ type: string; data?: unknown }> = []
+    for await (const event of service.streamConversation(
+      's1',
+      'hi',
+      'u1',
+      's1:thread-a',
+      undefined,
+      undefined,
+      'STEP-3.5-Flash',
+    )) {
+      events.push(event)
+    }
+    const settled = (
+      assistantMetadata().executionEvents as Array<{ type: string; data: Record<string, unknown> }>
+    )?.find((e) => e.type === 'turn_settled')
+    expect(settled?.data.model).toBe('step-3.5-flash')
+  })
+
   it('①c cacheWrite 结算透传 + turn_settled.tokens 原始 token 明细（终审 C-2/I-1）', async () => {
     process.env.TEXT_TOKEN_BILLING = 'on'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
