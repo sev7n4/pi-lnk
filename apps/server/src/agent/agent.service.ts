@@ -1162,6 +1162,78 @@ export class AgentService implements OnModuleInit {
     }
   }
 
+  // ─── 多端一致性 P0（规格 2026-10-21 §10 / 计划 2026-11-04 Task 2）────────────
+  /**
+   * 断流后对账：回答「这个会话此刻有没有活跃/已完结的回合」。verify-before-fail 的
+   * 服务端真相源——断流 ≠ 失败，先查真再判失败（红车根因 2026-11-01 P0）。
+   *
+   * ⭐ 真相源刻意**不用** `getThreadState`/`getThreadTimeline`——两者已随 LangGraph
+   * 退役（恒返回 null）。改用双源裁决：
+   *   ① IdempotencyRecord 近窗（threadId + 30min）：processing ⇒ active、completed ⇒ settled
+   *   ② runEventStream 流探测（5s 超时）：立即续到增量 ⇒ active（终止事件 ⇒ settled）
+   * GenerationRecord 无 threadId 列（仅 sessionId/nodeId）⇒ 不参与裁决。
+   * 双源全空 ⇒ missing（此时前端才允许判真失败）。
+   */
+  async reconcileLatestAssistant(
+    threadId: string,
+    sinceSeq: number,
+  ): Promise<{
+    outcome: 'active' | 'settled' | 'missing'
+    lastSeq: number
+    evidence?: { idempotencyStatus?: string }
+  }> {
+    const recent = await this.prisma.idempotencyRecord
+      .findMany({
+        where: { threadId, createdAt: { gte: new Date(Date.now() - 30 * 60_000) } },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+      })
+      .catch(() => [] as Array<{ status: string }>)
+    const processing = recent.find((r) => r.status === 'processing')
+    if (processing) {
+      // 短路：无需探测，幂等记录在案 ⇒ 活跃
+      return { outcome: 'active', lastSeq: sinceSeq, evidence: { idempotencyStatus: 'processing' } }
+    }
+    const probe = await this.probeRunEventStream(threadId, sinceSeq, 5_000)
+    if (probe.outcome !== 'none') {
+      return { outcome: probe.outcome, lastSeq: probe.lastSeq }
+    }
+    const completed = recent.find((r) => r.status === 'completed')
+    if (completed) {
+      return { outcome: 'settled', lastSeq: sinceSeq, evidence: { idempotencyStatus: 'completed' } }
+    }
+    return { outcome: 'missing', lastSeq: sinceSeq }
+  }
+
+  /** 流探测：按游标续至多 timeoutMs，拿不到增量（超时/404 退避中）视为 none。 */
+  private async probeRunEventStream(
+    threadId: string,
+    sinceSeq: number,
+    timeoutMs: number,
+  ): Promise<{ outcome: 'active' | 'settled' | 'none'; lastSeq: number }> {
+    const ac = new AbortController()
+    const timer = setTimeout(() => ac.abort(), timeoutMs)
+    try {
+      for await (const ev of this.runEventStream(threadId, {
+        lastEventId: String(sinceSeq),
+        signal: ac.signal,
+      })) {
+        const seq =
+          typeof (ev as unknown as { seq?: number }).seq === 'number'
+            ? (ev as unknown as { seq: number }).seq
+            : sinceSeq
+        const type = (ev as unknown as { type?: string }).type
+        const terminated = type === 'turn_end' || type === 'agent_end' || type === 'turn_settled'
+        return { outcome: terminated ? 'settled' : 'active', lastSeq: seq }
+      }
+      return { outcome: 'none', lastSeq: sinceSeq }
+    } catch {
+      return { outcome: 'none', lastSeq: sinceSeq }
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   /**
    * 用户插话（steering 队列）：run 进行中发言的正道。
    *

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   ForbiddenException,
@@ -404,6 +405,21 @@ export class AgentController {
     @Query('threadId') threadId: string,
   ) {
     const data = await this.agentService.getThreadTimeline(threadId)
+    return { code: 0, message: 'ok', data }
+  }
+
+  /** 多端一致性 P0（规格 2026-10-21 §10）：断流后对账——前端 verify-before-fail 的查真入口。 */
+  @Get('chat/reconcile')
+  @UseGuards(AuthGuard)
+  async reconcile(
+    @Query('threadId') threadId: string,
+    @Query('sinceSeq') sinceSeq?: string,
+  ) {
+    if (!threadId?.trim()) throw new BadRequestException('threadId is required')
+    const data = await this.agentService.reconcileLatestAssistant(
+      threadId.trim(),
+      Number(sinceSeq ?? '0') || 0,
+    )
     return { code: 0, message: 'ok', data }
   }
 
