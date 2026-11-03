@@ -414,6 +414,50 @@ describe('turnTimeline — 模型层（设计 §4 / §5-P1）', () => {
     expect(byKind(tl, 'notice').filter((n) => n.id === 'notice:waiting')).toHaveLength(0)
   })
 
+  it('⭐ 2026-11-04 确认（resolved→confirmed）即建产物卡：排在 proposal 之后、title 取 pendingNodeMeta', () => {
+    const tl = feed([
+      addNode('n1', 'image', '黑色狐狸精'),
+      { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation', nodeId: 'n1', callId: 'c1' } },
+      { type: 'waiting_user', data: { status: 'resolved', toolName: 'propose_generation', callId: 'c1', reason: 'answered' } },
+    ])
+    const proposals = byKind(tl, 'proposal')
+    expect(proposals).toHaveLength(1)
+    expect(proposals[0].status).toBe('confirmed')
+    const arts = byKind(tl, 'artifact')
+    expect(arts).toHaveLength(1)
+    expect(arts[0].nodeId).toBe('n1')
+    expect(arts[0].title).toBe('黑色狐狸精') // title 取自 pendingNodeMeta，不退化成「未命名」
+    expect(arts[0].status).toBe('running') // 确认即启动生成
+    // 顺序：proposal 在 artifact 之前（parts 顺序 = 事件到达顺序；卡天然排在 proposal 之后）
+    expect(tl.parts.indexOf(proposals[0])).toBeLessThan(tl.parts.indexOf(arts[0]))
+  })
+
+  it('⭐ 2026-11-04 取消（resolved→aborted）不建产物卡', () => {
+    const tl = feed([
+      addNode('n1', 'image', '黑色狐狸精'),
+      { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation', nodeId: 'n1', callId: 'c1' } },
+      { type: 'waiting_user', data: { status: 'resolved', toolName: 'propose_generation', callId: 'c1', reason: 'aborted' } },
+    ])
+    expect(byKind(tl, 'proposal')[0].status).toBe('declined')
+    expect(byKind(tl, 'artifact')).toHaveLength(0)
+  })
+
+  it('⭐ 2026-11-04 确认建卡后 node_status 更新既有卡（不重复建、进度拍生效）', () => {
+    const tl = feed([
+      addNode('n1', 'image', '黑色狐狸精'),
+      { type: 'waiting_user', data: { status: 'waiting', toolName: 'propose_generation', nodeId: 'n1', callId: 'c1' } },
+      { type: 'waiting_user', data: { status: 'resolved', toolName: 'propose_generation', callId: 'c1', reason: 'answered' } },
+      { type: 'node_status', data: { nodeId: 'n1', status: 'generating' } },
+      { type: 'generation_progress', data: { nodeId: 'n1', elapsedMs: 5000 } },
+      { type: 'node_status', data: { nodeId: 'n1', status: 'done', url: 'http://img/fox.png' } },
+    ])
+    const arts = byKind(tl, 'artifact')
+    expect(arts).toHaveLength(1) // 不重复建
+    expect(arts[0].status).toBe('done')
+    expect(arts[0].url).toBe('http://img/fox.png')
+    expect(arts[0].progressElapsedMs).toBe(5000)
+  })
+
   it('⭐ 2026-10-14 累积快照差分：存量 done.summary 带前文时按前缀差分出段增量，不再整段重复', () => {
     // 复刻生产实测形态：4 段 summary len 220/758/822/963，head 完全相同（累积快照）
     const seg1 = '用户想要图标库。'

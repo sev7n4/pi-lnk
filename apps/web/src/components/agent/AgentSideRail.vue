@@ -3543,6 +3543,8 @@ function handleEvent(event: { type: string; data: unknown }) {
         timeoutMs?: number
         /** P1：waiting_user 也带 reason（供 TurnTimeline warn notice 文案） */
         reason?: string
+        /** 服务端 dispatchWaitingUser 透传的标题（resolved 时一并喂给时间线层） */
+        title?: string
       }
       if (d.status === 'resolved' || !d.toolName) {
         // ⭐ 2026-10-17 生产复测发现（PR #449 伴生）：resolved 只清状态行位、没喂时间线，
@@ -3550,7 +3552,19 @@ function handleEvent(event: { type: string; data: unknown }) {
         // resolved upsert 契约存在但没人调用）。补喂 resolved；`!d.toolName`（无状态清位）
         // 不喂——喂了会被 applyTimelineEvent 当 waiting 重新 upsert，反把 notice 复活。
         if (d.status === 'resolved') {
-          agent.trackWaitingUser({ status: 'resolved', toolName: d.toolName })
+          // 2026-11-04 修复：resolved 必须把 callId/nodeId/reason 一并透传 —— 否则时间线层
+          // 拿不到 reason，无法区分确认(answered)/取消(aborted)/超时(timeout)：既会让取消的
+          // proposal 误显「已确认」，也会让「确认即建产物卡」的守卫（turnTimeline resolved 分支）
+          // 在取消时误建卡。服务端 dispatchWaitingUser 本就带 reason/callId（见 pi-runtime index.ts）。
+          agent.trackWaitingUser({
+            status: 'resolved',
+            toolName: d.toolName,
+            callId: d.callId,
+            nodeId: d.nodeId,
+            reason: d.reason,
+            title: d.title,
+            timeoutMs: d.timeoutMs,
+          })
         }
       } else {
         // 根治规格 2026-10-28 / 2026-10-29：waiting_user → 时间线单一真相（flag 已移除，

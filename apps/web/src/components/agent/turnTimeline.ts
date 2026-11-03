@@ -147,8 +147,8 @@ export interface TurnTimeline {
   /**
    * 节点创建元数据暂存（2026-11-03 修复）：`add_node` 到达时节点刚建好、还没开始生成，
    * 此时**不急切建 artifact 卡**（否则确认前就露一张与 proposal 重复的「待确认」节点卡，
-   * 且确认后产物卡错位顶到「新建节点」前）。只把 nodeType/title 暂存到这里，等 `node_status`
-   * 进入生成生命周期（generating/running/done/failed）才用此 meta 建卡——卡天然排在
+   * 且确认后产物卡错位顶到「新建节点」前）。只把 nodeType/title 暂存到这里，等用户**确认**
+   * （`waiting_user{resolved}` → confirmed）才用此 meta 建卡——卡天然排在
    * proposal 之后，时间线连续可读。内存态，replay 每次重建，不落库（executionEvents 白名单不含）。
    */
   pendingNodeMeta: Record<string, { nodeType: string; title: string }>
@@ -552,7 +552,9 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
       if (type === 'add_node' && nodeId) {
         // 2026-11-03 修复：不再急切建 pending 态 artifact（会造成「确认前就出现待确认节点卡」
         // 且与 proposal 卡重复、确认后产物卡错位顶到「新建节点」前）。只暂存 meta，待
-        // node_status 进入生成生命周期才真正建卡——此时卡天然排在 proposal 之后，时间线连续可读。
+        // 用户**确认**（waiting_user resolved→confirmed）才真正建卡——此时卡天然排在 proposal 之后。
+        // （2026-11-04 修正：此前写「待 node_status 进入生成生命周期才建卡」，但 node_status 无服务端
+        // 生产者、且画布对账只回填已存在的卡 ⇒ 卡永不出现；建卡时机改到确认点，见 waiting_user 分支。）
         const nodeType = String(action.payload?.nodeType || 'image')
         // title/prompt 都在 payload.data 里（CanvasAction 无顶层 title，见 deriveLinkedOutputs）
         const title = String(
@@ -589,8 +591,8 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
         }
         return
       }
-      // 没有已存在的 artifact（add_node 只记了 meta，未急切建卡）：用暂存 meta 建卡，
-      // 标题不退化成「未命名」（meta 含 add_node 时的真实标题/提示）。
+      // 兜底：确认点已建卡（见 waiting_user resolved→confirmed），此处通常只更新既有卡。
+      // 若 node_status 早于确认到达（罕见），用暂存 meta 建卡，标题不退化成「未命名」。
       const meta = timeline.pendingNodeMeta[d.nodeId]
       timeline.parts.push({
         kind: 'artifact',
@@ -671,7 +673,32 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
           (p): p is Extract<TimelinePart, { kind: 'proposal' }> =>
             p.kind === 'proposal' && (!d.callId || !p.callId || p.callId === d.callId),
         )
-        if (prop) prop.status = resolveProposalStatusByReason(d.reason)
+        if (prop) {
+          const resolved = resolveProposalStatusByReason(d.reason)
+          prop.status = resolved
+          // 2026-11-04 修复：确认（answered）即启动生成 ⇒ 此刻建出 artifact 产物卡。
+          // 此前 deferred 到 node_status，但 node_status 无服务端生产者、且画布对账
+          // （reconcileFromNodes）只回填「时间线已持有」的卡 ⇒ 卡永不出现、产物永不落库。
+          // 建卡时机改到「确认」：同回合 add_node 已把 nodeType/title 暂存进 pendingNodeMeta，
+          // 此刻取来建卡；卡天然排在 proposal 之后（parts 顺序 = 事件到达顺序）。建出后
+          // `owned` 非空 ⇒ 对账/轮询正常把它翻到 generating/done。幂等：已存在不重复建；
+          // 取消/超时（非 confirmed）不建卡。
+          if (
+            resolved === 'confirmed' &&
+            prop.nodeId &&
+            !timeline.parts.some(
+              (p) => p.kind === 'artifact' && p.nodeId === prop.nodeId,
+            )
+          ) {
+            const meta = timeline.pendingNodeMeta[prop.nodeId]
+            upsertArtifact(timeline, {
+              nodeId: prop.nodeId,
+              nodeType: meta?.nodeType ?? 'image',
+              title: meta?.title ?? '未命名',
+              status: 'running',
+            })
+          }
+        }
         const q = timeline.parts.find(
           (p): p is Extract<TimelinePart, { kind: 'question' }> => p.kind === 'question',
         )
