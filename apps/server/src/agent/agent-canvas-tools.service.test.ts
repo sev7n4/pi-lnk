@@ -1099,6 +1099,50 @@ describe('AgentCanvasToolsService', () => {
     expect(generateImage).toHaveBeenCalled()
   })
 
+  it('积分单一真相源③：record.metadata.chargedPoints → 节点 data.creditCost + creditFromServer（权威锁价）', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'img-1',
+          type: 'image',
+          position: { x: 0, y: 0 },
+          data: { prompt: '洁具白底图', status: 'draft' },
+        },
+      ],
+      edges: [],
+    }
+    generateImage.mockResolvedValue({
+      id: 'gen-charge-1',
+      status: 'generating',
+      metadata: JSON.stringify({ chargedPoints: 33, resolution: '1K' }),
+    })
+    await svc.startImageGeneration({ sessionId: 's1', userId: 'u1', nodeId: 'img-1' })
+    const data = canvas.nodes[0]!.data as Record<string, unknown>
+    expect(data.creditCost).toBe(33)
+    expect(data.creditFromServer).toBe(true)
+    expect(data.generationRecordId).toBe('gen-charge-1')
+  })
+
+  it('积分单一真相源③：record 无 chargedPoints（旧 mock 形状）→ 键不出现，不写假权威位', async () => {
+    canvas = {
+      nodes: [
+        {
+          id: 'img-1',
+          type: 'image',
+          position: { x: 0, y: 0 },
+          data: { prompt: '洁具白底图', status: 'draft' },
+        },
+      ],
+      edges: [],
+    }
+    generateImage.mockResolvedValue({ id: 'gen-nometa', status: 'generating' })
+    await svc.startImageGeneration({ sessionId: 's1', userId: 'u1', nodeId: 'img-1' })
+    const data = canvas.nodes[0]!.data as Record<string, unknown>
+    expect('creditCost' in data).toBe(false)
+    expect('creditFromServer' in data).toBe(false)
+    expect(data.generationRecordId).toBe('gen-nometa')
+  })
+
   it('runImageGeneration prefers node image fields over account defaults', async () => {
     canvas = {
       nodes: [

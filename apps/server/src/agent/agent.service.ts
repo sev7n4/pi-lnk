@@ -3177,6 +3177,10 @@ export class AgentService implements OnModuleInit {
               holdId: billingHold.id,
               credits: settled.settled,
               ruleVersion: quote.ruleVersion,
+              // 2026-11-03 结算摘要：模型名随结算下发（turn 摘要静态行「共消耗 N 积分 · 模型名」
+              // 数据源）；同回合内 billingModelKey 恒定（回合开始冻结），落库重放还原一致。
+              // 键不出现纪律：空值（异常形态）不带键，前端按「无模型名」缺省渲染。
+              ...(billingModelKey ? { model: billingModelKey } : {}),
               // 终审 I-1：tokens = 原始 token 数（展示口径，千级；与计费口径
               // cacheWrite 并入 in 可不同——此为 turn_usage 四列直取）。
               // breakdown（积分成分，个位）留事件供未来展开，前端不再按它渲染。

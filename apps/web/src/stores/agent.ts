@@ -127,6 +127,25 @@ export const useAgentStore = defineStore('agent', () => {
    * 状态行 running 段「预估 -N积分」数据源；纯展示预估，P2 落账后由 settled 权威值替代。 */
   const liveEstimatedCredits = ref<number | null>(null)
   /**
+   * 本会话累计已消耗积分（2026-11-03，对齐 WorkBuddy「已消耗 ◇N」底部常驻条）。
+   * 口径：各 assistant 回合的 turn_settled **权威结算值**求和（released 全退不计），
+   * 流式期间叠加当前回合的实时预估（liveEstimatedCredits；settle 到达即被权威值替代，
+   * 不重不漏——结算前该回合不在 settled 求和里，结算后 live 已清零）。
+   * 数据随 executionEvents 重放还原（历史加载后累计值自动重建），无独立落库状态。
+   */
+  const sessionConsumedCredits = computed(() => {
+    let total = 0
+    for (const m of messages.value) {
+      const settled = m.role === 'assistant' ? m.executionTrace?.settled : undefined
+      if (!settled || settled.released) continue
+      if (typeof settled.credits === 'number' && Number.isFinite(settled.credits)) {
+        total += settled.credits
+      }
+    }
+    if (liveEstimatedCredits.value != null) total += liveEstimatedCredits.value
+    return total
+  })
+  /**
    * 等待态单一真相的查询侧（根治规格 2026-10-28）：当前处于 `pending_confirm` 的
    * proposal part（来自上游 `waiting_user` 事件，时间线 reducer 已把它收敛成 part）。
    * 画布节点内联确认面 / 对话流内联卡 / 底部状态行都只读它，不再用 `blockingWait` 这类
@@ -583,12 +602,15 @@ export const useAgentStore = defineStore('agent', () => {
 
   /** P2 T7：turn_settled 事件落 trace（settled 态摘要行/状态行数据源），沿 turn_usage 同款接线。
    * live 通道同时触发余额刷新（auth.refreshPoints 现成方法，内部吞错——计费展示绝不打断回合）。
-   * settled 数据随既有 executionEvents 重放通道持久化（重放由 loadHistory 消费）。 */
+   * settled 数据随既有 executionEvents 重放通道持久化（重放由 loadHistory 消费）。
+   * 2026-11-03：同 feed 进时间线（timeline.settled）——回合摘要行「共消耗 N 积分 · 模型名」
+   * 数据源；model 由服务端 turn_settled 事件下发（同回合冻结的 billingModelKey）。 */
   function trackTurnSettled(data: {
     holdId: string
     credits?: number
     breakdown?: { in: number; cache: number; out: number }
     ruleVersion?: string
+    model?: string
     degraded?: boolean
     released?: boolean
   }) {
@@ -597,6 +619,7 @@ export const useAgentStore = defineStore('agent', () => {
     liveEstimatedCredits.value = null
     const last = lastAssistant()
     if (last?.executionTrace) applyTurnSettled(last.executionTrace, data)
+    feedTimeline({ type: 'turn_settled', data })
     void useAuthStore().refreshPoints()
   }
 
@@ -935,6 +958,7 @@ export const useAgentStore = defineStore('agent', () => {
     messages,
     isStreaming,
     liveEstimatedCredits,
+    sessionConsumedCredits,
     pendingProposal,
     pendingQuestion,
     recovering,

@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common'
 import type { CanvasAction, CanonicalVideoGenerationRequest } from '@lnkpi/shared'
 import { StudioService, type StudioRefInput } from './studio.service'
+import { chargedPointsFromRecord } from '../points/charge-session'
 import type {
   VideoGenerationStartResult,
   VideoGenerationWaitResult,
@@ -88,9 +89,18 @@ export class VideoGenerationOrchestrator {
     )
 
     const recordId = record.id
+    // 积分单一真相源收尾（2026-11-03）：同 image/audio——实扣积分锁进节点 data.creditCost，
+    // 提议卡 pill 服务端权威位（creditFromServer）供数；fail-soft 键不出现。
+    const videoCharged = chargedPointsFromRecord(record)
     const recordPatch: CanvasAction = {
       type: 'update_node',
-      payload: { id: nodeId, data: { generationRecordId: recordId } },
+      payload: {
+        id: nodeId,
+        data: {
+          generationRecordId: recordId,
+          ...(videoCharged !== undefined ? { creditCost: videoCharged, creditFromServer: true } : {}),
+        },
+      },
     }
     allActions.push(recordPatch)
     await persist([recordPatch])

@@ -4,6 +4,7 @@ import {
   alreadyRefunded,
   applyChargeMeta,
   applyRefundMeta,
+  chargedPointsFromRecord,
   isCancelledException,
   isCancelledMeta,
   rethrowWithRefundedPoints,
@@ -11,6 +12,22 @@ import {
 } from './charge-session'
 
 describe('charge-session', () => {
+  it('chargedPointsFromRecord reads stamped chargedPoints from record metadata', () => {
+    expect(
+      chargedPointsFromRecord({ metadata: JSON.stringify(applyChargeMeta({ model: 'm' }, 33)) }),
+    ).toBe(33)
+  })
+
+  it('chargedPointsFromRecord fail-soft: 缺失/损坏/非法值 → undefined（键不出现）', () => {
+    expect(chargedPointsFromRecord({ metadata: undefined })).toBeUndefined()
+    expect(chargedPointsFromRecord({ metadata: null })).toBeUndefined()
+    expect(chargedPointsFromRecord({ metadata: 'not-json{' })).toBeUndefined()
+    expect(chargedPointsFromRecord({ metadata: JSON.stringify({ chargedPoints: 0 }) })).toBeUndefined()
+    expect(chargedPointsFromRecord({ metadata: JSON.stringify({ chargedPoints: -3 }) })).toBeUndefined()
+    expect(chargedPointsFromRecord({ metadata: JSON.stringify({ chargedPoints: '33' }) })).toBeUndefined()
+    expect(chargedPointsFromRecord({})).toBeUndefined()
+  })
+
   it('applyChargeMeta adds chargedPoints to meta', () => {
     expect(applyChargeMeta({ foo: 'bar' }, 10)).toEqual({ foo: 'bar', chargedPoints: 10 })
   })

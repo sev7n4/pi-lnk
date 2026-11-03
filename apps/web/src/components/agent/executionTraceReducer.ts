@@ -89,6 +89,8 @@ export interface ExecutionTraceState {
     breakdown?: { in: number; cache: number; out: number }
     tokens?: { in: number; cache: number; out: number }
     ruleVersion?: string
+    /** 2026-11-03 结算摘要：回合冻结的计费模型名（turn_settled 事件下发）。 */
+    model?: string
     degraded?: boolean
     released?: boolean
   }
@@ -531,6 +533,7 @@ export function applyTurnSettled(
     breakdown?: { in: number; cache: number; out: number }
     tokens?: { in: number; cache: number; out: number }
     ruleVersion?: string
+    model?: string
     degraded?: boolean
     released?: boolean
   },
@@ -543,6 +546,7 @@ export function applyTurnSettled(
     ...(data.breakdown ? { breakdown: { ...data.breakdown } } : {}),
     ...(data.tokens ? { tokens: { ...data.tokens } } : {}),
     ...(data.ruleVersion ? { ruleVersion: data.ruleVersion } : {}),
+    ...(typeof data.model === 'string' && data.model ? { model: data.model } : {}),
     ...(data.degraded === true ? { degraded: true } : {}),
     ...(data.released === true ? { released: true } : {}),
   }
@@ -562,12 +566,13 @@ export function turnSettledText(trace: ExecutionTraceState | undefined | null): 
   if (settled.released) return '预扣已退回'
   if (typeof settled.credits !== 'number' || !Number.isFinite(settled.credits)) return null
   let text: string
+  const modelSuffix = typeof settled.model === 'string' && settled.model ? ` · ${settled.model}` : ''
   if (settled.degraded) {
-    text = `已结算 -${settled.credits} 积分（按成本估算）`
+    text = `已结算 -${settled.credits} 积分${modelSuffix}（按成本估算）`
   } else if (settled.tokens) {
-    text = `已结算 -${settled.credits} 积分（输入 ${formatTokens(settled.tokens.in)} · 缓存 ${formatTokens(settled.tokens.cache)} · 输出 ${formatTokens(settled.tokens.out)}）`
+    text = `已结算 -${settled.credits} 积分${modelSuffix}（输入 ${formatTokens(settled.tokens.in)} · 缓存 ${formatTokens(settled.tokens.cache)} · 输出 ${formatTokens(settled.tokens.out)}）`
   } else {
-    text = `已结算 -${settled.credits} 积分`
+    text = `已结算 -${settled.credits} 积分${modelSuffix}`
   }
   const estimated = trace.usage?.estimatedCredits
   if (
