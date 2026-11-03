@@ -1,6 +1,6 @@
 # superpowers 文档索引
 
-> 全部 **434 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
+> 全部 **439 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
 > **文档正文未改动** —— 本索引只做导航与状态标注。
 
 ## 怎么用这份索引
@@ -13,17 +13,17 @@
 
 | 状态 | 份数 | 含义 |
 |---|---|---|
-| 🟢 living | 147 | 仍在演进，改动前先看这份 |
-| 🔒 frozen | 278 | 内容已定稿或功能已落地，作为历史依据 |
+| 🟢 living | 148 | 仍在演进，改动前先看这份 |
+| 🔒 frozen | 282 | 内容已定稿或功能已落地，作为历史依据 |
 | ⛔ superseded | 9 | 已被后续决策取代，勿再参考 |
 
 ## 主题分布
 
 | 主题 | 份数 | 其中 living |
 |---|---|---|
-| 其他 | 96 | 26 |
-| 画布工具与交互 | 75 | 33 |
-| 生成管线（图像/视频/3D） | 41 | 9 |
+| 其他 | 99 | 27 |
+| 画布工具与交互 | 76 | 33 |
+| 生成管线（图像/视频/3D） | 42 | 9 |
 | 画布产品能力（原子/意图/neowow） | 34 | 8 |
 | Agent 交互与可见性 | 32 | 15 |
 | 图片编辑器与精修台 | 30 | 5 |
@@ -42,10 +42,11 @@
 
 ## 按主题浏览
 
-### 其他（96 份）
+### 其他（99 份）
 
-<details><summary>🟢 living · 26 份</summary>
+<details><summary>🟢 living · 27 份</summary>
 
+- `docs/superpowers/specs/2026-11-02-points-display-single-source.md` ★design
 - `docs/superpowers/plans/2026-11-02-delivery-card-v1.md`
 - `docs/superpowers/specs/2026-11-02-delivery-card-v1-design.md` ★design
 - `docs/superpowers/specs/2026-10-28-askuser-mobile-multi-question-redesign.md` ★design
@@ -75,8 +76,10 @@
 
 </details>
 
-<details><summary>🔒 frozen · 68 份</summary>
+<details><summary>🔒 frozen · 70 份</summary>
 
+- `docs/superpowers/specs/2026-11-03-proposal-card-credits-and-turn-estimate-ssot.md` ★design
+- `docs/superpowers/plans/2026-11-02-points-display-single-source.md`
 - `docs/superpowers/specs/2026-11-02-p1d-state-machine-input.md` ★design
 - `docs/superpowers/specs/2026-11-02-p1d-approval-tiering-design.md` ★design
 - `docs/superpowers/specs/2026-11-02-p1c-write-path-governance-design.md` ★design
@@ -155,7 +158,7 @@
 
 </details>
 
-### 画布工具与交互（75 份）
+### 画布工具与交互（76 份）
 
 <details><summary>🟢 living · 33 份</summary>
 
@@ -195,8 +198,9 @@
 
 </details>
 
-<details><summary>🔒 frozen · 41 份</summary>
+<details><summary>🔒 frozen · 42 份</summary>
 
+- `docs/superpowers/specs/2026-11-03-e-series-conversation-driven-canvas-evolution-design.md` ★design
 - `docs/superpowers/plans/2026-11-02-propose-card-ux-optimization.md`
 - `docs/superpowers/specs/2026-11-02-propose-card-ux-optimization-design.md` ★design
 - `docs/superpowers/specs/2026-10-30-propose-confirm-execution-unity-design.md` ★design
@@ -247,7 +251,7 @@
 
 </details>
 
-### 生成管线（图像/视频/3D）（41 份）
+### 生成管线（图像/视频/3D）（42 份）
 
 <details><summary>🟢 living · 9 份</summary>
 
@@ -263,8 +267,9 @@
 
 </details>
 
-<details><summary>🔒 frozen · 32 份</summary>
+<details><summary>🔒 frozen · 33 份</summary>
 
+- `docs/superpowers/specs/2026-11-03-e1-generation-terminal-write-tap-design.md` ★design
 - `docs/superpowers/specs/2026-11-01-p1b-generation-job-design.md` ★design
 - `docs/superpowers/plans/2026-10-13-pr3-generation-failure-recovery.md`
 - `docs/superpowers/plans/2026-10-04-media-generation-pipeline.md`

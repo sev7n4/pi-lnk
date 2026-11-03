@@ -1,14 +1,14 @@
 {
- "total": 434,
+ "total": 439,
  "by_status": {
-  "living": 147,
-  "frozen": 278,
+  "living": 148,
+  "frozen": 282,
   "superseded": 9
  },
  "by_topic": {
-  "other": 96,
-  "canvas-tool": 75,
-  "generation-pipeline": 41,
+  "other": 99,
+  "canvas-tool": 76,
+  "generation-pipeline": 42,
   "canvas-product": 34,
   "agent-ux": 32,
   "image-editor": 30,
@@ -28,7 +28,7 @@
   "2026-08": 79,
   "2026-09": 155,
   "2026-10": 147,
-  "2026-11": 12
+  "2026-11": 17
  },
  "items": [
   {
@@ -1985,6 +1985,15 @@
    "topic": "other"
   },
   {
+   "path": "docs/superpowers/specs/2026-11-02-points-display-single-source.md",
+   "name": "2026-11-02-points-display-single-source.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
    "path": "docs/superpowers/specs/2026-11-02-propose-card-ux-optimization-design.md",
    "name": "2026-11-02-propose-card-ux-optimization-design.md",
    "month": "2026-11",
@@ -1992,6 +2001,33 @@
    "status": "frozen",
    "reason": "文内标注已实现/已交付",
    "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-03-e-series-conversation-driven-canvas-evolution-design.md",
+   "name": "2026-11-03-e-series-conversation-driven-canvas-evolution-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-03-e1-generation-terminal-write-tap-design.md",
+   "name": "2026-11-03-e1-generation-terminal-write-tap-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-03-proposal-card-credits-and-turn-estimate-ssot.md",
+   "name": "2026-11-03-proposal-card-credits-and-turn-estimate-ssot.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-11 非活跃主题",
+   "topic": "other"
   },
   {
    "path": "docs/superpowers/plans/2026-07-09-neowow-workflow.md",
@@ -3926,6 +3962,15 @@
    "kind": "plan",
    "status": "living",
    "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-11-02-points-display-single-source.md",
+   "name": "2026-11-02-points-display-single-source.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-11 非活跃主题",
    "topic": "other"
   },
   {
