@@ -150,45 +150,44 @@ def probe_routes(session_id: str = "probe-session") -> None:
 
 
 def seed_canvas(user_token: str, session_id: str) -> tuple[str, str, str]:
-    sess = http("GET", f"/sessions/{session_id}", token=user_token)["data"]
-    canvas = sess.get("canvasData") or {}
-    nodes = list(canvas.get("nodes") or [])
+    # P1-C C2②（2026-11-03）：PUT 的 canvasData 写入已关闭（带 canvasData ⇒ 整包忽略，
+    # 打点 canvas_put_rejected）——铺种子必须走 PATCH op 通道（规格 §4.2 主通道）。
+    # 此处顺带成为「新通道可写」的生产行为级验证。
     ts = int(time.time())
     ids = [f"layout-img-{ts}", f"layout-txt-{ts + 1}", f"layout-vid-{ts + 2}"]
-    nodes.extend(
-        [
-            {
+    ops = [
+        {
+            "type": "add_node",
+            "payload": {
                 "id": ids[0],
-                "type": "image",
+                "nodeType": "image",
                 "position": {"x": 100, "y": 100},
                 "data": {"title": "Layout A", "status": "done"},
             },
-            {
+        },
+        {
+            "type": "add_node",
+            "payload": {
                 "id": ids[1],
-                "type": "text",
+                "nodeType": "text",
                 "position": {"x": 420, "y": 160},
                 "data": {"title": "Layout B", "content": "seed"},
             },
-            {
+        },
+        {
+            "type": "add_node",
+            "payload": {
                 "id": ids[2],
-                "type": "video",
+                "nodeType": "video",
                 "position": {"x": 760, "y": 80},
                 "data": {"title": "Layout C", "status": "draft"},
             },
-        ]
-    )
-    http(
-        "PUT",
-        f"/sessions/{session_id}",
-        {
-            "canvasData": {
-                "nodes": nodes,
-                "edges": canvas.get("edges") or [],
-                "viewport": canvas.get("viewport"),
-            }
         },
-        token=user_token,
-    )
+    ]
+    resp = http("PATCH", f"/sessions/{session_id}/canvas", {"ops": ops}, token=user_token)
+    applied = (resp.get("data") or {}).get("applied")
+    if not applied:
+        raise RuntimeError(f"seed via PATCH canvas failed: {resp}")
     return ids[0], ids[1], ids[2]
 
 
