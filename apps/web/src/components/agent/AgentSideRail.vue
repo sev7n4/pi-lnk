@@ -4768,14 +4768,10 @@ defineExpose({
                  scrollToBottom 闩锁）。口径单源 = agent.sessionConsumedCredits（已结算权威值
                  累计 + 当前回合实时预估；结算到达即被权威值替代，不重不漏）。
                  状态行 2026-10-31 整条退役，本条是用户裁决的最小复生：只播报消耗，
-                 不播报等待/失败（那些仍由时间线内联卡单一真相承载）。 -->
-            <div
-              v-if="creditsLineVisible"
-              class="agent-credits-line"
-              data-testid="session-credits-line"
-            >
-              已消耗 ◇{{ agent.sessionConsumedCredits }} 积分
-            </div>
+                 不播报等待/失败（那些仍由时间线内联卡单一真相承载）。
+                 2026-11-03 复测修复：必须渲染在系统层**最末**（live 时间线之下、输入区
+                 之上）——首版放在层顶，被长 pinned 时间线顶到流中部，用户实测误读为
+                 「混进 SSE 滚动流」。WorkBuddy 位置 = 紧贴输入框。 -->
             <!-- 根治规格（2026-10-28）：对话流外浮卡已移除——「提议生成」决策点改为时间线内联
                  proposal part（见 AgentTurnTimeline.vue），与画布节点 ProposeConfirmOverlay
                  同读一份单一真相。桌面 = 对话流内联卡；移动端画布视图 = 节点内联面。
@@ -4840,6 +4836,14 @@ defineExpose({
               >
                 发起新任务
               </button>
+            </div>
+            <!-- 会话积分常驻条：系统层最末（见层顶注释——紧贴输入区，WorkBuddy 同位）。 -->
+            <div
+              v-if="creditsLineVisible"
+              class="agent-credits-line"
+              data-testid="session-credits-line"
+            >
+              已消耗 ◇{{ agent.sessionConsumedCredits }} 积分
             </div>
           </div>
 
