@@ -24,6 +24,21 @@ export type TurnSettledBusEvent = {
 export type TurnSettledListener = (ev: TurnSettledBusEvent) => void
 
 /**
+ * 迟到订阅回放窗口（2026-11-04 结算实时性根治，机制 A 防御）：
+ * 仅回放保留时刻距今不超过该窗口的最近一笔 turn_settled。
+ *
+ * 窗口取值依据：/runs/events 的 bus 订阅在 runEventStream 生成器启动时**同步**建立
+ * （agent.service.ts 订阅先于 streamEvents），丢失窗口 ≈ SSE 握手 + 控制器前置开销
+ * （移动端实测可到秒级）。15s 覆盖重挂握手绰绰有余；同时刻意取短——窗口越长，
+ * 「紧邻回合」场景下旧结算被回放到新回合时间线的暂态误标窗口越长（web 端按
+ * lastAssistant 落点，新回合自身结算到达后覆盖自愈）。
+ */
+export const TURN_SETTLED_REPLAY_MS = 15_000
+
+/** 保留表容量上限：Map 迭代按插入序，超限淘汰最旧会话（防长驻进程无界增长）。 */
+const TURN_SETTLED_RETAIN_CAP = 1000
+
+/**
  * Epic 1（spec 2026-11-03-credit-consumption-display-design §5.1）：会话级积分变动事件总线。
  *
  * 职责单一：把 `PointsService` 在计费事务提交后发出的 `credit_tx` 领域事件，路由到
@@ -42,6 +57,19 @@ export class SessionEventBus {
   private readonly userEmitters = new Map<string, EventEmitter>()
   private readonly turnSettledEmitters = new Map<string, EventEmitter>()
 
+  /**
+   * 迟到订阅回放（2026-11-04 结算实时性根治，机制 A 防御）：按会话保留最近一笔
+   * turn_settled。emit 无条件保留（与 emitter 生命周期**解耦**——退订会清空 emitter，
+   * 但保留值延续，重开的订阅仍能补投）。
+   *
+   * 背景：flag-on 下每条 own-turn 消息都会 abort 常驻连接 → ack → 重挂 /runs/events
+   * （AgentSideRail `listenFollowUpTail`）；重挂握手窗口内 emit 的结算没有任何订阅者
+   * ⇒ 静默丢失，摘要「已结算 -N 积分」只在刷新重放后出现（会话 cmw1oyqww 实测）。
+   * web 端 reducer 对 turn_settled 是覆盖写、重放幂等（turnTimeline `case 'turn_settled'`）
+   * ⇒ 重复投递无害；新回合自身的结算到达后覆盖自愈。
+   */
+  private readonly lastTurnSettled = new Map<string, { ev: TurnSettledBusEvent; ts: number }>()
+
   /** PointsService 在 pointTransaction.create 事务提交后调用。失败不抛（调用方已 try/warn）。 */
   emitCreditTx(ev: CreditTxEvent['data']): void {
     const sessionEmitter = ev.sessionId ? this.sessionEmitters.get(ev.sessionId) : undefined
@@ -53,7 +81,20 @@ export class SessionEventBus {
   /** streamConversation 结算块在 drain 模式下调用；无 sessionId（异常形态）静默丢弃。 */
   emitTurnSettled(ev: TurnSettledBusEvent): void {
     if (!ev.sessionId) return
+    this.rememberTurnSettled(ev)
     this.turnSettledEmitters.get(ev.sessionId)?.emit('turn_settled', ev)
+  }
+
+  /** 保留最近一笔（last-wins 覆盖写，与 web reducer 幂等语义同构）；超限淘汰最旧会话。 */
+  private rememberTurnSettled(ev: TurnSettledBusEvent): void {
+    const key = ev.sessionId as string
+    // delete+set 刷新插入序：最新会话恒排尾，淘汰恒打头
+    this.lastTurnSettled.delete(key)
+    if (this.lastTurnSettled.size >= TURN_SETTLED_RETAIN_CAP) {
+      const oldest = this.lastTurnSettled.keys().next().value
+      if (oldest !== undefined) this.lastTurnSettled.delete(oldest)
+    }
+    this.lastTurnSettled.set(key, { ev, ts: Date.now() })
   }
 
   /** streamConversation 在流建立时订阅本会话；结束时调用返回函数退订。 */
@@ -68,7 +109,15 @@ export class SessionEventBus {
 
   /** runEventStream 订阅本会话的 turn_settled 补桥；结束时退订。 */
   subscribeSessionTurnSettled(sessionId: string, fn: TurnSettledListener): () => void {
-    return this.subscribe(this.turnSettledEmitters, sessionId, 'turn_settled', fn)
+    const unsub = this.subscribe(this.turnSettledEmitters, sessionId, 'turn_settled', fn)
+    // 迟到回放：向新订阅者补投保留窗口内的最近一笔（同步调用——runEventStream 的
+    // 回调只做 queue.push + notify，无重入风险；notify 此时尚为 null，主循环先排干
+    // queue 再阻塞，回放帧因此成为该连接的**首帧**，先于 pi 事件）。
+    const retained = this.lastTurnSettled.get(sessionId)
+    if (retained && Date.now() - retained.ts <= TURN_SETTLED_REPLAY_MS) {
+      fn(retained.ev)
+    }
+    return unsub
   }
 
   private subscribe(
