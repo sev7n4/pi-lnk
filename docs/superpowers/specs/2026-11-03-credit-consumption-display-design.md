@@ -434,7 +434,7 @@ flowchart TD
 |---|---|
 | **C7 摘要口径对齐** | 摘要结算段与 executionTrace 同口径（「已结算」词族）；同一笔 turn_settled 在两个表面不得出现两种说法 |
 | **C8 展示名映射** | `platform::<model>` / `ch_xxx::<model>` 渲染前必须经展示名映射；缺失时降级为剥前缀裸名，禁止原样透出。生成记录 ID 保留在工具结果（`cancel_generation` 依赖）但呈现层收进详情/复制 affordance |
-| **C9 「共」字合法性** | 「共消耗」仅在聚合口径包含全部扣费主体时可用；`settled.credits` 只是文本回合费 ⇒ 摘要必须带主体标注（「文本」）或不含「共」。完整聚合（对话 M · 生成 K，§5.3）依赖 credit_tx 进时间线，列 §12 后续包 |
+| **C9 「共」字合法性** | 「共消耗」仅在聚合口径包含全部扣费主体时可用；`settled.credits` 只是文本回合费 ⇒ 摘要必须带主体标注（「文本」）或不含「共」。完整聚合（对话 M · 生成 K，§5.3）**已随 credit_tx 事件化史诗 #703/#706 落地**——`AgentSideRail` 常驻条经 `creditSplit`（文本费/生成费按 `category` 累计）拆分渲染「（对话 X · 生成 Y）」，详见 `apps/web/src/stores/agent.ts` 的 `creditSplit` computed；本规格 5 点治理（#711/#714/#717/#719）与之共同覆盖 §1 五条目标，无需本规格再单列实现 |
 | **C10 冗余合并** | 单提议单产物时「已生成 1 个产物 · 提议生成 1 张」合并为「已生成 1 张」 |
 
 ### 14.4 主场景规格（before → after，验收 = 截图会话重放）
@@ -452,7 +452,7 @@ flowchart TD
 - **纯函数**（新 `apps/web/src/utils/model-display.ts`）：`stripChannelPrefix` / `resolveModelDisplayName` 金样 + 变异；`composeSettlementSegment(settled)` 落 C9 守卫（credits 有效但缺主体标注 ⇒ 抛错；model 裸 key 未映射 ⇒ 抛错）。
 - **文件级**：`turnTimeline.ts`（结算段改 compose + 产物/提议合并）；`executionTraceReducer.ts`（若有裸 model 透出则同修）；web 渲染 `modelKey` 其余用户可见落点全走映射（全目录扫描 + 静态契约「`platform::` 出现在用户可见文案 = 0」，改白名单 = 审计动作，沿用 #689 纪律）；pi-runtime `tools/generation.ts` run_* description 追加「不要向用户复述计费数字与生成记录 ID」；`AgentTopoCardList`（creditQuote 卡 `settledActual` 翻转）。
 - **验收**：① §14.5 纯函数单测；② C7 双表面口径一致性测试（同一 turn_settled 数据喂图 5 的两个渲染函数，断言词族一致）；③ C9 守卫变异（去掉映射/标注 ⇒ 红）；④ 目视重放截图会话五层 before→after。
-- **风险**：模型幻觉编数字无法完全根除（模板管住后仅剩低概率路径），呈现层不做 LLM 输出过滤（高误伤）；图像费聚合进摘要依赖 credit_tx 进时间线（数据结构改动），列 §12 不进本包。
+- **风险**：模型幻觉编数字无法完全根除（模板管住后仅剩低概率路径），呈现层不做 LLM 输出过滤（高误伤）；图像费聚合进摘要的「对话 X · 生成 Y」拆分**已随 credit_tx 事件化史诗 #703/#706 落地**（数据来自 `credit_tx` 按 `category` 累计的 `creditSplit` computed，`AgentSideRail` 常驻条渲染），原「依赖 credit_tx 进时间线、列 §12 不进本包」的判断已失效。
 
 ### 14.7 点⑤实施记录（2026-11-04，tokens 移详情独立 web 小包）
 
@@ -466,3 +466,22 @@ flowchart TD
 ### 14.6 边界
 
 不改变定价/价目表计算（`pricing.service.ts` 只读）；不动 `CREDIT_TX` / `TEXT_TOKEN_BILLING` 开关矩阵；不做 LLM 输出数字过滤；图像 quote 与实耗差异的计费侧解释列 §12 后续包。
+
+### 14.8 结算实时投递根治（2026-11-04 复测：摘要「已结算」实时缺席、刷新才现）
+
+> 实测会话 cmw1oyqww（截图 1/2）：回合结束后正文缺「已结算 -8 积分（文本 · …）」行（卡级「实耗 33」翻转正常），刷新/切回后才出现。落库无恙（`pushTraceEvent`），纯实时投递缺口。
+
+**根因（机制 B，主因）**：flag-on（`STREAM_MAIN_FROM_PIRUNTIME=on`）下终态帧 `done` 由 pi `agent_end` 投影而来（pi-events `agent_end → done`），先于 `turn_settled` 到达 `/runs/events`——结算块含 `pricing.quoteTextTokens` + `points.settle` 两次 DB 往返，`agent_end` 投影恒抢先。web 端 `onEvent` 收到 `done` 即 `finishOwnTurnViaObserver()`（`isTurnTerminal('done')`）翻掉 `ownTurnViaObserver`，随后到达的 settle 帧落入**旁观分支**——该分支只分发 text_delta / canvas_action / 终态 ⇒ **静默丢弃**。对照证据：图像 `credit_tx` 在回合内 emit（终态前）⇒ 走 own-turn 分支正常上屏，形成「33 到、-8 丢」的不对称。
+
+**根因（机制 A，次因/防御面）**：每条 own-turn 消息都 abort 常驻连接 → ack → 重挂 `/runs/events`（`listenFollowUpTail`）；重挂握手窗口内 emit 的结算/扣费在 `SessionEventBus` 上没有任何订阅者 ⇒ 静默丢失（bus 是纯内存即时扇出，无保留）。
+
+**修法（双管齐下，均不触碰事件契约与落库）**：
+
+| 机制 | 层 | 改动 | 幂等依据 |
+|---|---|---|---|
+| B | web `AgentSideRail.vue` 旁观分支 | 补分发 `turn_settled → agent.trackTurnSettled`、`credit_tx → agent.trackCreditTx`（不跨标签广播——follower 应用语义与 SharedSubscription buffer 重放误标风险独立评估，列后续） | reducer 覆盖写 / `txId` 去重（C5） |
+| A | server `SessionEventBus` | `emitTurnSettled` 按会话保留最近一笔（有界 Map，容量 1000，插入序淘汰）；`subscribeSessionTurnSettled` 对新订阅者补投保留窗口（`TURN_SETTLED_REPLAY_MS=15s`，取短以压「紧邻回合旧结算误标新回合时间线」的暂态面，新回合自身结算到达后覆盖自愈）内的事件；回放帧经既有订阅回调进 queue，为主循环首帧 | web `case 'turn_settled'` 覆盖写、重放幂等 |
+
+**测试**：`session-event-bus.turn-settled.test.ts` 重写 B 用例（重订阅 = 回放 + live 两段）+ 新增 R1–R7（同步回放 / last-wins / 超窗不回放 / 窗口边界 / 在册订阅者不受回放影响 / 会话隔离 / 容量淘汰，fake timers 钉窗口）；新 `AgentSideRail.observerSettlementWiring.test.ts` 静态契约钉「旁观分支必须分发两类计费帧、且排在终态判据之前、不得广播」。
+
+**验收**：真机复测会话 cmw1oyqww 同流程——回合结束后**不刷新**即出现「已结算 -N 积分（文本 · …）」行。

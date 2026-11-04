@@ -3270,6 +3270,16 @@ const followUpTail = createFollowUpTailListener({
       const data = payload.data
       applyCanvasAction(data)
       sharedSubscription?.broadcast({ kind: 'canvas_action', data })
+    } else if (payload.type === 'turn_settled') {
+      // 2026-11-04 结算实时性根治（机制 B）：终态帧（done，由 pi agent_end 投影）先于
+      // turn_settled 到达——结算块含 quote+settle 两次 DB 往返，agent_end 投影恒抢先
+      // ⇒ finishOwnTurnViaObserver 先把 ownTurnViaObserver 翻 false，settle 帧落入本
+      // 旁观分支被静默丢弃 ⇒ 摘要「已结算 -N 积分」只在刷新重放后出现（会话
+      // cmw1oyqww 实测取证）。结算/扣费是终态后到达的合法权益（退款更是天然回合外）
+      // ⇒ 旁观分支同样分发；reducer 覆盖写/txId 去重保证幂等。
+      agent.trackTurnSettled(payload.data as Parameters<typeof agent.trackTurnSettled>[0])
+    } else if (payload.type === 'credit_tx') {
+      agent.trackCreditTx(payload.data as CreditTxEvent['data'])
     } else if (isTurnTerminal(payload.type)) {
       applyTurnEnd()
       sharedSubscription?.broadcast({ kind: 'turn_end' })
