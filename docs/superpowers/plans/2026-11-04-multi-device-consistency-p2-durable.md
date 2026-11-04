@@ -185,10 +185,18 @@ it("重启后磁盘 resume：buffer 从日志 rebuild，nextSeq 跨重启连续"
 ### Task 6 (deploy gate): CI/合并/runtime-deploy/canary
 
 **流程闸门**（无新文件）：
-- [ ] **Step 1**: 全量回归分批（server + pi-runtime + web 三层 + 双端 tsc；web 预计零改动跑基线）→ REST 推送 → CI 全绿 → squash merge。
-- [ ] **Step 2**: dispatch runtime-deploy（tag = master 全 40 位 SHA；feature_grep = `events.jsonl` 或 journal 模块特征串，feature_file = `session-manager.js` 或 `events-journal.js` 按实际 dist 核对）。
-- [ ] **Step 3**: 生产 canary 行为复测：① 正常回合对账不回归；② **容器重启演练**（`docker/k3s restart pi-runtime`，或 k3s rollout restart）：重启后以重启前 lastEventId 调 `GET /sessions/:id/events` ⇒ 200 且重放完整、probe 判 settled；③ TTL 驱逐路径抽查（30min 待驱逐会话重连可用）。
-- [ ] **Step 4**: PASS ⇒ 收官（规格 §12 状态同步、日志记录）；FAIL ⇒ 回滚 = revert 该 PR（磁盘 events.jsonl 残留文件无害，读路径旧代码忽略它）。
+- [x] **Step 1**: 全量回归分批（server + pi-runtime + web 三层 + 双端 tsc；web 预计零改动跑基线）→ REST 推送 → CI 全绿 → squash merge。
+- [x] **Step 2**: dispatch runtime-deploy（tag = master 全 40 位 SHA；feature_grep = `events.jsonl` 或 journal 模块特征串，feature_file = `session-manager.js` 或 `events-journal.js` 按实际 dist 核对）。
+- [x] **Step 3**: 生产 canary 行为复测：① 正常回合对账不回归；② **容器重启演练**（`docker/k3s restart pi-runtime`，或 k3s rollout restart）：重启后以重启前 lastEventId 调 `GET /sessions/:id/events` ⇒ 200 且重放完整、probe 判 settled；③ TTL 驱逐路径抽查（30min 待驱逐会话重连可用）。
+- [x] **Step 4**: PASS ⇒ 收官（规格 §12 状态同步、日志记录）；FAIL ⇒ 回滚 = revert 该 PR（磁盘 events.jsonl 残留文件无害，读路径旧代码忽略它）。
+
+### ✅ Task 6 收官实录（2026-11-04 23:45）
+
+- **PR #720** squash merge `1bf314dd`（CI 3/3 绿）；合并触发的主 deploy 与并行 #721（`d2760a44`，计费实时投递）共用并发组——首次 runtime-deploy dispatch 被 pending 挤掉取消（⭐ 并发组语义：cancel-in-progress:false 下只保留最新 1 个 pending），等两轮主 deploy 全 success 后以 `d2760a44` 重dispatch。
+- **runtime-deploy** run 41857218784：Preflight behind_by=0 → build → **feature hits: 1**（`events journal stream error` @ dist/events-journal.js）→ 闸门自批放行 → success。
+- **生产取证**：pod imageID `sha256:0964f031…`、镜像内特征串 grep=1、healthz `version=d2760a44`。
+- **生产行为探针**：① 新建平台会话（provider=agnes）⇒ events 200 + `events.jsonl` 真实落盘 + DELETE 204 清理干净；② 存量 BYOK 会话（provider=byok-…）⇒ events 404 = **设计内 fail-soft**（身份预检不匹配，零删除副作用）；③ 伪 id 404 语义不变。
+- ⏳ 待真实流量复测：平台会话跑一轮生成回合后重启 pod，以重启前 lastEventId 重连 ⇒ 200 重放完整、probe settled（本轮无平台会话存量——现网会话全为 BYOK）。
 
 ---
 
