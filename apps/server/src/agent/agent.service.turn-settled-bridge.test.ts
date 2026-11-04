@@ -78,8 +78,12 @@ describe('turn_settled 实时补桥（flag-on /runs/events）', () => {
       subscribeSession: vi.fn(() => () => {}),
       subscribeUser: vi.fn(() => () => {}),
       subscribeSessionTurnSettled: vi.fn(() => () => {}),
+      subscribeSessionTurnAck: vi.fn(() => () => {}),
+      subscribeSessionTurnNotSubmitted: vi.fn(() => () => {}),
       emitCreditTx: vi.fn(),
       emitTurnSettled,
+      emitTurnAck: vi.fn(),
+      emitTurnNotSubmitted: vi.fn(),
     }
     const freeze = vi.fn().mockResolvedValue({ id: 'hold-1', amount: 4 })
     const settleFromHold = vi.fn().mockResolvedValue({ settled: 3, released: 0 })
@@ -136,8 +140,12 @@ describe('turn_settled 实时补桥（flag-on /runs/events）', () => {
       subscribeSession: vi.fn(() => () => {}),
       subscribeUser: vi.fn(() => () => {}),
       subscribeSessionTurnSettled: vi.fn(() => () => {}),
+      subscribeSessionTurnAck: vi.fn(() => () => {}),
+      subscribeSessionTurnNotSubmitted: vi.fn(() => () => {}),
       emitCreditTx: vi.fn(),
       emitTurnSettled,
+      emitTurnAck: vi.fn(),
+      emitTurnNotSubmitted: vi.fn(),
     }
     const service = buildService(
       eventBus,
@@ -173,6 +181,8 @@ describe('turn_settled 实时补桥（flag-on /runs/events）', () => {
           settledUnsubCalled = true
         }
       }),
+      subscribeSessionTurnAck: vi.fn(() => () => {}),
+      subscribeSessionTurnNotSubmitted: vi.fn(() => () => {}),
       emitCreditTx: vi.fn(),
       emitTurnSettled: vi.fn(),
     }

@@ -3291,6 +3291,10 @@ const followUpTail = createFollowUpTailListener({
       agent.trackTurnSettled(payload.data as Parameters<typeof agent.trackTurnSettled>[0])
     } else if (payload.type === 'credit_tx') {
       agent.trackCreditTx(payload.data as CreditTxEvent['data'])
+    } else if (payload.type === 'turn_not_submitted') {
+      // P3（Review Focus 1）：结构化拒绝帧桥接进共享通道后观察者也会收到，
+      // 但受众=提交者本人（own-turn 分支经 handleEvent 消费）。运行中的 run 与
+      // 「第三方消息被拒」无关 ⇒ 旁观不收尾（turn_ack 无此问题：done 已是观察者终态）。
     } else if (isTurnTerminal(payload.type)) {
       applyTurnEnd()
       sharedSubscription?.broadcast({ kind: 'turn_end' })
@@ -3882,6 +3886,14 @@ function handleEvent(event: { type: string; data: unknown }) {
     case 'turn_not_submitted': {
       const d = event.data as { reason?: 'not_idle' | 'not_steerable' }
       agent.setTurnRefusal(d.reason === 'not_steerable' ? 'not_steerable' : 'not_idle')
+      break
+    }
+    // P3 D4：回合裁定终态（终态收口由 isTurnTerminal 统一走）。此处补 queued 徽标
+    // 的实时清除：落库补齐成功时 ack 带 messageId（键不出现纪律）⇒ 按 id 精确翻牌；
+    // 无 messageId（fail-soft / 老 runtime）则保留徽标，刷新后由读时派生收敛。
+    case 'turn_ack': {
+      const d = event.data as { mode?: string; messageId?: string }
+      if (d.mode && d.mode !== 'run' && d.messageId) agent.consumeQueued(d.messageId)
       break
     }
     case 'canvas_command': {
@@ -4599,6 +4611,14 @@ defineExpose({
                 ]"
                 @click="onUserBubbleClick(msg)"
               >
+                <!-- D5（P3）：排队中徽标。数据源=server 读时派生的 queued
+                     （无更晚 assistant 行才保持 true）；实时清除由
+                     turn_ack{messageId} → consumeQueued 承载（徽标随消费消失）。 -->
+                <span
+                  v-if="msg.role === 'user' && msg.queued"
+                  class="agent-queued-badge"
+                  data-testid="queued-badge"
+                >排队中</span>
                 <AgentProseBlock
                   v-if="shouldRenderSchemeDraftProse(msg)"
                   :content="msg.content"
@@ -6459,6 +6479,19 @@ defineExpose({
  * 它落在 --agent-user-bg 上，跟随气泡的明暗才不会有对比度缺口。 */
 .agent-edit-hint {
   color: color-mix(in srgb, var(--agent-user-text) 62%, transparent);
+}
+
+/* D5 排队徽标：同 .agent-edit-hint 的明暗跟随理由——落在 --agent-user-bg 上，
+ * 用气泡文字色做边框与文字（color-mix），不引入新 hex（令牌 SSOT 纪律）。 */
+.agent-queued-badge {
+  display: inline-block;
+  margin-bottom: 4px;
+  border: 1px solid color-mix(in srgb, var(--agent-user-text) 30%, transparent);
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: var(--lnk-text-2xs);
+  line-height: 1.6;
+  color: color-mix(in srgb, var(--agent-user-text) 72%, transparent);
 }
 
 /* 展示态图标行 .agent-msg-actions 的同槽：同样的左对齐、8px 顶距、26px 行高。

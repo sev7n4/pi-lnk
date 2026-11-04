@@ -58,6 +58,13 @@ export interface AgentStreamMessage {
    * 仅 user 消息会带（助手消息的 entryId 无重跑语义）。
    */
   entryId?: string
+  /**
+   * D5（P3）：排队中标记（历史面）。数据源=server getMessages **读时派生**后的
+   * queued（无更晚 assistant 行才为 true）⇒ 可直接渲染徽标；实时清除走
+   * consumeQueued（turn_ack{messageId}）。本地直发气泡不入此状态（实时反馈由
+   * turnRefusal callout 承载），刷新后由历史行恢复。
+   */
+  queued?: boolean
   streaming?: boolean
   textReplaceHistory?: string[]
   executionTrace?: ExecutionTraceState
@@ -965,6 +972,9 @@ export const useAgentStore = defineStore('agent', () => {
       id: persisted.id,
       role: persisted.role as 'user' | 'assistant',
       content: persisted.content,
+      // D5（P3）：queued 透传（读时派生值）。role 门：徽标只对 user 行有意义，
+      // assistant 行归一 false（DB 列异常也不渲染徽标）。
+      queued: persisted.role === 'user' && persisted.queued === true,
       attachments: parseAttachments(persisted.attachments),
       linkedOutputs: parseLinkedOutputs(persisted.linkedOutputs),
       canvasActions: parsePersistedToolCalls(persisted.toolCalls),
@@ -972,6 +982,19 @@ export const useAgentStore = defineStore('agent', () => {
       presentation,
       timeline,
     }
+  }
+
+  /**
+   * D5（P3）：turn_ack{messageId} 的实时清除（刷新后重连场景）。未知 id 幂等 no-op。
+   * 本地直发气泡 queued 未设（实时反馈由 turnRefusal callout 承载）⇒ 天然 no-op。
+   */
+  function consumeQueued(messageId: string): void {
+    if (!messageId) return
+    const idx = messages.value.findIndex((m) => m.id === messageId)
+    if (idx < 0 || !messages.value[idx]?.queued) return
+    const next = [...messages.value]
+    next[idx] = { ...next[idx], queued: false }
+    messages.value = next
   }
 
   /**
@@ -1063,6 +1086,7 @@ export const useAgentStore = defineStore('agent', () => {
     turnError,
     turnRefusal,
     setTurnRefusal,
+    consumeQueued,
     setRecovering,
     addUserMessage,
     insertUserMessageBeforeAssistant,

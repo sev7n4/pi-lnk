@@ -330,7 +330,7 @@ describe('follow-up-tail 重连行为（multi-device Task 5）', () => {
     listener.abort()
   })
 
-  it('失败帧（error / turn_not_submitted）同样是收束——变异点：去掉收束判定', async () => {
+  it('error 仍是收束；turn_not_submitted 豁免（P3 Review Focus 1：旁观轮不得被第三方拒绝帧误收尾）', async () => {
     let ends = 0
     const deps = makeDeps({
       onTurnEnd: () => {
@@ -346,7 +346,10 @@ describe('follow-up-tail 重连行为（multi-device Task 5）', () => {
     const listener = createFollowUpTailListener(deps)
     await listener.start()
     await flush()
-    expect(ends, '轮失败也必须有收束信号，否则旁观气泡永远转圈').toBe(2)
+    // error（本端回合真失败）收束一次；turn_not_submitted（第三方消息被拒）不再收尾
+    // ——P3 前它也在收束名单（旧契约「这一轮到此为止」），桥接进共享通道后受众面
+    // 扩到观察者，据此收尾会把运行中的旁观轮提前掐断 ⇒ 语义有意变更。
+    expect(ends, 'error 收束；turn_not_submitted 豁免').toBe(1)
     listener.abort()
   })
 })
