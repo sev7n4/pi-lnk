@@ -1,12 +1,16 @@
 <script setup lang="ts">
 /**
- * 移动端分享面板（Task 4）：唯一基座 = `MobileSheet`。
+ * 分享面板（Task 4）：唯一基座 = `MobileSheet`。
  * 两行网格：行1 品牌渠道（微信/朋友圈/QQ/企业微信，首期同落「二维码+链接」）；
  *           行2 功能（生成图片/复制链接/生成二维码/离线打开）。
- * 进出面板默认全选；勾选实时更新「已选中 N 条对话」。
+ *
+ * ⚠️ 设计变更（用户裁决）：**本面板不再内联可选对话记录**。勾选集合由「对话页面本体」
+ * 上的操作入口决定 —— 回合级分享钮（每条助手消息操作栏的「分享」）即「单选」操作：
+ * 点哪条，就把哪条作为唯一选中项带入本面板；会话级「分享会话」则带入全部回合。
+ * 因此本面板直接消费 `props.turns`（已是页面侧选定的最终集合），不再二次筛选。
  *
  * ⚠️ 手势安全（spec §4）：复制链接的 `navigator.clipboard.writeText` 必须在点击
- *    同步回调里执行。故面板打开（及勾选变化时）**预先** `upload` 缓存托管 URL，
+ *    同步回调里执行。故面板打开即**预先** `upload` 缓存托管 URL，
  *    点击时直接拿已解析 url 走同步写入，避免 `await` 后丢失 iOS 手势。
  */
 import { computed, ref, watch } from 'vue'
@@ -28,36 +32,28 @@ const emit = defineEmits<{ 'update:modelValue': [boolean] }>()
 
 const actions = useShareActions()
 
-const selectedIds = ref<Set<string>>(new Set(props.turns.map((t) => t.id)))
 const busy = ref(false)
 const uploading = ref(false)
 const shareUrl = ref<string | null>(null)
 const qrVisible = ref(false)
 const imagePreview = ref<string | null>(null)
 
-const selectedTurns = computed(() => props.turns.filter((t) => selectedIds.value.has(t.id)))
-const selectedCount = computed(() => selectedTurns.value.length)
 const linkReady = computed(() => !!shareUrl.value && !uploading.value && !busy.value)
 
-const selKey = () => [...selectedIds.value].sort().join(',')
-let lastSelKey = ''
-
 function reset() {
-	selectedIds.value = new Set(props.turns.map((t) => t.id))
-	lastSelKey = selKey()
 	qrVisible.value = false
 	imagePreview.value = null
 	shareUrl.value = null
 }
 
 function reupload() {
-	if (!selectedTurns.value.length) {
+	if (!props.turns.length) {
 		shareUrl.value = null
 		return
 	}
 	uploading.value = true
 	actions
-		.upload(selectedTurns.value, props.sessionId)
+		.upload(props.turns, props.sessionId)
 		.then((res) => {
 			shareUrl.value = res.url
 		})
@@ -85,28 +81,6 @@ watch(
 	{ immediate: true },
 )
 
-watch(selectedIds, () => {
-	if (!props.modelValue) return
-	const k = selKey()
-	if (k === lastSelKey) return
-	lastSelKey = k
-	qrVisible.value = false
-	reupload()
-})
-
-function toggle(id: string) {
-	const s = new Set(selectedIds.value)
-	if (s.has(id)) s.delete(id)
-	else s.add(id)
-	selectedIds.value = s
-}
-
-function snippet(t: ShareTurn): string {
-	const textPart = t.parts?.find((p) => p.type === 'text')
-	const txt = textPart && textPart.type === 'text' ? textPart.text : t.contentText ?? ''
-	return txt.slice(0, 40).trim() || (t.role === 'user' ? '用户消息' : '助手消息')
-}
-
 async function onCopyLink() {
 	if (!shareUrl.value) return
 	// 同步手势内写入（composable 内部 await 前的 writeText 已处于手势中）
@@ -123,7 +97,7 @@ function onShareViaQr() {
 async function onOpenOffline() {
 	busy.value = true
 	try {
-		await actions.openOffline(selectedTurns.value)
+		await actions.openOffline(props.turns)
 	} finally {
 		busy.value = false
 	}
@@ -132,7 +106,7 @@ async function onOpenOffline() {
 async function onMakeImage() {
 	busy.value = true
 	try {
-		imagePreview.value = await actions.toImage(selectedTurns.value)
+		imagePreview.value = await actions.toImage(props.turns)
 	} finally {
 		busy.value = false
 	}
@@ -148,24 +122,7 @@ const brandModes = [
 </script>
 
 <template>
-	<MobileSheet v-if="modelValue" title="分享对话" :subtitle="`已选中 ${selectedCount} 条对话`" @close="close">
-		<!-- 多选列表 -->
-		<ul class="share-list" data-testid="share-list">
-			<li v-for="t in turns" :key="t.id" class="share-item" :data-testid="`share-item-${t.id}`">
-				<button
-					type="button"
-					class="share-item-btn"
-					:class="{ 'is-selected': selectedIds.has(t.id) }"
-					:aria-pressed="selectedIds.has(t.id)"
-					@click="toggle(t.id)"
-				>
-					<span class="share-check" :class="{ on: selectedIds.has(t.id) }" aria-hidden="true" />
-					<span class="share-role" :class="t.role">{{ t.role === 'user' ? '我' : '助手' }}</span>
-					<span class="share-snip">{{ snippet(t) }}</span>
-				</button>
-			</li>
-		</ul>
-
+	<MobileSheet v-if="modelValue" title="分享对话" :subtitle="`将分享 ${props.turns.length} 条对话`" @close="close">
 		<div v-if="uploading" class="share-hint">正在生成分享链接…</div>
 
 		<!-- 行1 品牌渠道 -->
@@ -252,63 +209,6 @@ const brandModes = [
 </template>
 
 <style scoped>
-.share-list {
-	list-style: none;
-	margin: 0 0 12px;
-	padding: 0;
-	max-height: 32vh;
-	overflow-y: auto;
-}
-.share-item {
-	margin: 6px 0;
-}
-.share-item-btn {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	width: 100%;
-	padding: 8px 10px;
-	border-radius: 10px;
-	background: var(--lnk-surface-sunken);
-	border: 1px solid transparent;
-	text-align: left;
-	cursor: pointer;
-}
-.share-item-btn.is-selected {
-	border-color: var(--lnk-accent-border);
-}
-.share-check {
-	width: 18px;
-	height: 18px;
-	border-radius: 50%;
-	border: 2px solid var(--lnk-text-muted);
-	flex: 0 0 auto;
-}
-.share-check.on {
-	background: var(--lnk-accent);
-	border-color: var(--lnk-accent);
-}
-.share-role {
-	font-size: var(--lnk-text-xs);
-	padding: 1px 6px;
-	border-radius: 6px;
-	flex: 0 0 auto;
-}
-.share-role.user {
-	background: var(--lnk-accent-subtle);
-	color: var(--lnk-accent-text);
-}
-.share-role.assistant {
-	background: rgba(148, 154, 168, 0.18);
-	color: var(--lnk-text-secondary);
-}
-.share-snip {
-	font-size: var(--lnk-text-sm);
-	color: var(--lnk-text-secondary);
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
 .share-hint {
 	font-size: var(--lnk-text-xs);
 	color: var(--lnk-text-muted);

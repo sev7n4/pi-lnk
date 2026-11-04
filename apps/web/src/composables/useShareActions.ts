@@ -26,8 +26,15 @@ export function useShareActions() {
 	async function upload(turns: ShareTurn[], sessionId: string): Promise<ShareUploadResult> {
 		loading.value = true
 		try {
-			const { data } = await api.post('/share/conversation', { sessionId, turns })
-			return { shareId: data.shareId, url: data.url } as ShareUploadResult
+		const resp = await api.post('/share/conversation', { sessionId, turns })
+		// 响应体为 { code, message, data: { shareId, url } }（api 拦截器返回完整 AxiosResponse，
+		// 全仓惯例是 resp.data.data 取内层载荷，见 works-api / studio-api 等调用方）
+		const body = resp.data
+		if (body.code !== 0) {
+			throw new Error(body.message || '分享上传失败')
+		}
+		const payload = body.data
+		return { shareId: payload.shareId, url: payload.url } as ShareUploadResult
 		} finally {
 			loading.value = false
 		}

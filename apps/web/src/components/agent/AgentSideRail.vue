@@ -4820,7 +4820,7 @@ defineExpose({
                     aria-label="有帮助"
                     @click="toggleMessageFeedback(msg.id, 'up')"
                   >
-                    <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
+                    <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" :fill="messageFeedback[msg.id] === 'up' ? 'var(--lnk-accent)' : 'none'" :stroke="messageFeedback[msg.id] === 'up' ? 'var(--lnk-accent)' : 'currentColor'" stroke-width="1.5">
                       <path stroke-linecap="round" stroke-linejoin="round" d="M7 11v8m0-8V7a2 2 0 0 1 2-2h1.5a1.5 1.5 0 0 1 1.4 1.02l1.12 3.36a2 2 0 0 0 1.9 1.34H17a2 2 0 0 1 2 2v1a2 2 0 0 1-2 2h-1.5l-.84 2.52A1.5 1.5 0 0 1 13.18 21H10a2 2 0 0 1-2-2v-8z" />
                     </svg>
                   </button>
@@ -4832,7 +4832,7 @@ defineExpose({
                     aria-label="无帮助"
                     @click="toggleMessageFeedback(msg.id, 'down')"
                   >
-                    <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
+                    <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" :fill="messageFeedback[msg.id] === 'down' ? 'var(--lnk-accent)' : 'none'" :stroke="messageFeedback[msg.id] === 'down' ? 'var(--lnk-accent)' : 'currentColor'" stroke-width="1.5">
                       <path stroke-linecap="round" stroke-linejoin="round" d="M17 13V5m0 8v3a2 2 0 0 1-2 2h-1.5a1.5 1.5 0 0 1-1.4-1.02l-1.12-3.36a2 2 0 0 0-1.9-1.34H7a2 2 0 0 0-2 2v1a2 2 0 0 0 2 2h1.5l.84-2.52A1.5 1.5 0 0 0 10.82 3H14a2 2 0 0 1 2 2v8z" />
                     </svg>
                   </button>
@@ -4844,11 +4844,11 @@ defineExpose({
                     aria-label="复制回复"
                     @click="copyAssistantMessage(msg)"
                   >
-                    <svg v-if="copiedMessageId !== msg.id" viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
+                    <svg v-if="copiedMessageId !== msg.id" viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.5">
                       <rect x="9" y="9" width="11" height="11" rx="2" />
                       <path stroke-linecap="round" d="M5 15V5a2 2 0 0 1 2-2h10" />
                     </svg>
-                    <svg v-else viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
+                    <svg v-else viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.5">
                       <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
                   </button>
@@ -4875,7 +4875,7 @@ defineExpose({
                       aria-label="编辑"
                       @click="editUserMessage(msg)"
                     >
-                      <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
+                      <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.5">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
                       </svg>
                     </button>
@@ -4887,11 +4887,11 @@ defineExpose({
                       aria-label="复制"
                       @click="copyUserMessage(msg)"
                     >
-                      <svg v-if="copiedMessageId !== msg.id" viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
+                      <svg v-if="copiedMessageId !== msg.id" viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.5">
                         <rect x="9" y="9" width="11" height="11" rx="2" />
                         <path stroke-linecap="round" d="M5 15V5a2 2 0 0 1 2-2h10" />
                       </svg>
-                      <svg v-else viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
+                      <svg v-else viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.5">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
                       </svg>
                     </button>
@@ -4906,7 +4906,7 @@ defineExpose({
                       data-testid="reuse-turn-btn"
                       @click="reattachTurnFromHistory(msg)"
                     >
-                      <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
+                      <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.5">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
                         <path stroke-linecap="round" stroke-linejoin="round" d="M1 4v6h6" />
                       </svg>
