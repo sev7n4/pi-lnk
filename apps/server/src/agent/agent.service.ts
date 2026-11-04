@@ -34,7 +34,10 @@ import { buildSidebarBlock } from './pi-runtime/sidebar-block'
 import { decodeCursor, paginateVisibleRows } from './messages-cursor'
 import { normalizeIntent } from './intent-dedup'
 import { MaterialService } from '../canvas/material.service'
-import { SessionEventBus } from '../points/session-event-bus.service'
+import {
+  SessionEventBus,
+  type TurnSettledBusEvent,
+} from '../points/session-event-bus.service'
 import { ZodError } from 'zod'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
 import {
@@ -769,6 +772,15 @@ export class AgentService implements OnModuleInit {
    * ⚠️ 追加在参数表**末尾**：本方法有 ~40 处按位置调用的测试，中间插入会移位。
    */
   billingSource?: 'user' | 'automation',
+  /**
+   * 2026-11-04 实时补桥（flag `STREAM_MAIN_FROM_PIRUNTIME=on`）：drain 模式下
+   * generator 的 yield 帧被后台 drain 丢弃（仅保留落库副作用）⇒ turn_settled
+   * 经 /runs/events 收不到，前端实时摘要缺结算段（刷新重放才见）。置 true 时
+   * 结算块的权威值同步 emit 到 SessionEventBus，由 `runEventStream` 订阅注入
+   * （与 credit_tx Epic 1 Task 5 同款接线）。flag-off 主流直收 yield，**不置**
+   * （防双发）。⚠️ 追加在参数表**末尾**：本方法有 ~40 处按位置调用的测试。
+   */
+  streamOpts?: { bridgeSettledToBus?: boolean },
   ): AsyncGenerator<AgentStreamEvent> {
     // P4 意图级去重（根治规格 §8.3）：预计算归一化意图指纹，供 registerIdempotencyKey 落库 +
     // 控制器入口 findDuplicateIntent 近窗去重。与 HTTP 随机幂等键解耦。
@@ -925,6 +937,9 @@ export class AgentService implements OnModuleInit {
         model,
         // P2 T6：run 发起方标识透传（预扣失败的用户 run 拒绝 / automation run 降级）
         billingSource,
+        // 2026-11-04 实时补桥：drain 模式下 turn_settled 经 SessionEventBus 注入
+        // runEventStream（见 streamOpts.bridgeSettledToBus 注释；结算块在本方法内）
+        streamOpts,
       )) {
         if (event.type === 'text_delta') {
           assistantText += (event.data as { text: string }).text
@@ -1177,6 +1192,11 @@ export class AgentService implements OnModuleInit {
       args.thinkingEffort,
       args.branchFromEntryId,
       args.selectedNodeIds,
+      // billingSource：ack 化入口固定用户 run（位置参数纪律：末位追加，禁中段插参）
+      undefined,
+      // flag-on 实时补桥：drain 丢弃 yield 帧 ⇒ turn_settled 经 SessionEventBus
+      // 注入 runEventStream（2026-11-04，截图会话取证「刷新才有结算段」根因）。
+      { bridgeSettledToBus: true },
     )
     const drain = (): void => {
       void (async () => {
@@ -1265,6 +1285,12 @@ export class AgentService implements OnModuleInit {
     const queue: AgentStreamEvent[] = []
     let notify: (() => void) | null = null
     let finished = false
+    // ── 2026-11-04 实时补桥（截图会话取证：flag-on 实时摘要缺 tokens/结算段）──
+    // turn_usage 是 Nest 侧合成事件（createUsageAccumulator 折叠 message_end.usage），
+    // 此前只在 flag-off 主生成器里 yield；flag-on 本通道收不到 ⇒ 实时「消耗 N tokens」
+    // 段缺失，刷新重放才出现。此处接入 accumulator（不传 estimateCredits：旁观路径
+    // 不复制回合计费上下文，estimatedCredits 缺省由重放的落库权威值补齐）。
+    const usageAccumulator = createUsageAccumulator()
     // ── Epic 1 Task 5：旁听路径同样注入 credit_tx（多端一致，见 streamFromPiRuntime）──
     // 直接推入本方法既有 queue（主循环已会 yield），退订在 finally。
     let creditUnsub: (() => void) | undefined
@@ -1274,11 +1300,24 @@ export class AgentService implements OnModuleInit {
         notify?.()
       })
     }
+    // turn_settled 补桥：streamConversation 结算块在 drain 模式下 emit（见
+    // streamOpts.bridgeSettledToBus），本通道订阅注入。剥掉路由用 sessionId 再下发
+    // （键不出现纪律：与重放通道的 executionEvents data 契约一致）。
+    let settledUnsub: (() => void) | undefined
+    if (this.eventBus) {
+      settledUnsub = this.eventBus.subscribeSessionTurnSettled(sessionKey, (ev) => {
+        const { sessionId: _routeKey, ...data } = ev
+        queue.push({ type: 'turn_settled', data } as unknown as AgentStreamEvent)
+        notify?.()
+      })
+    }
     const unsubscribe = client.streamEvents(
       sessionKey,
       (event) => {
         // 与主 `streamConversation` 走同一个归一函数，保证两端事件契约一致
         // （前端 handleEvent 只需认 AgentStreamEvent，不必懂 pi 原始名）。
+        const usageUi = usageAccumulator.feed(event)
+        if (usageUi) queue.push(usageUi as AgentStreamEvent)
         const ui = mapPiEventToUiEvent(event)
         if (!ui) return
         // 与主 `streamConversation`（:912）一样：归一产物是 `UiEvent`，末端收口成
@@ -1323,6 +1362,7 @@ export class AgentService implements OnModuleInit {
       if (opts?.signal) opts.signal.removeEventListener('abort', onAbort)
       unsubscribe()
       creditUnsub?.()
+      settledUnsub?.()
     }
   }
 
@@ -2530,6 +2570,9 @@ export class AgentService implements OnModuleInit {
     model?: string,
     // P2 T6：run 发起方标识（'automation' 预扣失败降级照常执行；缺省用户 run）
     billingSource: 'user' | 'automation' = 'user',
+    // 2026-11-04 实时补桥（见 streamConversation.streamOpts 注释）：结算块 emit
+    // turn_settled 到 SessionEventBus，由 runEventStream 订阅注入 /runs/events。
+    streamOpts?: { bridgeSettledToBus?: boolean },
   ): AsyncGenerator<AgentStreamEvent> {
     // ── P2 T6（token 精确计费）：回合发起预扣 ──
     // flag 门禁：TEXT_TOKEN_BILLING 仅 'on' 启用；off 时零预扣零结算（Q2 展示预估照旧，
@@ -3403,6 +3446,13 @@ export class AgentService implements OnModuleInit {
     // 发起 run，没有可归因的 usage；扣它等于对同一次生成重复收费。
     // hold 由下面的 finally 兜底全退（holdOpen 仍为 true ⇒ release 恰一次）。
     if (turnRole === 'owner' && billingEnabled && billingHold && this.points && this.pricing) {
+      // 2026-11-04 实时补桥：drain 模式（flag-on）下 yield 帧被丢弃 ⇒ turn_settled
+      // 需经 SessionEventBus 注入 runEventStream（见 streamOpts.bridgeSettledToBus 注释）。
+      // emit 的 data 与流内 yield 共用同一对象（落库=下发=补桥三口同源，杜绝口径漂移）。
+      const bridgeSettledToBus = streamOpts?.bridgeSettledToBus === true
+      const emitSettled = (data: TurnSettledBusEvent): void => {
+        if (bridgeSettledToBus) this.eventBus?.emitTurnSettled({ ...data, sessionId })
+      }
       const usageEv = [...executionEvents].reverse().find((e) => e.type === 'turn_usage')
       const usage = (usageEv?.data ?? {}) as {
         inputTokens?: number
@@ -3424,10 +3474,12 @@ export class AgentService implements OnModuleInit {
         // 2026-11-03 复测修复：turn_settled 此前只 pushTraceEvent（落库），从不 yield 进
         // SSE 流 ⇒ live 摘要永远停在「≈N 积分（预估）」，刷新后重放才见权威值。生成器
         // 尾部结算块可直接 yield（同 turn_ack），落库+下发共用同一 data 对象。
-        yield {
-          type: 'turn_settled',
-          data: pushTraceEvent('turn_settled', { holdId: billingHold.id, released: true }).data,
-        } as AgentStreamEvent
+        const settledData = pushTraceEvent('turn_settled', {
+          holdId: billingHold.id,
+          released: true,
+        }).data
+        emitSettled(settledData as TurnSettledBusEvent)
+        yield { type: 'turn_settled', data: settledData } as AgentStreamEvent
       } else {
         try {
           // credits 来自实际 usage（turn_usage 折叠值直取，cacheWrite 并入 in 项
@@ -3458,28 +3510,27 @@ export class AgentService implements OnModuleInit {
               } satisfies PointTxMeta,
             )
             holdOpen = false
-            yield {
-              type: 'turn_settled',
-              data: pushTraceEvent('turn_settled', {
-                holdId: billingHold.id,
-                credits: settled.settled,
-                ruleVersion: quote.ruleVersion,
-                // 2026-11-03 结算摘要：模型名随结算下发（turn 摘要静态行「共消耗 N 积分 · 模型名」
-                // 数据源）；同回合内 billingModelKey 恒定（回合开始冻结），落库重放还原一致。
-                // 键不出现纪律：空值（异常形态）不带键，前端按「无模型名」缺省渲染。
-                ...(billingModelKey ? { model: billingModelKey } : {}),
-                // 终审 I-1：tokens = 原始 token 数（展示口径，千级；与计费口径
-                // cacheWrite 并入 in 可不同——此为 turn_usage 四列直取）。
-                // breakdown（积分成分，个位）留事件供未来展开，前端不再按它渲染。
-                tokens: {
-                  in: usage.inputTokens ?? 0,
-                  cache: usage.cacheReadTokens ?? 0,
-                  out: usage.outputTokens ?? 0,
-                },
-                // 键不出现：breakdown 仅价目口径携带；degraded 仅 USD 兜底场景携带
-                ...(quote.breakdown ? { breakdown: quote.breakdown } : { degraded: true }),
-              }).data,
-            } as AgentStreamEvent
+            const settledData = pushTraceEvent('turn_settled', {
+              holdId: billingHold.id,
+              credits: settled.settled,
+              ruleVersion: quote.ruleVersion,
+              // 2026-11-03 结算摘要：模型名随结算下发（turn 摘要静态行「共消耗 N 积分 · 模型名」
+              // 数据源）；同回合内 billingModelKey 恒定（回合开始冻结），落库重放还原一致。
+              // 键不出现纪律：空值（异常形态）不带键，前端按「无模型名」缺省渲染。
+              ...(billingModelKey ? { model: billingModelKey } : {}),
+              // 终审 I-1：tokens = 原始 token 数（展示口径，千级；与计费口径
+              // cacheWrite 并入 in 可不同——此为 turn_usage 四列直取）。
+              // breakdown（积分成分，个位）留事件供未来展开，前端不再按它渲染。
+              tokens: {
+                in: usage.inputTokens ?? 0,
+                cache: usage.cacheReadTokens ?? 0,
+                out: usage.outputTokens ?? 0,
+              },
+              // 键不出现：breakdown 仅价目口径携带；degraded 仅 USD 兜底场景携带
+              ...(quote.breakdown ? { breakdown: quote.breakdown } : { degraded: true }),
+            }).data
+            emitSettled(settledData as TurnSettledBusEvent)
+            yield { type: 'turn_settled', data: settledData } as AgentStreamEvent
             // Epic 1 Task 5：回合结算 credit_tx 已随 settleFromHold 经总线入队，
             // 此处收口下发，确保落在本流结束（done）之前、turn_settled 之后。
             while (creditQueue.length > 0) {
@@ -3498,11 +3549,12 @@ export class AgentService implements OnModuleInit {
                 `turn hold release failed (hold=${billingHold.id}): ${releaseErr instanceof Error ? releaseErr.message : String(releaseErr)}`,
               )
             }
-            yield {
-              type: 'turn_settled',
-              data: pushTraceEvent('turn_settled', { holdId: billingHold.id, released: true })
-                .data,
-            } as AgentStreamEvent
+            const settledData = pushTraceEvent('turn_settled', {
+              holdId: billingHold.id,
+              released: true,
+            }).data
+            emitSettled(settledData as TurnSettledBusEvent)
+            yield { type: 'turn_settled', data: settledData } as AgentStreamEvent
           }
         } catch (err) {
           // quote 异常（quoteTextTokens 承诺永不 throw，此处为纵深防御）→ release 全退
