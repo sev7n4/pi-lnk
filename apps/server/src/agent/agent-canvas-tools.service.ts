@@ -2794,6 +2794,19 @@ export class AgentCanvasToolsService {
     return typeof id === 'string' && id.trim() ? id.trim() : undefined
   }
 
+  /** 宽松 parse 生成记录 metadata（坏 JSON/非对象回退空对象，fail-soft 与 persist 同纪律）。 */
+  private parseRecordMetadata(raw: string | null | undefined): Record<string, unknown> {
+    if (!raw) return {}
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {}
+    } catch {
+      return {}
+    }
+  }
+
   private materialIdFromNode(node: CanvasNode): string | undefined {
     const id = node.data?.materialId
     return typeof id === 'string' && id.trim() ? id.trim() : undefined
@@ -2860,18 +2873,34 @@ export class AgentCanvasToolsService {
     actions: CanvasAction[]
   }> {
     const { recordId, recordKind, nodeId } = await this.resolveGenerationRecord(input)
-    if (recordKind === 'material') {
-      await this.material.cancelGeneration(input.userId, recordId)
-    } else {
-      await this.studio.cancelGeneration(input.userId, recordId)
-    }
+    const settled =
+      recordKind === 'material'
+        ? await this.material.cancelGeneration(input.userId, recordId)
+        : await this.studio.cancelGeneration(input.userId, recordId)
     const actions: CanvasAction[] = []
     if (nodeId) {
+      // 取消投影契约（规格 2026-11-04-generation-terminal-projection §5.1/§5.4）：
+      // 取消是一等语义——errorCode 承载 cancelled，文案由退分事实组装，
+      // 不再裸写「已取消」两字（此前前端靠字符串嗅探识别取消，被轮询写者
+      // 「生成失败，N 积分已返回」击穿 → 刷屏）。
+      const meta = this.parseRecordMetadata(settled?.metadata)
+      const refundedPoints =
+        typeof meta.refundedPoints === 'number' && meta.refundedPoints > 0
+          ? meta.refundedPoints
+          : undefined
+      const errorMessage = refundedPoints
+        ? `已取消，${refundedPoints} 积分已返回`
+        : '已取消'
       actions.push({
         type: 'update_node',
         payload: {
           id: nodeId,
-          data: { status: 'error', errorMessage: '已取消' },
+          data: {
+            status: 'error',
+            errorCode: 'cancelled',
+            errorMessage,
+            ...(recordKind === 'studio' ? { generationRecordId: recordId } : {}),
+          },
         },
       })
       await this.persist(input.sessionId, actions)
@@ -4037,7 +4066,12 @@ export class AgentCanvasToolsService {
       const staged = parseStagedActions(session.stagedActions)
       if (staged.length === 0) return { actions: [] }
       const current = parseCanvas(session.canvasData)
-      const updated = this.applier.apply(current, staged)
+      const updated = this.applier.apply(current, staged, {
+        onGuardReject: (nodeId) =>
+          this.logger.warn(
+            `terminal_regen_rejected sessionId=${input.sessionId} nodeId=${nodeId} path=commitStage`,
+          ),
+      })
       await tx.session.update({
         where: { id: input.sessionId },
         data: {
@@ -4257,7 +4291,10 @@ export class AgentCanvasToolsService {
         )
       }
       const current = parseCanvas(session.canvasData)
-      const updated = this.applier.apply(current, actions)
+      const updated = this.applier.apply(current, actions, {
+        onGuardReject: (nodeId) =>
+          this.logger.warn(`terminal_regen_rejected sessionId=${sessionId} nodeId=${nodeId}`),
+      })
       const merged: CanvasData = { ...current, ...updated }
       await tx.session.update({
         where: { id: sessionId },

@@ -107,6 +107,41 @@ describe('buildPollingFailurePatch', () => {
     })
     expect(patch).not.toHaveProperty('errorCode')
   })
+
+  it('cancelled 记录：errorCode 优先于退分分支，文案是「已取消」不是「生成失败」（2026-11-04 刷屏根治）', () => {
+    // 生产事故记录形态：errorCode=cancelled + refundedPoints=33 + userMessage=已取消
+    expect(
+      buildPollingFailurePatch({
+        metadata: JSON.stringify({
+          errorCode: 'cancelled',
+          refundedPoints: 33,
+          userMessage: '已取消',
+        }),
+        generationRecordId: 'rec-1',
+      }),
+    ).toEqual({
+      status: NODE_GENERATION_STATUS.error,
+      errorMessage: '已取消，33 积分已返回',
+      generationRecordId: 'rec-1',
+      errorCode: 'cancelled',
+    })
+  })
+
+  it('cancelled 无退分：文案「已取消」', () => {
+    expect(
+      buildPollingFailurePatch({
+        metadata: JSON.stringify({ errorCode: 'cancelled', userMessage: '已取消' }),
+      }).errorMessage,
+    ).toBe('已取消')
+  })
+
+  it('非 cancelled 的 errorCode 仍透传 serverMessage（B2 行为保留）', () => {
+    expect(
+      buildPollingFailurePatch({
+        metadata: JSON.stringify({ errorCode: 'upstream_error', userMessage: '上游响应超时' }),
+      }).errorMessage,
+    ).toBe('上游响应超时')
+  })
 })
 
 describe('buildCopyForNode', () => {

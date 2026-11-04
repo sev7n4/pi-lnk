@@ -376,14 +376,15 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 			status?: string;
 			url?: string;
 			error?: string;
+			refundedPoints?: number;
 		};
 	}>("/sessions/:sessionId/notify-generation", async (request, reply) => {
 		const { sessionId } = request.params;
 		const nodeId = typeof request.body?.nodeId === "string" ? request.body.nodeId.trim() : "";
 		const status = request.body?.status;
 		if (!nodeId) return reply.code(400).send({ error: "nodeId is required" });
-		if (status !== "completed" && status !== "failed") {
-			return reply.code(400).send({ error: "status must be 'completed' | 'failed'" });
+		if (status !== "completed" && status !== "failed" && status !== "cancelled") {
+			return reply.code(400).send({ error: "status must be 'completed' | 'failed' | 'cancelled'" });
 		}
 		try {
 			const result = await manager.notifyGenerationTerminal(sessionId, {
@@ -395,6 +396,9 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 				...(typeof request.body?.kind === "string" && request.body.kind ? { kind: request.body.kind } : {}),
 				...(typeof request.body?.url === "string" && request.body.url ? { url: request.body.url } : {}),
 				...(typeof request.body?.error === "string" && request.body.error ? { error: request.body.error } : {}),
+				...(typeof request.body?.refundedPoints === "number" && request.body.refundedPoints > 0
+					? { refundedPoints: request.body.refundedPoints }
+					: {}),
 			});
 			metrics.observeQueueOp("enqueue", "followUp", result.delivered ? "ok" : "rejected");
 			return reply.send(result);

@@ -50,6 +50,7 @@ export * from './publicMediaUrl'
 export * from './upstreamRefInline'
 export * from './textNodeFormat'
 export * from './agentContract'
+export * from './canvasLifecycle'
 // 分组契约（色卡 8 键白名单 SSOT + CanvasGroup zod + 三个命令请求体），2026-10-21 下沉。
 // 前端 groupColors.ts 的 GROUP_COLOR_KEYS 已改为从此 re-export，不再自有副本 ——
 // 白名单必须在写入口（服务端 setGroupColor）就能拒非法值，而不是等前端渲染层静默落 neutral。

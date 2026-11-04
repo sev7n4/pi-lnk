@@ -106,7 +106,12 @@ export type CanvasAction = z.infer<typeof CanvasActionSchema>
  * `canvas-action-applier.ts` 的默认实现）。
  */
 export interface CanvasActionApplier {
-  apply(data: CanvasData, actions: CanvasAction[]): CanvasData
+  apply(
+    data: CanvasData,
+    actions: CanvasAction[],
+    /** 吸收态守卫留痕（2026-11-04-generation-terminal-projection §5.2）：可选。 */
+    opts?: { onGuardReject?: (nodeId: string) => void },
+  ): CanvasData
 }
 
 // ============================================================

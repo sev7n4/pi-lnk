@@ -1713,6 +1713,20 @@ describe("生成终态等待登记与回合外通报（2026-10-18 上游对齐�
 			NotFoundError,
 		);
 	});
+	it("notifyGenerationTerminal：cancelled 一等文案（已取消 + 退分），不再谎报失败", async () => {
+		const sm = smWithLanes();
+		await sm.create("thread-ntf-cancel", { canvasSessionId: "canvas-ntf-cancel" });
+		const result = await sm.notifyGenerationTerminal("thread-ntf-cancel", {
+			nodeId: "node-9",
+			status: "cancelled",
+			refundedPoints: 33,
+			kind: "图像",
+		});
+		assert.deepEqual(result, { delivered: true });
+		assert.match(followUpCalls.at(-1)!.text, /已取消/);
+		assert.match(followUpCalls.at(-1)!.text, /33 积分已返回/);
+		assert.doesNotMatch(followUpCalls.at(-1)!.text, /失败/);
+	});
 });
 
 describe("projectLaneSnapshot（lane.watch 快照投影，2026-10-18 上游对齐）", () => {

@@ -6,6 +6,7 @@ import {
   extractRefundedPointsFromError,
   extractStructuredGenerationFields,
   formatGenerationFailureMessage,
+  formatTerminalFailureMessage,
   parseRefundedPointsFromMetadata,
 } from '@/utils/generationPointsMessage'
 
@@ -91,11 +92,14 @@ export function buildPollingFailurePatch(opts: {
   // B2 投影纯化：Nest 侧失败文案（metadata.userMessage，由 applyFailureDiagnosticMeta
   // 写入，含 U6 无产物翻失败后的标准文案）优先透出，缺省回退既有硬编码（旧记录无该字段）。
   const serverMessage = parseServerUserMessageFromMetadata(opts.metadata)
+  // 文案分支优先级重排（规格 2026-11-04-generation-terminal-projection §5.3 条款 2）：
+  // errorCode 语义 > serverMessage > 退分补充说明 > 兜底。
+  // 此前 refundedPoints 是第一分支——用户取消（errorCode=cancelled + 退分）被渲染成
+  // 「生成失败，N 积分已返回」，击穿 toast 层的「已取消」豁免 ⇒ 取消刷屏事故直接推手。
+  // errorMessage 此处仅作展示；取消的语义判据在 toast 层走 errorCode（不回读文案）。
   const patch: Record<string, unknown> = {
     status: NODE_GENERATION_STATUS.error,
-    errorMessage: refundedPoints
-      ? formatGenerationFailureMessage(new Error('生成失败'), refundedPoints)
-      : serverMessage ?? '生成失败',
+    errorMessage: formatTerminalFailureMessage({ errorCode, serverMessage, refundedPoints }),
   }
   if (opts.generationRecordId) patch.generationRecordId = opts.generationRecordId
   if (opts.materialId) patch.materialId = opts.materialId

@@ -4543,6 +4543,11 @@ watch(
     title: typeof n.data?.title === 'string' ? n.data.title : undefined,
     status: n.data?.status,
     errorMessage: n.data?.errorMessage,
+    // 取消语义判据（errorCode）与去重键（recordId）随快照透传——
+    // 规格 2026-11-04-generation-terminal-projection §5.3：语义走结构化字段，
+    // 文案不作判据；去重键 = 生成记录维度，重载不清 rec 键。
+    errorCode: n.data?.errorCode,
+    generationRecordId: n.data?.generationRecordId,
   })),
   (curr, prevByIdArr) => {
     const prevById = new Map((prevByIdArr ?? []).map((p) => [p.id, p]))
@@ -5647,11 +5652,19 @@ function buildStudioRecordPatch(
       : record.status === 'failed' || record.status === 'error'
         ? NODE_GENERATION_STATUS.error
         : record.status
+  // 对账回填文案走统一映射（规格 2026-11-04-generation-terminal-projection §5.1
+  // 条款 2 / P1-3）：此前一刀切「图像生成未完成或超时」——把取消/上游失败等一律
+  // 说成超时，是五写者多重解释病灶之一。
+  const failurePatch =
+    status === NODE_GENERATION_STATUS.error
+      ? buildPollingFailurePatch({ metadata: record.metadata })
+      : null
   const patch: Record<string, unknown> = {
     status,
     generationRecordId: record.id,
-    errorMessage: status === NODE_GENERATION_STATUS.error ? '图像生成未完成或超时' : null,
+    errorMessage: failurePatch ? failurePatch.errorMessage : null,
   }
+  if (failurePatch?.errorCode) patch.errorCode = failurePatch.errorCode
   if (record.type === 'text') {
     patch.content = parseRecordText(record)
   } else {

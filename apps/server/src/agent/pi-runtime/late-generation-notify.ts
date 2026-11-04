@@ -50,11 +50,18 @@ import type { Prisma } from '@prisma/client'
 /** 与 pi-runtime GenerationTerminalNotice 通知载荷对齐（结构对齐，独立声明）。 */
 export interface LateGenerationNotifyPayload {
 	nodeId: string
-	status: 'completed' | 'failed'
+	/**
+	 * 终态三值（规格 2026-11-04-generation-terminal-projection §5.4）：cancelled
+	 * 一等公民化——此前取消记录（metadata.errorCode=cancelled，record.status=failed）
+	 * 被硬映射成 failed 通报，agent 复述「生成失败」、用户自己的取消被当故障播报。
+	 */
+	status: 'completed' | 'failed' | 'cancelled'
 	recordId?: string
 	kind?: string
 	url?: string
 	error?: string
+	/** cancelled 时的退分事实（积分文案由 pi-runtime 侧拼装，Nest 只传事实字段）。 */
+	refundedPoints?: number
 }
 
 /** 通报客户端的最小面（PiRuntimeClient 的结构子集，测试可注入假实现）。 */
@@ -254,6 +261,14 @@ export async function notifyLateGenerationTerminals(
 			rec.status !== 'completed' && typeof meta.userMessage === 'string' && meta.userMessage
 				? meta.userMessage
 				: undefined
+		// cancelled 一等公民化（规格 2026-11-04-generation-terminal-projection §5.4）：
+		// 取消记录的 record.status 也是 'failed'（结算词汇表不扩），靠 metadata.errorCode
+		// 区分——不再把用户取消硬映射成 failed 通报「生成失败」。
+		const isCancelled = meta.errorCode === 'cancelled'
+		const refundedPoints =
+			typeof meta.refundedPoints === 'number' && meta.refundedPoints > 0
+				? meta.refundedPoints
+				: undefined
 		// ⭐ 订阅先于触发（Layer 3）：先让投影方把事件订阅挂上并等 SSE open，
 		// 再发 notify——runtime 收到 notify 同步开简报轮，agent_start 必然落在
 		// 订阅窗口内。arm 失败 fail-open（照常通报，退化回旧行为）。
@@ -267,11 +282,12 @@ export async function notifyLateGenerationTerminals(
 		try {
 			const result = await client.notifyGeneration(thread.id, {
 				nodeId: rec.nodeId,
-				status: rec.status === 'completed' ? 'completed' : 'failed',
+				status: rec.status === 'completed' ? 'completed' : isCancelled ? 'cancelled' : 'failed',
 				...(rec.id ? { recordId: rec.id } : {}),
 				kind: kindLabel(rec.type),
 				...(rec.url ? { url: rec.url } : {}),
 				...(rec.status !== 'completed' && errorMessage ? { error: errorMessage } : {}),
+				...(isCancelled && refundedPoints ? { refundedPoints } : {}),
 			})
 			// delivered=false（工具仍在等 / 会话不在本实例）也是确定性结果，落标记防重发。
 			await markNotified(prisma, rec.id, meta, result.delivered ? 'delivered' : `suppressed:${result.reason ?? 'unknown'}`)

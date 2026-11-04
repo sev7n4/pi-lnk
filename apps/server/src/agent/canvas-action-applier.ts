@@ -16,5 +16,5 @@ export const CANVAS_ACTION_APPLIER = Symbol('CANVAS_ACTION_APPLIER')
 
 /** 默认实现：当前的 `@lnkpi/agent` 版本。 */
 export const defaultCanvasActionApplier: CanvasActionApplier = {
-  apply: (data, actions) => applyCanvasActions(data, actions),
+  apply: (data, actions, opts) => applyCanvasActions(data, actions, opts),
 }

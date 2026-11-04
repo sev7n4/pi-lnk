@@ -27,6 +27,14 @@ describe('shouldToastForFailure', () => {
       ),
     ).toBe(false)
   })
+  it('已取消（errorCode=cancelled，文案伪装成失败）：不 toast（2026-11-04 刷屏根治判据）', () => {
+    expect(
+      shouldToastForFailure(
+        { status: 'generating' },
+        { status: 'error', errorCode: 'cancelled', errorMessage: '生成失败，33 积分已返还' },
+      ),
+    ).toBe(false)
+  })
   it('error → error（重复快照/轮询重放）：不 toast', () => {
     expect(
       shouldToastForFailure(
@@ -87,5 +95,30 @@ describe('useGenerationFailureToast', () => {
     onNodeError({ id: 'n1', title: 't1', status: 'error', errorMessage: 'a' })
     onNodeError({ id: 'n2', title: 't2', status: 'error', errorMessage: 'b' })
     expect(ElMessage).toHaveBeenCalledTimes(2)
+  })
+
+  it('同一 record 反复「generating→error」边（重载×N）：只 toast 一次（2026-11-04 刷屏根治）', () => {
+    const { onNodeError } = useGenerationFailureToast({ onOpenDetail })
+    for (let i = 0; i < 20; i++) {
+      // 每次重载：陈旧 generating 快照先到，轮询 error 再到——同一条 record。
+      onNodeError({ id: 'n1', title: 't', status: 'generating', generationRecordId: 'rec-1' })
+      onNodeError({ id: 'n1', title: 't', status: 'error', errorMessage: '生成失败', generationRecordId: 'rec-1' })
+    }
+    expect(ElMessage).toHaveBeenCalledTimes(1)
+  })
+
+  it('新一轮生成（新 recordId）：失败再 toast（重试契约保留）', () => {
+    const { onNodeError } = useGenerationFailureToast({ onOpenDetail })
+    onNodeError({ id: 'n1', title: 't', status: 'error', errorMessage: 'a', generationRecordId: 'rec-1' })
+    onNodeError({ id: 'n1', title: 't', status: 'error', errorMessage: 'b', generationRecordId: 'rec-2' })
+    expect(ElMessage).toHaveBeenCalledTimes(2)
+  })
+
+  it('rec 键不受 clearNodeDedupe 影响（node 键只管无 recordId 旧数据）', () => {
+    const { onNodeError, clearNodeDedupe } = useGenerationFailureToast({ onOpenDetail })
+    onNodeError({ id: 'n1', title: 't', status: 'error', errorMessage: 'a', generationRecordId: 'rec-1' })
+    clearNodeDedupe('n1')
+    onNodeError({ id: 'n1', title: 't', status: 'error', errorMessage: 'b', generationRecordId: 'rec-1' })
+    expect(ElMessage).toHaveBeenCalledTimes(1)
   })
 })

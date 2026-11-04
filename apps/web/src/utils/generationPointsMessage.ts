@@ -103,6 +103,30 @@ export function formatCancelledMessage(refundedPoints?: number): string {
     : '已取消'
 }
 
+/**
+ * 终态文案单一映射（规格 2026-11-04-generation-terminal-projection §5.3 条款 2）。
+ *
+ * 分支优先级 = errorCode 语义 > serverMessage（Nest 落的 metadata.userMessage）
+ * > 退分补充说明 > 兜底。此前 buildPollingFailurePatch 把「有退分」当第一分支，
+ * 把用户取消渲染成「生成失败，N 积分已返回」——恰好击穿 toast 层的
+ * `startsWith('已取消')` 豁免，是取消刷屏事故的直接推手。
+ * 语义判据永远是 errorCode，文案只是展示（文案不作判据）。
+ */
+export function formatTerminalFailureMessage(opts: {
+  errorCode?: ErrorCode
+  serverMessage?: string
+  refundedPoints?: number
+}): string {
+  if (opts.errorCode === 'cancelled') {
+    return formatCancelledMessage(opts.refundedPoints)
+  }
+  if (opts.serverMessage && opts.serverMessage.trim()) return opts.serverMessage.trim()
+  if (opts.refundedPoints && opts.refundedPoints > 0) {
+    return `生成失败，${opts.refundedPoints} 积分已返回`
+  }
+  return '生成失败'
+}
+
 export function formatGenerationFailureMessage(err: unknown, refundedPoints?: number): string {
   const raw = apiErrorMessage(err, '生成失败')
   if (raw.includes('积分不足')) return '积分不足，请充值后再试'

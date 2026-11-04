@@ -178,11 +178,17 @@ export interface GenerationTerminalNotice {
 	recordId?: string;
 	/** 生成类型（image/video/text/audio），用于通报文案。 */
 	kind?: string;
-	status: "completed" | "failed";
+	/**
+	 * 终态三值（规格 2026-11-04-generation-terminal-projection §5.4）：cancelled
+	 * 一等公民化——用户取消不再被通报成「生成失败」。
+	 */
+	status: "completed" | "failed" | "cancelled";
 	/** completed 时的产物 url（若有）。 */
 	url?: string;
 	/** failed 时的人类可读原因。 */
 	error?: string;
+	/** cancelled 时的退分事实（积分），通报文案拼装用。 */
+	refundedPoints?: number;
 }
 
 /** `lane.watch()` 快照的可序列化投影（2026-10-18 上游对齐，快照重连）。
@@ -2229,10 +2235,14 @@ export class SessionManager {
 			return { delivered: false, reason: "tool-wait-active" };
 		}
 		const kindLabel = data.kind ?? "生成";
+		// cancelled 一等文案（规格 2026-11-04 §5.4）：如实「已取消 + 退分」，
+		// 不再走 failed 分支谎报「生成失败」。
 		const stateLine =
 			data.status === "completed"
 				? `已完成${data.url ? `，产物 url：${data.url}` : ""}`
-				: `失败${data.error ? `，原因：${data.error}` : ""}`;
+				: data.status === "cancelled"
+					? `已取消${data.refundedPoints ? `，${data.refundedPoints} 积分已返回` : ""}`
+					: `失败${data.error ? `，原因：${data.error}` : ""}`;
 		const text =
 			`[系统通报 · 回合外生成终态] 画布节点 ${data.nodeId} 的${kindLabel}生成${stateLine}。` +
 			"这条生成是在本回合之外落定终态的：请先用画布工具核实节点当前状态，再向用户一句话简报结果；" +

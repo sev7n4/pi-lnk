@@ -1,7 +1,21 @@
 import type { CanvasAction, CanvasData } from '@lnkpi/shared'
+import { isTerminalRegen } from '@lnkpi/shared'
+
+export interface ApplyCanvasActionsOpts {
+  /**
+   * 吸收态守卫拒绝回调（规格 2026-11-04-generation-terminal-projection §5.2）：
+   * update_node 试图把已终态（error/completed/failed）节点拉回在途态且未携带
+   * 新 generationRecordId 时，该 op 的 data 合并被整体丢弃，经此回调留痕。
+   */
+  onGuardReject?: (nodeId: string) => void
+}
 
 /** Apply agent canvas mutations to an in-memory canvas snapshot. */
-export function applyCanvasActions(data: CanvasData, actions: CanvasAction[]): CanvasData {
+export function applyCanvasActions(
+  data: CanvasData,
+  actions: CanvasAction[],
+  opts?: ApplyCanvasActionsOpts,
+): CanvasData {
   const result: CanvasData = {
     ...data,
     nodes: [...data.nodes],
@@ -26,7 +40,20 @@ export function applyCanvasActions(data: CanvasData, actions: CanvasAction[]): C
         if (existingIndex >= 0) {
           const existing = result.nodes[existingIndex]!
           existing.position = pos
-          existing.data = { ...existing.data, ...(p.data ?? {}) }
+          // 吸收态守卫同款（与 update_node 一致）：重放的 add_node 不得把终态节点
+          // 拉回在途态（SSE 重放是 2026-11-04 事故的同族回灌向量）。
+          if (
+            !isTerminalRegen({
+              currentStatus: existing.data?.status,
+              currentRecordId: existing.data?.generationRecordId,
+              incomingStatus: p.data?.status,
+              incomingRecordId: p.data?.generationRecordId,
+            })
+          ) {
+            existing.data = { ...existing.data, ...(p.data ?? {}) }
+          } else {
+            if (p.id) opts?.onGuardReject?.(p.id)
+          }
           if (p.nodeType) existing.type = p.nodeType as CanvasData['nodes'][0]['type']
         } else {
           result.nodes.push({
@@ -50,7 +77,22 @@ export function applyCanvasActions(data: CanvasData, actions: CanvasAction[]): C
         const node = result.nodes.find((n) => n.id === action.payload.id)
         if (node) {
           if (action.payload.position) node.position = action.payload.position
-          if (action.payload.data) node.data = { ...node.data, ...action.payload.data }
+          if (action.payload.data) {
+            // 吸收态守卫（2026-11-04）：终态节点被无新 recordId 的在途态 op 回写
+            // ⇒ 整体丢弃该 data 合并（陈旧快照回灌/迟到 op 在此被结构性阻断）。
+            if (
+              isTerminalRegen({
+                currentStatus: node.data?.status,
+                currentRecordId: node.data?.generationRecordId,
+                incomingStatus: action.payload.data.status,
+                incomingRecordId: action.payload.data.generationRecordId,
+              })
+            ) {
+              if (action.payload.id) opts?.onGuardReject?.(action.payload.id)
+              break
+            }
+            node.data = { ...node.data, ...action.payload.data }
+          }
         }
         break
       }
