@@ -11,6 +11,7 @@
 import { Logger } from "@nestjs/common";
 import { CanvasActionSchema, NODE_TYPES, type CanvasAction } from "@lnkpi/shared";
 import { z } from "zod";
+import { stripPlanMarkers } from "../planMarkers";
 
 /** SP-F O1（spec 2026-10-28-canvas-edge-remedy-loop-design.md §3.3）：
  *  派发通道三类静默丢弃的可观测出口。健康链路零频（丢弃本应是异常）；
@@ -871,6 +872,108 @@ export function createUsageAccumulator(estimateCredits?: (totals: TurnUsage) => 
 				};
 			}
 			return null;
+		},
+	};
+}
+
+// ── 统一事件通道派生补全（spec 2026-11-04-unified-channel-event-projection-design §5.1）──
+//
+// 单一派生源判据（spec §4.4-1）：同一 raw 事件的 UI 派生编排只允许一份实现。
+// 本工厂把主链路 streamFromPiRuntime 循环体的派生段（agent.service.ts :3126-3240）
+// 复刻为「纯产出、无落库」的编排单元——提取逻辑全部复用本文件既有函数，本工厂
+// 不重写任何提取。与主链路的等价由契约测试（multi-device-stream.consistency.test.ts
+// 双重等价断言）钉死；主链路本包不切换（落库/计费/围栏耦合，spec §5.1 P2 演进）。
+export interface UiEventProjectorOptions {
+	/** owner：主链路形态（P2 预留）；observer：统一通道形态（无落库、无围栏）。 */
+	role: "owner" | "observer";
+	/** usage 积分折算回调（Nest business-owned）。P0 observer 必须注入（经
+	 *  AgentService.turnEstimators 转发闭包），否则 usage 预估行不可达（spec §6.8）。 */
+	estimateTurnCredits?: (totals: {
+		inputTokens?: number;
+		cacheReadTokens?: number;
+		cacheWriteTokens?: number;
+		outputTokens?: number;
+		cost?: number;
+	}) => number | null;
+}
+
+export interface UiEventProjector {
+	/** 输入一条 raw 事件，产出 0..n 个 UI 事件（顺序 = 主链路既有顺序）。 */
+	feed(event: PiRuntimeEvent): UiEvent[];
+	/** 流收尾。accumulator 无残留态（thinking done / turn_usage 均由事件驱动），
+	 *  P0 返回 []；保留为契约前瞻位（P2 主链路切换时承接 textPersister.flush 的
+	 *  等价物——届时 owner 形态才有非空实现）。 */
+	flush(): UiEvent[];
+}
+
+export function createUiEventProjector(opts: UiEventProjectorOptions): UiEventProjector {
+	const thinkingAccumulator = createThinkingAccumulator();
+	const usageAccumulator = createUsageAccumulator(opts.estimateTurnCredits);
+	return {
+		feed(event: PiRuntimeEvent): UiEvent[] {
+			const out: UiEvent[] = [];
+			// 1) 结构化 error（主链路 :3126 同点位同序）。provider/model 是主链路从
+			//    会话上下文 enrich 的 owner 字段，observer 不带（契约测试对 error 剥离比较）。
+			const turnErr = classifyPiRunError(event);
+			if (turnErr) {
+				out.push({
+					type: "error",
+					data: { message: turnErr.message, error_type: turnErr.kind, retry_hint: turnErr.retry_hint },
+					seq: event.seq,
+				});
+			}
+			// 2) canvas_command（ask_user 卡 / svg_card / UI_COMMAND；B-6 契约）
+			for (const cmd of extractCanvasCommands(event)) {
+				out.push({ type: "canvas_command", data: cmd, seq: event.seq });
+			}
+			// 3) canvas_action（画布数据动作 + 节点状态）
+			for (const action of extractCanvasActions(event)) {
+				out.push({ type: "canvas_action", data: action, seq: event.seq });
+			}
+			// 4) task_list / task_update（todo_write diff）
+			for (const task of extractTaskEvents(event)) {
+				out.push(task as UiEvent);
+			}
+			// 5) thinking 折叠（accumulator 内部带节流与 seq 透传）
+			const thinkingUi = thinkingAccumulator.feed(event);
+			if (thinkingUi) out.push(thinkingUi);
+			// 6) usage 累积（message_end → usage_delta；agent_end → turn_usage）
+			const usageUi = usageAccumulator.feed(event);
+			if (usageUi) out.push(usageUi);
+			// 7) map 归一 + plan 标记派生（派生先于 ui 本身，与主链路 text_delta 分支同序）
+			const ui = mapPiEventToUiEvent(event);
+			if (ui) {
+				if (ui.type === "text_delta") {
+					const rawText = (ui.data as { text: string }).text;
+					const stripped = stripPlanMarkers(rawText);
+					(ui.data as { text: string }).text = stripped.text;
+					if (stripped.plan?.length) {
+						out.push({
+							type: "task_list",
+							data: {
+								items: stripped.plan.map((it) => ({
+									id: `plan-${it.n}`,
+									title: it.title,
+									status: "running",
+								})),
+							},
+							seq: event.seq,
+						});
+					}
+					if (stripped.doneN != null) {
+						out.push({
+							type: "task_update",
+							data: { id: `plan-${stripped.doneN}`, status: "done" },
+							seq: event.seq,
+						});
+					}
+				}
+				out.push(ui);
+			}
+			return out;
+		},
+		flush(): UiEvent[] {
+			return [];
 		},
 	};
 }

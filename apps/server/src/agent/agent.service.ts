@@ -102,7 +102,7 @@ import { resolveForceSkills } from './pi-runtime/resolve-force-skills'
 import { stripPlanMarkers } from './planMarkers'
 import { normalizeAssistantText } from './text-normalize'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
-import { createThinkingAccumulator, createTextSegmentPersister, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, extractTaskEvents, extractTextDelta, extractTextEnd, mapPiEventToUiEvent, classifyPiRunError, type PiRuntimeEvent } from './pi-runtime/pi-events'
+import { createUiEventProjector, createThinkingAccumulator, createTextSegmentPersister, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, extractTaskEvents, extractTextDelta, extractTextEnd, mapPiEventToUiEvent, classifyPiRunError, type PiRuntimeEvent } from './pi-runtime/pi-events'
 import { GenerationReaperService } from '../studio/generation-reaper.service'
 import { estimateCreditsFromUsdCost, resolveFxUsdCny } from '../pricing/pricing.core'
 import { InsufficientPointsError, PointsService } from '../points/points.service'
@@ -1285,12 +1285,14 @@ export class AgentService implements OnModuleInit {
     const queue: AgentStreamEvent[] = []
     let notify: (() => void) | null = null
     let finished = false
-    // ── 2026-11-04 实时补桥（截图会话取证：flag-on 实时摘要缺 tokens/结算段）──
-    // turn_usage 是 Nest 侧合成事件（createUsageAccumulator 折叠 message_end.usage），
-    // 此前只在 flag-off 主生成器里 yield；flag-on 本通道收不到 ⇒ 实时「消耗 N tokens」
-    // 段缺失，刷新重放才出现。此处接入 accumulator（不传 estimateCredits：旁观路径
-    // 不复制回合计费上下文，estimatedCredits 缺省由重放的落库权威值补齐）。
-    const usageAccumulator = createUsageAccumulator()
+    // ── 统一事件通道 P0（spec 2026-11-04-unified-channel-event-projection-design）──
+    // 单一派生源判据（spec §4.4-1）：回调从「usageAccumulator + mapPiEventToUiEvent
+    // 零散拼装」收敛为投影编排工厂——与主链路共享同一批 pi-events 提取实现
+    // （#714 补桥的 usage/turn_usage 语义在此收敛继承：不传 estimateTurnCredits，
+    // 旁观不复制回合计费上下文，estimatedCredits 由重放的落库权威值补齐）。
+    // 分工边界：projector 只承诺「pi 事件 → UI 事件」；turn_settled/credit_tx 是
+    // 计费领域事件，走 SessionEventBus 扇出（上方两条总线订阅），不入派生源。
+    const projector = createUiEventProjector({ role: 'observer' })
     // ── Epic 1 Task 5：旁听路径同样注入 credit_tx（多端一致，见 streamFromPiRuntime）──
     // 直接推入本方法既有 queue（主循环已会 yield），退订在 finally。
     let creditUnsub: (() => void) | undefined
@@ -1314,15 +1316,14 @@ export class AgentService implements OnModuleInit {
     const unsubscribe = client.streamEvents(
       sessionKey,
       (event) => {
-        // 与主 `streamConversation` 走同一个归一函数，保证两端事件契约一致
-        // （前端 handleEvent 只需认 AgentStreamEvent，不必懂 pi 原始名）。
-        const usageUi = usageAccumulator.feed(event)
-        if (usageUi) queue.push(usageUi as AgentStreamEvent)
-        const ui = mapPiEventToUiEvent(event)
-        if (!ui) return
+        // 统一事件通道 P0：全量投影派生（canvas_command / canvas_action / task /
+        // thinking / usage / 结构化 error / map 归一）——askuser 卡等此前被 pi_
+        // 前缀静默丢弃的事件在此恢复。顺序 = 主链路既有顺序（projector 内编排列）。
         // 与主 `streamConversation`（:912）一样：归一产物是 `UiEvent`，末端收口成
         // `AgentStreamEvent` 时统一 cast，保证两端契约一致。
-        queue.push(ui as AgentStreamEvent)
+        for (const ui of projector.feed(event)) {
+          queue.push(ui as AgentStreamEvent)
+        }
         notify?.()
       },
       () => {
