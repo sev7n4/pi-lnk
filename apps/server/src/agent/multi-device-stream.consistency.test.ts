@@ -174,6 +174,23 @@ describe('多端一致性集成（规格 §10 判据，真实 runEventStream + r
     expect(active.lastSeq).toBe(4)
   })
 
+  it('P2 重启窗：lazy-reload 重放流（journal 只含结构性事件、无 delta 帧）⇒ probe 仍 settled', async () => {
+    // 重启后 events 端点从 events.jsonl rebuild 重放（Task 2/3）：
+    // journal 刻意不含 message_update（写放大防线）⇒ 重放流里没有任何 delta 帧。
+    // ⭐ 本用例钉 Nest 侧契约：probe 裁决只依赖结构性事件（终态帧在即可），
+    // delta 缺失不得把 settled 误判成 active/none——否则重启窗对账失效。
+    seqCounter = 0
+    const journalRebuiltBuffer: PiRuntimeEvent[] = [
+      piEvent('turn_start', {}),
+      piEvent('tool_execution_start', { toolCallId: 'c1', toolName: 'run_text_generation', args: {} }),
+      piEvent('agent_end', {}),
+      piEvent('turn_end', {}),
+    ]
+    const settled = await makeService(journalRebuiltBuffer).reconcileLatestAssistant('T1', 0)
+    expect(settled.outcome).toBe('settled')
+    expect(settled.lastSeq).toBe(3) // 首个终态帧 done（agent_end seq3）即返回
+  })
+
   it('变异守卫：服务端丢 seq（去 id: 帧的等价形态）⇒ 迟连游标失效面暴露（红）', async () => {
     // 语义：Nest runEvents 的 `id: ${seq}` 与 mapPiEventToUiEvent 的 seq 透传是
     // 游标续传的原材料；本断言锁「事件必须携带 seq」——上游丢了 seq，B 的

@@ -606,7 +606,12 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 		async (request, reply) => {
 			const { sessionId } = request.params;
 			if (!manager.hasKey(sessionId)) {
-				return reply.code(404).send({ error: "session not found" });
+				// P2：重启窗 lazy reload——TTL 逐出/重启后磁盘会话先尝试重载再判 404
+				// （ensureLoaded 只读：磁盘无会话/身份不匹配 ⇒ false，404 语义不变）。
+				// 对账 probe（Nest reconcile）由此在重启窗不再恒 missing。
+				if (!(await manager.ensureLoaded(sessionId))) {
+					return reply.code(404).send({ error: "session not found" });
+				}
 			}
 			// 订阅起点优先级（P0-A，2026-09-29）见 resolveEventsSubscribeMode
 			const mode = resolveEventsSubscribeMode(request.query);
