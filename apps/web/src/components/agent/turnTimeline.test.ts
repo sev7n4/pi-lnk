@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   applyTimelineEvent,
+  composeSettledSegment,
   createTurnTimeline,
   finalizeTurnTimeline,
   refreshTimelineSummary,
@@ -216,7 +217,8 @@ describe('turnTimeline — 模型层（设计 §4 / §5-P1）', () => {
     const last = tl.parts[tl.parts.length - 1]
     expect(last.kind).toBe('notice')
     if (last.kind === 'notice') {
-      expect(last.text).toContain('提议生成')
+      // §14.5-C10：单提议单产物合并为「已生成 1 张」（旧文案「提议生成 N 张」退役）
+      expect(last.text).toContain('已生成 1 张')
       expect(last.text).toContain('tokens')
     }
   })
@@ -931,5 +933,96 @@ describe('2026-11-03 修复：add_node 延迟建卡（Q1 去重 / Q2+Q3 产物�
     expect(arts).toHaveLength(1)
     expect(arts[0].title).toBe('蓝色狐狸')
     expect(arts[0].status).toBe('done')
+  })
+})
+
+describe('§14 结算段治理（2026-11-04 修订）', () => {
+  const turnUsage = { inputTokens: 85000, cacheReadTokens: 500, outputTokens: 800, estimatedCredits: 7 }
+
+  it('§14.4 主样本：turn_settled → 「已结算 -7 积分（文本 · agnes-2.5-flash）」；「共消耗」与渠道前缀不再出现', () => {
+    const tl = feed([
+      { type: 'turn_usage', data: turnUsage },
+      { type: 'turn_settled', data: { holdId: 'h1', credits: 7, model: 'platform::agnes-2.5-flash' } },
+    ])
+    finalizeTurnTimeline(tl)
+    const last = tl.parts[tl.parts.length - 1]
+    expect(last.kind).toBe('notice')
+    if (last.kind === 'notice') {
+      expect(last.text).toContain('已结算 -7 积分（文本 · agnes-2.5-flash）')
+      expect(last.text).not.toContain('共消耗')
+      expect(last.text).not.toContain('platform::')
+    }
+  })
+
+  it('C9：degraded → 标注「按成本估算」；模型名缺 → 只留文本标注', () => {
+    expect(composeSettledSegment({ credits: 5, degraded: true, model: 'platform::step-3.5-flash' })).toBe(
+      '已结算 -5 积分（文本 · 按成本估算 · step-3.5-flash）',
+    )
+    expect(composeSettledSegment({ credits: 5 })).toBe('已结算 -5 积分（文本）')
+  })
+
+  it('C9 变异：released（预扣全退）不进结算段', () => {
+    const tl = feed([
+      { type: 'turn_usage', data: turnUsage },
+      { type: 'turn_settled', data: { holdId: 'h1', credits: 7, released: true, model: 'platform::m' } },
+    ])
+    finalizeTurnTimeline(tl)
+    const last = tl.parts[tl.parts.length - 1]
+    if (last.kind === 'notice') {
+      expect(last.text).not.toContain('已结算')
+    }
+  })
+
+  it('C10：单提议单产物 → 合并「已生成 1 张」，不再两段重复', () => {
+    const tl = feed([
+      addNode('n1'),
+      { type: 'node_status', data: { nodeId: 'n1', status: 'done' } },
+      { type: 'tool_call', data: { toolCallId: 'c1', name: 'propose_generation', args: { n: 1 } } },
+      { type: 'tool_result', data: { toolCallId: 'c1', name: 'propose_generation', result: {} } },
+      { type: 'turn_usage', data: { inputTokens: 100, outputTokens: 50 } },
+    ])
+    finalizeTurnTimeline(tl)
+    const last = tl.parts[tl.parts.length - 1]
+    if (last.kind === 'notice') {
+      expect(last.text).toContain('已生成 1 张')
+      expect(last.text).not.toContain('个产物')
+      expect(last.text).not.toContain('提议生成')
+    }
+  })
+
+  it('C10 反例：产物数 ≠ 提议数（含非提议产物）→ 保留分项口径', () => {
+    const tl = feed([
+      addNode('n1'),
+      { type: 'node_status', data: { nodeId: 'n1', status: 'done' } },
+      addNode('n2', 'text', '一段文案'),
+      { type: 'node_status', data: { nodeId: 'n2', status: 'done' } },
+      { type: 'tool_call', data: { toolCallId: 'c1', name: 'propose_generation', args: { n: 1 } } },
+      { type: 'tool_result', data: { toolCallId: 'c1', name: 'propose_generation', result: {} } },
+      { type: 'turn_usage', data: { inputTokens: 100, outputTokens: 50 } },
+    ])
+    finalizeTurnTimeline(tl)
+    const last = tl.parts[tl.parts.length - 1]
+    if (last.kind === 'notice') {
+      expect(last.text).toContain('已生成 2 个产物')
+      expect(last.text).toContain('提议生成 1 张')
+    }
+  })
+
+  it('C7：同一笔 turn_settled 喂两个渲染面，词族一致（均已结算 / 均含展示名）', async () => {
+    const { turnSettledText } = await import('@/components/agent/executionTraceReducer')
+    const settled = { credits: 7, model: 'platform::agnes-2.5-flash' }
+    const summarySegment = composeSettledSegment(settled)
+    // 纪律：mock 不用 as never（CI tsc 会因窄化报 TS2339）——按入参类型显式双跳
+    const traceState = { steps: [], collapsed: false, turnStartedAt: 0, settled } as unknown as Parameters<
+      typeof turnSettledText
+    >[0]
+    const traceText = turnSettledText(traceState)
+    expect(summarySegment.startsWith('已结算 -7 积分')).toBe(true)
+    expect(traceText!.startsWith('已结算 -7 积分')).toBe(true)
+    // 两表面模型名口径一致：同为展示名（剥前缀），且都无渠道前缀
+    expect(summarySegment).toContain('agnes-2.5-flash')
+    expect(traceText).toContain('agnes-2.5-flash')
+    expect(summarySegment.includes('::')).toBe(false)
+    expect(traceText!.includes('::')).toBe(false)
   })
 })

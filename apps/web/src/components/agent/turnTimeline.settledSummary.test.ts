@@ -26,7 +26,7 @@ describe('turnTimeline: turn_settled 结算摘要', () => {
     estimatedCredits: 2,
   }
 
-  it('settled 到达 → 摘要「共消耗 N 积分 · 模型名」，预估段不再出现', () => {
+  it('settled 到达 → 摘要「已结算 -N 积分（文本 · 展示名）」（§14 治理口径），预估段不再出现', () => {
     const tl = createTurnTimeline()
     applyTimelineEvent(tl, { type: 'turn_usage', data: { ...usage } })
     applyTimelineEvent(tl, {
@@ -34,7 +34,7 @@ describe('turnTimeline: turn_settled 结算摘要', () => {
       data: { holdId: 'h1', credits: 14, model: 'agnes-2.5-flash' },
     })
     const s = summarizeTimeline(tl)!
-    expect(s).toContain('共消耗 14 积分 · agnes-2.5-flash')
+    expect(s).toContain('已结算 -14 积分（文本 · agnes-2.5-flash）')
     expect(s).not.toContain('预估')
   })
 
@@ -44,7 +44,7 @@ describe('turnTimeline: turn_settled 结算摘要', () => {
     expect(summarizeTimeline(tl)).toContain('≈2 积分（预估）')
   })
 
-  it('released（预扣全退）→ 不显示共消耗，回退预估段', () => {
+  it('released（预扣全退）→ 不进结算段，回退预估段', () => {
     const tl = createTurnTimeline()
     applyTimelineEvent(tl, { type: 'turn_usage', data: { ...usage } })
     applyTimelineEvent(tl, { type: 'turn_settled', data: { holdId: 'h1', released: true } })
@@ -64,7 +64,7 @@ describe('turnTimeline: turn_settled 结算摘要', () => {
       type: 'turn_settled',
       data: { holdId: 'h1', credits: 14, model: 'agnes-2.5-flash' },
     })
-    expect(summaryText(tl)).toContain('共消耗 14 积分 · agnes-2.5-flash')
+    expect(summaryText(tl)).toContain('已结算 -14 积分（文本 · agnes-2.5-flash）')
     expect(summaryText(tl)).not.toContain('非正式结算')
   })
 
@@ -80,7 +80,7 @@ describe('turnTimeline: turn_settled 结算摘要', () => {
       '正文',
     )
     finalizeTurnTimeline(tl)
-    expect(summaryText(tl)).toContain('共消耗 7 积分 · agnes-2.5-flash')
+    expect(summaryText(tl)).toContain('已结算 -7 积分（文本 · agnes-2.5-flash）')
   })
 
   it('model 键缺失（旧落库事件）→ 只显示积分，不显示 undefined', () => {
@@ -88,7 +88,7 @@ describe('turnTimeline: turn_settled 结算摘要', () => {
     applyTimelineEvent(tl, { type: 'turn_usage', data: { ...usage } })
     applyTimelineEvent(tl, { type: 'turn_settled', data: { holdId: 'h1', credits: 14 } })
     const s = summarizeTimeline(tl)!
-    expect(s).toContain('共消耗 14 积分')
+    expect(s).toContain('已结算 -14 积分（文本）')
     expect(s).not.toContain('undefined')
   })
 })

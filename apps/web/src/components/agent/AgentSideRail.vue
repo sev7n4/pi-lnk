@@ -1927,6 +1927,7 @@ async function restoreSessionCreditHistory(sessionId: string) {
           kind: row.kind as CreditTxEvent['data']['kind'],
           category: row.category as CreditTxEvent['data']['category'],
           reason: row.reason,
+          generationId: row.generationId ?? undefined, // §14.4：restore 同写实耗 map，重开对话卡片仍翻转
           balanceAfter: row.balanceAfter ?? 0, // restore 不读余额；契约必填 number，undefined 会 TS2322
           ts: new Date(row.createdAt).getTime(),
         },

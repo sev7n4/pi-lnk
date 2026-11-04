@@ -129,3 +129,38 @@ describe('trackCreditTx（Epic1 前端口径 + 余额事件化）', () => {
     expect(store.crossSessionSpend).toBe(0)
   })
 })
+
+describe('§14.4 卡片对账：trackCreditTx 按 generationId 记录实耗净额', () => {
+  it('consume → generationSettledCredit 翻实耗；restore 回放同样写入（重开对话仍翻转）', async () => {
+    const { generationSettledCredit } = await import('@/composables/useProposalNodeData')
+    setActivePinia(createPinia())
+    const auth = useAuthStore()
+    vi.spyOn(auth, 'refreshPoints').mockResolvedValue(100)
+    const store = useAgentStore()
+    const genId = 'gen-abc'
+    store.trackCreditTx(
+      makeCreditTx({ txId: 'g1', category: 'image', amount: -33, generationId: genId }),
+    )
+    expect(generationSettledCredit(genId)).toBe(33)
+    // 历史回放（restore）路径同样写入
+    store.trackCreditTx(
+      makeCreditTx({ txId: 'g2', category: 'image', amount: -7, generationId: 'gen-r', sessionId: 's2' }),
+      { restore: true },
+    )
+    expect(generationSettledCredit('gen-r')).toBe(7)
+  })
+
+  it('退款回补 → 净额归零，卡片不再挂实耗', async () => {
+    const { generationSettledCredit } = await import('@/composables/useProposalNodeData')
+    setActivePinia(createPinia())
+    const auth = useAuthStore()
+    vi.spyOn(auth, 'refreshPoints').mockResolvedValue(100)
+    const store = useAgentStore()
+    store.trackCreditTx(makeCreditTx({ txId: 'h1', amount: -33, generationId: 'gen-x' }))
+    expect(generationSettledCredit('gen-x')).toBe(33)
+    store.trackCreditTx(
+      makeCreditTx({ txId: 'h2', kind: 'refund', amount: 33, generationId: 'gen-x' }),
+    )
+    expect(generationSettledCredit('gen-x')).toBeUndefined()
+  })
+})

@@ -13,6 +13,8 @@ export interface ProposalNodeData {
   style: string
   creditCost: number
   creditFromServer: boolean
+  /** 生成记录 id（节点 data.generationRecordId）——credit_tx 实耗对账的匹配键（§14.4 卡片翻转）。 */
+  generationRecordId: string
   thumbnail?: string
   nodeType: string
   /** 视频只读参数（videoSettings 内面，2026-11-02 模态感知分派：Sheet 只读展示真值，不提供编辑） */
@@ -99,6 +101,7 @@ export function resolveProposalNodeData(
     style,
     creditCost,
     creditFromServer: serverCredit !== undefined,
+    generationRecordId: typeof d.generationRecordId === 'string' ? d.generationRecordId : '',
     thumbnail: typeof d.url === 'string' ? d.url : undefined,
     nodeType: type,
     videoDuration,
@@ -182,4 +185,33 @@ export function proposalCreditCost(d: ProposalNodeData | null | undefined): numb
     return estimateImageCredits(q.count, q.resolution)
   }
   return undefined
+}
+
+/* ---------------------------------------------------------------------------
+ * quote→实耗 对账（规格 2026-11-03 §14.4 提议卡翻转）。
+ *
+ * 背景（生产实例）：提议卡 quote「消耗 33 积分」生成后不更新，而回合摘要只结算
+ * 文本费（7 积分）⇒ 用户看到两个打架的数字。credit_tx（CREDIT_TX=on）的生成类
+ * consume 携带 `generationId = record.id`，与节点 `generationRecordId` 同键 ⇒
+ * 卡片可原位翻转为「已结算 · 实耗 N 积分」。
+ *
+ * 模式沿用上方 quoteMap 先例：模块级响应式 Map + 渲染期纯读——组件保持零 store
+ * 依赖（ledger R1/R2），写入方是 `stores/agent.ts trackCreditTx`（SSE credit_tx 帧
+ * 与历史回放同路径）。
+ * ------------------------------------------------------------------------ */
+
+const settledGenerationCredits = reactive(new Map<string, number>())
+
+/** trackCreditTx 写入：generationId 有符号净额（consume 负 / refund 正，退款后净额归零不显示）。 */
+export function recordGenerationSettledCredit(generationId: string | null | undefined, amount: number): void {
+  if (!generationId) return
+  const prev = settledGenerationCredits.get(generationId) ?? 0
+  settledGenerationCredits.set(generationId, prev + amount)
+}
+
+/** 渲染期读：净额 < 0（已扣未退）→ 实耗绝对值；否则 undefined（quote pill 照常/不显示）。 */
+export function generationSettledCredit(generationId: string | null | undefined): number | undefined {
+  if (!generationId) return undefined
+  const net = settledGenerationCredits.get(generationId)
+  return typeof net === 'number' && net < 0 ? -net : undefined
 }
