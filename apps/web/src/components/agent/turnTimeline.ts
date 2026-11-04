@@ -18,6 +18,7 @@
 
 import type { CanvasAction } from '@lnkpi/shared'
 import { summarizeToolArgs } from '@/components/agent/toolArgSummary'
+import { resolveModelDisplayName } from '@/utils/model-display'
 import {
   canvasActionLabel,
   formatDuration,
@@ -965,8 +966,14 @@ export function summarizeTimeline(timeline: TurnTimeline): string | null {
   )
   const imageCount = proposeSteps.length
   const segments: string[] = []
-  if (productCount > 0) segments.push(`已生成 ${productCount} 个产物`)
-  if (imageCount > 0) segments.push(`提议生成 ${imageCount} 张`)
+  // C10（规格 §14.5）：单提议单产物（或数量相等）时「已生成 N 个产物 · 提议生成 N 张」
+  // 是同一件事说两遍 ⇒ 合并为「已生成 N 张」；数量不等（产物含非提议产物）保留分项。
+  if (productCount > 0 && imageCount > 0 && productCount === imageCount) {
+    segments.push(`已生成 ${productCount} 张`)
+  } else {
+    if (productCount > 0) segments.push(`已生成 ${productCount} 个产物`)
+    if (imageCount > 0) segments.push(`提议生成 ${imageCount} 张`)
+  }
   if (timeline.turnEndedAt != null) {
     segments.push(`用时 ${formatDuration(timeline.turnEndedAt - timeline.turnStartedAt)}`)
   }
@@ -981,12 +988,15 @@ export function summarizeTimeline(timeline: TurnTimeline): string | null {
     const tokenStr = tokens < 1000 ? `${tokens}` : `${(Math.round(tokens / 100) / 10).toFixed(1)}k`
     segments.push(`消耗 ${tokenStr} tokens`)
     // 2026-11-03 结算摘要（对齐 WorkBuddy 回合尾静态行）：settled 到达即用**权威结算值**
-    // 收口「共消耗 N 积分 · 模型名」，预估段（≈N 积分（预估））不再出现——预估是流式
-    // 瞬时态，绝不残留为最终数字。released（预扣全退）不显示负数；credits 缺（异常形态）
-    // 回退预估段。模型名缺（旧落库事件无 model 键）时只显示积分。
+    // 收口摘要行，预估段（≈N 积分（预估））不再出现——预估是流式瞬时态，绝不残留为
+    // 最终数字。released（预扣全退）不显示负数；credits 缺（异常形态）回退预估段。
     const settled = timeline.settled
-    if (settled && !settled.released && typeof settled.credits === 'number' && Number.isFinite(settled.credits)) {
-      segments.push(`共消耗 ${settled.credits} 积分${settled.model ? ` · ${settled.model}` : ''}`)
+    const settledCredits =
+      settled && !settled.released && typeof settled.credits === 'number' && Number.isFinite(settled.credits)
+        ? settled.credits
+        : null
+    if (settled && settledCredits != null) {
+      segments.push(composeSettledSegment({ credits: settledCredits, model: settled.model, degraded: settled.degraded }))
     } else {
       // Q2（2026-10-14）：摘要把消耗收敛到**积分**单一口径（与项目计费体系一致）——
       // USD cost 是上游内部成本口径，不再透出给用户；预估积分缺（渠道未配 pricing /
@@ -1005,6 +1015,35 @@ export function summarizeTimeline(timeline: TurnTimeline): string | null {
     }
   }
   return segments.length > 0 ? segments.join(' · ') : null
+}
+
+/**
+ * 结算段文案（规格 2026-11-03 §14.5-C9 单源）：
+ * `已结算 -N 积分（文本[ · 按成本估算][ · 模型展示名]）`。
+ *
+ * 违规修复背景（生产实例）：旧文案「共消耗 7 积分 · platform::agnes-2.5-flash」两处违规——
+ * ① `settled.credits` 只是**文本回合**费，标签「共消耗」把单项口径说成总额，与生成类
+ * quote（如图像 33）数字打架；② `settled.model` 原样透出渠道前缀 key。
+ * ⇒ C9：主体标注「文本」恒在（credits 是 turn_settled=文本回合权威值）；模型名恒经
+ * `resolveModelDisplayName`（目录缺失降级剥前缀裸名）。与 executionTrace `turnSettledText`
+ * 同「已结算」词族（C7 双表面口径一致）。生成类费用聚合（「对话 M · 生成 K」）依赖
+ * credit_tx 进时间线，列规格 §12 后续包。
+ */
+export function composeSettledSegment(settled: {
+  credits: number
+  model?: string
+  degraded?: boolean
+}): string {
+  const name = resolveModelDisplayName(settled.model)
+  const tags = ['文本']
+  if (settled.degraded) tags.push('按成本估算')
+  if (name) tags.push(name)
+  const segment = `已结算 -${settled.credits} 积分（${tags.join(' · ')}）`
+  // C9 不变量：任何路径都不允许渠道前缀泄漏到用户可见文案（编码纪律：模型名不含 ::）。
+  if (segment.includes('::')) {
+    throw new Error(`[C9] settled 段泄漏渠道前缀 key：${segment}`)
+  }
+  return segment
 }
 
 /** 历史重放：有序 executionEvents 直接回放（设计 §5-P1 双源接入·历史）。

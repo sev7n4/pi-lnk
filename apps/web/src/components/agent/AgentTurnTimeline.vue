@@ -24,9 +24,11 @@ import type { TimelinePart, ThinkingPart } from '@/components/agent/turnTimeline
 import {
   resolveProposalNodeData,
   proposalCreditCost,
+  generationSettledCredit,
   type ProposalCanvasNode,
   type ProposalNodeData,
 } from '@/composables/useProposalNodeData'
+import { resolveModelDisplayName } from '@/utils/model-display'
 import { tuneSheetOpen, tuneNodeId, openProposeTuneSheet } from './proposeWaitActions'
 import { CANVAS_NODE_CANCEL_KEY } from '@/composables/canvasNodeActions'
 import ProposeTuneSheet from './ProposeTuneSheet.vue'
@@ -196,6 +198,20 @@ function proposalCredit(nodeId?: string): number | undefined {
 }
 function artifactCredit(nodeId: string): number | undefined {
   return proposalCredit(nodeId)
+}
+
+/**
+ * quote→实耗 对账（规格 2026-11-03 §14.4）：credit_tx（generationId=节点
+ * generationRecordId）到达后，卡片原位翻转「已结算 · 实耗 N 积分」；
+ * 未到达/已退款（净额≥0）→ undefined，quote pill 照常。
+ */
+function settledActualCredit(nodeId?: string): number | undefined {
+  return generationSettledCredit(proposalData(nodeId)?.generationRecordId)
+}
+
+/** C8：model chip 展示名映射——渠道前缀 key（platform::…）绝不原样透出。 */
+function displayModelId(nodeId?: string): string {
+  return resolveModelDisplayName(proposalData(nodeId)?.modelId)
 }
 function onAskSubmit(
   part: Extract<TimelinePart, { kind: 'question' }>,
@@ -458,7 +474,8 @@ const rootClass = computed(() =>
             data-test="view-result"
             @click="onLocate(part.nodeId)"
           >查看结果 ↗</button>
-          <span v-if="part.status === 'done' && artifactCredit(part.nodeId)" class="status-pill credit">消耗 {{ artifactCredit(part.nodeId) }} 积分</span>
+          <span v-if="part.status === 'done' && settledActualCredit(part.nodeId)" class="status-pill credit" data-test="artifact-credit-settled">已结算 · 实耗 {{ settledActualCredit(part.nodeId) }} 积分</span>
+          <span v-else-if="part.status === 'done' && artifactCredit(part.nodeId)" class="status-pill credit">消耗 {{ artifactCredit(part.nodeId) }} 积分</span>
           <!-- failed：重试 + 未扣减 -->
           <button
             v-if="part.status === 'failed'"
@@ -537,7 +554,8 @@ const rootClass = computed(() =>
 
         <!-- 元信息（决策关键信息恒可见；积分 A-now 本地估算，C-later 服务端 creditCost 优先） -->
         <div v-if="proposalData(part.nodeId)" class="meta">
-          <span v-if="proposalData(part.nodeId)!.modelId" class="chip model">{{ proposalData(part.nodeId)!.modelId }}</span>
+          <!-- §14.5-C9：模型名经展示名映射（渠道前缀 key 绝不透出） -->
+          <span v-if="displayModelId(part.nodeId)" class="chip model">{{ displayModelId(part.nodeId) }}</span>
           <span v-if="proposalData(part.nodeId)!.aspectRatio" class="chip">{{ proposalData(part.nodeId)!.aspectRatio }}</span>
           <!-- 音频内联参数回执（2026-11-03 propose_inline_params）：台词段数/歌词字数/风格，
                用户确认前可见生成内容载体（与节点 data 同源，音频 dock 面板可改） -->
@@ -548,7 +566,12 @@ const rootClass = computed(() =>
           <!-- 2026-11-04 4 点优化③：去「预计」字眼 →「⚡ 消耗 N 积分」+ 琥珀强调
               （--lnk-credit 唯一积分语义令牌；闪电 svg 与 DockCreditBadge 同语义）。
                金额仍走 proposalCredit（creditCost 服务端权威 → estimate* 兜底），不编造。 -->
-          <span v-if="proposalCredit(part.nodeId)" class="chip credit" data-test="credit-chip">
+          <!-- §14.5-C 卡片对账：credit_tx 实耗到达 → 原位翻转「已结算 · 实耗」（quote 为生成前预估） -->
+          <span v-if="settledActualCredit(part.nodeId)" class="chip credit" data-test="credit-chip-settled">
+            <svg class="bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            已结算 · 实耗 {{ settledActualCredit(part.nodeId) }} 积分
+          </span>
+          <span v-else-if="proposalCredit(part.nodeId)" class="chip credit" data-test="credit-chip">
             <svg class="bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
             消耗 {{ proposalCredit(part.nodeId) }} 积分
           </span>

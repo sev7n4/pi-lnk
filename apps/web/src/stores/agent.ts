@@ -12,6 +12,7 @@ import {
 } from '@lnkpi/shared'
 import { parsePersistedToolCalls } from '@/components/agent/agentCanvasOutputs'
 import { summarizeToolArgs } from '@/components/agent/toolArgSummary'
+import { recordGenerationSettledCredit } from '@/composables/useProposalNodeData'
 import {
   applyCanvasAction,
   applyExplore,
@@ -687,6 +688,9 @@ export const useAgentStore = defineStore('agent', () => {
     const abs = Math.abs(data.amount)
     const base = creditTxByCategory[data.category] ?? 0
     creditTxByCategory[data.category] = data.kind === 'refund' ? base - abs : base + abs
+    // §14.4 卡片对账：按 generationId 记录有符号净额（历史回放 restore 同样写入，
+    // 重开对话后卡片仍能翻转实耗态）；显示侧由 generationSettledCredit 判净额<0。
+    recordGenerationSettledCredit(data.generationId, data.amount)
     if (opts?.restore) return
     // Epic 5 Task 11：漂移检测——余额降幅 > 本笔会话扣费 ⇒ 差额来自其他会话。
     // 只统计消耗方向（退款/充值令余额上升，不构成「凭空变少」的误判来源）。

@@ -136,3 +136,43 @@ describe('proposalCreditCost — 价目表权威取数', () => {
     expect(mod.proposalCreditCost(undefined)).toBeUndefined()
   })
 })
+
+describe('§14.4 quote→实耗 对账（generationSettledCredit）', () => {
+  it('generationRecordId 从节点 data 解析', async () => {
+    const { mod } = await fresh()
+    const d = mod.resolveProposalNodeData('n1', [
+      { id: 'n1', type: 'image', data: { ...imageNode.data, generationRecordId: 'gen-1' } },
+    ])!
+    expect(d.generationRecordId).toBe('gen-1')
+    expect(mod.resolveProposalNodeData('n1', [imageNode])!.generationRecordId).toBe('')
+  })
+
+  it('consume（负额）后翻实耗；credit_tx 未到达 → undefined（quote pill 照常）', async () => {
+    const { mod } = await fresh()
+    expect(mod.generationSettledCredit('gen-1')).toBeUndefined()
+    mod.recordGenerationSettledCredit('gen-1', -33)
+    expect(mod.generationSettledCredit('gen-1')).toBe(33)
+    expect(mod.generationSettledCredit('gen-unknown')).toBeUndefined()
+  })
+
+  it('幂等对账：同 generationId 两笔净额累计（重放去重由 txId 层负责，此处只保证净额正确）', async () => {
+    const { mod } = await fresh()
+    mod.recordGenerationSettledCredit('gen-1', -33)
+    mod.recordGenerationSettledCredit('gen-1', -33)
+    expect(mod.generationSettledCredit('gen-1')).toBe(66)
+  })
+
+  it('退款回补：净额归零 → 不再显示实耗（防「已退回还挂着实耗」误导）', async () => {
+    const { mod } = await fresh()
+    mod.recordGenerationSettledCredit('gen-1', -33)
+    mod.recordGenerationSettledCredit('gen-1', 33)
+    expect(mod.generationSettledCredit('gen-1')).toBeUndefined()
+  })
+
+  it('防御：generationId 缺省（后台赠送等）不写入不炸', async () => {
+    const { mod } = await fresh()
+    expect(() => mod.recordGenerationSettledCredit(null, -5)).not.toThrow()
+    expect(() => mod.recordGenerationSettledCredit(undefined, -5)).not.toThrow()
+    expect(mod.generationSettledCredit('')).toBeUndefined()
+  })
+})

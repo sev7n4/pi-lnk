@@ -1,6 +1,7 @@
 import type { CanvasAction } from '@lnkpi/shared'
 import { formatStructuredError } from '@/components/agent/executionStepErrors'
 import { summarizeToolArgs } from '@/components/agent/toolArgSummary'
+import { modelDisplaySuffix } from '@/utils/model-display'
 import {
   canvasActionLabel,
   formatDuration,
@@ -566,7 +567,8 @@ export function turnSettledText(trace: ExecutionTraceState | undefined | null): 
   if (settled.released) return '预扣已退回'
   if (typeof settled.credits !== 'number' || !Number.isFinite(settled.credits)) return null
   let text: string
-  const modelSuffix = typeof settled.model === 'string' && settled.model ? ` · ${settled.model}` : ''
+  // C8（规格 §14.5）：模型名经展示名映射，渠道前缀 key（platform::…）绝不原样透出
+  const modelSuffix = modelDisplaySuffix(settled.model)
   if (settled.degraded) {
     text = `已结算 -${settled.credits} 积分${modelSuffix}（按成本估算）`
   } else if (settled.tokens) {

@@ -147,23 +147,31 @@ export function createGenerationTools(
 		},
 	});
 
+	// ⚠️ 呈现纪律（规格 2026-11-03 §14.5）：账目数字与记录 id 由前端机器渲染
+	// （结算行 / credit pill / 生成记录详情），模型叙事只讲结果——
+	// 复述数字会与机器行打架（quote vs 实耗），裸 id 是内部标识符泄漏。
+	const PRESENTATION_DISCIPLINE =
+		" Never narrate billing numbers (credits/tokens) or raw generation record ids to the user; the UI renders the settlement line itself. Just report the outcome in plain words.";
 	return [
 		runTool(
 			"run_image_generation",
 			"执行图片生成",
-			"Start image generation for a canvas media node and return immediately with the job handle (generationRecordId); the result is reported in a later notification when the generation finishes. Requires the node to be pending user confirmation. status=fallback_pending in the response means user must confirm platform fallback on the canvas node. When the result includes imageRefine=\"attached\", the generated image is attached — inspect it against the task checklist before reporting. Do not claim the image is ready before the completion notice arrives.",
+			"Start image generation for a canvas media node and return immediately with the job handle (generationRecordId); the result is reported in a later notification when the generation finishes. Requires the node to be pending user confirmation. status=fallback_pending in the response means user must confirm platform fallback on the canvas node. When the result includes imageRefine=\"attached\", the generated image is attached — inspect it against the task checklist before reporting. Do not claim the image is ready before the completion notice arrives." +
+				PRESENTATION_DISCIPLINE,
 			"/agent/internal/start-image-generation",
 		),
 		runTool(
 			"run_video_generation",
 			"执行视频生成",
-			"Start video generation for a canvas media node and return immediately with the job handle (generationRecordId); the result is reported in a later notification (video takes up to ~11 min). Same confirmation and status semantics as run_image_generation.",
+			"Start video generation for a canvas media node and return immediately with the job handle (generationRecordId); the result is reported in a later notification (video takes up to ~11 min). Same confirmation and status semantics as run_image_generation." +
+				PRESENTATION_DISCIPLINE,
 			"/agent/internal/start-video-generation",
 		),
 		runTool(
 			"run_text_generation",
 			"执行文案生成",
-			"Start text generation for a canvas media node and return immediately with the job handle; generated copy is written into node content by the pipeline and reported in a later notification. Requires pending confirmation.",
+			"Start text generation for a canvas media node and return immediately with the job handle; generated copy is written into node content by the pipeline and reported in a later notification. Requires pending confirmation." +
+				PRESENTATION_DISCIPLINE,
 			"/agent/internal/start-text-generation",
 		),
 		// 被删历史（2026-10-17 prompt 节点下线，PR feat/prompt-node-decommission）：
@@ -176,7 +184,8 @@ export function createGenerationTools(
 			name: "run_audio_generation",
 			label: "执行音频生成",
 			description:
-				"Run audio generation for a canvas media node using node audio params. Requires pending confirmation. `kind` selects the audio sub-type: voice (default, TTS 配音) | design (综合音频：多角色台词+音效+氛围) | music (音乐/BGM). Sub-type-specific params may be passed inline and take precedence over node params: voice uses voice/emotion; design uses roles/scripts/instruction; music uses caption/lyrics/instrumental. Pick the kind that matches the request instead of defaulting to voice; if the requested kind's model is unavailable the tool returns an explicit error — report it, do not silently fall back.",
+				"Run audio generation for a canvas media node using node audio params. Requires pending confirmation. `kind` selects the audio sub-type: voice (default, TTS 配音) | design (综合音频：多角色台词+音效+氛围) | music (音乐/BGM). Sub-type-specific params may be passed inline and take precedence over node params: voice uses voice/emotion; design uses roles/scripts/instruction; music uses caption/lyrics/instrumental. Pick the kind that matches the request instead of defaulting to voice; if the requested kind's model is unavailable the tool returns an explicit error — report it, do not silently fall back." +
+				PRESENTATION_DISCIPLINE,
 			parameters: Type.Object({
 				node_id: Type.String({
 					description: "Media node id to generate for (from canvas summary, not title text)",
