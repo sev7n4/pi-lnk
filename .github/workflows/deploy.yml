@@ -88,6 +88,7 @@ jobs:
               - 'packages/shared/**'
               - 'deploy/nginx.conf'
               - 'deploy/deploy-web.sh'
+              - 'deploy/static/**'
               - '.github/workflows/deploy.yml'
 
   deploy-api:
@@ -494,8 +495,11 @@ jobs:
           set -euo pipefail
           DEPLOY_DIR="${{ env.DEPLOY_DIR }}"
           tar -czf /tmp/lnkpi-web-dist.tgz -C apps/web/dist .
-          scp /tmp/lnkpi-web-dist.tgz deploy/nginx.conf deploy/deploy-web.sh deploy-cvm:/tmp/
-          ssh deploy-cvm "bash -lc 'mkdir -p ${DEPLOY_DIR}/web/dist ${DEPLOY_DIR}/deploy && rm -rf ${DEPLOY_DIR}/web/dist/assets && tar -xzf /tmp/lnkpi-web-dist.tgz -C ${DEPLOY_DIR}/web/dist && cp /tmp/nginx.conf ${DEPLOY_DIR}/deploy/nginx.conf && cp /tmp/deploy-web.sh ${DEPLOY_DIR}/deploy/deploy-web.sh && chmod +x ${DEPLOY_DIR}/deploy/deploy-web.sh && rm -f /tmp/lnkpi-web-dist.tgz /tmp/nginx.conf /tmp/deploy-web.sh'"
+          scp /tmp/lnkpi-web-dist.tgz deploy/nginx.conf deploy/deploy-web.sh deploy/static/share-og-default.png deploy-cvm:/tmp/
+          # ⚠️ 分享默认 OG 卡必须随 web 部署落到主机 SHARE_DIR（nginx 直出，绕过 Nest）。
+          # 缺失则所有分享卡的 OG 预览图 404（#723 生产复测发现：deploy 从不播种该静态资源）。
+          # 仅在 web 部署路径播种——SHARE_DIR 在主机磁盘（bind 挂载），一次播种即持久。
+          ssh deploy-cvm "bash -lc 'mkdir -p ${DEPLOY_DIR}/web/dist ${DEPLOY_DIR}/deploy ${DEPLOY_DIR}/share && rm -rf ${DEPLOY_DIR}/web/dist/assets && tar -xzf /tmp/lnkpi-web-dist.tgz -C ${DEPLOY_DIR}/web/dist && cp /tmp/nginx.conf ${DEPLOY_DIR}/deploy/nginx.conf && cp /tmp/deploy-web.sh ${DEPLOY_DIR}/deploy/deploy-web.sh && chmod +x ${DEPLOY_DIR}/deploy/deploy-web.sh && cp -f /tmp/share-og-default.png ${DEPLOY_DIR}/share/share-og-default.png && chmod 644 ${DEPLOY_DIR}/share/share-og-default.png && rm -f /tmp/lnkpi-web-dist.tgz /tmp/nginx.conf /tmp/deploy-web.sh /tmp/share-og-default.png'"
 
       - name: Configure nginx on CVM
         run: |
@@ -509,7 +513,10 @@ jobs:
           WEB_PORT="${{ env.WEB_PORT }}"
           ssh deploy-cvm "curl -fsS http://127.0.0.1:${WEB_PORT}/ | grep -qi html && curl -fsS http://127.0.0.1:${WEB_PORT}/api/health" | head -c 200
           echo ""
-          echo "localhost verify OK (nginx + /api proxy)"
+          # 分享默认 OG 卡：静态直出（nginx location = /share-og-default.png），缺失即 404。
+          # 这条判据把「部署是否播种 OG 默认图」从猜测变成线上自证（#723 复测发现的回归护栏）。
+          ssh deploy-cvm "curl -fsS -o /dev/null http://127.0.0.1:${WEB_PORT}/share-og-default.png"
+          echo "localhost verify OK (nginx + /api proxy + /share-og-default.png 静态直出)"
           if curl -fsS --connect-timeout 5 --max-time 15 "http://${SSH_HOST}:${WEB_PORT}/api/health" | head -c 200; then
             echo ""
             echo "External verify OK"
