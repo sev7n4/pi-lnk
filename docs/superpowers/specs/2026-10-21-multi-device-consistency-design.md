@@ -55,7 +55,7 @@
 | `2026-10-17-agent-turn-identity-design.md`（回合身份） | **继承 + 补盲区** | 它立了 `owner`/`shadow` 单写者 + `@@unique([threadId, runId])`。但 `runId` 可空 ⇒ SQLite 下 NULL 互不冲突 ⇒ 生产 9443 条 assistant 里 **9368 条（99.2%）唯一索引完全失效**。本规格用消息级 `seq` 补上这层，且**不推翻**它的 `owner`/`shadow` 判据 |
 | `2026-10-19-propose-confirm-single-surface-design.md`（ADR-0011） | 不冲突 | 提议确认收敛为单一锚定表面，与本规格的投影面共用 `snapshot` 投影 |
 | `2026-10-17-mobile-composer-sse-boundary-design.md` | **相关，需对齐** | 它界定了 SSE 边界（stale 判定、insert-line）。本规格 Task 5 扩展同一套边界（加游标与退避），实现前须核对其既有判据不被破坏 |
-| `2026-11-03-e1-generation-terminal-write-tap-design.md`（E1 终态写点直通） | **相关，需对齐 `agentMessage` 写方契约** | 本规格 §7.1 给 `agentMessage` 加 `seq`+唯一索引；E1 链路的简报落库写方 `apps/server/src/agent/agent-canvas-tools.service.ts:3365`（经 `notifyTerminalsOnce` 的 onDelivered 钩子写入）须在索引落地前补 `seq`，否则唯一索引拒绝其 NULL 写入、简报落库崩。两规格并行开发时此接缝须在双方评审中互认（详见 §7.1 / §9） |
+| `2026-11-04-e-series-presence-roadmap-design.md`（E 系列路标合一载体，Part B = E1 终态写点直通，已实施） | **相关，需对齐 `agentMessage` 写方契约** | 本规格 §7.1 给 `agentMessage` 加 `seq`+唯一索引；E1 链路的简报落库写方 `apps/server/src/agent/agent-canvas-tools.service.ts:3365`（经 `notifyTerminalsOnce` 的 onDelivered 钩子写入）须在索引落地前补 `seq`，否则唯一索引拒绝其 NULL 写入、简报落库崩。两规格并行开发时此接缝须在双方评审中互认（详见 §7.1 / §9） |
 | PR #534（插话补气泡，commit `43151009`，已在 master） | **前置，非重复** | #534 做了**前端气泡层**（消费时补气泡 + 修 fork 切点被冲掉），**未落 `AgentMessage` 表**。本规格 Task 8 承接其后半段；**不改 #534 的既有实现** |
 
 ## 4. 规范与判据
@@ -321,7 +321,7 @@ model AgentMessage {
 
 ⚠️ 第 4 步是不可跳过的闸门——这正是 `runId` 当年埋的坑（`schema.prisma:358-361` 注释已写明「存量零回填」，代价是唯一索引至今对 99.2% 数据失效）。
 
-⚠️ **第 4 步的 NULL 审计必须覆盖全部 `agentMessage` 写方，含跨规格接缝**：写方不止 `agent.service.ts`（:465/:890/:952/:2930），还有 `apps/server/src/agent/agent-canvas-tools.service.ts:3365`（简报落库，经 `notifyTerminalsOnce` 的 onDelivered 钩子写入——属 E1 `2026-11-03-e1-generation-terminal-write-tap-design.md` 的投影落库链路）。该写方不在本规格 §9 主体编辑清单之外——**已纳入 §9 接缝行**，step 4 加 `@@unique([threadId, seq])` 前必须确认它也已补 `seq`；否则唯一索引会拒绝其 NULL 写入、简报落库崩。此接缝与 E1 规格协同：任一方在 E1 落地或本规格迁移 step 4 前把该写方补 `seq`，并在双方评审中互认（见 §3 关系表）。
+⚠️ **第 4 步的 NULL 审计必须覆盖全部 `agentMessage` 写方，含跨规格接缝**：写方不止 `agent.service.ts`（:465/:890/:952/:2930），还有 `apps/server/src/agent/agent-canvas-tools.service.ts:3365`（简报落库，经 `notifyTerminalsOnce` 的 onDelivered 钩子写入——属 E1 投影落库链路（`2026-11-04-e-series-presence-roadmap-design.md` Part B，已实施））。该写方不在本规格 §9 主体编辑清单之外——**已纳入 §9 接缝行**，step 4 加 `@@unique([threadId, seq])` 前必须确认它也已补 `seq`；否则唯一索引会拒绝其 NULL 写入、简报落库崩。此接缝与 E1 规格协同：任一方在 E1 落地或本规格迁移 step 4 前把该写方补 `seq`，并在双方评审中互认（见 §3 关系表）。
 
 ## 8. 纯函数与算法
 

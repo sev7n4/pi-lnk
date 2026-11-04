@@ -1,19 +1,19 @@
 {
- "total": 434,
+ "total": 440,
  "by_status": {
-  "living": 147,
-  "frozen": 278,
+  "living": 148,
+  "frozen": 283,
   "superseded": 9
  },
  "by_topic": {
-  "other": 96,
+  "other": 100,
   "canvas-tool": 75,
-  "generation-pipeline": 41,
+  "generation-pipeline": 42,
   "canvas-product": 34,
   "agent-ux": 32,
   "image-editor": 30,
   "tool-runtime": 25,
-  "planning": 19,
+  "planning": 20,
   "account-auth": 18,
   "workflow-exchange": 18,
   "ui-interaction": 15,
@@ -28,7 +28,7 @@
   "2026-08": 79,
   "2026-09": 155,
   "2026-10": 147,
-  "2026-11": 12
+  "2026-11": 18
  },
  "items": [
   {
@@ -1985,6 +1985,15 @@
    "topic": "other"
   },
   {
+   "path": "docs/superpowers/specs/2026-11-02-points-display-single-source.md",
+   "name": "2026-11-02-points-display-single-source.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
    "path": "docs/superpowers/specs/2026-11-02-propose-card-ux-optimization-design.md",
    "name": "2026-11-02-propose-card-ux-optimization-design.md",
    "month": "2026-11",
@@ -1992,6 +2001,24 @@
    "status": "frozen",
    "reason": "文内标注已实现/已交付",
    "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-03-proposal-card-credits-and-turn-estimate-ssot.md",
+   "name": "2026-11-03-proposal-card-credits-and-turn-estimate-ssot.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-11 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-04-e-series-presence-roadmap-design.md",
+   "name": "2026-11-04-e-series-presence-roadmap-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "planning"
   },
   {
    "path": "docs/superpowers/plans/2026-07-09-neowow-workflow.md",
@@ -3929,6 +3956,15 @@
    "topic": "other"
   },
   {
+   "path": "docs/superpowers/plans/2026-11-02-points-display-single-source.md",
+   "name": "2026-11-02-points-display-single-source.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-11 非活跃主题",
+   "topic": "other"
+  },
+  {
    "path": "docs/superpowers/plans/2026-11-02-propose-card-ux-optimization.md",
    "name": "2026-11-02-propose-card-ux-optimization.md",
    "month": "2026-11",
@@ -3936,6 +3972,24 @@
    "status": "frozen",
    "reason": "文内标注已实现/已交付",
    "topic": "canvas-tool"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-11-03-e1-generation-terminal-write-tap.md",
+   "name": "2026-11-03-e1-generation-terminal-write-tap.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "generation-pipeline"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-11-04-multi-device-consistency-p0-p1.md",
+   "name": "2026-11-04-multi-device-consistency-p0-p1.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-11 非活跃主题",
+   "topic": "other"
   }
  ]
 }
