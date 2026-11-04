@@ -6,6 +6,7 @@ import {
   deriveProposeConfirmAnchor,
   extrasForCanvasSave,
   flowToCanvasData,
+  mergeNodeData,
   shouldStartPolling,
   type FlowEdge,
   type FlowNode,
@@ -269,5 +270,34 @@ describe('shouldStartPolling：服务端启动生成的轮询挂载去重判据'
     expect(shouldStartPolling({ ...base, status: 'completed' }, null)).toBe(false)
     expect(shouldStartPolling({ status: 'generating' }, null)).toBe(false)
     expect(shouldStartPolling(null, null)).toBe(false)
+  })
+})
+
+describe('mergeNodeData 吸收态守卫（规格 2026-11-04-generation-terminal-projection §5.2）', () => {
+  it('终态节点被无新 recordId 的 generating 写回 ⇒ 整体丢弃 incoming', () => {
+    const existing = { status: 'error', generationRecordId: 'rec-1', errorMessage: 'x' }
+    expect(mergeNodeData(existing, { status: 'generating', title: '重放' })).toEqual(existing)
+  })
+
+  it('终态节点 + 携带新 recordId 的 generating ⇒ 放行（新一轮生成合法重置）', () => {
+    const merged = mergeNodeData(
+      { status: 'error', generationRecordId: 'rec-1' },
+      { status: 'generating', generationRecordId: 'rec-2' },
+    )
+    expect(merged.status).toBe('generating')
+    expect(merged.generationRecordId).toBe('rec-2')
+  })
+
+  it('非终态节点照常合并（pending_confirm 旧守卫不受影响）', () => {
+    const merged = mergeNodeData({ status: 'draft' }, { status: 'pending_confirm' })
+    expect(merged.status).toBe('pending_confirm')
+  })
+
+  it('update_node 走 applyActionsToFlow 时守卫生效', () => {
+    const nodes = [node('n1', { status: 'error', generationRecordId: 'rec-1' })]
+    const out = applyActionsToFlow(nodes, [], [
+      { type: 'update_node', payload: { id: 'n1', data: { status: 'generating' } } } as CanvasAction,
+    ])
+    expect(out.nodes[0].data.status).toBe('error')
   })
 })

@@ -469,11 +469,12 @@ export class PiRuntimeClient {
 		sessionId: string,
 		payload: {
 			nodeId: string;
-			status: "completed" | "failed";
+			status: "completed" | "failed" | "cancelled";
 			recordId?: string;
 			kind?: string;
 			url?: string;
 			error?: string;
+			refundedPoints?: number;
 		},
 	): Promise<{ delivered: boolean; reason?: string }> {
 		const { status, body } = await this.request<{ delivered?: boolean; reason?: string; error?: string }>(

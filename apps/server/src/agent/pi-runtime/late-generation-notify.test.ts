@@ -339,3 +339,69 @@ describe("扫描失败降级（不刷屏）", () => {
 		expect(sent[0].payload).toMatchObject({ nodeId: "node-1", status: "completed", kind: "视频", url: "https://x/v.mp4" });
 	});
 });
+
+// ── 2026-11-04 cancelled 一等公民化（规格 generation-terminal-projection §5.4）──
+//
+// 取消记录的 record.status 也是 'failed'（结算词汇表不扩），靠 metadata.errorCode
+// 区分。此前被硬映射成 failed 通报「生成失败」——用户自己的取消被当故障播报
+// （2026-11-04 刷屏事故推手之一）。
+
+describe("notifyLateGenerationTerminals —— cancelled 通报", () => {
+	it("errorCode=cancelled 记录 → status='cancelled' + refundedPoints 透传，不再谎报 failed", async () => {
+		const { prisma } = makePrisma([
+			rec({
+				status: "failed",
+				metadata: JSON.stringify({
+					errorCode: "cancelled",
+					refundedPoints: 33,
+					userMessage: "已取消",
+				}),
+			}),
+		], { "canvas-1": "canvas-1:main" });
+		const sent: Array<Record<string, unknown>> = [];
+		const client = {
+			notifyGeneration: async (_sessionId: string, payload: Record<string, unknown>) => {
+				sent.push(payload);
+				return { delivered: true };
+			},
+		};
+		await notifyLateGenerationTerminals(prisma, client, silentLogger);
+		expect(sent).toHaveLength(1);
+		expect(sent[0]).toMatchObject({
+			nodeId: "node-1",
+			status: "cancelled",
+			refundedPoints: 33,
+		});
+	});
+
+	it("errorCode=cancelled 且无退分 → status='cancelled' 无 refundedPoints 键", async () => {
+		const { prisma } = makePrisma([
+			rec({ status: "failed", metadata: JSON.stringify({ errorCode: "cancelled" }) }),
+		], { "canvas-1": "canvas-1:main" });
+		const sent: Array<Record<string, unknown>> = [];
+		const client = {
+			notifyGeneration: async (_sessionId: string, payload: Record<string, unknown>) => {
+				sent.push(payload);
+				return { delivered: true };
+			},
+		};
+		await notifyLateGenerationTerminals(prisma, client, silentLogger);
+		expect(sent[0].status).toBe("cancelled");
+		expect(sent[0]).not.toHaveProperty("refundedPoints");
+	});
+
+	it("非 cancelled 失败仍通报 failed（行为保留）", async () => {
+		const { prisma } = makePrisma([
+			rec({ status: "failed", metadata: JSON.stringify({ errorCode: "upstream_timeout", userMessage: "上游超时" }) }),
+		], { "canvas-1": "canvas-1:main" });
+		const sent: Array<Record<string, unknown>> = [];
+		const client = {
+			notifyGeneration: async (_sessionId: string, payload: Record<string, unknown>) => {
+				sent.push(payload);
+				return { delivered: true };
+			},
+		};
+		await notifyLateGenerationTerminals(prisma, client, silentLogger);
+		expect(sent[0].status).toBe("failed");
+	});
+});

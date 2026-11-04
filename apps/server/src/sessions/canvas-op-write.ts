@@ -60,6 +60,11 @@ export interface GovernedCanvasOpOpts {
    * （composition confirm 的 BadRequest 语义）传自己的抛错 parse。
    */
   parse?: (raw: string | null | undefined) => CanvasData
+  /**
+   * 吸收态守卫拒绝留痕（规格 2026-11-04-generation-terminal-projection §5.2
+   * 打点 `terminal_regen_rejected`）：传 logger 的写者获得观测，不传则静默拒绝。
+   */
+  onGuardReject?: (nodeId: string) => void
 }
 
 /**
@@ -84,7 +89,10 @@ export async function transactGovernedCanvasOps(
     const current = parse(session.canvasData)
     const built = build(current)
     if (!built || built.ops.length === 0) return { outcome: 'skipped_no_ops' }
-    const updated = applyCanvasActions(current, built.ops)
+    const updated = applyCanvasActions(current, built.ops, {
+      onGuardReject: (nodeId) =>
+        opts.onGuardReject?.(nodeId),
+    })
     const merged: CanvasData = { ...current, ...updated }
     await tx.session.update({
       where: { id: sessionId },

@@ -1,4 +1,5 @@
 import type { CanvasAction, CanvasData } from '@lnkpi/shared'
+import { isTerminalRegen } from '@lnkpi/shared'
 import { dedupeNodesById } from '@/pages/canvas/canvasNodeMerge'
 
 export interface FlowNode {
@@ -32,6 +33,23 @@ export function mergeNodeData(
   existingData: Record<string, unknown> | undefined,
   incomingData: Record<string, unknown> | undefined,
 ): Record<string, unknown> {
+  // 吸收态守卫（规格 2026-11-04-generation-terminal-projection §5.2，与
+  // packages/agent applyCanvasActions 同一纯函数）：终态节点被无新 recordId 的
+  // 在途态写回 ⇒ 整体丢弃 incoming（陈旧快照回灌/SSE 重放在此结构性阻断）。
+  // 这是 2026-11-04「取消后 toast 刷屏」事故的写入侧根治点。
+  if (
+    isTerminalRegen({
+      currentStatus: existingData?.status,
+      currentRecordId: existingData?.generationRecordId,
+      incomingStatus: incomingData?.status,
+      incomingRecordId: incomingData?.generationRecordId,
+    })
+  ) {
+    console.warn(
+      `terminal_regen_rejected record=${String(existingData?.generationRecordId ?? 'unknown')}`,
+    )
+    return { ...(existingData ?? {}) }
+  }
   const merged = { ...existingData, ...incomingData }
   const existingStatus = String(existingData?.status ?? '')
   if (

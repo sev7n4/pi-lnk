@@ -1714,6 +1714,18 @@ describe('AgentCanvasToolsService', () => {
       expect(canvas.nodes[0].data.errorMessage).toBe('已取消')
     })
 
+    it('cancelGeneration 投影契约：结算结果含退分 ⇒ errorCode=cancelled + 退分文案（规格 2026-11-04 §5.1）', async () => {
+      cancelGenerationStudio.mockResolvedValue({
+        id: 'rec-1',
+        status: 'failed',
+        metadata: JSON.stringify({ errorCode: 'cancelled', refundedPoints: 33 }),
+      })
+      await svc.cancelGeneration({ sessionId: 's1', userId: 'u1', nodeId: 'img-1' })
+      expect(canvas.nodes[0].data.errorCode).toBe('cancelled')
+      expect(canvas.nodes[0].data.errorMessage).toBe('已取消，33 积分已返回')
+      expect(canvas.nodes[0].data.generationRecordId).toBe('rec-1')
+    })
+
     it('getGenerationDiagnostic delegates to studio', async () => {
       const d = await svc.getGenerationDiagnostic({
         sessionId: 's1',

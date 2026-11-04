@@ -3,6 +3,7 @@ import {
   extractRefundedPointsFromError,
   formatCancelledMessage,
   formatGenerationFailureMessage,
+  formatTerminalFailureMessage,
 } from '@/utils/generationPointsMessage'
 
 function axiosLikeError(message: string, extra?: Record<string, unknown>) {
@@ -54,6 +55,32 @@ describe('formatCancelledMessage', () => {
 
   it('includes refunded points when positive', () => {
     expect(formatCancelledMessage(8)).toBe('已取消，8 积分已返回')
+  })
+})
+
+describe('formatTerminalFailureMessage（终态文案单一映射，规格 2026-11-04 §5.3）', () => {
+  it('优先级 1：errorCode=cancelled ⇒ 取消文案（含退分），压过 serverMessage 与退分失败分支', () => {
+    expect(
+      formatTerminalFailureMessage({ errorCode: 'cancelled', refundedPoints: 33, serverMessage: '已取消' }),
+    ).toBe('已取消，33 积分已返回')
+    expect(formatTerminalFailureMessage({ errorCode: 'cancelled' })).toBe('已取消')
+  })
+
+  it('优先级 2：非 cancelled ⇒ serverMessage 透传（B2 行为保留）', () => {
+    expect(
+      formatTerminalFailureMessage({ errorCode: 'upstream_error', serverMessage: '上游响应超时', refundedPoints: 5 }),
+    ).toBe('上游响应超时')
+  })
+
+  it('优先级 3：无 serverMessage ⇒ 退分失败文案', () => {
+    expect(formatTerminalFailureMessage({ errorCode: 'upstream_timeout', refundedPoints: 10 })).toBe(
+      '生成失败，10 积分已返回',
+    )
+  })
+
+  it('优先级 4：全缺 ⇒ 兜底「生成失败」', () => {
+    expect(formatTerminalFailureMessage({})).toBe('生成失败')
+    expect(formatTerminalFailureMessage({ serverMessage: '   ' })).toBe('生成失败')
   })
 })
 

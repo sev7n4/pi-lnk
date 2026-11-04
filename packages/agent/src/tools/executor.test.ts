@@ -143,4 +143,80 @@ describe('applyCanvasActions', () => {
     expect(result.nodes).toHaveLength(2)
     expect(result.edges).toHaveLength(1)
   })
+
+  // 吸收态守卫（规格 2026-11-04-generation-terminal-projection §5.2）：
+  // 2026-11-04 取消刷屏事故的写入侧根治——终态节点不得被无新 recordId 的
+  // 在途态 op 拉回 generating（陈旧快照回灌 / SSE 重放同族向量）。
+  describe('吸收态守卫 isTerminalRegen', () => {
+    const errorNode = (data: Record<string, unknown> = {}): CanvasData => ({
+      nodes: [
+        {
+          id: 'n1',
+          type: 'image',
+          position: { x: 0, y: 0 },
+          data: { status: 'error', generationRecordId: 'rec-1', errorMessage: 'x', ...data },
+        },
+      ],
+      edges: [],
+    })
+
+    it('update_node：终态 → generating（同 recordId）被整体丢弃', () => {
+      const result = applyCanvasActions(errorNode(), [
+        { type: 'update_node', payload: { id: 'n1', data: { status: 'generating', title: '新' } } },
+      ])
+      expect(result.nodes[0]?.data.status).toBe('error')
+      expect(result.nodes[0]?.data.title).toBeUndefined()
+    })
+
+    it('update_node：终态 → generating 且携带新 recordId ⇒ 放行（新一轮生成合法重置）', () => {
+      const result = applyCanvasActions(errorNode(), [
+        {
+          type: 'update_node',
+          payload: { id: 'n1', data: { status: 'generating', generationRecordId: 'rec-2' } },
+        },
+      ])
+      expect(result.nodes[0]?.data.status).toBe('generating')
+      expect(result.nodes[0]?.data.generationRecordId).toBe('rec-2')
+    })
+
+    it('update_node：非吸收回写（error→completed 等）不受影响', () => {
+      const result = applyCanvasActions(errorNode(), [
+        { type: 'update_node', payload: { id: 'n1', data: { status: 'completed', url: 'u' } } },
+      ])
+      expect(result.nodes[0]?.data.status).toBe('completed')
+      expect(result.nodes[0]?.data.url).toBe('u')
+    })
+
+    it('add_node 重放：终态节点不被 generating data 覆盖，回调留痕', () => {
+      const rejected: string[] = []
+      const result = applyCanvasActions(
+        errorNode(),
+        [
+          {
+            type: 'add_node',
+            payload: {
+              id: 'n1',
+              nodeType: 'image',
+              position: { x: 1, y: 1 },
+              data: { status: 'generating', title: '重放' },
+            },
+          },
+        ],
+        { onGuardReject: (id) => rejected.push(id) },
+      )
+      expect(result.nodes[0]?.data.status).toBe('error')
+      expect(result.nodes[0]?.data.title).toBeUndefined()
+      expect(rejected).toEqual(['n1'])
+    })
+
+    it('onGuardReject 回调：update_node 拒绝时带 nodeId', () => {
+      const rejected: string[] = []
+      applyCanvasActions(
+        errorNode(),
+        [{ type: 'update_node', payload: { id: 'n1', data: { status: 'generating' } } }],
+        { onGuardReject: (id) => rejected.push(id) },
+      )
+      expect(rejected).toEqual(['n1'])
+    })
+  })
 })

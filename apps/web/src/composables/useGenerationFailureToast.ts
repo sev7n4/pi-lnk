@@ -4,10 +4,20 @@ import { h, onScopeDispose } from 'vue'
 interface NodeErrorLike {
   status?: unknown
   errorMessage?: unknown
+  errorCode?: unknown
+  generationRecordId?: unknown
 }
 
-/** 取消是用户动作不是故障：errorMessage 以「已取消」开头的不 toast。 */
+/**
+ * 取消是用户动作不是故障（规格 2026-11-04-generation-terminal-projection §5.3）：
+ * 判据 = errorCode === 'cancelled'（结构化语义，一等判据）；
+ * `errorMessage` 以「已取消」开头是**旧数据兼容分支**（存量记录 metadata 无
+ * errorCode 时由旧写者落下的文案），存量画布被对账收敛后可退役。
+ * ⛔ 不再只靠文案判据——2026-11-04 刷屏事故里轮询写者把取消渲染成
+ * 「生成失败，N 积分已返回」，字符串嗅探即被击穿。
+ */
 function isCancellation(node: NodeErrorLike): boolean {
+  if (node.errorCode === 'cancelled') return true
   const msg = typeof node.errorMessage === 'string' ? node.errorMessage : ''
   return msg.startsWith('已取消')
 }
@@ -35,6 +45,8 @@ export interface FailureToastNode {
   title?: string
   status?: unknown
   errorMessage?: unknown
+  errorCode?: unknown
+  generationRecordId?: unknown
 }
 
 export interface FailureToastOptions {
@@ -43,16 +55,30 @@ export interface FailureToastOptions {
 }
 
 /**
- * 节点失败 toast：同一 nodeId 只 toast 一次，直到该节点重新开始生成
- * （调用方在 → generating 边上调 clearNodeDedupe）。「失败→重试→再失败」
- * 必须第二次也 toast，所以去重键不是永久的。
+ * 节点失败 toast 去重：键 = 生成记录维度（`rec:<recordId>`，无 recordId 的旧数据
+ * 退 `node:<nodeId>`），直到新一轮生成（新 recordId 绑定节点）才可能再 toast。
+ *
+ * ⭐ 2026-11-04 刷屏根治：键从 nodeId 升级为 recordId，且 **record 键永不因
+ * 「→generating 边」清除**——重载把服务端陈旧 generating 快照拉回来再轮询写
+ * error，同一 record 的第二次到达会被去重吃掉（此前 nodeId 键 + generating 边
+ * 清键 = 弹窗数等于重载数）。「失败→重试→再失败」第二次必须 toast 的既有契约
+ * 保留：重试 = 新 recordId = 新去重键。
  */
 export function useGenerationFailureToast(opts: FailureToastOptions) {
   const toasted = new Set<string>()
 
+  function dedupeKeyOf(node: FailureToastNode): string {
+    const recordId =
+      typeof node.generationRecordId === 'string' && node.generationRecordId
+        ? node.generationRecordId
+        : ''
+    return recordId ? `rec:${recordId}` : `node:${node.id}`
+  }
+
   function onNodeError(node: FailureToastNode): void {
-    if (toasted.has(node.id)) return
-    toasted.add(node.id)
+    const key = dedupeKeyOf(node)
+    if (toasted.has(key)) return
+    toasted.add(key)
     const title = node.title?.trim() || '节点'
     const msg =
       typeof node.errorMessage === 'string' && node.errorMessage ? node.errorMessage : '生成失败'
@@ -72,9 +98,12 @@ export function useGenerationFailureToast(opts: FailureToastOptions) {
     })
   }
 
-  /** 重试开始（节点 → generating）时调用：解除该节点去重。 */
+  /**
+   * 重试开始（节点 → generating，且 recordId 未变）时调用：解除该节点的
+   * **node 维度**去重（无 recordId 的旧数据路径）。rec 维度键不受影响。
+   */
   function clearNodeDedupe(nodeId: string): void {
-    toasted.delete(nodeId)
+    toasted.delete(`node:${nodeId}`)
   }
 
   onScopeDispose(() => toasted.clear())
