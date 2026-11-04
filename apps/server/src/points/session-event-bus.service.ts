@@ -24,6 +24,34 @@ export type TurnSettledBusEvent = {
 export type TurnSettledListener = (ev: TurnSettledBusEvent) => void
 
 /**
+ * turn_ack 总线事件（P3 G1，multi-device spec §5.2 D4）：streamConversation 在
+ * drain 模式（flag `STREAM_MAIN_FROM_PIRUNTIME=on`）下 yield 帧被后台 drain 丢弃
+ * ⇒ 服务端已裁定的回合归属（run/steer/followup）前端经 /runs/events 收不到。
+ * 字段与 turn_ack 流事件 data 相同 + 路由用的 sessionId。
+ */
+export type TurnAckBusEvent = {
+  sessionId?: string
+  runId?: string
+  mode: 'run' | 'steer' | 'followup'
+  reason?: 'not_idle' | 'not_steerable'
+  messageId?: string
+}
+
+/**
+ * turn_not_submitted 总线事件（P3 G1）：409 转 steer/followUp 的结构化拒绝告知帧。
+ * ⚠️ 受众面变化（flag-off 下只有提交者自己的 POST 流可见）：桥接进 /runs/events
+ * 后观察者也会收到 —— web 端必须圈定 own-turn 作用域（fut.ts 派发层转发不收口 +
+ * AgentSideRail ownTurnViaObserver gate），观察者路径忽略（P3 计划 Review Focus 1）。
+ */
+export type TurnNotSubmittedBusEvent = {
+  sessionId?: string
+  reason: 'not_idle' | 'not_steerable'
+}
+
+export type TurnAckListener = (ev: TurnAckBusEvent) => void
+export type TurnNotSubmittedListener = (ev: TurnNotSubmittedBusEvent) => void
+
+/**
  * 迟到订阅回放窗口（2026-11-04 结算实时性根治，机制 A 防御）：
  * 仅回放保留时刻距今不超过该窗口的最近一笔 turn_settled。
  *
@@ -56,6 +84,8 @@ export class SessionEventBus {
   private readonly sessionEmitters = new Map<string, EventEmitter>()
   private readonly userEmitters = new Map<string, EventEmitter>()
   private readonly turnSettledEmitters = new Map<string, EventEmitter>()
+  /** turn_ack 与 turn_not_submitted 共用注册表（两者同源于 streamConversation 的裁定块）。 */
+  private readonly turnAckEmitters = new Map<string, EventEmitter>()
 
   /**
    * 迟到订阅回放（2026-11-04 结算实时性根治，机制 A 防御）：按会话保留最近一笔
@@ -120,11 +150,40 @@ export class SessionEventBus {
     return unsub
   }
 
+  /** streamConversation 在 drain 模式下与 turn_ack yield 同点调用；无 sessionId 静默丢弃。 */
+  emitTurnAck(ev: TurnAckBusEvent): void {
+    if (!ev.sessionId) return
+    // ⭐ 刻意无保留表（与 turn_settled 不同）：turn_ack 是回合裁定语义，迟到回放会把
+    // 新回合误标「已并入」⇒ 只投订阅在飞的连接（session-event-bus.turn-ack.test.ts N）。
+    this.turnAckEmitters.get(ev.sessionId)?.emit('turn_ack', ev)
+  }
+
+  /** streamConversation 在 drain 模式下与 turn_not_submitted yield 同点调用；无 sessionId 静默丢弃。 */
+  emitTurnNotSubmitted(ev: TurnNotSubmittedBusEvent): void {
+    if (!ev.sessionId) return
+    this.turnAckEmitters.get(ev.sessionId)?.emit('turn_not_submitted', ev)
+  }
+
+  /**
+   * runEventStream 订阅本会话的 turn_ack 补桥；结束时退订。
+   * ⭐ 刻意**无迟到回放**（与 turn_settled 的 15s replay 不同）：turn_settled 是
+   * 幂等覆盖写、回放自愈无害；turn_ack 是回合**裁定**语义，重挂后的新订阅回放
+   * 旧 ack 会把新回合误标「已并入」⇒ 只投订阅在飞的连接。
+   */
+  subscribeSessionTurnAck(sessionId: string, fn: TurnAckListener): () => void {
+    return this.subscribe(this.turnAckEmitters, sessionId, 'turn_ack', fn)
+  }
+
+  /** runEventStream 订阅本会话的 turn_not_submitted 补桥；结束时退订。同样无回放。 */
+  subscribeSessionTurnNotSubmitted(sessionId: string, fn: TurnNotSubmittedListener): () => void {
+    return this.subscribe(this.turnAckEmitters, sessionId, 'turn_not_submitted', fn)
+  }
+
   private subscribe(
     registry: Map<string, EventEmitter>,
     key: string,
-    event: 'credit_tx' | 'turn_settled',
-    fn: CreditTxListener | TurnSettledListener,
+    event: 'credit_tx' | 'turn_settled' | 'turn_ack' | 'turn_not_submitted',
+    fn: CreditTxListener | TurnSettledListener | TurnAckListener | TurnNotSubmittedListener,
   ): () => void {
     let emitter = registry.get(key)
     if (!emitter) {

@@ -399,6 +399,10 @@ export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTail
                 deps.onTextDelta?.((payload.data as { text?: string } | undefined)?.text ?? '')
               } else if (payload.type === 'canvas_action') {
                 deps.onCanvasAction?.(payload.data)
+              } else if (payload.type === 'turn_not_submitted') {
+                // P3（Review Focus 1）：结构化拒绝帧的受众=提交者本人（own-turn）。
+                // 旁观最小面不消费——运行中的 run 与「第三方消息被拒」无关，
+                // 据此收尾会把旁观轮提前掐断（turn_ack 无此问题：done 已是观察者终态）。
               } else if (isTurnTerminal(payload.type)) {
                 deps.onTurnEnd?.()
               }

@@ -692,9 +692,28 @@ export class AgentService implements OnModuleInit {
       }
       return !supersededBy
     })
+    // P3 G3（D5 收口）：queued 的消费判定走**读时派生**——steer 在 turn 边界消费、
+    // followUp 在收尾边界消费，而 owner 流在 agent_end 即收尾（早于 followUp 消费）
+    // ⇒ 写时翻转要么过早要么依赖 runtime queue_update 事件（刻意不进 SSE，
+    // session-manager.ts:1740）。desc 分页下 reply 恒新于 user 行 ⇒ 必在同窗或更早页，
+    // 窗口内判定即全局判定（P3 计划 Review Focus 4）。
+    const latestAssistantAt = visible.reduce<number>((acc, r) => {
+      if (r.role === 'assistant') {
+        const ts = new Date(r.createdAt).getTime()
+        return ts > acc ? ts : acc
+      }
+      return acc
+    }, 0)
+    const derived = visible.map((r) =>
+      r.role === 'user' &&
+      r.queued &&
+      latestAssistantAt > new Date(r.createdAt).getTime()
+        ? { ...r, queued: false }
+        : r,
+    )
     // rawCount = DB 原始行数（过滤前）：overfetch 窗口 (take*2) 被打满时保守判定有下一页，
     // 避免 superseded 重负载线程误判 hasMore=false 截断历史（审查 P1）。
-    return paginateVisibleRows(visible, take, rows.length)
+    return paginateVisibleRows(derived, take, rows.length)
   }
 
   async listThreads(sessionId: string) {
@@ -774,11 +793,14 @@ export class AgentService implements OnModuleInit {
   billingSource?: 'user' | 'automation',
   /**
    * 2026-11-04 实时补桥（flag `STREAM_MAIN_FROM_PIRUNTIME=on`）：drain 模式下
-   * generator 的 yield 帧被后台 drain 丢弃（仅保留落库副作用）⇒ turn_settled
-   * 经 /runs/events 收不到，前端实时摘要缺结算段（刷新重放才见）。置 true 时
-   * 结算块的权威值同步 emit 到 SessionEventBus，由 `runEventStream` 订阅注入
-   * （与 credit_tx Epic 1 Task 5 同款接线）。flag-off 主流直收 yield，**不置**
-   * （防双发）。⚠️ 追加在参数表**末尾**：本方法有 ~40 处按位置调用的测试。
+   * generator 的 yield 帧被后台 drain 丢弃（仅保留落库副作用）⇒ turn_settled 经
+   * /runs/events 收不到，前端实时摘要缺结算段（刷新重放才见）。置 true 时结算块
+   * 的权威值同步 emit 到 SessionEventBus，由 `runEventStream` 订阅注入（与
+   * credit_tx Epic 1 Task 5 同款接线）。flag-off 主流直收 yield，**不置**（防双发）。
+   * P3 G1（2026-11-05）：语义扩为 **drain 补桥总开关**——turn_settled 之外，
+   * turn_ack / turn_not_submitted 两个裁定帧也经本 gate 补投（不改名：
+   * startConversationRun 调用点零改动）。⚠️ 追加在参数表**末尾**：本方法有
+   * ~40 处按位置调用的测试。
    */
   streamOpts?: { bridgeSettledToBus?: boolean },
   ): AsyncGenerator<AgentStreamEvent> {
@@ -1313,6 +1335,29 @@ export class AgentService implements OnModuleInit {
         notify?.()
       })
     }
+    // P3 G1：turn_ack / turn_not_submitted 补桥订阅（streamConversation drain 模式 emit）。
+    // 剥掉路由用 sessionId 再下发（与 settled 补桥同口径）。两订阅共用一个退订聚合。
+    // ⚠️ 路由键主路径一致性（Review Focus 5）：本方法订阅键 = sessionKey（controller
+    // 传 threadId||sessionId），emit 键 = streamConversation 的 sessionId 首参；主路径
+    // threadId===sessionId ⇒ 一致。fork 线程的不对称属既有 turn_settled 桥问题，只记录不修。
+    let turnAckUnsub: (() => void) | undefined
+    if (this.eventBus) {
+      const unsubs: Array<() => void> = [
+        this.eventBus.subscribeSessionTurnAck(sessionKey, (ev) => {
+          const { sessionId: _routeKey, ...data } = ev
+          queue.push({ type: 'turn_ack', data } as unknown as AgentStreamEvent)
+          notify?.()
+        }),
+        this.eventBus.subscribeSessionTurnNotSubmitted(sessionKey, (ev) => {
+          const { sessionId: _routeKey, ...data } = ev
+          queue.push({ type: 'turn_not_submitted', data } as unknown as AgentStreamEvent)
+          notify?.()
+        }),
+      ]
+      turnAckUnsub = () => {
+        for (const u of unsubs) u()
+      }
+    }
     const unsubscribe = client.streamEvents(
       sessionKey,
       (event) => {
@@ -1364,6 +1409,7 @@ export class AgentService implements OnModuleInit {
       unsubscribe()
       creditUnsub?.()
       settledUnsub?.()
+      turnAckUnsub?.()
     }
   }
 
@@ -1673,6 +1719,51 @@ export class AgentService implements OnModuleInit {
         `user message entryId attach skipped (fail-soft, thread=${threadKey}, entryId=${entry}): ${err instanceof Error ? err.message : String(err)}`,
       )
       return { attached: false }
+    }
+  }
+
+  /**
+   * 隐式插话（409→steer/followUp 兜底）的落库补齐（P3 G2，D5）。
+   *
+   * 与显式端点（`persistQueuedUserMessage`）的差异：本路径的 user 行**早已存在**
+   * （streamConversation 在 prompt 前落库）⇒ 这里是 **update 既有行**而非 create
+   * ——再 create 就是同一句话两行（P3 计划 Review Focus 3）。定位口径与
+   * `attachUserMessageEntryId` 同源：thread 内最新 `entryId:null` 的 user 行
+   * （⛔ 绝不覆盖已有 entryId —— 那是上一条发言的 fork 切点，先到先得）。
+   * 幂等：entryId 唯一索引 ⇒ 重复调用天然 no-op。
+   * fail-soft：无行 / 写失败都只 warn，绝不阻断对话主链路。
+   */
+  async markQueuedUserMessage(input: {
+    sessionId: string
+    threadId: string
+    entryId: string
+  }): Promise<{ messageId?: string }> {
+    const threadKey = input.threadId?.trim()
+    const entry = input.entryId?.trim()
+    if (!threadKey || !entry) return {}
+    try {
+      const row = await this.prisma.agentMessage.findFirst({
+        where: {
+          sessionId: input.sessionId,
+          threadId: threadKey,
+          role: 'user',
+          entryId: null,
+          queued: false,
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true },
+      })
+      if (!row) return {}
+      await this.prisma.agentMessage.update({
+        where: { id: row.id },
+        data: { entryId: entry, queued: true },
+      })
+      return { messageId: row.id }
+    } catch (err) {
+      this.piLogger?.warn?.(
+        `queued user message update skipped (fail-soft, thread=${threadKey}, entryId=${entry}): ${err instanceof Error ? err.message : String(err)}`,
+      )
+      return {}
     }
   }
 
@@ -2921,6 +3012,11 @@ export class AgentService implements OnModuleInit {
      * （not_steerable 只在双失败路径置，而那一条 leave undefined）。
      */
     let turnMode: 'run' | 'steer' | 'followup' | undefined
+    /**
+     * P3 G4：turn_ack 的 messageId（隐式插话落库补齐后的 AgentMessage 行 id）。
+     * 键不出现纪律：落库失败（fail-soft）⇒ 不出现该键（不发 null/空串）。
+     */
+    let turnMessageId: string | undefined
     /** prompt 是否被 pi 接受（202）。false ⇒ pi 侧**整轮不存在**（双写分叉）。 */
     let promptAccepted = true
     // ── D2（multi-device Task 2）：落库与请求生命周期解耦 ──
@@ -2990,9 +3086,18 @@ export class AgentService implements OnModuleInit {
           `turn_not_submitted{reason=not_idle} key=${sessionKey} — 本流转旁听（同 run 由 owner 流记账）`,
         )
         try {
-          await client.steer(sessionKey, promptText, "main", { turnContext })
+          const steerRes = (await client.steer(sessionKey, promptText, "main", {
+            turnContext,
+          })) as { queued?: boolean; entryId?: string } | undefined
           // D4（Task 6）：服务端裁定 = 并入在跑 run 的 steer 队列（本轮 turn 边界接住）。
           turnMode = 'steer'
+          // P3 G2：隐式插话与显式端点同权——entryId 不再丢弃，既有 user 行补 queued+entryId。
+          const steerMark = await this.markQueuedUserMessage({
+            sessionId,
+            threadId: sessionKey,
+            entryId: steerRes?.entryId ?? '',
+          })
+          turnMessageId = steerMark.messageId
         } catch (steerErr: unknown) {
           // steer 也塞不进去（队列满 / 会话已被回收 / runtime 侧异常）。
           // D4（Task 6）追加 followUp 兜底：「忙碌且 steer 不可用」时用户发言改走
@@ -3005,8 +3110,18 @@ export class AgentService implements OnModuleInit {
             } — 转 followUp 兜底（收尾边界接住）`,
           )
           try {
-            await client.followUp(sessionKey, promptText, "main", { turnContext })
+            const followUpRes = (await client.followUp(sessionKey, promptText, "main", {
+              turnContext,
+            })) as { queued?: boolean; entryId?: string } | undefined
             turnMode = 'followup'
+            // P3 G2：同 steer——followUp 返回的 entryId 回填既有 user 行。
+            // entryId 缺席（老 runtime）⇒ markQueuedUserMessage no-op。
+            const followMark = await this.markQueuedUserMessage({
+              sessionId,
+              threadId: sessionKey,
+              entryId: followUpRes?.entryId ?? '',
+            })
+            turnMessageId = followMark.messageId
           } catch (followUpErr: unknown) {
             // 两条队列都进不去：必须留痕，否则「消息既不回答也不报错」会成为查不掉的黑洞。
             turnRefusalReason = 'not_steerable'
@@ -3021,6 +3136,10 @@ export class AgentService implements OnModuleInit {
         //「已并入 / 当前不可插话」两种文案。前端收到它才显示「已并入进行中的任务」。
         // ⚠️ followup 兜底成功时 reason 仍是 not_idle：消息**已受理**（排进收尾边界），
         // 只是没有新开一轮；steer/followup 的细化由流末尾 turn_ack 承担（D4）。
+        // P3 G1：drain 模式下本帧被丢弃 ⇒ 经 bus 补投（gate 与 turn_settled 补桥同源）。
+        if (streamOpts?.bridgeSettledToBus === true) {
+          this.eventBus?.emitTurnNotSubmitted({ sessionId, reason: turnRefusalReason })
+        }
         yield {
           type: 'turn_not_submitted',
           data: { reason: turnRefusalReason },
@@ -3421,6 +3540,16 @@ export class AgentService implements OnModuleInit {
     // （与 loopCompletedNaturally 的语义同源，见其声明处注释）⇒ 能走到这里
     // 就说明本轮是看着 agent_end/error/流耗尽收尾的，ack 是给看完整轮的前端的。
     if (turnMode) {
+      // P3 G1：drain 模式下本帧被丢弃 ⇒ 经 bus 补投。data 与流内 yield 同源，杜绝口径漂移。
+      if (streamOpts?.bridgeSettledToBus === true) {
+        this.eventBus?.emitTurnAck({
+          sessionId,
+          mode: turnMode,
+          ...(turnMode !== 'run' ? { reason: turnRefusalReason } : {}),
+          ...(turnRunId ? { runId: turnRunId } : {}),
+          ...(turnMessageId ? { messageId: turnMessageId } : {}),
+        })
+      }
       yield {
         type: 'turn_ack',
         data: {
@@ -3433,8 +3562,9 @@ export class AgentService implements OnModuleInit {
           // 不变式：此处 turnRefusalReason 恒为 'not_idle'（not_steerable 只伴随
           // turnMode === undefined，那条路径根本不会到这里）。
           ...(turnMode !== 'run' ? { reason: turnRefusalReason } : {}),
-          // messageId 留待 Task 8（插话落库）：steer/followUp 消息目前只存在于 pi 侧
-          // durable 队列，Nest 侧没有 AgentMessage 行 ⇒ 现在发 id 就是假装已落库。
+          // P3 G4（原「留待 Task 8」）：隐式插话落库补齐（markQueuedUserMessage）成功
+          // 时回填 AgentMessage 行 id；失败（fail-soft）不出现该键（不发 null/空串）。
+          ...(turnMessageId ? { messageId: turnMessageId } : {}),
         },
       } as AgentStreamEvent
     }

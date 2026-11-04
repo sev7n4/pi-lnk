@@ -359,6 +359,13 @@ export interface AgentChatMessage {
   linkedOutputs?: string
   /** JSON: AgentMessageMetadata */
   metadata?: string
+  /**
+   * D5（multi-device spec §5.2）：排队中标记。写入路径=插话落库
+   * （persistQueuedUserMessage / P3 markQueuedUserMessage）；**消费判定由
+   * getMessages 读时派生**（无更晚 assistant 行才保持 true）——前端拿到的
+   * queued 已是派生后的权威值，可直接渲染徽标。
+   */
+  queued?: boolean
   createdAt: string
 }
 

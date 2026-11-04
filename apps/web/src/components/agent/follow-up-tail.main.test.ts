@@ -201,3 +201,51 @@ describe('isTurnTerminal 终止语义（Task 6：on 路径以事件终态收口�
     expect(isTurnTerminal('turn_suspended')).toBe(false) // 挂起 ≠ 终态（run 仍在跑）
   })
 })
+
+describe('turn_not_submitted 观察者豁免（P3 / Review Focus 1）', () => {
+  it('具名回调分支（旁观最小面）：turn_not_submitted 不触发 onTurnEnd（旁观轮不得被第三方拒绝帧误收尾）', async () => {
+    const onTurnEnd = vi.fn()
+    const deps = makeDeps({
+      onTurnEnd,
+      fetchImpl: (_url, init) =>
+        Promise.resolve({
+          status: 200,
+          ok: true,
+          body: streamOf(
+            [
+              frame(1, 'turn_not_submitted', { reason: 'not_steerable' }),
+              frame(2, 'text_delta', { text: 'still running' }),
+            ],
+            init.signal,
+          ),
+        } as TailResponseLike),
+    })
+    const listener = createFollowUpTailListener(deps)
+    await listener.start()
+    await flush()
+
+    // 拒绝帧是「第三方消息被拒」——运行中的 run 与旁观者无关，不得据此收尾
+    expect(onTurnEnd).not.toHaveBeenCalled()
+  })
+
+  it('具名回调分支：turn_ack 仍是终态（onTurnEnd 恰一次，收口语义不回归）', async () => {
+    const onTurnEnd = vi.fn()
+    const deps = makeDeps({
+      onTurnEnd,
+      fetchImpl: (_url, init) =>
+        Promise.resolve({
+          status: 200,
+          ok: true,
+          body: streamOf(
+            [frame(1, 'turn_ack', { mode: 'run' })],
+            init.signal,
+          ),
+        } as TailResponseLike),
+    })
+    const listener = createFollowUpTailListener(deps)
+    await listener.start()
+    await flush()
+
+    expect(onTurnEnd).toHaveBeenCalledTimes(1)
+  })
+})
