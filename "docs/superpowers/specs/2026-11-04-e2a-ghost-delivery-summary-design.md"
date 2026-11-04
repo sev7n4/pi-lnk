@@ -1,0 +1,106 @@
+# E2-a 回合产物幽灵摘要（ghost delivery summary）设计规格
+
+状态：已实施（2026-11-04 拍板并同日实施；验收与合并状态见 PR）
+前置：
+- `2026-11-02-delivery-card-v1-design.md`（本规格是其 **拆分包 E2-a**；原 v1 重构为 E2-b，凭本包埋点数据准入，见 §9）
+- `2026-10-28-agent-wait-timeline-single-source-design.md`（turnTimeline part SSOT）
+分支约定：feature 分支 + PR + squash merge。
+
+## 0. 配图索引
+
+| 编号 | 形式 | 内容 | 位置 | 用途 |
+|---|---|---|---|---|
+| 图 1 | 内嵌 Mermaid（结构） | 幽灵摘要派生数据源与两态路由 | §4 | 验收：清单/计数为渲染期纯派生，viewer 直开按端路由 |
+
+## 1. 目标
+
+1. **产物可发现**：回合结束后，对话流内一行幽灵摘要「查看本轮产物 · N」即可感知本轮交付，默认零噪音（iOS 渐进披露：默认收起，按需展开）。
+2. **产物可直达**：展开清单点缩略图**一跳打开原生 viewer**（MobileNodeViewer，四类产物均支持），消灭「定位→再点节点」两跳；点定位角标跳画布节点。
+3. **零后端改动**：清单与计数全部为前端渲染期纯派生（本回合 artifact parts ∩ canvas store 节点解析），不新增事件、不新增通道、不改 pi-runtime / 事件契约。
+
+## 2. 范围（含明确不做）
+
+**做**：
+- `AgentTurnTimeline.vue` 回合尾部幽灵摘要行（收起/展开两态）+ 展开横向缩略图条。
+- 纯函数 `turnDeliveryItems(timeline)`：派生清单（无副作用、重放一致）。
+- viewer 直开路由：移动端 inject `MOBILE_NODE_OPEN_VIEWER_KEY`（CanvasPage 已 provide，:2895）；桌面端降级为 focus_node 定位（现状语义）。
+- 四指标埋点（曝光/展开/viewer 打开/定位），服务端小端点（原 E2 Task 5 保留，E2-b 准入判据数据源）。
+
+**不做（本包明确排除）**：
+- 不做逐产物交付卡 / 媒体竖卡 / 卡内联播（原 E2 v1 内容，归 E2-b）。
+- 不做 timeout / fallback_pending 子态表达、roundKey 补拍、常驻订阅（归 E2-b，§9 准入）。
+- 不做桌面端全屏 viewer（桌面现状无 viewer，`MobileCanvasShell` `v-if="isMobileLayout"`——桌面「查看」维持 focus_node 定位；桌面统一 viewer 登记 §9 P2 项）。
+- 不新增 part kind / 不改 `NodeStatusData` / 不碰 `canvasData` PUT。
+- running / failed / proposal 卡现状保留不动（失败即时可见是渐进披露的唯一例外）。
+
+## 3. 判据
+
+**D-a 派生纯函数判据**：`turnDeliveryItems(timeline)` 输入本回合 timeline，输出 `Array<{ nodeId, nodeType, title }>`（仅 `kind:'artifact'` 且 `status==='done'` 且有 nodeId 的 part，保序）；同输入两次调用同输出；不改 parts；历史重放/快照重建结果一致（继承原规格 D-5 纪律）。
+
+**D-b 计数与显隐判据**：幽灵行 N = items 长度；N=0 整行不渲染（含 failed——failed 不计入，保留既有行内重试卡）；N>9 显示 9+；回合进行中（存在 running artifact）幽灵行**不渲染**（生成中的可见性由既有 running 行内卡承担）。
+
+**D-c viewer 直开路由判据**：tile tap → 按 nodeId 从 canvas store 解析节点本体，经 `inject(MOBILE_NODE_OPEN_VIEWER_KEY)` 传 `{ id, type, data }`（与 `NodeRenderer.vue:72` 同款契约，type 映射 image/video/audio/text；路由见图 1）；节点缺失（已删）→ tile 降级类型图标且 tap 无 viewer（可定位则定位）；**桌面端 tap 走 focus_node 定位**（emit 既有 `focusNode`，与查看按钮同路由）。文本节点 tap 直开阅读器（不复制画布上 MobileNodeTile 的长文 TTS 分流——对话流语义=阅读）。
+
+**D-d 展开清单排列判据**：横向滑动缩略图条，64px 圆角 tile；无图产物（audio=波形 tile / text=文档 tile）+ 左下类型小字；video 右下时长徽标（节点实况，缺省隐藏）；定位 = 20px 圆形角标贴 tile 右上，透明外扩凑满 44px 命中区（`AgentSideRail` mic 先例）。
+
+**E-d 交互形态判据（iOS 极简）**：幽灵行 = accent tint 文本行 + chevron，非按钮堆；展开/收起 chevron 旋转 + 高度过渡（`--lnk-duration-fast` + `--lnk-ease-decelerate`，reduced-motion 降级为直切）；样式仅 `--lnk-*` 令牌（禁 `--neo-*` / 新增 hex）；图标内联 SVG 24 网格 stroke:2（零图标库纪律）；触控目标移动端 ≥44px。
+
+## 4. 架构与数据源
+
+```mermaid
+flowchart LR
+    A["artifact parts（turnTimeline SSOT，status=done）"] --> P["turnDeliveryItems 纯函数"]
+    S["canvas store 节点"] --> P
+    P --> G{"N 与回合态判定"}
+    G -->|"N=0 或回合进行中"| H["不渲染"]
+    G -->|"N≥1 且回合收束"| L["幽灵行（收起）"]
+    L -->|"tap 展开"| T["横向缩略图条"]
+    T -->|"tile tap · 移动端"| V["inject openViewer → MobileNodeViewer"]
+    T -->|"tile tap · 桌面端"| F["emit focusNode → 画布定位"]
+    T -->|"角标 tap"| F
+```
+
+*图 1 · 清单与计数均为渲染期派生：artifact part 只提供 nodeId/nodeType/状态，产物本体（url/封面/时长/文本内容）按 nodeId 从 canvas store 解析——与 viewer 版本正确性同源。*
+
+要点：
+- **幽灵行渲染在回合尾部**（AgentTurnTimeline 全部 parts 之后，简报 text part 之下），不新增 part kind、不落 executionEvents、不参与持久化——比原 E2 的 `delivery_group` 虚拟 part 更轻（连虚拟 part 都不需要）。
+- **viewer 打开入口已存在**：`CanvasPage.vue:2895` 无条件 `provide(MOBILE_NODE_OPEN_VIEWER_KEY)`，对话面板（AgentSideRail→AgentTurnTimeline）在其 provide 树内（`CanvasPage.vue:6377`），inject 直达；DevTimelinePreviewPage 无此 provide ⇒ inject 默认值降级为定位，预览页不受阻。
+- **回合态判定**：复用本回合 parts 内 running artifact 存在性（既有状态，无需新事件）。
+
+## 5. 场景验收
+
+1. **单图**：done 后幽灵行出现「查看本轮产物 · 1」；展开 1 tile；tap 开 viewer 显示该图。
+2. **四格批量**：4 个 done → N=4，横向条 4 tile 可滑；各自 tap 开对应 viewer。
+3. **混合类型**：图+视频+音频+文本同回合 → tile 分别为缩略图/首帧+时长/波形/文档图标；文本 tap 开阅读器。
+4. **回合外补拍**：backfill 回填晚到 done → N 反应式更新（收起态计数变、展开态清单增长），无需任何新事件。
+5. **失败不进清单**：failed 产物不计 N、不出 tile，行内重试卡照旧。
+6. **桌面**：tile tap 与定位角标都走画布定位（无 viewer，现状语义）。
+
+## 6. 埋点（E2-b 准入判据数据源）
+
+四指标：`impression`（幽灵行首渲）、`expand`（展开）、`viewer_open`（viewer 直开）、`locate`（定位）。服务端端点沿用原 E2 Task 5 设计（`POST /api/agent/metrics/delivery`，进程内存计数并入 `GET /api/health/notify-metrics`）；前端批量缓冲（50 条或 5s flush），失败静默丢弃。
+
+## 7. 文件级改动清单
+
+- `apps/web/src/components/agent/deliverySummary.ts`（新建）：`turnDeliveryItems` 纯函数 + type 映射助手。
+- `apps/web/src/components/agent/AgentTurnTimeline.vue`：回合尾部幽灵行/展开条渲染 + viewer inject + 打点接线。
+- `apps/web/src/components/agent/deliveryMetrics.ts`（新建）+ `apps/server/src/agent/delivery-metrics.controller.ts`（新建，原 E2 Task 5 原样）+ `agent.module.ts` 注册。
+- `apps/web/src/pages/DevTimelinePreviewPage.vue`：六场景样例。
+
+## 8. 测试策略与验收
+
+- `deliverySummary.test.ts`：纯函数快照（保序/过滤/重放一致性/变异：过滤条件改动⇒组数变化被抓）。
+- `AgentTurnTimeline.deliverySummary.test.ts`：静态契约（幽灵行判据 D-b 显隐、D-d 排列、E-d 令牌与触控正则、tap 路由 D-c）。
+- `delivery-metrics.controller.test.ts`：原 E2 Task 5 用例。
+- 目视验收：§5 六场景 DevTimelinePreview + 移动 sheet 真机走查（44px 命中、横滑、reduced-motion）。
+
+## 9. 与 E2-b 的拆分关系
+
+原 `2026-11-02-delivery-card-v1-design.md` 拆分：
+- **E2-a（本包，先做）**：零后端增量，即时交付「可发现 + 可直达」。
+- **E2-b（原 v1 剩余：v2 元数据、补拍、常驻订阅、单调守卫、媒体竖卡、组卡、timeout/fallback 子态）**：**准入判据 = E2-a 埋点数据**——expand 率与 viewer_open 率证明「卡内轻消费 / 富卡」有真实需求，且 timeout「裸生成中」投诉出现时，子态表达随包先行。原规格 §5.3 修正（前端无既有单调守卫）与 §5.5 常驻订阅设计**原样有效**，E2-b 实施时仍须先落守卫。
+- **P2 项登记**：桌面端统一 viewer（复用/抽离 MobileNodeViewer 或新轻 lightbox）。
+
+## 10. 配图规范自检
+
+`pnpm verify-spec-figures --file docs/superpowers/specs/2026-11-04-e2a-ghost-delivery-summary-design.md` 写作时执行，预期 0 错误。
