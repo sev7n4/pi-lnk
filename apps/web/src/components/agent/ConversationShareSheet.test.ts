@@ -63,24 +63,30 @@ describe('ConversationShareSheet', () => {
 		return wrapper
 	}
 
-	it('默认全选：副标题显示「已选中 N 条对话」', async () => {
+	it('副标题显示「将分享 N 条对话」（勾选集合由页面侧决定，面板不再内联筛选）', async () => {
 		mountSheet([turn('a', 'user', 'hi'), turn('b', 'assistant', 'hello')])
 		await flushPromises()
-		expect(bodyText()).toContain('已选中 2 条对话')
+		expect(bodyText()).toContain('将分享 2 条对话')
 	})
 
-	it('取消勾选：计数实时减少', async () => {
+	it('面板内不再内联可选对话列表（选择已上移到对话页面本体）', async () => {
 		mountSheet([turn('a', 'user', 'hi'), turn('b', 'assistant', 'hello')])
 		await flushPromises()
-		await clickSel('[data-testid="share-item-b"] .share-item-btn')
-		expect(bodyText()).toContain('已选中 1 条对话')
+		// 旧的多选列表 / 单选条目必须消失
+		expect(q('[data-testid="share-list"]')).toBeNull()
+		expect(q('[data-testid="share-item-a"]')).toBeNull()
+		expect(q('[data-testid="share-item-b"]')).toBeNull()
 	})
 
-	it('打开即预上传并缓存 url（手势安全前置）', async () => {
-		mountSheet([turn('a', 'user', 'hi')])
+	it('打开即预上传并缓存 url（手势安全前置），且直接消费传入的全部 turns', async () => {
+		mountSheet([turn('a', 'user', 'hi'), turn('b', 'assistant', 'hello')])
 		await flushPromises()
 		await new Promise((r) => setTimeout(r, 0))
-		expect(h.upload).toHaveBeenCalled()
+		expect(h.upload).toHaveBeenCalledTimes(1)
+		// 不再二次筛选：传入几条就上传几条
+		const [uploadedTurns] = h.upload.mock.calls[0]
+		expect(uploadedTurns).toHaveLength(2)
+		expect(uploadedTurns.map((t: ShareTurn) => t.id).sort()).toEqual(['a', 'b'])
 	})
 
 	it('点击「复制链接」调用 copyLink（同步手势写入）', async () => {
@@ -91,11 +97,11 @@ describe('ConversationShareSheet', () => {
 		expect(h.copyLink).toHaveBeenCalledWith('https://x/share/s1.html')
 	})
 
-	it('点击「离线打开」调用 openOffline', async () => {
+	it('点击「离线打开」调用 openOffline（传入全部 turns）', async () => {
 		mountSheet([turn('a', 'user', 'hi')])
 		await flushPromises()
 		await clickSel('[data-testid="mode-offline"]')
-		expect(h.openOffline).toHaveBeenCalled()
+		expect(h.openOffline).toHaveBeenCalledWith([expect.objectContaining({ id: 'a' })])
 	})
 
 	it('品牌渠道（微信）点击 → showQr 暴露二维码', async () => {
@@ -111,7 +117,7 @@ describe('ConversationShareSheet', () => {
 		mountSheet([turn('a', 'user', 'hi')])
 		await flushPromises()
 		await clickSel('[data-testid="mode-image"]')
-		expect(h.toImage).toHaveBeenCalled()
+		expect(h.toImage).toHaveBeenCalledWith([expect.objectContaining({ id: 'a' })])
 		expect(q('[data-testid="share-img"]')).not.toBeNull()
 	})
 
