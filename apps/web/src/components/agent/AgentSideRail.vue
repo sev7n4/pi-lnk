@@ -33,6 +33,9 @@ import { buildTurnReceipt } from './composer/turnReceipt'
 import { acceptedHint, cancelOutcomeHint, parseQueueDelivery } from '@/components/agent/queueDelivery'
 import type { QueueCancelOutcome } from '@/components/agent/queueDelivery'
 import type { AgentStreamMessage } from '@/stores/agent'
+import ConversationShareSheet from '@/components/agent/ConversationShareSheet.vue'
+import { toShareTurn } from '@/lib/share/toShareTurn'
+import type { ShareTurn } from '@lnkpi/shared/shareTemplate'
 import type { PersistedAgentMessage } from '@/stores/agent'
 import {
   cancelAgentRun,
@@ -536,6 +539,13 @@ function dismissHistoryReattachCoachmark() {
   } catch {
     /* ignore quota / private mode */
   }
+}
+
+const shareOpen = ref(false)
+const shareTurns = ref<ShareTurn[]>([])
+function openShare(msg: AgentStreamMessage) {
+  shareTurns.value = [toShareTurn(msg, props.sessionId)]
+  shareOpen.value = true
 }
 
 function visibleAssistantContent(msg: AgentStreamMessage): string {
@@ -4825,6 +4835,20 @@ defineExpose({
                       <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
                     </svg>
                   </button>
+                  <button
+                    type="button"
+                    class="agent-msg-action-btn"
+                    title="分享"
+                    aria-label="分享"
+                    @click="openShare(msg)"
+                  >
+                    <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.5">
+                      <circle cx="6" cy="12" r="2.5" />
+                      <circle cx="18" cy="6" r="2.5" />
+                      <circle cx="18" cy="18" r="2.5" />
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M8.2 10.8 15.8 7.2 M8.2 13.2 15.8 16.8" />
+                    </svg>
+                  </button>
                   </template>
                   <template v-else>
                     <button
@@ -5565,6 +5589,11 @@ defineExpose({
         @action="onForceChoiceAction"
       />
       <AgentAssetPicker v-model:open="assetPickerOpen" @pick="addAssetReference" />
+      <ConversationShareSheet
+        v-model="shareOpen"
+        :turns="shareTurns"
+        :session-id="props.sessionId"
+      />
     </div>
   </aside>
 </template>

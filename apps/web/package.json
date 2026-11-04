@@ -28,6 +28,7 @@
     "@vue-flow/minimap": "^1.5.2",
     "axios": "^1.7.9",
     "element-plus": "^2.14.2",
+    "html-to-image": "^1.11.13",
     "jszip": "^3.10.2",
     "mermaid": "^11",
     "pinia": "^2.3.1",

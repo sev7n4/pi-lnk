@@ -370,3 +370,5 @@ export interface CapabilityItem {
   description?: string
 }
 export * from './pi/typebox-bridge'
+
+export * from './shareTemplate'

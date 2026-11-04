@@ -8,7 +8,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./upstreamReconciliation": "./src/upstreamReconciliation.ts",
-    "./modelHealth": "./src/modelHealth.ts"
+    "./modelHealth": "./src/modelHealth.ts",
+    "./shareTemplate": "./src/shareTemplate.ts"
   },
   "typesVersions": {
     "*": {

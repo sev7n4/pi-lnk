@@ -18,6 +18,7 @@ import { HealthModule } from './health/health.module'
 import { ProviderModule } from './provider/provider.module'
 import { MediaModule } from './media/media.module'
 import { StorageModule } from './storage/storage.module'
+import { ShareModule } from './share/share.module'
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { StorageModule } from './storage/storage.module'
     AutomationModule,
     AdminModule,
     MediaModule,
+    ShareModule,
   ],
 })
 export class AppModule {}

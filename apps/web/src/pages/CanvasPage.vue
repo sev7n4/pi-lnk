@@ -72,6 +72,9 @@ import type { MobileAppTab } from '@/components/mobile/MobileTabBar.vue'
 import MobileCanvasShell from '@/components/mobile/MobileCanvasShell.vue'
 import MobileUndoToast from '@/components/mobile/MobileUndoToast.vue'
 import type { MobileShellAgentActions, MobileShellBatchActions } from '@/components/mobile/MobileCanvasShell.vue'
+import ConversationShareSheet from '@/components/agent/ConversationShareSheet.vue'
+import { toShareTurn } from '@/lib/share/toShareTurn'
+import type { ShareTurn } from '@lnkpi/shared/shareTemplate'
 import CanvasBottomLeftControls from '@/components/canvas/CanvasBottomLeftControls.vue'
 import ProviderConfigDialog from '@/components/canvas/ProviderConfigDialog.vue'
 import ByokFallbackConfirmDialog from '@/components/canvas/ByokFallbackConfirmDialog.vue'
@@ -226,6 +229,15 @@ const auth = useAuthStore()
 const canvasEditor = useCanvasEditorStore()
 const { registerLocateNodeHandler, locateNodeHandler, closeInspector, openInspector } = useMediaInspector()
 const sessionId = computed(() => route.params.sessionId as string)
+
+// 会话级分享（Task 6）：默认全选 → 全部回合映射为 ShareTurn
+const shareOpen = ref(false)
+const shareTurns = ref<ShareTurn[]>([])
+function openShare() {
+  const agent = useAgentStore()
+  shareTurns.value = [...agent.messages].map((m) => toShareTurn(m, sessionId.value))
+  shareOpen.value = true
+}
 
 interface CanvasEdge {
   id: string
@@ -6520,6 +6532,7 @@ onUnmounted(() => {
       :canvas-view-visible="mobileCanvasView"
       :on-tab-change="onMobileTabChange"
       :on-save="saveCanvas"
+      :on-share="openShare"
       :agent-actions="agentRailActions"
       :project-name="sessionTitle"
       :dock-add="handleDockAdd"
@@ -6583,6 +6596,11 @@ onUnmounted(() => {
       :mime-type="contextMenu.mimeType"
       @action="handleContextAction"
       @close="closeContextMenu"
+    />
+    <ConversationShareSheet
+      v-model="shareOpen"
+      :turns="shareTurns"
+      :session-id="sessionId"
     />
   </div>
 </template>

@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="620" viewBox="0 0 480 620" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif">
+  <rect width="480" height="620" fill="#F3F4F6"/>
+  <!-- scrim -->
+  <rect width="480" height="620" fill="#000000" fill-opacity="0.18"/>
+
+  <!-- bottom sheet card -->
+  <g transform="translate(0,180)">
+    <path d="M0 24 Q0 0 24 0 H456 Q480 0 480 24 V440 H0 Z" fill="#FFFFFF"/>
+    <!-- handle -->
+    <rect x="200" y="12" width="80" height="5" rx="2.5" fill="#D1D5DB"/>
+    <!-- title -->
+    <text x="24" y="56" font-size="20" font-weight="700" fill="#1F2430">分享会话</text>
+    <text x="24" y="80" font-size="13" fill="#6B7280">已选中 3 条对话</text>
+    <line x1="24" y1="96" x2="456" y2="96" stroke="#EEF0F3" stroke-width="1.5"/>
+
+    <!-- multi-select list (default all checked) -->
+    <g transform="translate(0,110)">
+      <!-- turn 1 -->
+      <rect x="24" y="0" width="432" height="56" rx="10" fill="#F8F9FB" stroke="#E5E7EB" stroke-width="1"/>
+      <rect x="40" y="18" width="20" height="20" rx="6" fill="#7C5CFF"/>
+      <path d="M46 28 l4 4 l8 -9" stroke="#FFFFFF" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="76" y="26" font-size="13" fill="#374151">你：把这段对话整理成分享稿</text>
+      <text x="76" y="44" font-size="11" fill="#9CA3AF">assistant · 文本 + 思考</text>
+      <!-- turn 2 -->
+      <rect x="24" y="64" width="432" height="56" rx="10" fill="#F8F9FB" stroke="#E5E7EB" stroke-width="1"/>
+      <rect x="40" y="82" width="20" height="20" rx="6" fill="#7C5CFF"/>
+      <path d="M46 92 l4 4 l8 -9" stroke="#FFFFFF" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="76" y="90" font-size="13" fill="#374151">assistant：已生成分享预览</text>
+      <text x="76" y="108" font-size="11" fill="#9CA3AF">assistant · 产物缩略</text>
+      <!-- turn 3 -->
+      <rect x="24" y="128" width="432" height="56" rx="10" fill="#F8F9FB" stroke="#E5E7EB" stroke-width="1"/>
+      <rect x="40" y="146" width="20" height="20" rx="6" fill="#7C5CFF"/>
+      <path d="M46 156 l4 4 l8 -9" stroke="#FFFFFF" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="76" y="154" font-size="13" fill="#374151">你：再补一句来源说明</text>
+      <text x="76" y="172" font-size="11" fill="#9CA3AF">user · 文本</text>
+    </g>
+
+    <!-- 2x2 grid of share targets -->
+    <g transform="translate(24,366)">
+      <!-- 微信 -->
+      <g transform="translate(0,0)">
+        <rect x="0" y="0" width="192" height="64" rx="12" fill="#07C160" fill-opacity="0.1" stroke="#07C160" stroke-width="1.5"/>
+        <circle cx="32" cy="32" r="16" fill="#07C160"/>
+        <text x="58" y="38" font-size="15" font-weight="600" fill="#07C160">微信</text>
+      </g>
+      <!-- 生成图片 -->
+      <g transform="translate(216,0)">
+        <rect x="0" y="0" width="192" height="64" rx="12" fill="#7C5CFF" fill-opacity="0.1" stroke="#7C5CFF" stroke-width="1.5"/>
+        <rect x="18" y="18" width="28" height="28" rx="5" fill="none" stroke="#7C5CFF" stroke-width="1.5"/>
+        <text x="58" y="38" font-size="15" font-weight="600" fill="#7C5CFF">生成图片</text>
+      </g>
+      <!-- 复制链接 -->
+      <g transform="translate(0,80)">
+        <rect x="0" y="0" width="192" height="64" rx="12" fill="#F3F4F6" stroke="#E5E7EB" stroke-width="1.5"/>
+        <g transform="translate(18,18)" stroke="#374151" stroke-width="1.5" fill="none" stroke-linejoin="round">
+          <rect x="6" y="6" width="20" height="22" rx="3"/>
+          <rect x="0" y="0" width="20" height="22" rx="3" fill="#FFFFFF"/>
+        </g>
+        <text x="58" y="38" font-size="15" font-weight="600" fill="#374151">复制链接</text>
+      </g>
+      <!-- 生成二维码 -->
+      <g transform="translate(216,80)">
+        <rect x="0" y="0" width="192" height="64" rx="12" fill="#F3F4F6" stroke="#E5E7EB" stroke-width="1.5"/>
+        <g transform="translate(18,18)" fill="#374151">
+          <rect x="0" y="0" width="28" height="28" rx="3" fill="none" stroke="#374151" stroke-width="1.5"/>
+          <rect x="4" y="4" width="6" height="6"/><rect x="18" y="4" width="6" height="6"/>
+          <rect x="4" y="18" width="6" height="6"/><rect x="18" y="18" width="6" height="6"/>
+        </g>
+        <text x="58" y="38" font-size="15" font-weight="600" fill="#374151">生成二维码</text>
+      </g>
+    </g>
+  </g>
+</svg>
