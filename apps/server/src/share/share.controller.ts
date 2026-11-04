@@ -16,7 +16,7 @@ class CreateShareDto {
   turns!: ShareTurn[]
 }
 
-@Controller('api/share')
+@Controller('share')
 export class ShareController {
   constructor(private readonly shareService: ShareService) {}
 
