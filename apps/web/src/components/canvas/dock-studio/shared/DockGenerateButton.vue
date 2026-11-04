@@ -23,20 +23,20 @@ const emit = defineEmits<{
     data-hit="l"
     :class="[`dock-generate-btn--${size}`, { 'is-generating': generating }]"
     :disabled="disabled"
-    :title="title ?? (generating ? '点击取消生成' : '生成')"
-    :aria-label="label ?? (generating ? '取消生成' : '生成')"
+    :title="title ?? (generating ? '停止生成' : '生成')"
+    :aria-label="label ?? (generating ? '停止生成' : '生成')"
     @click.stop="emit('generate')"
   >
-    <!-- Stop square while generating — clearer cancel affordance than a spinner-only control -->
+    <!-- Stop square while generating — clearer cancel affordance than a spinner-only control.
+         2026-11-04 移动端复测②：方块 12px rx1.5 → 14px rx3（视觉更稳，正圆钮内占比更合理）。 -->
     <svg
       v-if="generating"
-      viewBox="0 0 24 24"
-      width="12"
-      height="12"
+      width="14"
+      height="14"
       fill="currentColor"
       aria-hidden="true"
     >
-      <rect x="6" y="6" width="12" height="12" rx="1.5" />
+      <rect x="0" y="0" width="14" height="14" rx="3" />
     </svg>
     <!-- 2026-10-18：生成锚品牌 glyph（用户供图抠像素材）。
          mask + currentColor ⇒ 深浅主题 / hover / disabled 全部自动跟随文字色 -->
@@ -101,12 +101,15 @@ const emit = defineEmits<{
 }
 
 .dock-generate-btn.is-generating {
-  background: var(--lnk-surface-raised);
-  color: var(--lnk-text-primary);
+  /* 2026-11-04 移动端复测②用户裁决：停止态保持黑白，且**圆盘必须与发送态同底可见**——
+     旧实现把盘底换成 surface-raised（深色主题下与输入条几乎同色）⇒ 圆盘隐形、
+     只剩一个浮块，「整个视觉效果只看到块了」。现盘底/投影与空闲态同源（hi 家族，
+     随主题黑白翻转），仅 glyph 由发送箭头换为停止方块。 */
+  background: var(--lnk-hi-bg);
+  color: var(--lnk-hi-text);
   opacity: 1 !important;
   pointer-events: auto !important;
   cursor: pointer;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--lnk-hi-text) 18%, transparent);
 }
 
 .dock-generate-btn.is-generating:hover:not(:disabled) {
