@@ -36,6 +36,9 @@ services:
     volumes:
       - lnkpi-data:/app/apps/server/data
       - lnkpi-uploads:/app/apps/server/uploads
+      # 会话分享托管页：Nest 写静态 HTML 到 /app/share，nginx（主机 :8888）经 bind 直出。
+      # Docker 会在主机缺失时自动创建 /opt/lnkpi/share（root 属主）；如需非 root 写入可预建并 chown。
+      - /opt/lnkpi/share:/app/share
     networks:
       - lnkpi
     healthcheck:

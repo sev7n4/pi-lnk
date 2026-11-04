@@ -825,3 +825,15 @@ model PointHold {
   @@index([userId, status])
   @@index([status, createdAt])
 }
+
+model conversation_shares {
+  id            String    @id @default(cuid())
+  sessionId     String
+  htmlSnapshot  String
+  staticPath    String
+  createdAt     DateTime  @default(now())
+  expiresAt     DateTime?
+
+  @@index([sessionId])
+  @@index([expiresAt])
+}

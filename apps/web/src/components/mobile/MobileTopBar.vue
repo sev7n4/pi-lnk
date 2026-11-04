@@ -34,6 +34,8 @@ const emit = defineEmits<{
   'go-gallery': []
   /** 规格 §6.3：⤢ 适应画布（canvas 分支，经壳层桥接到 VueFlow fitView） */
   'fit-view': []
+  /** 会话级分享（Task 6）：chat 页签「分享会话」图标钮 → emit share（经 MobileCanvasShell 桥接 CanvasPage.openShare） */
+  'share': []
 }>()
 
 const isGhost = computed(() => props.tab === 'discover' || props.tab === 'mine')
@@ -98,6 +100,22 @@ onUnmounted(() => {
 
       <!-- 右侧工具簇 -->
       <div class="bar-actions">
+        <!-- 会话级分享（Task 6）：chat 页签「分享会话」图标钮 → emit share（经 MobileCanvasShell 桥接 CanvasPage.openShare） -->
+        <button
+          v-if="props.tab === 'chat'"
+          type="button"
+          class="bar-btn"
+          data-testid="mobile-topbar-share"
+          aria-label="分享会话"
+          @click="emit('share')"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <circle cx="6" cy="12" r="2.5" />
+            <circle cx="18" cy="6" r="2.5" />
+            <circle cx="18" cy="18" r="2.5" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M8.2 10.8 15.8 7.2 M8.2 13.2 15.8 16.8" />
+          </svg>
+        </button>
         <!-- 画布：⤢ 适应画布（规格 §6.3，经壳层桥接 VueFlow fitView） -->
         <button
           v-if="props.tab === 'canvas'"
