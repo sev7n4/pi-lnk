@@ -232,6 +232,8 @@ const e2aScenarios: Array<{
     nodes: [
       { id: 'g1', type: 'image', data: { url: THUMB } },
       { id: 'g2', type: 'image', data: { url: THUMB } },
+      { id: 'g3', type: 'image', data: {} },
+      { id: 'g4', type: 'image', data: {} },
     ],
   },
   {
@@ -242,7 +244,12 @@ const e2aScenarios: Array<{
       e2aDone('g3', 'audio', 'bgm'),
       e2aDone('g4', 'text', '文案'),
     ],
-    nodes: [{ id: 'g2', type: 'video', data: { durationMs: 84_000 } }],
+    nodes: [
+      { id: 'g1', type: 'image', data: { url: THUMB } },
+      { id: 'g2', type: 'video', data: { durationMs: 84_000 } },
+      { id: 'g3', type: 'audio', data: {} },
+      { id: 'g4', type: 'text', data: {} },
+    ],
   },
   {
     name: '⑤ 失败不计入（行内重试卡照旧）',
@@ -264,7 +271,10 @@ const e2aBackfillParts = computed<E2aArtifactPart[]>(() =>
       ]
     : [e2aDone('b1', 'image', '概念图 1', THUMB)],
 )
-const e2aBackfillNodes: ProposalCanvasNode[] = [{ id: 'b1', type: 'image', data: { url: THUMB } }]
+const e2aBackfillNodes: ProposalCanvasNode[] = [
+  { id: 'b1', type: 'image', data: { url: THUMB } },
+  { id: 'b2', type: 'image', data: {} },
+]
 
 // ⑥ 桌面路由降级：focusNode emit 回显
 const e2aLastFocus = ref('')

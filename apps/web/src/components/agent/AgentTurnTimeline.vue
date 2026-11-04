@@ -196,7 +196,7 @@ const cancelGeneration = inject(CANVAS_NODE_CANCEL_KEY, null)
  * 展开态是组件本地 ref（Review Focus 1：禁写进 timeline）。
  * 显隐判据 D-b：N=0 / 存在 running artifact（回合进行中）⇒ 不渲染。
  */
-const deliveryItems = computed(() => turnDeliveryItems(props.parts ?? []))
+const deliveryItems = computed(() => turnDeliveryItems(props.parts ?? [], props.canvasNodes))
 const deliveryHidden = computed(
   () => deliveryItems.value.length === 0 || hasRunningGeneration(props.parts ?? []),
 )
@@ -1271,9 +1271,13 @@ const rootClass = computed(() =>
 .delivery-strip {
   display: flex;
   gap: 8px;
-  margin-top: 6px;
-  overflow-x: auto;
+  /* Q3 裁切修复（2026-11-05）：overflow-x:auto 令 overflow-y 同为 auto，
+     定位角标 top:-5px 上溢出 tile 会被滚动容器上沿裁掉——用头部 padding 预留
+     角标空间（margin 换 padding：padding 在滚动内容盒内，不会被裁）。 */
+  margin-top: 0;
+  padding-top: 11px;
   padding-bottom: 2px;
+  overflow-x: auto;
 }
 .delivery-tile-wrap {
   position: relative;

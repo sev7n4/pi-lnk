@@ -64,6 +64,30 @@ describe('turnDeliveryItems — D-a 派生纯函数', () => {
   })
 })
 
+describe('turnDeliveryItems — 画布存在性过滤（2026-11-05 真机修复 Q2：已删节点不残留）', () => {
+  it('canvasNodes 提供时，过滤 nodeId 已不在画布的项（删除 ⇒ 清单同步减）', () => {
+    const tl = feed([
+      addNode('n1'),
+      status('n1', 'done', 'https://x/a.png'),
+      addNode('n2'),
+      status('n2', 'done', 'https://x/b.png'),
+    ])
+    const nodes = [{ id: 'n1' }, { id: 'n9' }]
+    expect(turnDeliveryItems(tl.parts, nodes).map((i) => i.nodeId)).toEqual(['n1'])
+  })
+
+  it('canvasNodes 为 null/undefined ⇒ 不过滤（未接线/预览场景保守显示）', () => {
+    const tl = feed([addNode('n1'), status('n1', 'done', 'https://x/a.png')])
+    expect(turnDeliveryItems(tl.parts, undefined).map((i) => i.nodeId)).toEqual(['n1'])
+    expect(turnDeliveryItems(tl.parts, null).map((i) => i.nodeId)).toEqual(['n1'])
+  })
+
+  it('空数组 ⇒ 全过滤（画布确无节点 = 全部已删，不留幽灵 tile）', () => {
+    const tl = feed([addNode('n1'), status('n1', 'done', 'https://x/a.png')])
+    expect(turnDeliveryItems(tl.parts, [])).toEqual([])
+  })
+})
+
 describe('hasRunningGeneration — D-b 回合态判定', () => {
   it('存在 running artifact ⇒ true', () => {
     const tl = feed([addNode('n1'), status('n1', 'generating')])

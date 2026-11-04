@@ -101,6 +101,12 @@ flowchart LR
 - **E2-b（原 v1 剩余：v2 元数据、补拍、常驻订阅、单调守卫、媒体竖卡、组卡、timeout/fallback 子态）**：**准入判据 = E2-a 埋点数据**——expand 率与 viewer_open 率证明「卡内轻消费 / 富卡」有真实需求，且 timeout「裸生成中」投诉出现时，子态表达随包先行。原规格 §5.3 修正（前端无既有单调守卫）与 §5.5 常驻订阅设计**原样有效**，E2-b 实施时仍须先落守卫。
 - **P2 项登记**：桌面端统一 viewer（复用/抽离 MobileNodeViewer 或新轻 lightbox）。
 
+## 9.1 真机修复记录（2026-11-05，PR 后第一轮实测三缺陷）
+
+1. **文本/HTML 产物不进交付条**：根因三段——文本生成自动审批（P1-D）无确认点建卡 + 完成通报走 `notifyGenerationTerminal` 只入 followUp 不派 node_status + 画布对账回填（`reconcileFromNodes`）的归属预筛只认「已有 artifact part」。修复 = 归属集并入 `pendingNodeMeta`（`collectBackfillOwnableNodeIds`，归属≠判 done，W11 probe 仍要求 content/url 正据）。E2-b 的「补拍派 node_status」届时仍做（秒级翻正），本修复只解决「有没有」。
+2. **已删节点残留在展开清单**：`remove_node` 不回写事件投影（part 恒 done）。修复 = `turnDeliveryItems(parts, canvasNodes?)` 画布存在性过滤；null/undefined（未接线/预览）保守不过滤。
+3. **交付条上沿裁切**：`.delivery-locate` 角标 `top:-5px` 上溢，`overflow-x:auto` 令 overflow-y 同为 auto ⇒ 被滚动容器裁掉。修复 = strip 头部 `padding-top:11px`（margin 换 padding：padding 在滚动内容盒内不裁），静态契约锁定 ≥6px。
+
 ## 10. 配图规范自检
 
 `pnpm verify-spec-figures --file docs/superpowers/specs/2026-11-04-e2a-ghost-delivery-summary-design.md` 写作时执行，预期 0 错误。

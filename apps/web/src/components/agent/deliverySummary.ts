@@ -14,14 +14,22 @@ export interface DeliveryItem {
   title: string
 }
 
-/** 本回合可交付产物清单：done 且有 nodeId 的 artifact part，事件到达序保序。 */
-export function turnDeliveryItems(parts: readonly TimelinePart[]): DeliveryItem[] {
+/** 本回合可交付产物清单：done 且有 nodeId 的 artifact part，事件到达序保序。
+ *  `canvasNodes`（2026-11-05 真机修复 Q2）：提供数组时过滤 nodeId 已不在画布的项
+ *  （remove_node 不回写事件投影 ⇒ part 仍 done，必须按画布现况裁清单）；
+ *  null/undefined = 未接线/未知态，不过滤（预览页保守显示）。 */
+export function turnDeliveryItems(
+  parts: readonly TimelinePart[],
+  canvasNodes?: readonly { id: string }[] | null,
+): DeliveryItem[] {
   const items: DeliveryItem[] = []
   for (const p of parts) {
     if (p.kind !== 'artifact' || p.status !== 'done') continue
     items.push({ nodeId: p.nodeId, nodeType: p.nodeType, title: p.title })
   }
-  return items
+  if (!canvasNodes) return items
+  const alive = new Set(canvasNodes.map((n) => n.id))
+  return items.filter((it) => alive.has(it.nodeId))
 }
 
 /** 回合态判定（D-b）：存在 running artifact ⇒ 回合进行中，幽灵行不渲染。 */

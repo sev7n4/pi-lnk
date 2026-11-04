@@ -57,6 +57,7 @@ import {
 } from '@/composables/useGenerationPolling'
 import { useAgentStream } from '@/composables/useAgentStream'
 import {
+  collectBackfillOwnableNodeIds,
   mapNodeStatus,
   reconcileTaskProgress,
   shouldFinishTaskCard,
@@ -4189,13 +4190,9 @@ function reconcileFromNodes(rawNodes: CanvasNodeLike[]) {
   // （含未确认的 propose 节点）保持原状，不会被误翻 done。
   // 归属预筛：先收集时间线已持有的 artifact nodeId，避免对用户手建节点做全量消息回填空转。
   if (rawNodes.length) {
-    const owned = new Set<string>()
-    for (const m of agent.messages) {
-      if (m.role !== 'assistant' || !m.timeline) continue
-      for (const p of m.timeline.parts) {
-        if (p.kind === 'artifact') owned.add(p.nodeId)
-      }
-    }
+    // 2026-11-05 修复 Q1：归属集并入 pendingNodeMeta（文本/HTML 产物无确认点、无
+    // node_status，deferred 建卡下永远没有 part；只认 part 会让对账回填永远跳过它们）。
+    const owned = collectBackfillOwnableNodeIds(agent.messages)
     if (owned.size) {
       for (const n of rawNodes) {
         if (!owned.has(n.id)) continue
