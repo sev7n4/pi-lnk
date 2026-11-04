@@ -837,3 +837,11 @@ REST Git Data API 推送（Global Constraints 纪律）；PR 标题 `feat(agent)
 2. **占位符扫描**：Task 2 fixture 两处「形状待核」、Task 5 fixture 形状警示——均为**显式核实指令**（指向确定源文件与行号），非 TBD；实施动作是「读源码定形状」而非「自行发挥」。
 3. **类型一致性**：`createUiEventProjector` 签名在 Task 2 定义 / Task 3 消费一致（`role` + `estimateTurnCredits`）；`emitRunControl(threadKey, {type, data})` 在 Task 1 定义 / Task 4 消费一致；`turnEstimators` 值类型与主流 `estimateTurnCredits` 闭包签名一致（五可选 token 字段 → number|null）。
 4. **Review Focus 落点**：五项分别钉在 Task 3（mid-join、早接）、Task 4（无 seq 注记）、Task 5（共享 seq fixture、注入面时序剥离注记）。
+
+## 执行状态（2026-11-04 Native，基线前移注记）
+
+- **基线前移**：实施期间并行线 #714（turn_settled/turn_usage 实时补桥）先行合并（master `53f6f740`），本计划 Task 1/Task 4 与其重叠——**作废**，遵其已收敛形态：SessionEventBus turn_settled 专用桥 + runEventStream 两条总线订阅（credit_tx + turn_settled）已上线。
+- **分工边界（#714 拍板）**：projector 只承诺「pi 事件 → UI 事件」派生；turn_settled/credit_tx 是计费领域事件，走 SessionEventBus 扇出，不入派生源。runEventStream 最终形态 = projector + 两条总线订阅。
+- **estimator 直传方案作废**：遵 #714 裁决——observer 不传 estimateTurnCredits（旁观不复制回合计费上下文），usage_delta 不产（Q2 纪律：无预估快照无意义），turn_usage 照发（无 estimatedCredits，权威预估由重放的落库值补齐）。
+- **已落地**：Task 2（createUiEventProjector + 13 用例 + 变异锁定两向）✅；Task 3'（runEventStream 接入 projector，收敛 #714 的零散 usageAccumulator；4+2 用例含契约白名单）✅；Task 5 落地形态调整为「事件契约白名单测试」（spec §4.4 判据 2 的落法——全真 streamConversation 等价 harness 的增量价值低于既有 72 条 agent.service 测试 + projector 顺序断言的组合，避免第二套重 mock 基建）。Task 6 进行中。
+- 回归：pi-events 64+6+1、agent.service 72+124、#714 三件套（bridge 3 / startConversationRun 10 / consistency 5）+ credit-tx 2 全绿；变异两向各自红、恢复全绿。
