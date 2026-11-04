@@ -1,0 +1,1 @@
+@/Users/4seven/workspace/pi-lnk/.worktrees/spec-unified-projection/docs/superpowers/specs/2026-11-04-unified-channel-event-projection-design.md
