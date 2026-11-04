@@ -1,6 +1,6 @@
 # 对话流内产物交付卡（delivery card v1）设计规格
 
-状态：待评审（brainstorming 产出，2026-11-02）
+状态：已拆分（2026-11-04 评审会商拍板）——**E2-a 回合产物幽灵摘要先行**（零后端，规格 [`2026-11-04-e2a-ghost-delivery-summary-design.md`](./2026-11-04-e2a-ghost-delivery-summary-design.md)）；本规格重构为 **E2-b**，凭 E2-a 埋点数据准入（expand 率 / viewer_open 率 / timeout 投诉），实施时 §5.3 修正（前端无既有单调守卫）与 §5.5 常驻订阅设计原样有效。下文为 E2-b 口径存档。
 前置：
 - `2026-10-28-agent-wait-timeline-single-source-design.md`（已合入：等待态单一真相，turnTimeline 是对话流 part 的 SSOT）
 - `2026-10-28-text-node-html-artifact-design.md`（已合入：文本节点 HTML 产物）
@@ -44,6 +44,7 @@
 - **继承** `2026-10-28-agent-wait-timeline-single-source-design.md`：交付卡是 turnTimeline part 体系的一员，与 proposal / question 等待卡同层；不引入第二套对话流状态。
 - **修订** 2026-10-18 node_status 口径：`NodeStatusData` 三态词表**不变**（generating/done/failed，保「有正据才动」），新增可选元数据字段与 `terminalState` 精确子态；旧消费者忽略新字段，逐字节向后兼容。
 - **配合** `2026-11-01-red-car-...-rootfix-design.md`：`version` 字段即该包"产物版本锚"的用户侧呈现出口；两包字段语义对齐，由本包消费、该包生产（若该包未合，本包 version 字段可先空缺，交付卡降级为无版本徽标）。
+- **配合（2026-11-04 评审登记，E 系列路标 C.1 互认项）**：E1 终态写点直通已上线（PR #700 `14f5de6d`，flag on 生产生效）——`running→completed` 到达时间已是秒级，本包契约对触发节拍零假设（已取证），交点仅在于交付卡出现时机同步提前；Nest `/api/health/notify-metrics` 观测面可用；交点记录存 E 系列路标 [`2026-11-04-e-series-presence-roadmap-design.md`](./2026-11-04-e-series-presence-roadmap-design.md) Part C.1。
 
 ## 4. 规范与判据
 
@@ -94,7 +95,7 @@ sequenceDiagram
 | `durationMs` | number | 音视频尽量给 | 进度条/时长徽标 | 交付卡 |
 | `posterUrl` | string | 可选 | 视频首帧/音频封面 | 交付卡 |
 | `version` | number | 可选 | 产物版本锚（D-3） | 交付卡+画布校验 |
-| `roundKey` | string | 可选 | 批次键，缺省 = `runId` | 批次聚合 |
+| `roundKey` | string | 可选 | 批次键。⭐ 2026-11-04 裁决（双通道分离）：**仅活体回合携带**，由 session-manager 在 dispatchNodeStatus 时自动盖 `currentRunId`（工具域不传）；回合外补拍**不携带**（数据源不存在且语义上不需要，见 §5.5） | 批次聚合（仅活体） |
 | `terminalState` | `timeout/fallback_pending` | 可选 | 精确子态（D-2） | 交付卡动作矩阵 |
 | `summary` | string ≤80 字 | text 必填 | 文本首行摘要 | 交付卡 |
 
@@ -115,7 +116,7 @@ flowchart TD
 
 *图 2 · timeout 与 fallback_pending 是 running 的可见子态而非终态：done 唯一入口是「有正据」，子态晚到不回退 done。*
 
-图 2 判读：timeout 与 fallback_pending 是 running 的**可见子态**而非终态，回流到 running 继续等待或经用户确认后重启；`done` 唯一入口是"有正据"。此机与前端既有 `mapNodeStatus` 单调不减守卫（turnTimeline.ts:568）叠加：子态晚到不回退 done。
+图 2 判读：timeout 与 fallback_pending 是 running 的**可见子态**而非终态，回流到 running 继续等待或经用户确认后重启；`done` 唯一入口是"有正据"。⭐ 2026-11-04 评审修正：前端**不存在**「既有 mapNodeStatus 单调不减守卫」（实测 turnTimeline.ts node_status 分支对 status 直接赋值，仅 generation_progress 的 elapsedMs 有单调不减）——status 单调守卫是本包 mapNodeStatusV2 的**净新增**（§8.1），是「子态晚到不回退 done」与「补拍重放无害」论证的唯一成立前提。
 
 ### 5.4 批次聚合判定
 
@@ -132,6 +133,18 @@ flowchart TD
 *图 3 · 批次归组判据：roundKey 缺失独立卡兜底、回合外通报归原组、已折叠回合降级单卡。*
 
 图 3 判读：回合外通报（notify-generation → followUp）携带原 roundKey，保证迟到终态不会误开新组卡；原回合已在历史流折叠时降级为单卡 + 「本回合交付」回执徽标，不重开时间线。
+⭐ 2026-11-04 裁决修订：回合外补拍**不携带 roundKey**（见 §5.5），H 分支的「归原组」在补拍场景不可达（原回合必然已折叠）——补拍落 Q1 独立卡 + `lateNotify` 标记驱动「本回合交付」徽标，行为等价于 H 的降级形态；roundKey 归组仅服务活体回合（四格批量主场景）。
+
+### 5.5 回合外补拍的送达路径（2026-11-04 评审新增）
+
+**问题**：补拍 node_status 进 lane buffer 后，在线前端在回合收束时已关闭 POST 发起的订阅（P1 统一传输契约：`consumeMainTurnStream` 到终局帧即 cancel）——回合外事件到达时**没有活跃订阅**，秒级验收（§6 场景 3）落空，只剩 backfill 轮询兜底。
+
+**裁决：常驻事件订阅（吃满 P1 权威通道，消费面收窄）**：
+
+1. **通道**：复用 `GET /runs/events`（P1 建成的权威通道：cursor 重放 / `id:` 帧 / 心跳，T8 canary 六锚实证）。前端会话面板活跃期间**常驻订阅**（`lastEventId` 续传断点），`visibilitychange` 隐藏即断开、回显即重连。
+2. **v1 消费面收窄（scope 控制）**：常驻订阅只消费 `node_status` / `generation_progress` 两类事件，直送既有 `trackNodeStatus` / `trackGenerationProgress` reducer（零新渲染逻辑）；**简报/文本/工具事件仍走 #685 影子采纳**——避免「无 POST 发起的活体回合」闯入现有流状态机。订阅全量统一（简报也走事件流实时化）留给 E5。
+3. **生命周期**：单例订阅（同一 thread 永不双开）；线程切换重挂（重挂带新 lastEventId）；POST 发起的主流订阅与常驻订阅**并存不冲突**（同一 reducer 幂等消费，mapNodeStatusV2 单调守卫保证重放无害）。
+4. **服务端**：零改动（通道本就支持多订阅者与跨回合长连接）。
 
 ## 6. 打样/主场景规格（逐项可验收）
 
@@ -154,13 +167,15 @@ flowchart TD
 5. **音频**：done → 波形卡内联起播，3 秒内可出声（埋点 delivery_inline_play）。
 6. **文本 HTML**：done → 首行摘要（≤80 字）+ 定位动作；全屏阅读视图归 P2-A（不在 v1 验收）。
 
-## 7. 数据与状态变更
+## 7. 数据与状态变更（2026-11-04 评审修订）
 
-- `NodeStatusData` 增加可选字段（§5.2 表）；`GenerationTerminalNotice` 增加 `roundKey`、`version` 透传（notify-generation 链）。
-- **回合外补拍契约（新增）**：现状 notify-generation 端点只入 followUp、不派 node_status（前端靠 backfill 轮询兜底，turnTimeline 晚到回填）。本包要求 `/sessions/:id/notify-generation` 在 followUp 之外**同步 `dispatchNodeStatus(v2)`**（roundKey 取 Nest 通报体原 runId），使迟到终态原地翻正归组；backfill 轮询保留为降级兜底，两者幂等（mapNodeStatusV2 单调守卫保证重放无害）。
+- `NodeStatusData` 增加可选字段（§5.2 表）。⭐ ~~`GenerationTerminalNotice` 增加 `roundKey`、`version` 透传~~ **砍除**（评审裁决 1）：`GenerationRecord` 无 runId 列、metadata 无 runId 写入、late-notify select（prisma 真源类型约束）无字段可取——**通报链路全程拿不到原 runId**；且补拍时原回合必然已折叠，图 3 归原组分支不可达，透传无消费价值。Nest 通报链（reaper / late-generation-notify / pi-runtime.client / app.ts 路由）**零改动**。version 徽标待根因包落地后由节点本体经 backfill/节点回填自然供给（D-3 空缺降级）。
+- **回合外补拍契约（修订）**：现状 notify-generation 端点只入 followUp、不派 node_status（前端靠 backfill 轮询兜底，turnTimeline 晚到回填）。本包要求 `notifyGenerationTerminal`（session-manager）在 followUp 之外**同步 `dispatchNodeStatus(v2)`**（status=generating+terminalState 或 done/failed，按通报体映射；roundKey 不传——裁决 1），使迟到终态经常驻订阅（§5.5）秒级原地翻正；backfill 轮询保留为降级兜底。幂等性论证修正：两者幂等**依赖本包新增的 mapNodeStatusV2 单调守卫**（前端无既有守卫，见 §5.3 修正），守卫落地前补拍与 backfill 并发不安全——故两者必须同 PR 上线。
+- 工具活体回合的 v2 元数据（kind/mimeType/durationMs/terminalState/summary）由 `generation.ts` 从 Nest 返回体取值注入；`roundKey` 不由工具传，session-manager dispatch 时统一盖 `currentRunId`。
 - Nest `pi-events.ts`：node_status 透传白名单增加 v2 字段（既有白名单模式，缺字段不报错）。
-- web `turnTimeline.ts`：artifact part 增加 `kind/durationMs/posterUrl/version/roundKey/terminalState/summary` 可选字段；新增 `delivery_batch` **虚拟 part**（渲染期由 artifact 派生，不落 executionEvents，不参与持久化）。
+- web `turnTimeline.ts`：artifact part 增加 `kind/durationMs/posterUrl/version/terminalState/summary/lateNotify` 可选字段；新增 `delivery_batch` **虚拟 part**（渲染期由 artifact 派生，不落 executionEvents，不参与持久化）。
 - executionEvents 白名单**不变**：v2 字段持久化仍走节点本体（PATCH op 主通道），时间线刷新后由节点回填 + 下一拍重建。
+- web `AgentSideRail.vue`：§5.5 常驻订阅生命周期（单例 / visibilitychange / lastEventId 续传 / 消费面白名单仅 node_status+generation_progress）。
 
 ## 8. 纯函数与算法（含单测要求）
 
@@ -170,10 +185,10 @@ flowchart TD
 
 ## 9. 文件级改动清单
 
-- `services/pi-runtime/src/session-manager.ts`：`NodeStatusData` / `GenerationTerminalNotice` 类型扩展（仅类型+dispatch 白名单透传）+ `notifyGenerationTerminal` 内同步补拍 `dispatchNodeStatus(v2)`。
-- `apps/server/src/agent/**`（generation-reaper 通报生产点）：`GenerationTerminalNotice` 补 `roundKey`（原 runId）与 `version` 字段。
-- `services/pi-runtime/src/tools/generation.ts`：`emitTerminalFromResult` / `withGenSignal` 补 v2 元数据（kind/mimeType/durationMs/version/terminalState/summary，从 Nest 返回体与节点实况取值，fail-soft）。
-- `apps/server/src/agent/pi-runtime/pi-events.ts`：node_status 派生分支透传 v2 字段；notify-generation 分支透传 roundKey。
+- `services/pi-runtime/src/session-manager.ts`：`NodeStatusData` / `GenerationTerminalNotice` 类型扩展（仅类型）+ `notifyGenerationTerminal` 内同步补拍 `dispatchNodeStatus(v2)`（工具等待期抑制分支**不**补拍——等待者自己会发终态）+ `dispatchNodeStatus` 自动盖 `roundKey = entry.currentRunId`（活体回合）。
+- ~~`apps/server/src/agent/**`（generation-reaper 通报生产点）~~：**零改动**（评审裁决 1，GenerationTerminalNotice 不加字段）。
+- `services/pi-runtime/src/tools/generation.ts`：`emitTerminalFromResult` / `withGenSignal` 补 v2 元数据（kind/mimeType/durationMs/version/terminalState/summary，从 Nest 返回体与节点实况取值，fail-soft）；timeout/fallback_pending 改为下发 `status:'generating' + terminalState` 子态（现状是纯不下发，规格 §5.3 图 2 的 F/G 子态来源）。
+- `apps/server/src/agent/pi-runtime/pi-events.ts`：node_status 派生分支透传 v2 字段（~~notify-generation 分支透传 roundKey~~ 砍除，裁决 1）。
 - `apps/web/src/components/agent/turnTimeline.ts`：§7 part 扩展 + §8 三纯函数。
 - `apps/web/src/components/agent/AgentTurnTimeline.vue`：交付卡渲染（动作矩阵、内联媒体、版本徽标、组卡）；样式仅用 `--lnk-*` 令牌，浮层走 MobileSheet 基座（移动端）。
 - `apps/web/src/stores/agent.ts`：埋点 `observeDeliveryCard(impression/open/inlinePlay)` 接 metrics 上报。
@@ -190,7 +205,8 @@ flowchart TD
 1. **Nest 封闭联合再扩容**：node_status v2 走扩字段而非新事件类型，风险已最小化；仍需 Nest/web 同 PR 灰度开关双向兜底（`PI_RUNTIME_DELIVERY_META=off` / 前端 feature flag）。
 2. **版本锚依赖 2026-11-01 根因包**：version 生产方未合时字段空缺，交付卡降级——不阻塞本包上线，但重复产物防护不生效，上线顺序建议根因包先行。
 3. **内联播放器自动播放策略**：浏览器自动播放限制 → 内联起播一律用户手势触发，禁止 autoplay。
-4. **聚合误并**：roundKey 缺省 = runId，但 propose 快捷生成可能无 runId → 判据图 3 Q1 独立卡兜底，禁止猜测归组。
+4. **聚合误并**：roundKey 由 session-manager 盖 `currentRunId`（活体）／补拍不携带（裁决 1）⇒ 「缺省 = runId 猜测归组」风险源消除；Q1 独立卡兜底保留为防御。
+5. **常驻订阅资源面（§5.5 新增）**：每个活跃会话页一条长连接；pi-runtime 通道本就多订阅者设计（P1 canary 双订阅实证），风险面=前端泄漏——单例守卫 + visibilitychange 强制断开 + 页面卸载钩子，变异测试覆盖「双开即失败」。
 
 ## 12. 后续包 / 路线图
 
