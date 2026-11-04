@@ -669,7 +669,12 @@ const rootClass = computed(() =>
         :class="toneClass(part.tone)"
       >
         <span class="shrink-0">{{ part.tone === 'error' ? '⚠' : part.tone === 'warn' ? '⏸' : '·' }}</span>
-        <span class="min-w-0 flex-1">
+        <!-- 点⑤：detail 存在 ⇒ 原生 title 悬停承载详情（tokens breakdown），cursor-help 暗示可悬停 -->
+        <span
+          class="min-w-0 flex-1"
+          :class="part.detail ? 'cursor-help' : ''"
+          :title="part.detail"
+        >
           {{ part.text }}
           <span v-if="part.retryLabel" class="ml-1 opacity-80">{{ part.retryLabel }}</span>
         </span>
