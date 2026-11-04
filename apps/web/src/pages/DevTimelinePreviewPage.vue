@@ -18,8 +18,10 @@ import {
   createTurnTimeline,
   finalizeTurnTimeline,
   type TimelineEvent,
+  type TimelinePart,
   type TurnTimeline,
 } from '@/components/agent/turnTimeline'
+import type { ProposalCanvasNode } from '@/composables/useProposalNodeData'
 import {
   applyCanvasAction,
   applyNodeStatus,
@@ -186,6 +188,87 @@ function resolveNodeUrl(nodeId: string): string | undefined {
   return nodeId === NODE_A || nodeId === NODE_B ? THUMB : undefined
 }
 
+// ── E2-a 回合产物幽灵摘要 · 六场景预览（规格 2026-11-04-e2a-ghost-delivery-summary §5）──
+// 预览页无 MOBILE_NODE_OPEN_VIEWER_KEY provide ⇒ tile tap 一律走 focusNode 降级（场景⑥语义）。
+type E2aArtifactPart = Extract<TimelinePart, { kind: 'artifact' }>
+const ap = (
+  nodeId: string,
+  nodeType: string,
+  title: string,
+  status: E2aArtifactPart['status'],
+  url?: string,
+): E2aArtifactPart =>
+  ({
+    kind: 'artifact',
+    id: `a-${nodeId}`,
+    nodeId,
+    nodeType,
+    title,
+    status,
+    ...(url ? { url } : {}),
+  }) as E2aArtifactPart
+
+const e2aDone = (nodeId: string, nodeType: string, title: string, url?: string) =>
+  ap(nodeId, nodeType, title, 'done', url)
+
+const e2aScenarios: Array<{
+  name: string
+  parts: TimelinePart[]
+  nodes: ProposalCanvasNode[]
+}> = [
+  {
+    name: '① 单图 done',
+    parts: [e2aDone('g1', 'image', '概念图', THUMB)],
+    nodes: [{ id: 'g1', type: 'image', data: { url: THUMB } }],
+  },
+  {
+    name: '② 四格批量',
+    parts: [
+      e2aDone('g1', 'image', '概念图 A', THUMB),
+      e2aDone('g2', 'image', '概念图 B', THUMB),
+      e2aDone('g3', 'image', '概念图 C'),
+      e2aDone('g4', 'image', '概念图 D'),
+    ],
+    nodes: [
+      { id: 'g1', type: 'image', data: { url: THUMB } },
+      { id: 'g2', type: 'image', data: { url: THUMB } },
+    ],
+  },
+  {
+    name: '③ 混合四类（video 时长徽标 / audio·text 类型 tile）',
+    parts: [
+      e2aDone('g1', 'image', '概念图', THUMB),
+      e2aDone('g2', 'video', '宣传片'),
+      e2aDone('g3', 'audio', 'bgm'),
+      e2aDone('g4', 'text', '文案'),
+    ],
+    nodes: [{ id: 'g2', type: 'video', data: { durationMs: 84_000 } }],
+  },
+  {
+    name: '⑤ 失败不计入（行内重试卡照旧）',
+    parts: [
+      e2aDone('g1', 'image', '概念图', THUMB),
+      ap('g9', 'image', '概念图 F', 'failed'),
+    ],
+    nodes: [{ id: 'g1', type: 'image', data: { url: THUMB } }],
+  },
+]
+
+// ④ 补拍回填：按钮切换模拟 backfill 回填晚到 done（计数反应式更新，无新事件）
+const e2aBackfillDone = ref(false)
+const e2aBackfillParts = computed<E2aArtifactPart[]>(() =>
+  e2aBackfillDone.value
+    ? [
+        e2aDone('b1', 'image', '概念图 1', THUMB),
+        e2aDone('b2', 'image', '概念图 2'),
+      ]
+    : [e2aDone('b1', 'image', '概念图 1', THUMB)],
+)
+const e2aBackfillNodes: ProposalCanvasNode[] = [{ id: 'b1', type: 'image', data: { url: THUMB } }]
+
+// ⑥ 桌面路由降级：focusNode emit 回显
+const e2aLastFocus = ref('')
+
 reset()
 </script>
 
@@ -272,6 +355,54 @@ reset()
           <template v-else-if="p.kind === 'canvas'">{{ p.label }}</template>
         </li>
       </ol>
+    </section>
+
+    <!-- E2-a 回合产物幽灵摘要 · 六场景（规格 §5）：静态 parts 驱动，肉眼验收显隐/计数/tile 形态 -->
+    <section class="mt-5 rounded-lg border border-[var(--neo-border)] p-4">
+      <div class="mb-1 text-[12px] font-medium">E2-a 回合产物幽灵摘要 · 六场景</div>
+      <p class="mb-3 text-[11px] text-[var(--neo-text-muted)]">
+        预览页无 viewer provide ⇒ tile tap 走 focusNode 降级（场景⑥语义）；移动端真机请在会话页验收 viewer 直开。
+      </p>
+      <div class="grid grid-cols-2 gap-4">
+        <div
+          v-for="s in e2aScenarios"
+          :key="s.name"
+          class="rounded-md border border-[var(--agent-assistant-divider)] bg-[var(--agent-assistant-bg-soft)] p-3"
+        >
+          <div class="mb-1 text-[11px] font-medium">{{ s.name }}</div>
+          <AgentTurnTimeline
+            :parts="s.parts"
+            :canvas-nodes="s.nodes"
+            :resolve-node-url="resolveNodeUrl"
+            @focus-node="e2aLastFocus = $event"
+          />
+        </div>
+        <div class="rounded-md border border-[var(--agent-assistant-divider)] bg-[var(--agent-assistant-bg-soft)] p-3">
+          <div class="mb-1 flex items-center gap-2">
+            <span class="text-[11px] font-medium">④ 补拍回填（计数反应式更新）</span>
+            <button
+              class="rounded border border-[var(--neo-border)] px-2 py-0.5 text-[11px] hover:bg-[var(--neo-hover)]"
+              @click="e2aBackfillDone = !e2aBackfillDone"
+            >{{ e2aBackfillDone ? '回填前' : '模拟 backfill 回填' }}</button>
+          </div>
+          <AgentTurnTimeline
+            :parts="e2aBackfillParts"
+            :canvas-nodes="e2aBackfillNodes"
+            :resolve-node-url="resolveNodeUrl"
+            @focus-node="e2aLastFocus = $event"
+          />
+        </div>
+        <div class="rounded-md border border-[var(--agent-assistant-divider)] bg-[var(--agent-assistant-bg-soft)] p-3">
+          <div class="mb-1 text-[11px] font-medium">⑥ 桌面路由降级（无 viewer provide ⇒ 定位）</div>
+          <AgentTurnTimeline
+            :parts="e2aScenarios[0]!.parts"
+            :canvas-nodes="e2aScenarios[0]!.nodes"
+            :resolve-node-url="resolveNodeUrl"
+            @focus-node="e2aLastFocus = $event"
+          />
+          <p class="mt-1 text-[11px] text-[var(--neo-text-muted)]">最近 focusNode：{{ e2aLastFocus || '（未点击）' }}</p>
+        </div>
+      </div>
     </section>
   </div>
 </template>

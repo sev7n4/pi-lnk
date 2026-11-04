@@ -1,4 +1,5 @@
 import { Controller, Get } from '@nestjs/common'
+import { deliveryMetrics } from '../agent/delivery-metrics'
 import { notifyMetrics } from '../studio/notify-metrics'
 import { isTerminalWriteTapEnabled } from '../prisma/prisma.module'
 
@@ -24,6 +25,7 @@ export class HealthController {
       ok: true,
       terminalWriteTapEnabled: isTerminalWriteTapEnabled(),
       metrics: notifyMetrics.snapshot(),
+      deliveryCard: deliveryMetrics.snapshot(),
       timestamp: new Date().toISOString(),
     }
   }

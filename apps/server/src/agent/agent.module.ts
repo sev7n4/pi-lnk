@@ -9,6 +9,7 @@ import { PricingModule } from '../pricing/pricing.module'
 import { AgentCanvasToolsController } from './agent-canvas-tools.controller'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
 import { CANVAS_ACTION_APPLIER, defaultCanvasActionApplier } from './canvas-action-applier'
+import { DeliveryMetricsController } from './delivery-metrics.controller'
 import { AgentController } from './agent.controller'
 import { AgentInternalGuard } from './agent-internal.guard'
 import { AgentService } from './agent.service'
@@ -36,7 +37,7 @@ import { TurnStateService } from './turn-state.service'
     PointsModule,
     PricingModule,
   ],
-  controllers: [AgentController, AgentCanvasToolsController],
+  controllers: [AgentController, AgentCanvasToolsController, DeliveryMetricsController],
   providers: [
     AgentService,
     AgentCanvasToolsService,

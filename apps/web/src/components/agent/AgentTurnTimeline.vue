@@ -14,7 +14,7 @@
  *   failed 出内联重试入口（D2）+ 错误文案；点击/定位复用现有画布能力
  * - notice：按 tone 着色；error 带重试按钮
  */
-import { computed, inject, shallowReactive } from 'vue'
+import { computed, inject, ref, shallowReactive, watch } from 'vue'
 import DockTypeIcon from '@/components/canvas/dock-studio/shared/DockTypeIcon.vue'
 import CanvasLocateButton from '@/components/shared/CanvasLocateButton.vue'
 import AskUserCard from '@/components/agent/AskUserCard.vue'
@@ -30,7 +30,9 @@ import {
 } from '@/composables/useProposalNodeData'
 import { resolveModelDisplayName } from '@/utils/model-display'
 import { tuneSheetOpen, tuneNodeId, openProposeTuneSheet } from './proposeWaitActions'
-import { CANVAS_NODE_CANCEL_KEY } from '@/composables/canvasNodeActions'
+import { CANVAS_NODE_CANCEL_KEY, isViewableNodeType, MOBILE_NODE_OPEN_VIEWER_KEY } from '@/composables/canvasNodeActions'
+import { deliveryCountLabel, hasRunningGeneration, turnDeliveryItems } from '@/components/agent/deliverySummary'
+import { observeDeliveryCard } from '@/components/agent/deliveryMetrics'
 import ProposeTuneSheet from './ProposeTuneSheet.vue'
 
 const props = defineProps<{
@@ -187,6 +189,85 @@ function endStateLabel(status?: string): string {
  * null 兜底（独立渲染场景）= 不渲染停止钮而非报错。
  */
 const cancelGeneration = inject(CANVAS_NODE_CANCEL_KEY, null)
+
+/**
+ * E2-a 回合产物幽灵摘要（规格 docs/superpowers/specs/2026-11-04-e2a-ghost-delivery-summary-design.md）：
+ * 纯渲染期派生（deliverySummary.ts 纯函数），不新增 part kind、不落 executionEvents；
+ * 展开态是组件本地 ref（Review Focus 1：禁写进 timeline）。
+ * 显隐判据 D-b：N=0 / 存在 running artifact（回合进行中）⇒ 不渲染。
+ */
+const deliveryItems = computed(() => turnDeliveryItems(props.parts ?? []))
+const deliveryHidden = computed(
+  () => deliveryItems.value.length === 0 || hasRunningGeneration(props.parts ?? []),
+)
+const deliveryExpanded = ref(false)
+
+/** §6 打点：impression = 幽灵行首次可渲染即计（一次性，回合内不重复）。 */
+const deliveryImpressionReported = ref(false)
+watch(
+  deliveryHidden,
+  (hidden) => {
+    if (!hidden && !deliveryImpressionReported.value) {
+      deliveryImpressionReported.value = true
+      observeDeliveryCard('impression')
+    }
+  },
+  { immediate: true },
+)
+
+/** §6 打点：expand。 */
+function onDeliveryToggle(): void {
+  deliveryExpanded.value = !deliveryExpanded.value
+  if (deliveryExpanded.value) observeDeliveryCard('expand')
+}
+
+/** D-c：viewer 打开经 CanvasPage provide（同 NodeRenderer 契约）；null 兜底=独立渲染场景降级定位。 */
+const deliveryViewer = inject(MOBILE_NODE_OPEN_VIEWER_KEY, null)
+
+/** 按 nodeId 从 canvasNodes 解析节点本体（data 与画布同源 ⇒ viewer 版本正确性同源）。 */
+function deliveryViewerNodeOf(
+  nodeId: string,
+): { id: string; type: 'image' | 'video' | 'audio' | 'text'; data?: Record<string, unknown> } | undefined {
+  const node = props.canvasNodes?.find((c) => c.id === nodeId)
+  if (!node || !node.type || !isViewableNodeType(node.type)) return undefined
+  return { id: node.id, type: node.type, data: node.data ?? undefined }
+}
+
+/** D-c 路由：viewer 解析+inject 命中 ⇒ 直开；否则（桌面/预览页/节点已删）定位兜底。 */
+function onDeliveryTileOpen(item: { nodeId: string }): void {
+  const node = deliveryViewerNodeOf(item.nodeId)
+  if (node && deliveryViewer) {
+    deliveryViewer(node)
+    observeDeliveryCard('viewer_open', { nodeId: item.nodeId })
+  } else {
+    onDeliveryLocate(item.nodeId)
+  }
+}
+
+/** §6 打点：locate（tile 降级路径与定位角标共用）。 */
+function onDeliveryLocate(nodeId: string): void {
+  onLocate(nodeId)
+  observeDeliveryCard('locate', { nodeId })
+}
+
+/** video 时长徽标（节点实况 durationMs，缺省隐藏——D-d）。 */
+function deliveryDurationLabel(nodeId: string): string {
+  const data = deliveryViewerNodeOf(nodeId)?.data
+  const ms = data && typeof data.durationMs === 'number' ? data.durationMs : undefined
+  if (!ms || ms <= 0) return ''
+  const totalSec = Math.round(ms / 1000)
+  const min = Math.floor(totalSec / 60)
+  const sec = totalSec % 60
+  return min > 0 ? `${min}:${String(sec).padStart(2, '0')}` : `0:${String(sec).padStart(2, '0')}`
+}
+
+/** tile 缩略图地址：复用 artifactUrl（part.url 优先、resolveNodeUrl 兜底）。 */
+function deliveryThumbOf(nodeId: string): string | undefined {
+  const part = (props.parts ?? []).find(
+    (p): p is Extract<TimelinePart, { kind: 'artifact' }> => p.kind === 'artifact' && p.nodeId === nodeId,
+  )
+  return part ? artifactUrl(part) : undefined
+}
 
 /**
  * 卡片积分 pill 权威取值（v2 单一真相源修复）：服务端 creditCost 优先，
@@ -681,6 +762,101 @@ const rootClass = computed(() =>
       </div>
     </template>
 
+    <!-- E2-a 回合产物幽灵摘要（规格 2026-11-04-e2a-ghost-delivery-summary §3）：
+         收起 = tint 文本行 + chevron；展开 = 横向 64px tile 条（D-d 横滑，不推走对话流）。
+         tile tap：viewer 解析+inject 命中 ⇒ 直开（一跳）；否则定位兜底（D-c）。
+         定位角标独立命中区（::after 外扩 44px，E-d）。 -->
+    <div v-if="!deliveryHidden" class="delivery-summary" data-test="delivery-summary">
+      <button
+        type="button"
+        class="delivery-toggle"
+        data-test="delivery-toggle"
+        :aria-expanded="deliveryExpanded"
+        @click="onDeliveryToggle"
+      >
+        查看本轮产物 · {{ deliveryCountLabel(deliveryItems.length) }}
+        <svg
+          class="chevron"
+          :class="deliveryExpanded ? 'is-open' : ''"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        ><path d="m6 9 6 6 6-6" /></svg>
+      </button>
+      <div v-if="deliveryExpanded" class="delivery-strip" data-test="delivery-strip">
+        <div v-for="item in deliveryItems" :key="item.nodeId" class="delivery-tile-wrap">
+          <button
+            type="button"
+            class="delivery-tile"
+            :data-test="'delivery-tile-' + item.nodeId"
+            :aria-label="'预览 ' + item.title"
+            @click="onDeliveryTileOpen(item)"
+          >
+            <video
+              v-if="deliveryThumbOf(item.nodeId) && item.nodeType === 'video'"
+              :src="`${deliveryThumbOf(item.nodeId)}#t=0.1`"
+              muted
+              preload="metadata"
+              class="tile-media"
+            />
+            <img
+              v-else-if="deliveryThumbOf(item.nodeId)"
+              :src="deliveryThumbOf(item.nodeId)"
+              :alt="item.title"
+              loading="lazy"
+              class="tile-media"
+            />
+            <svg
+              v-else-if="item.nodeType === 'audio'"
+              class="tile-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              aria-hidden="true"
+            ><path d="M4 12v0M8 8v8M12 5v14M16 9v6M20 11v2" /></svg>
+            <svg
+              v-else-if="item.nodeType === 'text'"
+              class="tile-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            ><path d="M6 3h8l4 4v14H6z" /><path d="M14 3v4h4" /><path d="M9 12h6M9 16h6" /></svg>
+            <svg
+              v-else
+              class="tile-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            ><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="1.6" /><path d="M4.5 18.5 10 13l4 4 2.5-2.5 3 3" /></svg>
+            <span v-if="deliveryDurationLabel(item.nodeId)" class="duration">{{ deliveryDurationLabel(item.nodeId) }}</span>
+          </button>
+          <button
+            type="button"
+            class="delivery-locate"
+            :data-test="'delivery-locate-' + item.nodeId"
+            :aria-label="'在画布中定位 ' + item.title"
+            @click.stop="onDeliveryLocate(item.nodeId)"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="7" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" /></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- R-C（2026-11-02 卡片 UX 优化）：参数微调 Sheet——挂载在 parts 循环外。
          「调整」入口（proposal 卡 data-test=tune）经 openProposeTuneSheet 置模块级 ref
          驱动显隐；「保存并确认」经本组件既有 confirmProposal emit 上行到 SideRail
@@ -1063,4 +1239,109 @@ const rootClass = computed(() =>
   .state-running .trilink-rail .trail { animation: none; width: 55%; }
   .tether:hover svg.chain { animation: none; }
 }
+
+/* E2-A-DELIVERY-BEGIN — 回合产物幽灵摘要（E-d：仅 --lnk-* 令牌，零 hex；
+   展开过渡 --lnk-duration-fast，reduced-motion 降级直切） */
+.delivery-summary {
+  margin-top: 6px;
+}
+.delivery-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: var(--lnk-touch-target);
+  padding: 2px 0;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  color: var(--lnk-accent-text);
+  cursor: pointer;
+}
+.delivery-toggle:hover {
+  color: var(--lnk-accent);
+}
+.delivery-toggle .chevron {
+  width: 12px;
+  height: 12px;
+  transition: transform var(--lnk-duration-fast) var(--lnk-ease-decelerate);
+}
+.delivery-toggle .chevron.is-open {
+  transform: rotate(180deg);
+}
+.delivery-strip {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.delivery-tile-wrap {
+  position: relative;
+  flex-shrink: 0;
+}
+.delivery-tile {
+  position: relative;
+  display: block;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border: 0.5px solid var(--lnk-border-default);
+  border-radius: var(--lnk-control-sm);
+  background: var(--lnk-surface-sunken);
+  overflow: hidden;
+  cursor: pointer;
+}
+.delivery-tile .tile-media {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.delivery-tile .tile-icon {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 26px;
+  height: 26px;
+  color: var(--lnk-text-muted);
+}
+.delivery-tile .duration {
+  position: absolute;
+  right: 4px;
+  bottom: 3px;
+  padding: 0 3px;
+  border-radius: 4px;
+  background: var(--lnk-hi-bg);
+  font-size: 10px;
+  color: var(--lnk-hi-text);
+}
+.delivery-locate {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0.5px solid var(--lnk-border-strong);
+  border-radius: 50%;
+  background: var(--lnk-hi-bg);
+  color: var(--lnk-accent-text);
+  cursor: pointer;
+}
+/* 命中区外扩 20px→44px（AgentSideRail mic 同款手法；只纵向收敛防压邻 tile） */
+.delivery-locate::after {
+  content: '';
+  position: absolute;
+  inset: -12px;
+}
+.delivery-locate svg {
+  width: 11px;
+  height: 11px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .delivery-toggle .chevron { transition: none; }
+}
+/* E2-A-DELIVERY-END */
 </style>
