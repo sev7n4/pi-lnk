@@ -179,9 +179,12 @@ describe('startConversationRun（P1 Task 4：ack 化 + 后台 drain）', () => {
     expect(spyWithArgs.positionalArgs[1]).toBe('画一只红车')
     expect(spyWithArgs.positionalArgs[2]).toBe('U1')
     expect(spyWithArgs.positionalArgs[3]).toBe('T1')
-    // 15 个位置参数的末位 = selectedNodeIds；billingSource 不传（缺省 user）
-    expect(spyWithArgs.positionalArgs).toHaveLength(15)
+    // 17 个位置参数：末位 = streamOpts（2026-11-04 实时补桥，turn_settled 经总线注入
+    // /runs/events）；15 位 = selectedNodeIds；16 位 = billingSource（ack 入口固定 user）
+    expect(spyWithArgs.positionalArgs).toHaveLength(17)
     expect(spyWithArgs.positionalArgs[14]).toEqual(['n1'])
+    expect(spyWithArgs.positionalArgs[15]).toBeUndefined()
+    expect(spyWithArgs.positionalArgs[16]).toEqual({ bridgeSettledToBus: true })
     await drained
   })
 
