@@ -855,8 +855,14 @@ export class AgentController {
         thinking: dto.thinking,
         thinkingEffort: dto.thinkingEffort,
         branchFromEntryId: dto.branchFromEntryId,
-        selectedNodeIds: dto.selectedNodeIds,
-      })
+      selectedNodeIds: dto.selectedNodeIds,
+    })
+      // ⛔ T8 canary（2026-11-04 生产实证）：方法开头已为 SSE 路径预设
+      // text/event-stream，而 Express 4 的 res.json() **不覆盖**已存在的
+      // Content-Type ⇒ ack 响应带 SSE 头出去 ⇒ 前端 isConversationAckResponse()
+      // （判据=ct.includes('application/json')）判 false ⇒ 分派失效：ack body
+      // 被当 SSE 逐行 split 后全部静默丢弃。⇒ 必须显式覆盖（前端分派的唯一判据）。
+      res.setHeader('Content-Type', 'application/json; charset=utf-8')
       return res.status(200).json({ code: 0, message: 'ok', data: ack })
     }
 
