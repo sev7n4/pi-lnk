@@ -103,3 +103,36 @@ export function synthesizeSummary(
   }
   return { success, failed, needsUser, skipped, lines }
 }
+
+/** 画布对账回填的归属源最小结构切片（AgentMessage，避免引入 store 类型依赖）。 */
+export interface BackfillOwnableMessage {
+  role: string
+  timeline?: {
+    parts: ReadonlyArray<{ kind: string; nodeId?: string }>
+    pendingNodeMeta?: Record<string, unknown>
+  } | null
+}
+
+/**
+ * 回填归属集（2026-11-05 真机修复 Q1）：时间线已持有 artifact 的 nodeId +
+ * 已暂存 pendingNodeMeta 的 nodeId。
+ *
+ * 为什么必须认 meta：文本/HTML 产物（P1-D 自动审批）没有 waiting_user 确认点，
+ * 完成通报只入 followUp 不派 node_status ⇒ deferred 建卡机制下永远建不出
+ * artifact part；若归属集只认已有 part，画布对账回填会静默跳过它们——
+ * 这正是文本产物不进交付条的根因。W11「有正据才动」不破：收集归属≠判 done，
+ * probe 仍要求 content/url 证据（mapNodeStatus）。
+ */
+export function collectBackfillOwnableNodeIds(
+  messages: readonly BackfillOwnableMessage[],
+): Set<string> {
+  const owned = new Set<string>()
+  for (const m of messages) {
+    if (m.role !== 'assistant' || !m.timeline) continue
+    for (const p of m.timeline.parts) {
+      if (p.kind === 'artifact' && p.nodeId) owned.add(p.nodeId)
+    }
+    for (const nodeId of Object.keys(m.timeline.pendingNodeMeta ?? {})) owned.add(nodeId)
+  }
+  return owned
+}

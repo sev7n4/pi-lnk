@@ -22,9 +22,9 @@ const artifact = (over: Partial<Extract<TimelinePart, { kind: 'artifact' }>> = {
 
 const canvasNode = (id: string, type: string, data: Record<string, unknown> = {}) => ({ id, type, data })
 
-function mountTimeline(parts: TimelinePart[], opts: { viewer?: ReturnType<typeof vi.fn>; nodes?: unknown[] } = {}) {
+function mountTimeline(parts: TimelinePart[], opts: { viewer?: ReturnType<typeof vi.fn>; nodes?: unknown[] | null } = {}) {
   return mount(AgentTurnTimeline, {
-    props: { parts, canvasNodes: (opts.nodes ?? []) as never },
+    props: { parts, canvasNodes: (opts.nodes === undefined ? [] : opts.nodes) as never },
     global: opts.viewer
       ? { provide: { [MOBILE_NODE_OPEN_VIEWER_KEY as symbol]: opts.viewer } }
       : undefined,
@@ -34,10 +34,18 @@ function mountTimeline(parts: TimelinePart[], opts: { viewer?: ReturnType<typeof
 
 describe('AgentTurnTimeline — 幽灵摘要显隐（D-b）', () => {
   it('done≥1 且无 running ⇒ 渲染，文案含「查看本轮产物 · 2」', () => {
-    const w = mountTimeline([
-      artifact({ nodeId: 'n1', url: 'https://x/a.png' }),
-      artifact({ nodeId: 'n2', title: '概念图 B', url: 'https://x/b.png' }),
-    ])
+    const w = mountTimeline(
+      [
+        artifact({ nodeId: 'n1', url: 'https://x/a.png' }),
+        artifact({ nodeId: 'n2', title: '概念图 B', url: 'https://x/b.png' }),
+      ],
+      {
+        nodes: [
+          canvasNode('n1', 'image', { url: 'https://x/a.png' }),
+          canvasNode('n2', 'image', { url: 'https://x/b.png' }),
+        ],
+      },
+    )
     const row = w.find('[data-test="delivery-summary"]')
     expect(row.exists(), '有产物且回合收束 ⇒ 幽灵行在').toBe(true)
     expect(row.text()).toContain('查看本轮产物 · 2')
@@ -49,10 +57,13 @@ describe('AgentTurnTimeline — 幽灵摘要显隐（D-b）', () => {
   })
 
   it('failed 不计入 N', () => {
-    const w = mountTimeline([
-      artifact({ nodeId: 'n1', url: 'https://x/a.png' }),
-      artifact({ nodeId: 'n2', status: 'failed' }),
-    ])
+    const w = mountTimeline(
+      [
+        artifact({ nodeId: 'n1', url: 'https://x/a.png' }),
+        artifact({ nodeId: 'n2', status: 'failed' }),
+      ],
+      { nodes: [canvasNode('n1', 'image', { url: 'https://x/a.png' })] },
+    )
     expect(w.find('[data-test="delivery-summary"]').text()).toContain('· 1')
   })
 
@@ -67,7 +78,9 @@ describe('AgentTurnTimeline — 幽灵摘要显隐（D-b）', () => {
 
 describe('AgentTurnTimeline — 展开两态与 tile（D-d/E-d）', () => {
   it('默认收起；点击展开出现 tile 条，再点收起', async () => {
-    const w = mountTimeline([artifact({ nodeId: 'n1', url: 'https://x/a.png' })])
+    const w = mountTimeline([artifact({ nodeId: 'n1', url: 'https://x/a.png' })], {
+      nodes: [canvasNode('n1', 'image', { url: 'https://x/a.png' })],
+    })
     expect(w.find('[data-test="delivery-strip"]').exists()).toBe(false)
     await w.find('[data-test="delivery-toggle"]').trigger('click')
     expect(w.find('[data-test="delivery-strip"]').exists()).toBe(true)
@@ -83,6 +96,8 @@ describe('AgentTurnTimeline — 展开两态与 tile（D-d/E-d）', () => {
       artifact({ nodeId: 'n3', nodeType: 'video', title: '宣传片', url: 'https://x/v.mp4' }),
     ], {
       nodes: [
+        canvasNode('n1', 'audio', {}),
+        canvasNode('n2', 'text', {}),
         canvasNode('n3', 'video', { url: 'https://x/v.mp4', durationMs: 84_000 }),
       ],
     })
@@ -107,7 +122,9 @@ describe('AgentTurnTimeline — viewer 直开路由（D-c）', () => {
   })
 
   it('inject 缺省（预览页/桌面）⇒ 降级 emit focusNode', async () => {
-    const w = mountTimeline([artifact({ nodeId: 'n1', url: 'https://x/a.png' })])
+    const w = mountTimeline([artifact({ nodeId: 'n1', url: 'https://x/a.png' })], {
+      nodes: [canvasNode('n1', 'image', { url: 'https://x/a.png' })],
+    })
     await w.find('[data-test="delivery-toggle"]').trigger('click')
     await w.find('[data-test="delivery-tile-n1"]').trigger('click')
     expect(w.emitted('focusNode')).toEqual([['n1']])
@@ -124,13 +141,23 @@ describe('AgentTurnTimeline — viewer 直开路由（D-c）', () => {
     expect(w.emitted('focusNode')).toEqual([['n1']])
   })
 
-  it('节点已删（canvasNodes 无此 nodeId）⇒ tap 降级定位', async () => {
-    const viewer = vi.fn()
-    const w = mountTimeline([artifact({ nodeId: 'n1', url: 'https://x/a.png' })], { viewer })
+  it('节点已删（canvasNodes 无此 nodeId）⇒ tile 整体从清单过滤，计数同步减（Q2）', async () => {
+    const w = mountTimeline(
+      [
+        artifact({ nodeId: 'n1', url: 'https://x/a.png' }),
+        artifact({ nodeId: 'n2', title: '概念图 B', url: 'https://x/b.png' }),
+      ],
+      { nodes: [canvasNode('n1', 'image', { url: 'https://x/a.png' })] },
+    )
+    expect(w.find('[data-test="delivery-summary"]').text(), '计数只含存活节点').toContain('· 1')
     await w.find('[data-test="delivery-toggle"]').trigger('click')
-    await w.find('[data-test="delivery-tile-n1"]').trigger('click')
-    expect(viewer).not.toHaveBeenCalled()
-    expect(w.emitted('focusNode')).toEqual([['n1']])
+    expect(w.find('[data-test="delivery-tile-n1"]').exists()).toBe(true)
+    expect(w.find('[data-test="delivery-tile-n2"]').exists(), '已删节点不留幽灵 tile').toBe(false)
+  })
+
+  it('canvasNodes=null（未接线/未知态）⇒ 不过滤，保守显示', () => {
+    const w = mountTimeline([artifact({ nodeId: 'n1', url: 'https://x/a.png' })], { nodes: null })
+    expect(w.find('[data-test="delivery-summary"]').text()).toContain('· 1')
   })
 })
 
@@ -157,6 +184,16 @@ describe('AgentTurnTimeline — 令牌纪律（E-d）', () => {
     expect(seg.length, '标记段必须存在于 style 内').toBeGreaterThan(0)
     expect(seg).not.toMatch(/--neo-/)
     expect(seg).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
+  })
+})
+
+describe('AgentTurnTimeline — 交付条裁切防回归（2026-11-05 Q3）', () => {
+  it('.delivery-strip 为上溢定位角标（top:-5px）预留头部 padding，防 overflow-x 滚动容器裁切', () => {
+    const rule = readSelf().match(/\.delivery-strip \{[^}]*\}/)
+    expect(rule, '.delivery-strip 规则必须在位').toBeTruthy()
+    const pt = rule![0].match(/padding-top\s*:\s*(\d+)px/)
+    expect(pt, '必须以 px 显式设置 padding-top').toBeTruthy()
+    expect(Number(pt![1]), '头部预留须 ≥6px（角标上溢 5px + 1px 余量）').toBeGreaterThanOrEqual(6)
   })
 })
 
