@@ -124,4 +124,28 @@ describe('POST /chat/conversation 的 STREAM_MAIN_FROM_PIRUNTIME 分支', () => 
     ).rejects.toThrow('db down')
     expect(res.json).not.toHaveBeenCalled()
   })
+
+  // T8 canary（2026-11-04 生产实证）：方法开头为 SSE 路径预设了
+  // text/event-stream，而 Express 4 的 res.json() **不覆盖**已存在的
+  // Content-Type ⇒ ack 响应带着 SSE 头出去 ⇒ 前端
+  // isConversationAckResponse()（判据=ct.includes('application/json')）判
+  // false ⇒ 分派失效：ack body 被当 SSE 逐行 split，全部不匹配 `data: `
+  // 前缀而静默丢弃。⇒ flag 分支必须**显式覆盖** Content-Type。
+  it('flag on ⇒ ack 响应必须显式覆盖 Content-Type 为 application/json', async () => {
+    vi.stubEnv('STREAM_MAIN_FROM_PIRUNTIME', 'on')
+    const { controller, agentService } = makeController()
+    const res = makeRes()
+
+    await controller.conversation(DTO as never, makeReq() as never, res as never)
+
+    // 方法开头已设 SSE 头（模拟真实 Express 行为：头已存在）
+    expect(res.setHeader).toHaveBeenCalledWith('Content-Type', 'text/event-stream')
+    // flag 分支必须再显式覆盖为 JSON——这是前端分派的唯一判据
+    const setCalls = res.setHeader.mock.calls as Array<[string, string]>
+    const jsonHeader = setCalls.find(
+      ([k, v]) => k === 'Content-Type' && v.includes('application/json'),
+    )
+    expect(jsonHeader).toBeDefined()
+    expect(agentService.startConversationRun).toHaveBeenCalledTimes(1)
+  })
 })
