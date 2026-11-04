@@ -86,6 +86,11 @@ export type TimelinePart =
       tone: 'info' | 'warn' | 'error'
       /** D2：error notice 携带重试入口文案（由渲染层出按钮）。 */
       retryLabel?: string
+      /**
+       * 点⑤（2026-11-04 tokens 移详情）：摘要详情态文本，悬停承载（原生 title）。
+       * 当前承载 tokens breakdown（与 executionTrace T7 口径一致）；主行只留积分。
+       */
+      detail?: string
     }
   /**
    * 等待态单一真相（2026-10-28 根治规格）：propose_generation 的「等用户在画布上确认」
@@ -930,6 +935,7 @@ export function finalizeTurnTimeline(timeline: TurnTimeline): void {
       id: 'notice:turn-summary',
       text: summary,
       tone: 'info',
+      detail: composeTokensDetail(timeline) ?? undefined,
     })
   }
 }
@@ -951,6 +957,33 @@ export function refreshTimelineSummary(timeline: TurnTimeline): void {
   if (!summaryNotice) return
   const summary = summarizeTimeline(timeline)
   if (summary) summaryNotice.text = summary
+  summaryNotice.detail = composeTokensDetail(timeline) ?? undefined
+}
+
+/** tokens 人类化：≥1k 显示 X.Xk（3400 → 3.4k），否则原数。
+ *  与 executionTraceReducer.formatTokens 同形（格式化函数，非双表面同文案，C7 不适用）。 */
+function formatTokens(total: number): string {
+  if (total < 1000) return `${total}`
+  return `${(Math.round(total / 100) / 10).toFixed(1)}k`
+}
+
+/**
+ * 摘要 tokens 详情（点⑤ 2026-11-04：主行只留积分，tokens 收进悬停详情态）。
+ *
+ * 口径与 executionTrace T7（turnSettledText 结算段）完全对齐：
+ * `tokens 输入 X.Xk · 缓存 X.Xk · 输出 X.Xk`——输入 = inputTokens + cacheWriteTokens
+ * （计费口径 cacheWrite 并入 in，终审 I-1 / P2 T5 同源），缓存 = cacheReadTokens，
+ * 输出 = outputTokens。无 usage 或总量为 0（旧事件/无计费）返回 null ⇒ notice 不挂
+ * detail（渲染层无悬停 affordance）。
+ */
+export function composeTokensDetail(timeline: TurnTimeline): string | null {
+  const usage = timeline.usage
+  if (!usage) return null
+  const input = usage.inputTokens + (usage.cacheWriteTokens ?? 0)
+  const cache = usage.cacheReadTokens ?? 0
+  const out = usage.outputTokens
+  if (input + cache + out <= 0) return null
+  return `tokens 输入 ${formatTokens(input)} · 缓存 ${formatTokens(cache)} · 输出 ${formatTokens(out)}`
 }
 
 /** 摘要文案（复用 turnSummaryLine 的口径，但数据源是 parts）。 */
@@ -980,13 +1013,15 @@ export function summarizeTimeline(timeline: TurnTimeline): string | null {
   if (timeline.usage) {
     // P2 T5：inputTokens 已收窄为纯 input，合计 = in + cacheRead + cacheWrite + out
     // （旧事件无 cache 字段 → 0 兜底），用户可见总量不缩水。
+    // 点⑤（2026-11-04）：tokens 段从主行退场（详情态承载，composeTokensDetail），
+    // 主行只留积分；**唯一例外** = Q2 降级路径（无任何积分段，渠道未配 pricing），
+    // tokens 是唯一可用口径——维持 Q2「绝不显示 0 积分假象」既有裁定。
     const tokens =
       timeline.usage.inputTokens +
       (timeline.usage.cacheReadTokens ?? 0) +
       (timeline.usage.cacheWriteTokens ?? 0) +
       timeline.usage.outputTokens
     const tokenStr = tokens < 1000 ? `${tokens}` : `${(Math.round(tokens / 100) / 10).toFixed(1)}k`
-    segments.push(`消耗 ${tokenStr} tokens`)
     // 2026-11-03 结算摘要（对齐 WorkBuddy 回合尾静态行）：settled 到达即用**权威结算值**
     // 收口摘要行，预估段（≈N 积分（预估））不再出现——预估是流式瞬时态，绝不残留为
     // 最终数字。released（预扣全退）不显示负数；credits 缺（异常形态）回退预估段。
@@ -995,8 +1030,9 @@ export function summarizeTimeline(timeline: TurnTimeline): string | null {
       settled && !settled.released && typeof settled.credits === 'number' && Number.isFinite(settled.credits)
         ? settled.credits
         : null
+    let creditSegment: string | null = null
     if (settled && settledCredits != null) {
-      segments.push(composeSettledSegment({ credits: settledCredits, model: settled.model, degraded: settled.degraded }))
+      creditSegment = composeSettledSegment({ credits: settledCredits, model: settled.model, degraded: settled.degraded })
     } else {
       // Q2（2026-10-14）：摘要把消耗收敛到**积分**单一口径（与项目计费体系一致）——
       // USD cost 是上游内部成本口径，不再透出给用户；预估积分缺（渠道未配 pricing /
@@ -1006,12 +1042,17 @@ export function summarizeTimeline(timeline: TurnTimeline): string | null {
         // Epic 3 Task 10（规格 §5.3 flag-off 行）：回合已结束仍无 turn_settled ⇒ 服务端
         // TEXT_TOKEN_BILLING=off（零预扣零结算）——预估段成为终态，必须显式
         // 「预计消耗（非正式结算）」、不冒充已结算；流式中段保持「预估」瞬时态。
-        segments.push(
+        creditSegment =
           timeline.turnEndedAt != null
             ? `预计消耗 ≈${Math.ceil(credits)} 积分（非正式结算）`
-            : `≈${Math.ceil(credits)} 积分（预估）`,
-        )
+            : `≈${Math.ceil(credits)} 积分（预估）`
       }
+    }
+    if (creditSegment) {
+      segments.push(creditSegment)
+    } else {
+      // Q2 降级：无积分段 ⇒ tokens 保留在主行（唯一可用信息）。
+      segments.push(`消耗 ${tokenStr} tokens`)
     }
   }
   return segments.length > 0 ? segments.join(' · ') : null

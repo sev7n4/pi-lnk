@@ -387,6 +387,7 @@ model PointTransaction {
 | 定价模型/价目表改造 | 属 P2 与定价等价迁移，本规格只消费 |
 | 团队/跨账户对账 | 超出个人积分可视范围 |
 | flag 组合矩阵 | `CREDIT_TX=on/off × TEXT_TOKEN_BILLING=on/off` 四态：off/off=现状；on/off=生成进流但文本仍预估；off/on=文本精确但生成不进流（过渡）；on/on=全量（目标）。灰度从 off/off 逐步开到 on/on |
+| tokens breakdown 详情面板（悬停态富呈现） | 点⑤最小 affordance（原生 title 悬停）已随本规格落地（2026-11-04）；富详情面板（展开式 breakdown UI）仍后置，依赖交互设计投入 |
 
 ## 13. 配图规范自检
 
@@ -444,7 +445,7 @@ flowchart TD
 | 产物/提议段 | ~~已生成 1 个产物 · 提议生成 1 张~~ | 已生成 1 张（单提议单产物合并） |
 | 提议卡 | 消耗 33 积分（quote，生成后不更新） | 结算后原位翻转「已结算 · 实耗 N 积分」（`settledActual` 由 image 类 credit_tx 按 generationId 回填，幂等） |
 | 生成记录 ID | ~~生成记录：cmw1h2xe…~~（模型文本） | 约束句走 run_* 工具 description（不占 prompt-registry 预算）；呈现收进详情/复制 affordance |
-| tokens | 消耗 85.5k tokens（主行保留） | 维持现状（Q2 裁定的详情口径，暂不挪） |
+| tokens | ~~消耗 85.5k tokens（主行保留）~~ | **点⑤已落地（2026-11-04）**：有积分段时主行 tokens 退场，收进摘要 notice `detail` 悬停态（原生 title，`tokens 输入 X · 缓存 X · 输出 X`，与 executionTrace T7 口径一致）；**Q2 降级路径（无积分段）主行 tokens 保留**——它是唯一可用口径，延续「绝不显示 0 积分假象」既有裁定 |
 
 ### 14.5 实施清单与测试
 
@@ -452,6 +453,15 @@ flowchart TD
 - **文件级**：`turnTimeline.ts`（结算段改 compose + 产物/提议合并）；`executionTraceReducer.ts`（若有裸 model 透出则同修）；web 渲染 `modelKey` 其余用户可见落点全走映射（全目录扫描 + 静态契约「`platform::` 出现在用户可见文案 = 0」，改白名单 = 审计动作，沿用 #689 纪律）；pi-runtime `tools/generation.ts` run_* description 追加「不要向用户复述计费数字与生成记录 ID」；`AgentTopoCardList`（creditQuote 卡 `settledActual` 翻转）。
 - **验收**：① §14.5 纯函数单测；② C7 双表面口径一致性测试（同一 turn_settled 数据喂图 5 的两个渲染函数，断言词族一致）；③ C9 守卫变异（去掉映射/标注 ⇒ 红）；④ 目视重放截图会话五层 before→after。
 - **风险**：模型幻觉编数字无法完全根除（模板管住后仅剩低概率路径），呈现层不做 LLM 输出过滤（高误伤）；图像费聚合进摘要依赖 credit_tx 进时间线（数据结构改动），列 §12 不进本包。
+
+### 14.7 点⑤实施记录（2026-11-04，tokens 移详情独立 web 小包）
+
+用户裁决「5 点方案中 ①③④ 随 §14 主包落地（#711）、② 聚合账列 §12、⑤ 独立小包紧随」后实施：
+
+- **主行退场**：`summarizeTimeline` 有积分段（settled 权威值或预估）时不再产出「消耗 N tokens」段；主行只留积分（点⑤主语义）。
+- **详情态承载**：摘要 notice（`notice:turn-summary`）新增可选 `detail` 字段，经 `composeTokensDetail` 产出 `tokens 输入 X · 缓存 X · 输出 X`（cacheWrite 并入输入，与 executionTrace T7 / 终审 I-1 口径同源）；渲染层原生 `title` 悬停 + `cursor-help` 暗示（零新依赖最小 affordance，富详情面板仍列 §12）。
+- **Q2 降级例外**：无积分段（渠道未配 pricing）时主行 tokens 保留——Q2 既有裁定「只显示 tokens，绝不显示 0 积分假象」的延续，信息不灭优先于主行极简。
+- **测试**：新 `turnTimeline.tokensDetail.test.ts` 5 用例（主行退场 + detail 挂载 + Q2 例外 + replay 同构 + 空值 null）+ 既有 82 用例全绿 + `vue-tsc -b` 全量过 + C8 静态守卫过。
 
 ### 14.6 边界
 
