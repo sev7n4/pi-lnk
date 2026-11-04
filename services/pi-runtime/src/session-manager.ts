@@ -57,6 +57,7 @@ import { applyDynamicBudget, classifyBlock } from "./dynamic-budget.js"
 import { estimateImageTokens, toImageContents, type DirectImage } from "./direct-images.js";
 import { annotateImagesForSummary } from "./compaction-images.js";
 import { enforceRetention } from "./session-retention.js";
+import { EventJournal, isJournalable, readJournal, recoverNextSeq, type JournalRecord } from "./events-journal.js";
 import { buildToolEnsemble } from "./tools/tiering.js";
 import { seedTodoState, getTodoState } from "./tools/todo.js";
 import { pickLatestSnapshot, renderTodoBlock } from "./tools/task-state.js";
@@ -529,6 +530,15 @@ interface SessionEntry {
 	compacting?: boolean;
 	/** 下一个待分配的事件 seq（会话内单调递增，P0-③）。 */
 	nextSeq: number;
+	/**
+	 * P2：结构性事件 journal（`events.jsonl`，会话目录内）。
+	 *
+	 * 落盘内容 = 全部 NormalizedEventType − message_update（写放大防线），
+	 * 供「TTL 驱逐后 / 进程重启后」磁盘 resume 时 rebuild buffer 与 nextSeq——
+	 * `lastEventId` 游标跨重启连续，Nest P0 对账 probe 在重启窗不再恒 missing。
+	 * TTL 驱逐（destroyMemoryOnly）只 close 句柄不删文件；destroy（删目录）随目录清理。
+	 */
+	journal?: EventJournal;
 	/**
 	 * buffer 里**已被淘汰**的最早 seq；0 = 什么都没丢（T1）。
 	 *
@@ -1075,6 +1085,45 @@ export class SessionManager {
 		return this.sessions.has(toSessionKey(threadKey));
 	}
 
+	/**
+	 * P2：events 端点的磁盘尝试重载（只读语义——绝不创建新会话、绝不删目录）。
+	 *
+	 * 背景：TTL 逐出只关内存句柄、磁盘保留，但重启窗内 `hasKey=false` 让对账
+	 * probe（Nest `reconcileLatestAssistant`）恒 missing，误判轮次失败。
+	 * 本方法在 404 之前给一次磁盘机会：
+	 *
+	 * - 内存在 ⇒ true（幂等快路径）；
+	 * - 磁盘无 meta ⇒ false（伪 id / 已删会话：404 语义不变，**零副作用**）；
+	 * - ⛔ 身份预检：`create` 的磁盘分支在 LLM 身份不一致时会**删目录 rebuilt**。
+	 *   probe 订阅绝不能有删除副作用，且 BYOK 身份无法从 meta 复位
+	 *   （apiKey 不落盘是红线）⇒ 预检不匹配直接 false（probe 退化为 P2 前行为，
+	 *   零数据损失）；匹配（平台会话常态）才走 `create` 的磁盘 resume 分支，
+	 *   Task 2 的 journal rebuild 保证 buffer/nextSeq 跨重启连续。
+	 */
+	async ensureLoaded(threadKey: string): Promise<boolean> {
+		const key = toSessionKey(threadKey);
+		if (this.sessions.has(key)) return true;
+		try {
+			const cwd = join(this.config.dataRoot, key);
+			const meta = await readSessionMeta(cwd);
+			if (!meta) return false;
+			const { providerId, model } = this.modelFactory(undefined);
+			if (
+				!isSameLlmIdentity(
+					{ provider: meta.provider, model: meta.model },
+					{ provider: providerId, model: model.id },
+				)
+			) {
+				return false;
+			}
+			await this.create(threadKey, {});
+			return this.sessions.has(key);
+		} catch {
+			// 装配失败 / 目录竞态：fail-soft 降级为 404（对齐 journal 的诊断流定位，不阻断订阅面）。
+			return false;
+		}
+	}
+
 	/** 内存驻留会话键集合（TTL / LRU 豁免的唯一数据源）。 */
 	activeKeys(): Set<string> {
 		return new Set(this.sessions.keys());
@@ -1185,10 +1234,31 @@ export class SessionManager {
 				);
 			}
 			const built = await this.build(key, opts, models, model, identity, { env, repo, session: opened });
+			// P2：从 journal rebuild 重放 buffer 与 nextSeq —— lastEventId 游标跨重启连续，
+			// Nest P0 对账 probe 在重启窗不再恒 missing（rootfix T5 验收）。
+			await this.rebuildReplayFromJournal(key);
 			return { ...built, status: "resumed", resumedFrom: "disk" };
 		}
 		const created = await this.build(key, opts, models, model, identity, { env, repo });
 		return { ...created, status: "created" };
+	}
+
+	/**
+	 * P2：磁盘 resume 后，用 events.jsonl rebuild `buffer`/`droppedFromSeq`/`nextSeq`。
+	 *
+	 * - journal 缺失（存量旧会话）⇒ fail-soft：buffer 空、nextSeq=0（对齐新建语义）；
+	 * - 超过 BUFFER_LIMIT 时截取最近 500 条，`droppedFromSeq` = 保留段最早 seq
+	 *   （与内存溢出路径 `dropped.seq + 1` 在连续 seq 下等值）。
+	 */
+	private async rebuildReplayFromJournal(key: string): Promise<void> {
+		const entry = this.sessions.get(key);
+		const dir = entry?.journal?.directory;
+		if (!entry || !dir) return;
+		const recs = await readJournal(dir).catch(() => [] as JournalRecord[]);
+		entry.buffer = recs.slice(-BUFFER_LIMIT).map((r) => r.event);
+		entry.droppedFromSeq =
+			recs.length > BUFFER_LIMIT ? recs[recs.length - BUFFER_LIMIT].event.seq : 0;
+		entry.nextSeq = recoverNextSeq(recs);
 	}
 
 	/** 磁盘上存在可恢复会话时返回它（repo.list 按 createdAt 降序，取最新一条）。 */
@@ -1274,6 +1344,12 @@ export class SessionManager {
 			lastActivityAt: Date.now(),
 			lastProgressAt: Date.now(),
 		};
+		// P2：打开事件 journal（新建与磁盘 resume 共用；文件随会话目录生命周期）。
+		// open 失败不阻断建会话（对齐 :879 写盘失败不阻断的取舍）——代价仅是重启窗重放缺失。
+		entry.journal = await EventJournal.open(cwd).catch((err) => {
+			console.warn(`[pi-runtime] events journal open failed for ${key}: ${(err as Error).message}`);
+			return undefined;
+		});
 		// 归属/身份落盘（磁盘 resume 的 fail-closed 数据源，复核 Important #4）。
 		await writeSessionMeta(cwd, {
 			userId: opts.userId ?? null,
@@ -1815,6 +1891,8 @@ export class SessionManager {
 
 	private async releaseHandles(entry: SessionEntry): Promise<void> {		for (const unsub of entry.unsubscribes) unsub();
 		entry.listeners.clear();
+		// P2：journal 句柄一并关闭（flush 积压），文件保留在会话目录（磁盘 resume 的重放源）。
+		await entry.journal?.close().catch(() => {});
 		await entry.harness.close(this.context).catch(() => {});
 		await entry.repo.close(this.context).catch(() => {});
 		await entry.env.cleanup(this.context).catch(() => {});
@@ -3233,6 +3311,11 @@ export class SessionManager {
 			// 记下被淘汰的最早 seq（T1）：不记的话，subscribe 无法区分
 			// 「afterSeq 早于 buffer 起点」与「只是没有更早事件」这两种情况。
 			if (dropped) entry.droppedFromSeq = dropped.seq + 1;
+		}
+		// P2：结构性事件落 journal（message_update 除外——每 token 一条，写放大）。
+		// append 内部 200ms 节流 + 写失败只 warn：不阻断广播、不改变 dispatch 同步语义。
+		if (entry.journal && isJournalable(withSeq.type)) {
+			entry.journal.append({ seq: withSeq.seq, event: withSeq });
 		}
 		for (const listener of entry.listeners) {
 			try {
