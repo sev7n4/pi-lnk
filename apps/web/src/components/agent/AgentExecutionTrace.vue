@@ -57,15 +57,21 @@ const headerLabel = computed(() => {
 })
 
 const durationLabel = computed(() => {
-  if (props.streaming) return '· 进行中…'
+  // 2026-11-04 移动端复测①：streaming 时 headerLabel 已含「进行中…」（L47/L48），
+  // 这里再拼「· 进行中…」⇒ 同一行出现两次「进行中」（用户截图实证）。流式期间不重复。
+  if (props.streaming) return ''
   if (props.trace.totalMs != null) return `· ${formatDuration(props.trace.totalMs)}`
   return ''
 })
 
 const showTrace = computed(
   // usage 存在即渲染：纯文本回合（无步骤）也要露出回合摘要行（tokens 实耗）；
-  // 不用 totalMs 作门——否则老历史消息（无 usage）会多出重复的「执行过程」头行
-  () => stepCount.value > 0 || props.streaming || props.trace.usage != null,
+  // 不用 totalMs 作门——否则老历史消息（无 usage）会多出重复的「执行过程」头行。
+  // 2026-11-04 移动端复测①：去掉 `|| props.streaming`——等待窗（streaming 且 0 步且
+  // 无 usage）时 trace 只剩一行「执行过程（进行中…）」，与 SideRail 的「正在准备…」
+  // 占位（isPreparingPlaceholder）同屏两行都说"进行中/准备中"（用户截图实证）。
+  // 等待窗交由占位单独承载；首个步骤到达后 stepCount>0 自然亮出本组件。
+  () => stepCount.value > 0 || props.trace.usage != null,
 )
 
 function toggle() {
