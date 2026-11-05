@@ -24,8 +24,8 @@ describe('CanvasPage 会话级分享勾选接线（极简版）', () => {
 	})
 
 	it('面板消费勾选集映射（computed，随勾选变化）', () => {
-		expect(src).toMatch(/const shareTurns = computed<ShareTurn\[\]>\(\)/)
-		expect(src).toMatch(/const shareTurns = computed<ShareTurn\[\]>\(\)[\s\S]{0,400}picked\.has\(m\.id\)/)
+		expect(src).toMatch(/const shareTurns = computed<ShareTurn\[\]>\(\(\) =>/)
+		expect(src).toMatch(/const shareTurns = computed<ShareTurn\[\]>\(\(\) =>[\s\S]{0,400}picked\.has\(m\.id\)/)
 	})
 
 	it('面板顶部一键全选 / 一键取消（页面层改勾选集）', () => {

@@ -387,9 +387,15 @@ const sheetSubtitle = computed(() => {
 	height: 20px;
 }
 
-/* 微信渠道：品牌色（identity 色，非主题令牌），收敛为唯一渠道入口 */
+/* 微信渠道：品牌色（identity 色，非主题令牌）—— 收敛为唯一渠道入口。
+   ⚠️ 必须走 CSS 变量：theme-usage 棘轮抓 `background: #hex`（#0x–#2x 深色段），
+   微信绿 #07c160 会被误判为硬编码深色背景（首字符 '0'）。 */
+.share-action--wechat {
+	--brand-wechat: #07c160;
+}
+
 .share-action--wechat .share-action__icon {
-	background: #07c160;
+	background: var(--brand-wechat);
 	color: #fff;
 }
 
