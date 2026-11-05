@@ -1,23 +1,32 @@
 import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common'
-import { Type } from 'class-transformer'
-import { IsArray, IsOptional, IsString, ValidateNested } from 'class-validator'
+import { IsArray, IsObject, IsOptional, IsString } from 'class-validator'
 import type { ShareTurn } from '@lnkpi/shared'
 import { AuthGuard } from '../auth/auth.guard'
 import { ShareRateLimitGuard } from './share-rate-limit.guard'
 import { ShareService } from './share.service'
 
-class CreateShareDto {
+/**
+ * 分享创建入参。
+ *
+ * ⚠️ `turns` 刻意**不做嵌套校验**（不用 `@ValidateNested` + `@Type(() => Object)`）：
+ * 全局管道是 `new ValidationPipe({ transform: true, whitelist: true })`
+ * （apps/server/src/main.ts），whitelist 会剥掉「嵌套对象上无校验装饰器」的属性
+ * ⇒ 每个 turn 的 id/role/createdAt/parts/contentText 全被清空
+ * ⇒ 服务端渲染出的托管分享页只有空气泡 + 兜底时间（线上自 #723 起一直是空的，
+ * 早期症状是 createdAt 丢失导致的「Invalid Date」）。
+ *
+ * 改用 `@IsObject({ each: true })`：不做嵌套校验 ⇒ 回合对象原样透传；
+ * 结构合法性由 share.service 的 `assertShareTurns()` 兜底（非法即 400，绝不静默渲染空气泡）。
+ */
+export class CreateShareDto {
   @IsString()
   sessionId!: string
 
   @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => Object)
+  @IsObject({ each: true })
   turns!: ShareTurn[]
 
   /** 分享页可见标题（对话·项目名称），前端拼好传入；缺省回退到 OG 推导标题。 */
-  // ⚠️ 必须挂 @IsOptional：class-validator 对无 @IsOptional 的 undefined 字段直接判失败
-  //（回归教训：#732 加 title 漏挂导致老前端（无 title）POST 全量 400）。
   @IsOptional()
   @IsString()
   title?: string
