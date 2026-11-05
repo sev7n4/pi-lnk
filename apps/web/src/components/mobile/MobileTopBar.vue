@@ -27,6 +27,10 @@ const props = defineProps<{
   tab: 'chat' | 'canvas' | 'discover' | 'mine'
   /** 当前项目名（规格 §6.4：次级灰、15px、超长截断、非交互） */
   projectName: string
+  /** 会话级分享勾选态：顶栏切到「已选 N 条 + 分享所选 + 取消」。 */
+  shareSelectMode?: boolean
+  /** 勾选中的对话条数。 */
+  shareSelectedCount?: number
 }>()
 
 const emit = defineEmits<{
@@ -36,6 +40,10 @@ const emit = defineEmits<{
   'fit-view': []
   /** 会话级分享（Task 6）：chat 页签「分享会话」图标钮 → emit share（经 MobileCanvasShell 桥接 CanvasPage.openShare） */
   'share': []
+  /** 确认分享（按勾选集）——经壳层桥接 CanvasPage.confirmShare。 */
+  'share-confirm': []
+  /** 取消勾选态——经壳层桥接 CanvasPage.cancelShareSelect。 */
+  'share-cancel': []
 }>()
 
 const isGhost = computed(() => props.tab === 'discover' || props.tab === 'mine')
@@ -102,7 +110,7 @@ onUnmounted(() => {
       <div class="bar-actions">
         <!-- 会话级分享（Task 6）：chat 页签「分享会话」图标钮 → emit share（经 MobileCanvasShell 桥接 CanvasPage.openShare） -->
         <button
-          v-if="props.tab === 'chat'"
+          v-if="props.tab === 'chat' && !props.shareSelectMode"
           type="button"
           class="bar-btn"
           data-testid="mobile-topbar-share"
@@ -116,6 +124,34 @@ onUnmounted(() => {
             <path stroke-linecap="round" stroke-linejoin="round" d="M8.2 10.8 15.8 7.2 M8.2 13.2 15.8 16.8" />
           </svg>
         </button>
+        <!-- 会话级分享勾选态：计数 + 分享所选 + 取消（替代分享图标钮，避免两个入口并置） -->
+        <template v-if="props.tab === 'chat' && props.shareSelectMode">
+          <span class="bar-select-count" data-testid="mobile-topbar-select-count"
+            >已选 {{ props.shareSelectedCount ?? 0 }} 条</span
+          >
+          <button
+            type="button"
+            class="bar-btn bar-btn--accent"
+            data-testid="mobile-topbar-share-confirm"
+            aria-label="分享所选对话"
+            @click="emit('share-confirm')"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            class="bar-btn"
+            data-testid="mobile-topbar-share-cancel"
+            aria-label="取消选择"
+            @click="emit('share-cancel')"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+              <path stroke-linecap="round" d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </button>
+        </template>
         <!-- 画布：⤢ 适应画布（规格 §6.3，经壳层桥接 VueFlow fitView） -->
         <button
           v-if="props.tab === 'canvas'"
@@ -334,4 +370,16 @@ onUnmounted(() => {
   width: 19px;
   height: 19px;
 }
+
+/* 会话级分享勾选态：计数 + 强调动作 */
+.bar-select-count {
+  font-size: var(--lnk-text-xs);
+  color: var(--lnk-text-secondary);
+  white-space: nowrap;
+}
+
+.bar-btn--accent {
+  color: var(--lnk-accent);
+}
+
 </style>
