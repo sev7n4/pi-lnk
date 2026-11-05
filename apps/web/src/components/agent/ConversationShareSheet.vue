@@ -23,6 +23,8 @@ const props = withDefaults(
 	defineProps<{
 		turns: ShareTurn[]
 		sessionId: string
+		/** 分享页可见标题（对话·项目名称）。 */
+		title?: string
 		modelValue: boolean
 	}>(),
 	{},
@@ -53,7 +55,7 @@ function reupload() {
 	}
 	uploading.value = true
 	actions
-		.upload(props.turns, props.sessionId)
+		.upload(props.turns, props.sessionId, props.title)
 		.then((res) => {
 			shareUrl.value = res.url
 		})
@@ -97,7 +99,7 @@ function onShareViaQr() {
 async function onOpenOffline() {
 	busy.value = true
 	try {
-		await actions.openOffline(props.turns)
+		await actions.openOffline(props.turns, props.title)
 	} finally {
 		busy.value = false
 	}
@@ -106,7 +108,7 @@ async function onOpenOffline() {
 async function onMakeImage() {
 	busy.value = true
 	try {
-		imagePreview.value = await actions.toImage(props.turns)
+		imagePreview.value = await actions.toImage(props.turns, props.title)
 	} finally {
 		busy.value = false
 	}

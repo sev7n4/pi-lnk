@@ -23,10 +23,14 @@ export function useShareActions() {
 	const qrDataUrl = useQrDataUrl(qrText)
 
 	/** 上传到后端双写（DB + 静态托管页），返回公开 URL。须在用户手势之外调用。 */
-	async function upload(turns: ShareTurn[], sessionId: string): Promise<ShareUploadResult> {
+	async function upload(
+		turns: ShareTurn[],
+		sessionId: string,
+		title?: string,
+	): Promise<ShareUploadResult> {
 		loading.value = true
 		try {
-		const resp = await api.post('/share/conversation', { sessionId, turns })
+		const resp = await api.post('/share/conversation', { sessionId, turns, title })
 		// 响应体为 { code, message, data: { shareId, url } }（api 拦截器返回完整 AxiosResponse，
 		// 全仓惯例是 resp.data.data 取内层载荷，见 works-api / studio-api 等调用方）
 		const body = resp.data
@@ -56,9 +60,9 @@ export function useShareActions() {
 	}
 
 	/** 离线打开：图片预内联 base64 后生成 Blob 本地打开（零后端、真离线）。 */
-	async function openOffline(turns: ShareTurn[]): Promise<void> {
+	async function openOffline(turns: ShareTurn[], title?: string): Promise<void> {
 		const prepared = await prepareOfflineTurns(turns)
-		const html = buildShareHtml(prepared, { inlineMedia: 'offline' })
+		const html = buildShareHtml(prepared, { inlineMedia: 'offline', title })
 		const blob = new Blob([html], { type: 'text/html' })
 		const url = URL.createObjectURL(blob)
 		const w = window.open(url, '_blank')
@@ -72,11 +76,11 @@ export function useShareActions() {
 	}
 
 	/** 生成图片：模板渲染进隐藏层 → html-to-image → 返回 PNG dataURL。 */
-	async function toImage(turns: ShareTurn[]): Promise<string> {
+	async function toImage(turns: ShareTurn[], title?: string): Promise<string> {
 		// 图片须预内联为 data: URI 再截图：外链图片会让 html-to-image 的 canvas 被跨域污染
 		// 而静默失败（「生成图片点了没反应」的根因，#5）。与 openOffline 共用同一预内联通道。
 		const prepared = await prepareOfflineTurns(turns)
-		const html = buildShareHtml(prepared, { inlineMedia: 'offline' })
+		const html = buildShareHtml(prepared, { inlineMedia: 'offline', title })
 		const el = document.createElement('div')
 		el.style.position = 'fixed'
 		el.style.left = '-99999px'

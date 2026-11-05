@@ -73,6 +73,8 @@ export interface ShareHtmlOptions {
 	/** 是否注入 OG meta（托管页用）。 */
 	includeOg?: boolean
 	og?: { title: string; description: string; image?: string }
+	/** 分享页可见标题（如「对话·项目名称」）。缺省回退到 OG 标题 / '分享对话'。 */
+	title?: string
 }
 
 const STYLE = `
@@ -91,6 +93,22 @@ const STYLE = `
   .card a{color:#6d5dfc;word-break:break-all;}
   iframe{border:1px solid #e6e8ee;border-radius:10px;width:100%;min-height:340px;background:#fff;}
   .empty{padding:40px;text-align:center;color:#9aa3b2;}
+  .share-header{text-align:center;padding:8px 0 16px;margin-bottom:12px;border-bottom:1px solid #e6e8ee;}
+  .share-brand{display:inline-flex;align-items:center;gap:8px;justify-content:center;}
+  .share-brand__name{font-size:18px;font-weight:700;letter-spacing:-.01em;color:#1f2430;}
+  .share-title{margin:10px 0 0;font-size:16px;font-weight:600;color:#4a5364;}
+  /* 每轮助手回复前的品牌药丸徽章（对齐产品 agent-turn-head） */
+  .turn-head{display:flex;align-items:center;gap:6px;margin:14px 0 6px;}
+  .turn-head__badge{width:18px;height:18px;flex:0 0 auto;display:inline-flex;}
+  .turn-head__name{font-size:13px;font-weight:600;color:#4a5364;}
+  /* 思考 / 调用工具：对齐产品的带图标步骤卡片（原生 details 可离线展开） */
+  .step{margin:8px 0;padding:0;border-radius:10px;background:#fff;border:1px solid #e6e8ee;overflow:hidden;}
+  .step > summary{display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;list-style:none;}
+  .step > summary::-webkit-details-marker{display:none;}
+  .step__icon{flex:0 0 auto;font-size:14px;line-height:1;}
+  .step__label{flex:1;font-size:13px;font-weight:500;color:#4a5364;}
+  .step__chev{flex:0 0 auto;color:#9aa3b2;font-size:11px;}
+  .step__body{padding:0 12px 10px;color:#5a6478;font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;}
 `
 
 function fmtTime(ts: number): string {
@@ -106,15 +124,19 @@ function renderPart(p: ShareTurnPart): string {
 		case 'text':
 			return `<p>${escapeHtml(p.text)}</p>`
 		case 'thinking':
-			// 原生 <details>，不带 open ⇒ 默认收起（离线零 JS 可展开）
-			return `<details><summary>思考过程</summary><div>${escapeHtml(p.text)}</div></details>`
+			// 对齐产品「🧠 思考」步骤卡片：原生 <details> 默认收起（离线零 JS 可展开）
+			return `<details class="step"><summary><span class="step__icon">🧠</span><span class="step__label">思考</span><span class="step__chev">▾</span></summary><div class="step__body">${escapeHtml(
+				p.text,
+			)}</div></details>`
 		case 'tool':
-			// 工具调用默认展开
-			return `<details open><summary>工具调用：${escapeHtml(p.name)}</summary><div>${escapeHtml(
+			// 对齐产品「🔧 调用工具：name」步骤卡片，默认展开
+			return `<details class="step" open><summary><span class="step__icon">🔧</span><span class="step__label">调用工具：${escapeHtml(
+				p.name,
+			)}</span><span class="step__chev">▾</span></summary><div class="step__body">${escapeHtml(
 				typeof p.args === 'string' ? p.args : JSON.stringify(p.args ?? '', null, 2),
 			)}</div>${
 				p.result !== undefined
-					? `<div>结果：${escapeHtml(typeof p.result === 'string' ? p.result : JSON.stringify(p.result))}</div>`
+					? `<div class="step__body">结果：${escapeHtml(typeof p.result === 'string' ? p.result : JSON.stringify(p.result))}</div>`
 					: ''
 			}</details>`
 		case 'image':
@@ -151,13 +173,20 @@ function deriveParts(turn: ShareTurn): ShareTurnPart[] {
 	return parts
 }
 
+/** 每轮助手回复前的品牌药丸徽章（对齐产品 agent-turn-head）。 */
+function renderTurnHead(): string {
+	return `<div class="turn-head">${TURN_BADGE_SVG}<span class="turn-head__name">lnk π</span></div>`
+}
+
 function renderTurn(turn: ShareTurn): string {
 	const roleClass = turn.role === 'user' ? 'user' : 'assistant'
 	const parts = turn.parts && turn.parts.length ? turn.parts : deriveParts(turn)
 	const inner = parts.map(renderPart).join('')
-	return `<div class="msg ${roleClass}"><div class="bubble">${inner}<div class="meta">${escapeHtml(
+	const bubble = `<div class="msg ${roleClass}"><div class="bubble">${inner}<div class="meta">${escapeHtml(
 		fmtTime(turn.createdAt),
 	)}</div></div></div>`
+	// 产品：每条助手回复前都有品牌徽章；用户气泡不带徽章
+	return turn.role === 'assistant' ? `${renderTurnHead()}${bubble}` : bubble
 }
 
 function renderOg(og?: ShareHtmlOptions['og']): string {
@@ -173,12 +202,48 @@ function renderOg(og?: ShareHtmlOptions['og']): string {
 }
 
 /**
+ * 品牌徽标：盘 + 锚（自包含内联 SVG，离线/托管均无外链依赖）。
+ * 与产品本体 anchor-badge（盘+锚双色徽标）视觉一致——深墨盘 + 白色锚。
+ */
+const BRAND_BADGE_SVG = `<svg class="brand-badge" viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
+  <circle cx="12" cy="12" r="11" fill="#1f2430"/>
+  <g fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="12" y1="4.6" x2="12" y2="19"/>
+    <line x1="5.5" y1="9" x2="18.5" y2="9"/>
+    <path d="M12 19a6 6 0 0 0 6-6"/>
+    <path d="M12 19a6 6 0 0 1-6-6"/>
+  </g>
+  <circle cx="12" cy="4.6" r="1.6" fill="#fff" stroke="none"/>
+</svg>`
+
+/** 每轮徽章用的小号品牌徽标（深墨盘 + 白色锚）。 */
+const TURN_BADGE_SVG = `<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+  <circle cx="12" cy="12" r="11" fill="#1f2430"/>
+  <g fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <line x1="12" y1="5" x2="12" y2="19"/>
+    <line x1="6" y1="9" x2="18" y2="9"/>
+    <path d="M12 19a6 6 0 0 0 6-6"/>
+    <path d="M12 19a6 6 0 0 1-6-6"/>
+  </g>
+  <circle cx="12" cy="5" r="1.8" fill="#fff" stroke="none"/>
+</svg>`
+
+/** 分享页顶部品牌头：徽标 + 品牌名 + 可见标题（对话·项目名称）。 */
+function renderHeader(title: string): string {
+	return `<header class="share-header">
+  <div class="share-brand">${BRAND_BADGE_SVG}<span class="share-brand__name">lnk π</span></div>
+  <h1 class="share-title">${escapeHtml(title)}</h1>
+</header>`
+}
+
+/**
  * 生成自包含分享 HTML 字符串（纯函数，DOM-free）。
  * @param turns 勾选的消息有序集合
- * @param opts inlineMedia: 离线用 data: URI 图片 / includeOg: 注入 OG meta
+ * @param opts inlineMedia: 离线用 data: URI 图片 / includeOg: 注入 OG meta / title: 可见标题
  */
 export function buildShareHtml(turns: ShareTurn[], opts?: ShareHtmlOptions): string {
-	const title = opts?.og?.title ?? '分享对话'
+	const pageTitle = opts?.title ?? opts?.og?.title ?? '分享对话'
+	const header = renderHeader(opts?.title ?? '分享对话')
 	const body = turns.length
 		? turns.map(renderTurn).join('\n')
 		: '<div class="empty">暂无分享内容</div>'
@@ -187,12 +252,13 @@ export function buildShareHtml(turns: ShareTurn[], opts?: ShareHtmlOptions): str
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escapeHtml(title)}</title>
+<title>${escapeHtml(pageTitle)}</title>
   ${opts?.includeOg ? renderOg(opts.og) : ''}
 <style>${STYLE}</style>
 </head>
 <body>
 <div class="wrap">
+${header}
 ${body}
 </div>
 </body>
