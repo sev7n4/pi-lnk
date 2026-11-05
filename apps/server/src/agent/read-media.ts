@@ -1,7 +1,9 @@
 /**
  * read_media 的 Nest 侧取图（VISP S-7）：uploads 引用 → 本地盘直读（唯一取图点）
  * → mime 判定 → 超 2MB 缩图 → base64。无状态：不接受 sessionId、不查库；
- * 只接受 uploads 引用（R-V9：画布节点走 view_canvas_media，外部 URL 拒绝——
+ * 只接受 uploads 引用形态（R-V9：画布节点走 view_canvas_media）。凡非该形态的
+ * 输入（含外部公网 URL）一律按"格式不支持"拒绝——机制是形态匹配，不做 host
+ * 校验、不做任何网络 fetch——
  * pod 对宿主 IP hairpin 不可达，任何网络 fetch 都不做）。
  */
 import { readFile } from 'fs/promises'
@@ -49,7 +51,17 @@ export async function loadReadMediaImage(
     return { ok: false, error: `仅支持 uploads 引用（/api/uploads/…），收到: ${url.slice(0, 120)}` }
   }
 
-  const fileName = decodeURIComponent(rel.fileName)
+  // Review #1/#2：decodeURIComponent 对畸形 % 抛 URIError（会污染 NestClient 熔断）；
+  // userId/fileName 含 `..` 或以 `.` 开头 = 路径穿越，必须在读盘前拒绝。
+  let fileName: string
+  try {
+    fileName = decodeURIComponent(rel.fileName)
+  } catch {
+    return { ok: false, error: '文件名编码非法，无法解析（含畸形 % 转义）' }
+  }
+  if (rel.userId.includes('..') || rel.fileName.includes('..') || rel.userId.startsWith('.')) {
+    return { ok: false, error: '非法 uploads 引用（路径穿越）' }
+  }
   const localPath = join(deps.uploadsRoot ?? join(process.cwd(), 'uploads'), rel.userId, rel.fileName)
   const ext = fileName.slice(fileName.lastIndexOf('.')).toLowerCase()
   const resolvedMime = MIME_BY_EXT[ext]
@@ -77,9 +89,11 @@ export async function loadReadMediaImage(
   if (buf.length > READ_MEDIA_MAX_BYTES) {
     try {
       const r = await downscale(buf)
+      // Review #3：changed:false（尺寸本就 ≤2048，未重编码）时不得谎报
+      // downscaled=true / mime=jpeg（违反 R-V8 不撒谎契约）——原字节原 mime 返回
       buf = r.buffer
-      downscaled = true
-      mimeType = 'image/jpeg' // downscaleImageBuffer 缩放时输出 mozjpeg
+      downscaled = r.changed
+      if (r.changed) mimeType = 'image/jpeg' // downscaleImageBuffer 缩放时输出 mozjpeg
     } catch (err) {
       return { ok: false, error: `缩图失败: ${err instanceof Error ? err.message : String(err)}` }
     }

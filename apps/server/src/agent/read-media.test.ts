@@ -88,3 +88,53 @@ describe('loadReadMediaImage（VISP S-7 Nest 取图）', () => {
     expect(out.ok).toBe(false)
   })
 })
+
+describe('loadReadMediaImage（评审修复：#1 URIError / #2 路径穿越 / #3 changed:false）', () => {
+  let dir: string
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'read-media-fix-'))
+  })
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+  const deps = (overrides: Partial<Parameters<typeof loadReadMediaImage>[1]> = {}) => ({
+    uploadsRoot: dir,
+    ...overrides,
+  })
+
+  it('2f: 文件名含裸 %（合法本地文件名）→ ok:false 明确错误，不抛 URIError', async () => {
+    const out = await loadReadMediaImage({ url: '/api/uploads/u1/100%.png' }, deps())
+    expect(out.ok).toBe(false)
+    if (!out.ok) expect(out.error).toContain('编码')
+  })
+
+  it('2g: userId=..（路径穿越）→ ok:false 且绝不读盘', async () => {
+    let called = 0
+    const out = await loadReadMediaImage(
+      { url: '/api/uploads/../secret.png' },
+      deps({
+        readBuffer: async () => {
+          called += 1
+          return PNG_1PX
+        },
+      }),
+    )
+    expect(out.ok).toBe(false)
+    expect(called).toBe(0)
+  })
+
+  it('2c2: >2MB 但尺寸 ≤2048（downscale changed:false）→ 原字节原 mime 返回，不谎报', async () => {
+    const p = join(dir, 'u1', 'dense.png')
+    await mkdir(dirname(p), { recursive: true })
+    await writeFile(p, Buffer.concat(Array.from({ length: 40000 }, () => PNG_1PX)))
+    const out = await loadReadMediaImage(
+      { url: '/api/uploads/u1/dense.png' },
+      deps({ downscale: async (buf) => ({ buffer: buf, changed: false }) }),
+    )
+    expect(out.ok).toBe(true)
+    if (out.ok) {
+      expect(out.downscaled).toBe(false)
+      expect(out.mimeType).toBe('image/png')
+    }
+  })
+})
