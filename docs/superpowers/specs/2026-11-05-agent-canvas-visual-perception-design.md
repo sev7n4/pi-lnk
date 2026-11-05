@@ -319,6 +319,7 @@ export function validateCanvasLayout(input: ValidateInput): LayoutViolation[]
 | **预算接线后静默截断** | 同 SEL-REF §5.4：`classifyBlock` 映射先落地，像素块归 vision。 |
 | **记忆越界/跨画布注入** | `recall` 作用域校验同 `memory.ts` 既有 canvas/user scope。 |
 | **pi-runtime pod 出口受限（R2 实测）** | pod 对宿主公网 IP:8888 不可达（hairpin）⇒ `read_media` 必须经 Nest 代理取图（S-7），pod 侧直 fetch 一律不做；直注主路径的取图在 Nest 侧完成（PR #733），不依赖 pod 出口。 |
+| **`read-media` 端点无会话作用域（评审 #5，accepted risk）** | 内部端点仅校验 uploads 引用形态，不校验该 url 归属当前会话/用户——理论上已知他人 `userId/fileName` 可读取其 uploads 图片。缓解：端点仅供 pi-runtime pod 内网调用（非公网暴露）、引用串只来自本轮对话的 composer 附件（模型无法枚举他人文件名）；Path A 全量接线时升级为会话内附件白名单校验（复用 `sidebarAttachments` 解析链）。 |
 
 ## 12. 后续包 / 路线图（现状 → 目标态演进路标）
 
