@@ -5477,8 +5477,15 @@ function hydrateCanvasEdges(
   const ids = new Set(nodeList.map((node) => node.id))
   const animated = viewportSettings.value.edgeAnimated
   const out: CanvasEdge[] = []
+  // ⭐ 2026-11-05：静默丢弃要留显式信号。「连线不显示」有两种完全不同的根因
+  //   （视觉不可见 vs 端点悬空被过滤），历史取证只能证明旧个案。这里给出可观测
+  //   证据，避免再次把数据问题误判成样式问题；行为不变（仍 fail-closed 丢弃）。
+  let dropped = 0
   for (const edge of raw) {
-    if (!ids.has(edge.source) || !ids.has(edge.target)) continue
+    if (!ids.has(edge.source) || !ids.has(edge.target)) {
+      dropped += 1
+      continue
+    }
     out.push({
       id: edge.id,
       source: edge.source,
@@ -5487,6 +5494,9 @@ function hydrateCanvasEdges(
       targetHandle: edge.targetHandle,
       animated,
     })
+  }
+  if (dropped > 0) {
+    console.warn(`[canvas] hydrateCanvasEdges: ${dropped}/${raw.length} 条边端点悬空被丢弃（连线将不显示），请核对 edges 的 source/target 与节点 id`)
   }
   return out
 }

@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import MobileNodeViewer from './MobileNodeViewer.vue'
+import { resetAudioPlaybackForTest } from '@/utils/audioPlayback'
 import { stripHtmlTags } from '@lnkpi/shared'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -9,6 +10,9 @@ import { fileURLToPath } from 'node:url'
 
 // ⚠️ vitest 是 ESM ⇒ `__dirname` 不可用（仓库既有约定：fileURLToPath(import.meta.url)）
 const HERE = dirname(fileURLToPath(import.meta.url))
+
+// 播放互斥协调器是模块级单例，用例之间必须清空，避免跨用例 pause 干扰
+afterEach(() => resetAudioPlaybackForTest())
 
 // 评审 I2：包装真实 useNodeWaveform，捕获每次调用的 opts —— 断言非音频类型的
 // url getter 返回 undefined（不发起解码）。（jsdom 无 fetch，用 fetch spy 判据恒绿，弃用）
@@ -360,13 +364,34 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
     expect(speedBtn().text()).toBe('1x')
   })
 
-  it('video: 倍速按钮只出现在视频上（音频有自己的进度条，图片无播放）', () => {
+  it('倍速按钮出现在两种可播放媒体上、图片无播放（2026-11-05 音频补齐）', () => {
     const img = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'image', data: { url: 'x.png' } } })
     expect(img.find('[data-testid="mobile-viewer-speed"]').exists()).toBe(false)
     img.unmount()
     const aud = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'audio', data: { url: 'x.mp3' } } })
-    expect(aud.find('[data-testid="mobile-viewer-speed"]').exists()).toBe(false)
+    expect(aud.find('[data-testid="mobile-viewer-speed"]').exists()).toBe(true)
     aud.unmount()
+  })
+
+  it('audio: 倍速循环作用到 audio.playbackRate（补齐原生媒体基础能力）', async () => {
+    const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'audio', data: { url: 'x.mp3' } } })
+    const speedBtn = () => w.find('[data-testid="mobile-viewer-speed"]')
+    const audio = w.find('audio').element as HTMLAudioElement
+    expect(speedBtn().text()).toBe('1x')
+    await speedBtn().trigger('click')
+    expect(audio.playbackRate).toBe(1.5)
+    expect(speedBtn().text()).toBe('1.5x')
+    w.unmount()
+  })
+
+  it('audio: ended 复位播放态（短音频播完后再点一次即可重播）', async () => {
+    const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'audio', data: { url: 'x.mp3' } } })
+    const audioEl = w.find('audio')
+    await audioEl.trigger('play')
+    expect(w.find('[data-testid="mobile-viewer-audio-play"]').attributes('aria-label')).toBe('暂停')
+    await audioEl.trigger('ended')
+    expect(w.find('[data-testid="mobile-viewer-audio-play"]').attributes('aria-label')).toBe('播放')
+    w.unmount()
   })
 
   // ── 标注态（L1 · §4.3：只有一支笔）──────────────────────────────────
@@ -790,6 +815,92 @@ describe('图片双指缩放（W-5）', () => {
     w.unmount()
   })
 
+  // ⭐ 2026-11-05 真机回归：W-5 的 7 个原用例全部只派发**一次** touchend，
+  //    而真机双指 pinch 是「两指各一次 touchend（touches 2→1→0）」，中间还常有
+  //    残留单指 touchmove。旧状态机第一次 touchend 就把 gestureConsumed 清掉、
+  //    touchStartY 归零成 0，残留 touchmove 写入绝对 clientY ⇒ 第二次 touchend
+  //    算出 deltaY≈420 > 100 ⇒ 误关，放大态与圈选载体一并销毁。
+  it('真机 pinch：两次 touchend + 中间残留单指 touchmove ⇒ 不关闭且放大态驻留', async () => {
+    const w = mountImage()
+    const root = w.get('[data-testid="mobile-viewer"]')
+    // 第一指落下，第二指落下 ⇒ 进入 pinch
+    await root.trigger('touchstart', { touches: [{ clientX: 150, clientY: 300 }] })
+    await root.trigger('touchstart', {
+      touches: [
+        { clientX: 150, clientY: 300 },
+        { clientX: 250, clientY: 300 },
+      ],
+    })
+    await root.trigger('touchmove', {
+      touches: [
+        { clientX: 100, clientY: 300 },
+        { clientX: 300, clientY: 300 },
+      ],
+    })
+    expect(imgStyle(w)).toContain('scale(2)')
+    // 第一指抬起：touches 仍剩 1
+    await root.trigger('touchend', { touches: [{ clientX: 300, clientY: 420 }] })
+    // 残留单指滑动（绝对 clientY=420；旧实现 deltaY = 420 - 0 ⇒ 误判下滑）
+    await root.trigger('touchmove', { touches: [{ clientX: 300, clientY: 420 }] })
+    // 第二指抬起：touches 清空
+    await root.trigger('touchend', { touches: [] })
+    expect(w.emitted('close')).toBeFalsy()
+    expect(imgStyle(w)).toContain('scale(2)') // 放大态驻留 ⇒ 可继续圈选
+    w.unmount()
+  })
+
+  it('两指同时抬起（单次 touchend，touches=[]）同样不关闭', async () => {
+    const w = mountImage()
+    const root = w.get('[data-testid="mobile-viewer"]')
+    await root.trigger('touchstart', {
+      touches: [
+        { clientX: 150, clientY: 300 },
+        { clientX: 250, clientY: 300 },
+      ],
+    })
+    await root.trigger('touchmove', {
+      touches: [
+        { clientX: 100, clientY: 300 },
+        { clientX: 300, clientY: 300 },
+      ],
+    })
+    await root.trigger('touchend', { touches: [] })
+    expect(w.emitted('close')).toBeFalsy()
+    w.unmount()
+  })
+
+  it('多指手势复位后，下一次单指滑动关闭仍可用（状态无残留）', async () => {
+    const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'video', data: { url: 'v.mp4' } } })
+    const root = w.get('[data-testid="mobile-viewer"]')
+    await root.trigger('touchstart', { touches: [{ clientY: 300 }] })
+    await root.trigger('touchmove', { touches: [{ clientY: 300 }, { clientY: 320 }] })
+    await root.trigger('touchend', { touches: [{ clientY: 320 }] })
+    await root.trigger('touchend', { touches: [] })
+    expect(w.emitted('close')).toBeFalsy()
+    await root.trigger('touchstart', { touches: [{ clientY: 100 }] })
+    await root.trigger('touchmove', { touches: [{ clientY: 300 }] })
+    await root.trigger('touchend', { touches: [] })
+    expect(w.emitted('close')).toHaveLength(1)
+    w.unmount()
+  })
+
+  it('touchcancel 复位缩放态且不触发关闭（评审 M6 不回退）', async () => {
+    const w = mountImage()
+    const root = w.get('[data-testid="mobile-viewer"]')
+    await root.trigger('touchstart', {
+      touches: [
+        { clientX: 150, clientY: 300 },
+        { clientX: 250, clientY: 300 },
+      ],
+    })
+    await root.trigger('touchcancel', { touches: [] })
+    // 系统接管后再来一次残留单指 touchmove + touchend，不得误关
+    await root.trigger('touchmove', { touches: [{ clientX: 300, clientY: 420 }] })
+    await root.trigger('touchend', { touches: [] })
+    expect(w.emitted('close')).toBeFalsy()
+    w.unmount()
+  })
+
   it('非图片类型不受影响：视频上滑仍可关（媒体关闭惯例）', async () => {
     const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'video', data: { url: 'v.mp4' } } })
     const root = w.get('[data-testid="mobile-viewer"]')
@@ -893,6 +1004,27 @@ describe('长按唤起同源 Menu（v1.5 O / G-19）', () => {
       expect(pause).toHaveBeenCalled()
     } finally {
       pause.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('第二根手指落下取消长按（双指缩放途中不弹 Menu）', async () => {
+    vi.useFakeTimers()
+    try {
+      const w = mountViewer({ type: 'image', data: { url: 'x.png' } })
+      const body = w.find('[data-testid="mobile-viewer-body"]')
+      await body.trigger('touchstart', { touches: [{ clientX: 10, clientY: 10 }] })
+      // 第二指落下且首指几乎不动 ⇒ 旧实现只 return，500ms 后仍弹 Menu
+      await body.trigger('touchstart', {
+        touches: [
+          { clientX: 10, clientY: 10 },
+          { clientX: 200, clientY: 10 },
+        ],
+      })
+      await vi.advanceTimersByTimeAsync(600)
+      expect(w.emitted('more')).toBeUndefined()
+      w.unmount()
+    } finally {
       vi.useRealTimers()
     }
   })

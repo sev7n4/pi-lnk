@@ -27,13 +27,14 @@ function stripComments(src: string): string {
  *   又写回裸 fixed 浮层 / 字符图标 / 硬编码圆角。
  */
 describe('跨端视觉与组件哲学守卫（§4.11）', () => {
-  it('G-16 移动端模板不得用文本字符当功能图标（‹ × ⋯）', () => {
+  it('G-16 移动端模板不得用文本字符当功能图标（‹ × ⋯ ▶ ⏸）', () => {
     const files = readdirSync(MOBILE_DIR).filter((f) => f.endsWith('.vue'))
     const offenders: string[] = []
     for (const f of files) {
       const src = stripComments(read(f))
-      // 只查按钮内容里的裸字符图标
-      if (/>\s*[‹×⋯]\s*</.test(src)) offenders.push(f)
+      // 只查按钮内容里的裸字符图标。⭐ 2026-11-05 补 ▶/⏸：磁贴音频播放钮曾写死
+      // '▶' ⇒ 点击后形态永不变（用户实证），字符图标必须一律换内联 SVG。
+      if (/>\s*[‹×⋯▶⏸]\s*</.test(src)) offenders.push(f)
     }
     expect(offenders).toEqual([])
   })
