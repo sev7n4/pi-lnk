@@ -72,7 +72,7 @@ export interface ShareHtmlOptions {
 	inlineMedia?: 'online' | 'offline'
 	/** 是否注入 OG meta（托管页用）。 */
 	includeOg?: boolean
-	og?: { title: string; description: string; image?: string }
+	og?: { title: string; description?: string; image?: string }
 	/** 分享页可见标题（如「对话·项目名称」）。缺省回退到 OG 标题 / '分享对话'。 */
 	title?: string
 }
@@ -194,7 +194,7 @@ function renderOg(og?: ShareHtmlOptions['og']): string {
 	const rows = [
 		'<meta property="og:type" content="website">',
 		`<meta property="og:title" content="${escapeHtml(og.title)}">`,
-		`<meta property="og:description" content="${escapeHtml(og.description)}">`,
+		`<meta property="og:description" content="${escapeHtml(og.description ?? '')}">`,
 	]
 	if (og.image) rows.push(`<meta property="og:image" content="${escapeHtml(og.image)}">`)
 	rows.push('<meta name="twitter:card" content="summary_large_image">')
