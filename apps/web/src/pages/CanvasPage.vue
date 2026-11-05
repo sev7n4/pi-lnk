@@ -6479,6 +6479,7 @@ onUnmounted(() => {
         :class="graphOnly ? 'hidden' : (isMobileLayout && (mobileAppTab === 'discover' || mobileAppTab === 'mine') ? 'hidden' : '')"
         ref="agentRailRef"
         :session-id="sessionId"
+        :project-name="sessionTitle"
         :read-only="agentReadOnly"
         :mobile-canvas-view="mobileCanvasView"
         :mobile-canvas-imm="mobileCanvasImm"
@@ -6601,6 +6602,7 @@ onUnmounted(() => {
       v-model="shareOpen"
       :turns="shareTurns"
       :session-id="sessionId"
+      :title="`对话·${sessionTitle}`"
     />
   </div>
 </template>

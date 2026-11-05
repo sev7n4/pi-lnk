@@ -167,6 +167,8 @@ interface AgentThreadRow {
 
 const props = defineProps<{
   sessionId: string
+  /** 对话所属项目名称（用于分享页标题「对话·项目名称」）。 */
+  projectName?: string
   /** 当前登录用户非画布所有者时为 true，禁止 Agent 写入画布 */
   readOnly?: boolean
   /** W30: 画布选中节点 id，配合「快速生成」走单节点路径 */
@@ -5610,6 +5612,7 @@ defineExpose({
         v-model="shareOpen"
         :turns="shareTurns"
         :session-id="props.sessionId"
+        :title="`对话·${props.projectName ?? '未命名项目'}`"
       />
     </div>
   </aside>

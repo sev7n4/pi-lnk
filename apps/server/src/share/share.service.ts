@@ -72,7 +72,11 @@ export class ShareService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** 双写：① 落盘静态 HTML（含 OG）② 落库。任一失败均回滚另一边的副作用。 */
-  async createShare(sessionId: string, turns: ShareTurn[]): Promise<CreateShareResult> {
+  async createShare(
+    sessionId: string,
+    turns: ShareTurn[],
+    title?: string,
+  ): Promise<CreateShareResult> {
     const id = randomUUID()
     const staticPath = join(this.shareDir, `${id}.html`)
     // 防御：个别客户端（旧缓存 bundle）可能下发缺 createdAt / 类型非 number 的 turns，
@@ -90,8 +94,10 @@ export class ShareService implements OnModuleInit, OnModuleDestroy {
             : Date.now()
       return { ...t, createdAt }
     })
-    const og = this.deriveOg(safeTurns)
-    const html = buildShareHtml(safeTurns, { inlineMedia: 'online', includeOg: true, og })
+    const baseOg = this.deriveOg(safeTurns)
+    // 前端拼好的「对话·项目名称」优先作为 OG 标题，保证社交预览与页面标题一致
+    const og = title ? { ...baseOg, title } : baseOg
+    const html = buildShareHtml(safeTurns, { inlineMedia: 'online', includeOg: true, og, title })
 
     const expiresAt = new Date(Date.now() + SHARE_TTL_DAYS * 24 * 60 * 60 * 1000)
 

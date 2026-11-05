@@ -14,6 +14,10 @@ class CreateShareDto {
   @ValidateNested({ each: true })
   @Type(() => Object)
   turns!: ShareTurn[]
+
+  /** 分享页可见标题（对话·项目名称），前端拼好传入；缺省回退到 OG 推导标题。 */
+  @IsString()
+  title?: string
 }
 
 @Controller('share')
@@ -26,7 +30,7 @@ export class ShareController {
     @Req() req: { user: { sub: string } },
     @Body() dto: CreateShareDto,
   ) {
-    const result = await this.shareService.createShare(dto.sessionId, dto.turns)
+    const result = await this.shareService.createShare(dto.sessionId, dto.turns, dto.title)
     return { code: 0, message: 'ok', data: result }
   }
 
