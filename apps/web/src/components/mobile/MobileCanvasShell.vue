@@ -174,10 +174,6 @@ const props = defineProps<{
   onShare?: () => void
   /** 会话级分享勾选态：本体页 ☐ 列 + 顶栏按勾选集分享。 */
   shareSelectMode?: boolean
-  /** 勾选中的对话条数（顶栏展示）。 */
-  shareSelectedCount?: number
-  /** 确认分享（按勾选集）。 */
-  onShareConfirm?: () => void
   /** 取消勾选态。 */
   onShareCancel?: () => void
 }>()
@@ -336,8 +332,6 @@ watch(
     @fit-view="agentActions.fitView"
     @share="onShare"
     :share-select-mode="props.shareSelectMode"
-    :share-selected-count="props.shareSelectedCount"
-    @share-confirm="props.onShareConfirm?.()"
     @share-cancel="props.onShareCancel?.()"
   />
   <!-- 2026-10-21：自动保存状态行——静默成功只报异常（失败红胶囊可点重试，保存中仅呼吸点）；

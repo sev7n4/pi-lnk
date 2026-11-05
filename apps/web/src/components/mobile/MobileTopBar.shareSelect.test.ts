@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest'
+// 顶栏选择态极简化（用户裁决 2026-11-05）：计数与全选/取消已移入分享面板顶部，
+// 顶栏只保留「✕ 退出选择」，避免同一信息两处重复。
 import raw from './MobileTopBar.vue?raw'
 
 const src = raw
@@ -6,20 +8,19 @@ const src = raw
 	.replace(/<!--[\s\S]*?-->/g, '')
 	.replace(/\/\/.*$/gm, '')
 
-describe('MobileTopBar 会话级分享勾选态契约', () => {
-	it('勾选态显示「已选 N 条」+ 分享所选 + 取消', () => {
-		expect(src).toContain('data-testid="mobile-topbar-select-count"')
-		expect(src).toContain('data-testid="mobile-topbar-share-confirm"')
+describe('MobileTopBar 会话级分享选择态契约（极简版）', () => {
+	it('选择态仅保留「退出选择」按钮', () => {
 		expect(src).toContain('data-testid="mobile-topbar-share-cancel"')
-		expect(src).toContain('已选')
-	})
-	it('勾选态下原「分享会话」图标钮隐藏（避免两个入口并置）', () => {
-		expect(src).toMatch(/v-if="props\.tab === 'chat' && !props\.shareSelectMode"/)
-	})
-	it('动作以 emit 上抛（壳层桥接 CanvasPage）', () => {
-		expect(src).toContain("'share-confirm': []")
-		expect(src).toContain("'share-cancel': []")
-		expect(src).toContain("emit('share-confirm')")
 		expect(src).toContain("emit('share-cancel')")
+	})
+
+	it('不再有顶栏 ✓ 二次确认与计数（已移入面板）', () => {
+		expect(src).not.toContain('mobile-topbar-share-confirm')
+		expect(src).not.toContain('mobile-topbar-select-count')
+		expect(src).not.toContain("'share-confirm': []")
+	})
+
+	it('原「分享会话」入口在选择态隐藏（面板已承担分享动作）', () => {
+		expect(src).toMatch(/v-if="props\.tab === 'chat' && !props\.shareSelectMode"/)
 	})
 })
