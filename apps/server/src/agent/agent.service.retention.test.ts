@@ -31,7 +31,12 @@ describe('W2① 压缩保留段 · Nest 侧 retention 填值', () => {
     sessionUpdate.mockResolvedValue({})
     service = new AgentService(
       {
-        agentMessage: { create: vi.fn().mockResolvedValue({}), findMany: vi.fn().mockResolvedValue([]) },
+        agentMessage: {
+          create: vi.fn().mockResolvedValue({}),
+          findMany: vi.fn().mockResolvedValue([]),
+          // P4-T1：seq 取号桩
+          aggregate: vi.fn().mockResolvedValue({ _max: { seq: null } }),
+        },
         agentThread: {
           findUnique: vi.fn().mockResolvedValue(null),
           upsert: vi.fn().mockResolvedValue({}),

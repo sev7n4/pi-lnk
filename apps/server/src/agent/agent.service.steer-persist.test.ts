@@ -29,7 +29,8 @@ describe('插话/尾随入队落库（2026-10-21）', () => {
     return new AgentService(
       {
         agentMessage: {
-          upsert: agentMessageUpsert,
+          aggregate: vi.fn().mockResolvedValue({ _max: { seq: null } }),
+upsert: agentMessageUpsert,
           findFirst: agentMessageFindFirst,
           update: agentMessageUpdate,
           create: vi.fn(),

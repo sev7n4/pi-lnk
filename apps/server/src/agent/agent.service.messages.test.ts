@@ -52,6 +52,7 @@ describe('AgentService messages & threads', () => {
     service = new AgentService(
       {
         agentMessage: {
+          aggregate: async () => ({ _max: { seq: null } }),
           create: agentMessageCreate,
           findMany: agentMessageFindMany,
           groupBy: agentMessageGroupBy,
@@ -262,6 +263,8 @@ describe('AgentService messages & threads', () => {
         threadId: 's1:new-thread',
         role: 'user',
         content: '帮我生成唐朝宰相三视图',
+        // P4-T1：seq 统一取号（空会话桩 ⇒ 首行 seq=1）
+        seq: 1,
       },
     })
     expect(pi.prompt).toHaveBeenCalled()

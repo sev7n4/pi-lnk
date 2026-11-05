@@ -66,7 +66,12 @@ describe('落库与请求生命周期解耦 (multi-device Task 2 · D2)', () => 
 
     service = new AgentService(
       {
-        agentMessage: { create: agentMessageCreate, findMany: vi.fn().mockResolvedValue([]) },
+        agentMessage: {
+          create: agentMessageCreate,
+          findMany: vi.fn().mockResolvedValue([]),
+          // P4-T1：seq 取号桩（恒空会话 ⇒ seq=1；断言不关心 seq 本身）
+          aggregate: vi.fn().mockResolvedValue({ _max: { seq: null } }),
+        },
         agentThread: {
           findUnique: agentThreadFindUnique,
           upsert: agentThreadUpsert,

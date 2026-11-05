@@ -125,7 +125,13 @@ describe('AgentService projectOutOfTurnRuns', () => {
 
     service = new AgentService(
       {
-        agentMessage: { create: agentMessageCreate, findFirst: agentMessageFindFirst, findMany: vi.fn() },
+        agentMessage: {
+          create: agentMessageCreate,
+          findFirst: agentMessageFindFirst,
+          findMany: vi.fn(),
+          // P4-T1：seq 取号桩
+          aggregate: vi.fn().mockResolvedValue({ _max: { seq: null } }),
+        },
         agentThread: { findFirst: agentThreadFindFirst, findUnique: vi.fn(), upsert: vi.fn(), update: vi.fn() },
         session: { findUnique: sessionFindUnique, update: vi.fn() },
         idempotencyRecord: { create: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn() },
@@ -250,7 +256,13 @@ describe('AgentService armOutOfTurnProjection（订阅先于 notify）', () => {
 
     service = new AgentService(
       {
-        agentMessage: { create: agentMessageCreate, findFirst: vi.fn(), findMany: vi.fn() },
+        agentMessage: {
+          create: agentMessageCreate,
+          findFirst: vi.fn(),
+          findMany: vi.fn(),
+          // P4-T1：seq 取号桩
+          aggregate: vi.fn().mockResolvedValue({ _max: { seq: null } }),
+        },
         agentThread: { findFirst: agentThreadFindFirst, findUnique: vi.fn(), upsert: vi.fn(), update: vi.fn() },
         session: { findUnique: sessionFindUnique, update: vi.fn() },
         idempotencyRecord: { create: vi.fn(), findUnique: vi.fn(), updateMany: vi.fn(), deleteMany: vi.fn() },

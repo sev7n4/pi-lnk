@@ -16,6 +16,7 @@ function makeService(): AgentService {
   const service = new AgentService(
     {
       agentMessage: {
+        aggregate: async () => ({ _max: { seq: null } }),
         findMany: agentMessageFindMany,
         findUnique: agentMessageFindUnique,
         updateMany: agentMessageUpdateMany,

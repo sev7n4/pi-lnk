@@ -117,7 +117,8 @@ describe('AgentService streamConversation', () => {
     service = new AgentService(
       {
         agentMessage: {
-          create: agentMessageCreate,
+          aggregate: vi.fn().mockResolvedValue({ _max: { seq: null } }),
+create: agentMessageCreate,
           findMany: agentMessageFindMany,
         },
         agentThread: {
@@ -351,6 +352,8 @@ describe('AgentService streamConversation', () => {
         role: 'user',
         content: '营销',
         attachments: JSON.stringify(attachments),
+        // P4-T1：seq 统一取号（空会话桩 ⇒ 首行 seq=1）
+        seq: 1,
       },
     })
   })
@@ -420,7 +423,8 @@ describe('AgentService idempotency', () => {
     service = new AgentService(
       {
         agentMessage: {
-          create: agentMessageCreate,
+          aggregate: vi.fn().mockResolvedValue({ _max: { seq: null } }),
+create: agentMessageCreate,
           findMany: agentMessageFindMany,
         },
         agentThread: {
@@ -534,7 +538,7 @@ describe('AgentService checkRuntimeHealth', () => {
 
     service = new AgentService(
       {
-        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany },
+        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany, aggregate: vi.fn().mockResolvedValue({ _max: { seq: null } }) },
         session: { findUnique: sessionFindUnique, update: sessionUpdate },
         idempotencyRecord: {
           create: idempotencyRecordCreate,
@@ -603,7 +607,7 @@ describe('AgentService turn billing (P2 T6)', () => {
   const buildService = () => {
     service = new AgentService(
       {
-        agentMessage: { create: agentMessageCreate, findMany: vi.fn().mockResolvedValue([]) },
+        agentMessage: { create: agentMessageCreate, findMany: vi.fn().mockResolvedValue([]), aggregate: vi.fn().mockResolvedValue({ _max: { seq: null } }) },
         agentThread: {
           findUnique: agentThreadFindUnique,
           upsert: agentThreadUpsert,

@@ -33,6 +33,7 @@ function buildService(eventBus: unknown, agentMessageOverrides?: Record<string, 
   const args: unknown[] = [
     {
       agentMessage: {
+        aggregate: async () => ({ _max: { seq: null } }),
         create: vi.fn().mockResolvedValue({}),
         findMany: vi.fn().mockResolvedValue([]),
         ...agentMessageOverrides,
