@@ -63,10 +63,33 @@ describe('ConversationShareSheet', () => {
 		return wrapper
 	}
 
-	it('副标题显示「将分享 N 条对话」（勾选集合由页面侧决定，面板不再内联筛选）', async () => {
+	it('副标题显示「已选 N / M 条对话」（勾选集合由页面侧决定，面板不再内联筛选）', async () => {
 		mountSheet([turn('a', 'user', 'hi'), turn('b', 'assistant', 'hello')])
 		await flushPromises()
-		expect(bodyText()).toContain('将分享 2 条对话')
+		expect(bodyText()).toContain('已选 2 / 2 条对话')
+	})
+
+	it('选择行提供「全选 / 取消」一键操作（一步完成，不进二级）', async () => {
+		mountSheet([turn('a', 'user', 'hi')])
+		await flushPromises()
+		const all = q('[data-testid="share-select-all"]')
+		const clear = q('[data-testid="share-select-clear"]')
+		expect(all).not.toBeNull()
+		expect(clear).not.toBeNull()
+		await clickSel('[data-testid="share-select-all"]')
+		await clickSel('[data-testid="share-select-clear"]')
+		expect(wrapper!.emitted('selectAll')).toBeTruthy()
+		expect(wrapper!.emitted('clearAll')).toBeTruthy()
+	})
+
+	it('结果视图替换菜单（二维码与动作网格不同屏）', async () => {
+		mountSheet([turn('a', 'user', 'hi')])
+		await flushPromises()
+		expect(q('[data-testid="share-menu"]')).not.toBeNull()
+		await clickSel('[data-testid="mode-wechat"]')
+		// 进入二维码视图后，菜单动作网格必须让位（不与结果同屏）
+		expect(q('[data-testid="share-menu"]')).toBeNull()
+		expect(q('[data-testid="share-qr"]')).not.toBeNull()
 	})
 
 	it('面板内不再内联可选对话列表（选择已上移到对话页面本体）', async () => {

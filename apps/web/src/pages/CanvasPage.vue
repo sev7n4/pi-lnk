@@ -234,15 +234,27 @@ const sessionId = computed(() => route.params.sessionId as string)
 // 本体页各条对话记录左侧出现 ☐（默认全部选中，可逐条取消），顶栏按勾选集分享。
 // 回合级分享仍是单选本轮直开面板（AgentSideRail.openShare），两条链路互不干扰。
 const shareOpen = ref(false)
-const shareTurns = ref<ShareTurn[]>([])
 const shareSelectMode = ref(false)
 const shareSelectedIds = ref<string[]>([])
+
+/** 会话总回合数（面板顶部「已选 N / M」）。 */
+const shareTotalCount = computed(() => useAgentStore().messages.length)
+
+/** 勾选集 → ShareTurn（面板与上传共用同一集合；勾选一变即变）。 */
+const shareTurns = computed<ShareTurn[]>(() => {
+  const agent = useAgentStore()
+  const picked = new Set(shareSelectedIds.value)
+  return agent.messages.filter((m) => picked.has(m.id)).map((m) => toShareTurn(m, sessionId.value))
+})
 
 /** 顶栏「分享」：进入勾选态（默认全选当前会话全部回合）。 */
 function openShare() {
   const agent = useAgentStore()
   shareSelectedIds.value = agent.messages.map((m) => m.id)
   shareSelectMode.value = true
+  // 用户裁决（2026-11-05）：点分享**直接弹面板**，不再需要顶栏 ✓ 二次确认；
+  // 面板顶部自带「☑ 全选 / ✕ 取消」，一步完成选择。
+  shareOpen.value = true
 }
 
 /** 勾选态：切换某条对话的勾选（真相在本页，AgentSideRail 只渲染 + 上抛）。 */
@@ -256,17 +268,19 @@ function toggleShareSelect(id: string) {
 function cancelShareSelect() {
   shareSelectMode.value = false
   shareSelectedIds.value = []
+  shareOpen.value = false
 }
 
-/** 顶栏「分享所选」：只分享勾选集（按消息原有顺序）。 */
-function confirmShare() {
-  const agent = useAgentStore()
-  const picked = new Set(shareSelectedIds.value)
-  shareTurns.value = agent.messages
-    .filter((m) => picked.has(m.id))
-    .map((m) => toShareTurn(m, sessionId.value))
-  shareOpen.value = true
+/** 面板「☑ 全选」：一键全选当前会话全部回合。 */
+function selectAllShare() {
+  shareSelectedIds.value = useAgentStore().messages.map((m) => m.id)
 }
+
+/** 面板「✕ 取消」：一键清空勾选。 */
+function clearShareSelection() {
+  shareSelectedIds.value = []
+}
+
 
 interface CanvasEdge {
   id: string
@@ -6567,8 +6581,6 @@ onUnmounted(() => {
       :on-save="saveCanvas"
       :on-share="openShare"
       :share-select-mode="shareSelectMode"
-      :share-selected-count="shareSelectedIds.length"
-      :on-share-confirm="confirmShare"
       :on-share-cancel="cancelShareSelect"
       :agent-actions="agentRailActions"
       :project-name="sessionTitle"
@@ -6639,6 +6651,10 @@ onUnmounted(() => {
       :turns="shareTurns"
       :session-id="sessionId"
       :title="`对话·${sessionTitle}`"
+      :selected-count="shareSelectedIds.length"
+      :total-count="shareTotalCount"
+      @select-all="selectAllShare"
+      @clear-all="clearShareSelection"
     />
   </div>
 </template>

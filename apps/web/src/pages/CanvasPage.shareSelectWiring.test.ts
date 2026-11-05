@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest'
-// 会话级分享勾选态接线契约（用户裁决 2026-11-05）：
-// 顶栏「分享」→ 进入勾选态（默认全选）→ 本体页各条记录左侧 ☐ → 逐条取消 →
-// 顶栏「分享所选」按勾选集打开分享面板。勾选集真相在本页（页面层），不新建全局 store。
+// 会话级分享勾选接线契约（用户裁决 2026-11-05 · 极简化）：
+// ① 点顶栏「分享」**直接弹分享面板**（不再需要顶栏 ✓ 二次确认）；
+// ② 面板顶部自带「☑ 全选 / ✕ 取消」，一步完成选择；
+// ③ 面板消费页面层的勾选集映射（shareTurns 为 computed），勾选变化即变；
+// ④ 顶栏选择态只保留「✕ 退出选择」。
 import raw from './CanvasPage.vue?raw'
 
 const src = raw
@@ -9,26 +11,43 @@ const src = raw
 	.replace(/<!--[\s\S]*?-->/g, '')
 	.replace(/\/\/.*$/gm, '')
 
-describe('CanvasPage 会话级分享勾选接线', () => {
-	it('顶栏「分享」进入勾选态并默认全选全部回合', () => {
+describe('CanvasPage 会话级分享勾选接线（极简版）', () => {
+	it('顶栏「分享」进入勾选态并**直接打开面板**（无二次确认）', () => {
 		expect(src).toMatch(/function openShare\(\)[\s\S]{0,400}shareSelectedIds\.value = agent\.messages\.map\(\(m\) => m\.id\)/)
 		expect(src).toMatch(/function openShare\(\)[\s\S]{0,400}shareSelectMode\.value = true/)
+		expect(src).toMatch(/function openShare\(\)[\s\S]{0,400}shareOpen\.value = true/)
 	})
-	it('勾选集真相在页面层：toggle / confirm / cancel 三件套', () => {
-		expect(src).toContain('function toggleShareSelect(id: string)')
-		expect(src).toContain('function confirmShare()')
-		expect(src).toContain('function cancelShareSelect()')
+
+	it('不再存在「顶栏 ✓ 二次确认」链路（confirmShare 已下线）', () => {
+		expect(src).not.toContain('confirmShare')
+		expect(src).not.toContain('on-share-confirm')
 	})
-	it('confirmShare 只分享勾选集', () => {
-		expect(src).toMatch(/function confirmShare\(\)[\s\S]{0,600}picked\.has\(m\.id\)/)
-		expect(src).toMatch(/function confirmShare\(\)[\s\S]{0,600}shareOpen\.value = true/)
+
+	it('面板消费勾选集映射（computed，随勾选变化）', () => {
+		expect(src).toMatch(/const shareTurns = computed<ShareTurn\[\]>\(\)/)
+		expect(src).toMatch(/const shareTurns = computed<ShareTurn\[\]>\(\)[\s\S]{0,400}picked\.has\(m\.id\)/)
 	})
-	it('状态接到对话流 ☐ 与移动顶栏（两端同源）', () => {
+
+	it('面板顶部一键全选 / 一键取消（页面层改勾选集）', () => {
+		expect(src).toContain('function selectAllShare()')
+		expect(src).toContain('function clearShareSelection()')
+		expect(src).toContain('@select-all="selectAllShare"')
+		expect(src).toContain('@clear-all="clearShareSelection"')
+	})
+
+	it('面板拿到计数（已选 N / M）', () => {
+		expect(src).toContain(':selected-count="shareSelectedIds.length"')
+		expect(src).toContain(':total-count="shareTotalCount"')
+	})
+
+	it('退出选择态同时关闭面板', () => {
+		expect(src).toMatch(/function cancelShareSelect\(\)[\s\S]{0,200}shareOpen\.value = false/)
+		expect(src).toContain(':on-share-cancel="cancelShareSelect"')
+	})
+
+	it('对话流 ☐ 接线保留（逐条挑选）', () => {
 		expect(src).toContain(':share-select-mode="shareSelectMode"')
 		expect(src).toContain(':share-selected-ids="shareSelectedIds"')
 		expect(src).toContain('@toggle-share-select="toggleShareSelect"')
-		expect(src).toContain(':share-selected-count="shareSelectedIds.length"')
-		expect(src).toContain(':on-share-confirm="confirmShare"')
-		expect(src).toContain(':on-share-cancel="cancelShareSelect"')
 	})
 })
