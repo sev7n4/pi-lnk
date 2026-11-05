@@ -17,21 +17,21 @@ describe("侧栏 key 分配与素材块（sidebar_attachments.py 平移）", () 
 		expect(buildSidebarBlock([])).toBe("");
 	});
 
-	it("有素材逐行列出：url 取末段去 query，text 优先", () => {
+	it("有素材逐行列出：url 取末段去 query，text 优先；媒体行附完整 url（2026-11-05 事故修复：模型需真实 url 走 view_canvas_media 恢复）", () => {
 		const block = buildSidebarBlock([
 			{ url: "https://cdn.x/a/b.png?sign=1", mediaType: "image" },
 			{ text: "产品文案草稿", mediaType: "text" },
 		]);
-		expect(block).toBe("侧栏参考素材：\nI1=b.png\nT1=产品文案草稿");
+		expect(block).toBe("侧栏参考素材：\nI1=b.png url=https://cdn.x/a/b.png?sign=1\nT1=产品文案草稿");
 	});
 
 	it("url 无法取末段时整串兜底；text 优先于 url", () => {
 		expect(buildSidebarBlock([{ url: "https://x/a", mediaType: "image" }])).toBe(
-			"侧栏参考素材：\nI1=a",
+			"侧栏参考素材：\nI1=a url=https://x/a",
 		);
 		expect(
 			buildSidebarBlock([{ url: "https://x/a.png", text: "主图", mediaType: "image" }]),
-		).toBe("侧栏参考素材：\nI1=主图");
+		).toBe("侧栏参考素材：\nI1=主图 url=https://x/a.png");
 	});
 });
 

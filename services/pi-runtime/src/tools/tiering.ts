@@ -315,10 +315,20 @@ export function createLoadToolsTool(
 				.sort((a, b) => b.score - a.score)
 				.map((r) => r.tool);
 			// 未命中：返回完整目录（名字+摘要）但不激活——模型下一步可以点名再搜或换词。
+			// 2026-11-05 生产观察（composer 图不可见事故次生缺陷）：目录 dump 列出未激活工具
+			// 会诱导模型直接调用 → 吃 vendor「Tool X is unavailable」硬错误。必须显式声明
+			// 「目录仅供参考，直接调用不可用，需带名字再搜一次以激活」。
 			if (matches.length === 0) {
 				onSearch?.("miss", 0);
 				return {
-					content: [{ type: "text", text: `没有匹配「${p.query.trim()}」的工具。完整目录：\n${catalog}` }],
+					content: [
+						{
+							type: "text",
+							text:
+								`没有匹配「${p.query.trim()}」的工具。以下目录仅供参考——这些工具当前【未激活，直接调用会报 unavailable】；` +
+								`如需使用其中某个，请带上它的名字（或更贴近的关键词）再调一次本工具以激活。完整目录：\n${catalog}`,
+						},
+					],
 					details: { loaded: [] as string[] },
 				};
 			}
