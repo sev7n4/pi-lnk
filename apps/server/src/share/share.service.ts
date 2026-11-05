@@ -94,9 +94,9 @@ export class ShareService implements OnModuleInit, OnModuleDestroy {
             : Date.now()
       return { ...t, createdAt }
     })
-    const og = this.deriveOg(safeTurns)
+    const baseOg = this.deriveOg(safeTurns)
     // 前端拼好的「对话·项目名称」优先作为 OG 标题，保证社交预览与页面标题一致
-    if (title) og = { ...og, title }
+    const og = title ? { ...baseOg, title } : baseOg
     const html = buildShareHtml(safeTurns, { inlineMedia: 'online', includeOg: true, og, title })
 
     const expiresAt = new Date(Date.now() + SHARE_TTL_DAYS * 24 * 60 * 60 * 1000)
