@@ -30,7 +30,7 @@ import {
   type StudioModality,
   buildSelectionDigest,
 } from '@lnkpi/shared'
-import { buildSidebarBlock } from './pi-runtime/sidebar-block'
+import { buildSidebarBlock, buildImageRecoveryHint } from './pi-runtime/sidebar-block'
 import { decodeCursor, paginateVisibleRows } from './messages-cursor'
 import { runWithMessageSeq } from './agent-message-seq'
 import { normalizeIntent } from './intent-dedup'
@@ -2795,7 +2795,7 @@ export class AgentService implements OnModuleInit {
       }
     }
     // ③ 侧栏识图前置：结果作为文本上下文并入 systemPrompt（失败返回 ''，不阻断）
-    const visionBlock = directImages
+    const visionBase = directImages
       ? ''
       : await this.buildSidebarVisionBlock({
       sessionId,
@@ -2804,6 +2804,10 @@ export class AgentService implements OnModuleInit {
       attachments: piContext?.attachments,
       model,
     })
+    // VISP S-7/M-9（2026-11-05）：直注失败且有图片附件 → 动态块追加恢复提示
+    // （模型需要知道 read_media 存在；不吃 L6 静态预算，R-V10）。
+    const visionBlock =
+      visionBase + buildImageRecoveryHint(directImages ? undefined : piContext?.attachments)
     // P0-① Task 10：装配器拆静态/动态两段。此处暂按旧语义把两段拼成一个 systemPrompt
     // （会话仍每轮重建，动态块不会被冻结）；Task 11 改为把动态段交给 pi-runtime 每轮求值。
     const assembler = this.createPiPromptAssembler()

@@ -62,6 +62,7 @@ import {
 } from './pi-runtime/late-generation-notify'
 import { PiRuntimeClient } from './pi-runtime/pi-runtime.client'
 import { GenerationRecoveryService } from './generation-recovery/generation-recovery.service'
+import { loadReadMediaImage } from './read-media'
 import { PLATFORM_CHANNEL_ID, ProviderService } from '../provider/provider.service'
 // B2 S2-1e：模型能力判定/audioKind 派生切 DB 目录缓存（DB 是唯一真源）——
 // admin 后台新增的模型不在常量目录，旧实现会误判（如 music 模型判 voice、
@@ -892,6 +893,11 @@ export class AgentCanvasToolsService {
     if (!node) throw new NotFoundException('节点不存在')
     // 上下游是该节点的一等属性；拆第二个读工具只会迫使模型记住"读节点要调两次"
     return { ...node, ...relationsForNode(canvas, node.id) }
+  }
+
+  /** VISP S-7：read_media 取图（无状态：不查库，只读 uploads 本地盘，唯一取图点）。 */
+  async readMedia(input: { url?: string }) {
+    return loadReadMediaImage({ url: input?.url })
   }
 
   /** 焦点过滤阈值（审计 P0-①）：≤ 此数全量返回，避免小画布反而丢信息。 */

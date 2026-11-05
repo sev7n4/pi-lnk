@@ -38,3 +38,35 @@ export function validateSidebarAttachments(items: SidebarAttachment[]): SidebarA
   }
   return parsed
 }
+
+const SIDEBAR_IMAGE_PREFIX = 'I'
+
+/** VISP S-7：图片附件的侧栏 key 列表（与 sidebar-block 的 assignSidebarRefKeys 同源同序）。 */
+export function imageSidebarRefKeys(attachments: Array<{ mediaType?: string }>): string[] {
+  const keys: string[] = []
+  let n = 0
+  for (const item of attachments) {
+    if ((item?.mediaType ?? '').trim().toLowerCase() !== 'image') continue
+    n += 1
+    keys.push(`${SIDEBAR_IMAGE_PREFIX}${n}`)
+  }
+  return keys
+}
+
+/**
+ * VISP S-7：把侧栏图片标记（I1/I2…）解析回附件 url。
+ * 仅图片可解析（恢复路径域）；找不到 / 非图片 / 缺 url → null。
+ * 容忍小写与首尾空白（模型输出常带脏字符）。
+ */
+export function resolveSidebarRef(
+  attachments: Array<{ url?: string; mediaType?: string }>,
+  ref: string,
+): string | null {
+  const normalized = (ref ?? '').trim().toUpperCase()
+  const keys = imageSidebarRefKeys(attachments)
+  const idx = keys.indexOf(normalized)
+  if (idx < 0) return null
+  const images = attachments.filter((a) => (a?.mediaType ?? '').trim().toLowerCase() === 'image')
+  const url = (images[idx]?.url ?? '').trim()
+  return url || null
+}

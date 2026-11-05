@@ -174,6 +174,11 @@ class SessionOnlyDto {
   sessionId!: string
 }
 
+class ReadMediaDto {
+  @IsString()
+  url!: string
+}
+
 class GetAgentMessagesDto {
   @IsString()
   sessionId!: string
@@ -1265,6 +1270,13 @@ export class AgentCanvasToolsController {
   @Post('get-node')
   async getNode(@Body() dto: SessionNodeDto) {
     const data = await this.tools.getNode(dto)
+    return { code: 0, message: 'ok', data }
+  }
+
+  // VISP S-7：read_media 取图（无状态透传取图加载器，uploads 唯一取图点）
+  @Post('read-media')
+  async readMedia(@Body() dto: ReadMediaDto) {
+    const data = await this.tools.readMedia(dto)
     return { code: 0, message: 'ok', data }
   }
 

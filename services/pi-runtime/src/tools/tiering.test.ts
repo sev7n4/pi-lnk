@@ -53,6 +53,8 @@ const ALL_NAMES = [
 	"web_fetch",
 	"read_document",
 	"view_canvas_media",
+	// VISP S-7（2026-11-05）：read_media 恢复路径，常驻（tiering.ts R-V10 注释同源）
+	"read_media",
 	"recall_memory",
 	// 记忆写（2026-10-03）：被 memory_scope.tail.md 直接约束，常驻
 	"save_memory",

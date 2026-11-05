@@ -80,6 +80,9 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	// ⇒ 占位含 view_canvas_media(node_id:…)）——按「被点名 ⇒ 必须常驻」准绳必须常驻；
 	// 且「看图」是高频刚需，延迟即不可达（tool_search 语义靠不住的教训见文件头）。
 	"view_canvas_media",
+	// read_media（VISP S-7）：恢复路径必须无门槛可达（直注失败时模型靠它自救），
+	// 不得进延迟集——tool_search 触发率实测为 0，延迟即不可达（R-V10）。
+	"read_media",
 	"web_search",
 	"web_fetch",
 	"recall_memory",

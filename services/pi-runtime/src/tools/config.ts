@@ -1,6 +1,6 @@
 /** 工具装配与降级守卫：NEST env 齐全才启用工具，否则保持纯文本模式。 */
 import { NestClient, loadNestConfig } from "./nest-client.js";
-import { buildCanvasReadTools, buildCanvasWriteTools, buildUiCommandTools, buildAskUserTools, buildArrangeNodesTools, buildCanvasGroupTools, buildGenerationTools, buildWebTools, buildDeleteNodesTools, buildReadDocumentTools, buildMemoryTools, buildRemoveEdgesTools, buildRenderCanvasViewTools, buildViewCanvasMediaTools } from "./registry.js";
+import { buildCanvasReadTools, buildCanvasWriteTools, buildUiCommandTools, buildAskUserTools, buildArrangeNodesTools, buildCanvasGroupTools, buildGenerationTools, buildWebTools, buildDeleteNodesTools, buildReadDocumentTools, buildMemoryTools, buildRemoveEdgesTools, buildRenderCanvasViewTools, buildViewCanvasMediaTools, buildReadMediaTools } from "./registry.js";
 import type { LnkpiTool } from "./types.js";
 import { buildTodoTools, isTodoToolEnabled } from "./todo.js";
 import { createProposePlanTool } from "./propose-plan.js";
@@ -85,6 +85,8 @@ export function resolveToolsWithClient(
 		...buildCanvasReadTools(client),
 		// P0 感知闭环（2026-10-14）：view_canvas_media——画布/侧栏图片像素按需回流 tool result。
 		...buildViewCanvasMediaTools(client),
+		// VISP S-7（2026-11-05）：read_media——用户附件像素恢复路径（直注失败/事后回看）。
+		...buildReadMediaTools(client),
 		// P2（spec 2026-10-13 §2）：propose 结算归因回调——工具层不持 Metrics（2026-10-04 纪律），
 		// 经观察者回调接线；label 归一（stale_status:* 白名单折叠）在 metrics 侧单点完成。
 		...buildCanvasWriteTools(client, deps.registry, {
