@@ -257,7 +257,11 @@ jobs:
           # 这里从已同步的源码安装：版本化的策略 + 机器上的副本永不脱节。
           # ⚠️ install 失败必须中断（`set -e`）：否则会静默沿用机器上的旧副本，
           # 看起来部署成功而策略根本没更新——正是「以为有机制、其实没有」的那类坑。
-          ssh deploy-cvm "set -e; install -m 0755 '${DEPLOY_DIR}/deploy/disk-guard.sh' /usr/local/sbin/disk-guard.sh; docker builder prune -f | tail -1 || true; if [ -x /usr/local/sbin/disk-guard.sh ]; then /usr/local/sbin/disk-guard.sh; fi; df -h / | tail -1"
+          #
+          # 2026-11-05：同时安装 disk-watchdog.sh（磁盘水位巡检，被
+          # observability-watchdog.yml 调用）。disk-guard 是自愈（事后），
+          # disk-watchdog 是告警（事前）—— 两者互补，缺一不可。
+          ssh deploy-cvm "set -e; install -m 0755 '${DEPLOY_DIR}/deploy/disk-guard.sh' /usr/local/sbin/disk-guard.sh; install -m 0755 '${DEPLOY_DIR}/deploy/disk-watchdog.sh' /usr/local/sbin/lnkpi-disk-watchdog.sh; docker builder prune -f | tail -1 || true; if [ -x /usr/local/sbin/disk-guard.sh ]; then /usr/local/sbin/disk-guard.sh; fi; df -h / | tail -1"
 
       - name: Launch background build on CVM
         run: |
