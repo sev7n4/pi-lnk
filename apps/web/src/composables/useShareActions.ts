@@ -73,15 +73,19 @@ export function useShareActions() {
 
 	/** 生成图片：模板渲染进隐藏层 → html-to-image → 返回 PNG dataURL。 */
 	async function toImage(turns: ShareTurn[]): Promise<string> {
-		const html = buildShareHtml(turns, { inlineMedia: 'online' })
+		// 图片须预内联为 data: URI 再截图：外链图片会让 html-to-image 的 canvas 被跨域污染
+		// 而静默失败（「生成图片点了没反应」的根因，#5）。与 openOffline 共用同一预内联通道。
+		const prepared = await prepareOfflineTurns(turns)
+		const html = buildShareHtml(prepared, { inlineMedia: 'offline' })
 		const el = document.createElement('div')
 		el.style.position = 'fixed'
 		el.style.left = '-99999px'
 		el.style.top = '0'
+		el.style.width = '680px'
 		el.innerHTML = html
 		document.body.appendChild(el)
 		try {
-			return await toPng(el, { width: 680, cacheBust: true })
+			return await toPng(el, { width: 680, cacheBust: true, pixelRatio: 2 })
 		} finally {
 			document.body.removeChild(el)
 		}

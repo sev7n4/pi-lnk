@@ -80,7 +80,7 @@ const STYLE = `
   .wrap{max-width:680px;margin:0 auto;padding:16px;}
   .msg{display:flex;margin:12px 0;}
   .msg.user{justify-content:flex-end;}
-  .bubble{max-width:82%;padding:10px 14px;border-radius:14px;line-height:1.6;font-size:15px;word-break:break-word;}
+  .bubble{max-width:82%;padding:10px 14px;border-radius:14px;line-height:1.6;font-size:15px;word-break:break-word;overflow-wrap:anywhere;box-sizing:border-box;}
   .msg.user .bubble{background:#6d5dfc;color:#fff;border-bottom-right-radius:4px;}
   .msg.assistant .bubble{background:#fff;color:#1f2430;border:1px solid #e6e8ee;border-bottom-left-radius:4px;}
   .meta{font-size:12px;color:#9aa3b2;margin-top:4px;}
