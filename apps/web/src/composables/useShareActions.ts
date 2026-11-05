@@ -10,6 +10,9 @@ export interface ShareUploadResult {
 	url: string
 }
 
+/** 系统分享的结果，供面板给出不打扰的反馈（HIG：系统面板自己负责成败反馈）。 */
+export type ShareViaSystemResult = 'shared' | 'copied' | 'cancelled' | 'failed'
+
 /**
  * 分享动作封装（五种模式）。
  *
@@ -95,7 +98,53 @@ export function useShareActions() {
 		}
 	}
 
-	return { loading, qrDataUrl, upload, copyLink, showQr, showWeChat, openOffline, toImage }
+	/**
+	 * 系统分享（Web Share API）——面板的「分享到…」主行动。
+	 *
+	 * ⚠️ **同步手势铁律**：`navigator.share` 必须在用户点击的同步调用栈内触发；
+	 *    本函数第一个 `await` 之前不允许有任何异步操作，否则 iOS 会因丢失
+	 *    transient user activation 而静默失败。调用方须先用 `upload` 缓存好 url。
+	 *    浏览器不支持 Web Share（或调用失败）时降级为复制链接，保证入口永不空转。
+	 */
+	async function shareViaSystem(params: {
+		title: string
+		url: string
+	}): Promise<ShareViaSystemResult> {
+		const nav = navigator as Navigator & { share?: (data: ShareData) => Promise<void> }
+		if (typeof nav.share !== 'function') {
+			try {
+				await copyLink(params.url)
+				return 'copied'
+			} catch {
+				return 'failed'
+			}
+		}
+		try {
+			// 同步阶段调用：await 只等结果，不推迟 share() 本身
+			await nav.share({ title: params.title, text: params.title, url: params.url })
+			return 'shared'
+		} catch (err) {
+			if (err instanceof DOMException && err.name === 'AbortError') return 'cancelled'
+			try {
+				await copyLink(params.url)
+				return 'copied'
+			} catch {
+				return 'failed'
+			}
+		}
+	}
+
+	return {
+		loading,
+		qrDataUrl,
+		upload,
+		copyLink,
+		showQr,
+		showWeChat,
+		openOffline,
+		toImage,
+		shareViaSystem,
+	}
 }
 
 /** 离线模式：把图片 url 预抓为 data: URI（带鉴权）；失败降级为空串（占位，不崩页）。 */

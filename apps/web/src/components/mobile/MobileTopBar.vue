@@ -27,8 +27,8 @@ const props = defineProps<{
   tab: 'chat' | 'canvas' | 'discover' | 'mine'
   /** 当前项目名（规格 §6.4：次级灰、15px、超长截断、非交互） */
   projectName: string
-  /** 会话级分享勾选态：顶栏切到「已选 N 条 + 分享所选 + 取消」。 */
-  shareSelectMode?: boolean
+  /** 2026-11-05 真机走查：顶栏不再有「分享勾选态」——对话页只留常驻分享入口，
+   *  所有范围/动作/关闭都在分享卡片内完成，避免双 ✕ 与背景冻结。 */
 }>()
 
 const emit = defineEmits<{
@@ -36,10 +36,8 @@ const emit = defineEmits<{
   'go-gallery': []
   /** 规格 §6.3：⤢ 适应画布（canvas 分支，经壳层桥接到 VueFlow fitView） */
   'fit-view': []
-  /** 会话级分享（Task 6）：chat 页签「分享会话」图标钮 → emit share（经 MobileCanvasShell 桥接 CanvasPage.openShare） */
+  /** 会话级分享：chat 页签「分享会话」图标钮 → emit share（经 MobileCanvasShell 桥接 CanvasPage.openShare） */
   'share': []
-  /** 取消勾选态——经壳层桥接 CanvasPage.cancelShareSelect。 */
-  'share-cancel': []
 }>()
 
 const isGhost = computed(() => props.tab === 'discover' || props.tab === 'mine')
@@ -104,9 +102,9 @@ onUnmounted(() => {
 
       <!-- 右侧工具簇 -->
       <div class="bar-actions">
-        <!-- 会话级分享（Task 6）：chat 页签「分享会话」图标钮 → emit share（经 MobileCanvasShell 桥接 CanvasPage.openShare） -->
+        <!-- 会话级分享：chat 页签常驻「分享会话」入口（唯一入口，不随面板开关变形） -->
         <button
-          v-if="props.tab === 'chat' && !props.shareSelectMode"
+          v-if="props.tab === 'chat'"
           type="button"
           class="bar-btn"
           data-testid="mobile-topbar-share"
@@ -120,21 +118,8 @@ onUnmounted(() => {
             <path stroke-linecap="round" stroke-linejoin="round" d="M8.2 10.8 15.8 7.2 M8.2 13.2 15.8 16.8" />
           </svg>
         </button>
-        <!-- 会话级分享选择态：仅保留「✕ 退出选择」（计数与全选/取消在分享面板顶部，
-             避免同一信息两处重复；分享动作也在面板内直接完成） -->
-        <template v-if="props.tab === 'chat' && props.shareSelectMode">
-          <button
-            type="button"
-            class="bar-btn"
-            data-testid="mobile-topbar-share-cancel"
-            aria-label="退出分享选择"
-            @click="emit('share-cancel')"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
-              <path stroke-linecap="round" d="M6 6l12 12M18 6L6 18" />
-            </svg>
-          </button>
-        </template>
+        <!-- 2026-11-05：顶栏「✕ 退出选择」已退役。卡片头部 ✕ 是唯一退出口，
+             一次关闭即回到可操作的对话页，不再要求用户点第二次。 -->
         <!-- 画布：⤢ 适应画布（规格 §6.3，经壳层桥接 VueFlow fitView） -->
         <button
           v-if="props.tab === 'canvas'"

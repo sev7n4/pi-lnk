@@ -196,15 +196,11 @@ const props = defineProps<{
   /** IA v3：当前页签（chat/canvas/discover/mine）。页签是全局导航——抽屉遮罩避开页签区，
    *  页签变化时自动关抽屉（2026-10-19 真机反馈：抽屉开着点页签「失灵」，实为遮罩吞点击）。 */
   mobileAppTab?: string
-  /** 会话级分享勾选态：本体页各条对话记录左侧显示 ☐（默认全选，可逐条取消）。 */
-  shareSelectMode?: boolean
-  /** 勾选中的消息 id 集合（真相在 CanvasPage，本组件只渲染 + 上抛切换）。 */
-  shareSelectedIds?: string[]
+  /** 2026-11-05 真机走查：会话级 ☐ 勾选列退役。对话页不再进入任何分享选择态，
+   *  范围切换收进分享卡片；本组件只保留回合级分享（单选本轮直开面板）。 */
 }>()
 
 const emit = defineEmits<{
-  /** 会话级分享勾选态：切换某条对话的勾选（勾选集真相在 CanvasPage）。 */
-  toggleShareSelect: [id: string]
   canvasActions: [actions: unknown[]]
   /** Agent 一轮结束后由画布从服务端回拉 SoT，避免本地旧图覆盖 Nest 拆图结果 */
   turnComplete: []
@@ -552,10 +548,6 @@ function dismissHistoryReattachCoachmark() {
 
 const shareOpen = ref(false)
 const shareTurns = ref<ShareTurn[]>([])
-/** 勾选态：该条对话是否已被勾选（会话级分享）。 */
-function isShareSelected(id: string): boolean {
-  return props.shareSelectedIds?.includes(id) ?? false
-}
 
 function openShare(msg: AgentStreamMessage) {
   shareTurns.value = [toShareTurn(msg, props.sessionId)]
@@ -4593,35 +4585,8 @@ defineExpose({
               v-for="(msg, turnIdx) in agent.messages"
               :key="msg.id"
               class="agent-turn"
-              :class="[
-                msg.role === 'user' ? 'agent-turn--user' : 'agent-turn--assistant',
-                { 'agent-turn--share-select': props.shareSelectMode },
-              ]"
+              :class="msg.role === 'user' ? 'agent-turn--user' : 'agent-turn--assistant'"
             >
-              <!-- 会话级分享勾选态（用户裁决 2026-11-05）：点顶栏「分享」后本体页各条记录
-                   左侧出现 ☐，默认全部选中；点一下取消勾选，顶栏按勾选集分享。
-                   回合级操作栏的「分享」不受影响（仍是单选本轮直开面板）。 -->
-              <button
-                v-if="props.shareSelectMode"
-                type="button"
-                class="agent-turn-check"
-                :class="{ 'is-checked': isShareSelected(msg.id) }"
-                :aria-pressed="isShareSelected(msg.id)"
-                :aria-label="isShareSelected(msg.id) ? '取消勾选该条对话' : '勾选该条对话'"
-                data-testid="agent-turn-check"
-                @click.stop="emit('toggleShareSelect', msg.id)"
-              >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
-                  <circle cx="12" cy="12" r="9" />
-                  <path
-                    v-if="isShareSelected(msg.id)"
-                    d="M8 12.6l2.8 2.8L16 9.6"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  />
-                </svg>
-              </button>
               <!-- 2026-11-03 WorkBuddy 同款轮次抬头（移动端复测追加需求）：每轮 agent 回复
                    开头一行「项目徽章 + lnk π」（徽章灰样式抄提议生成卡片 .chip）。
                    turn 起点 = 首条消息或前一条非 assistant（连续 assistant 消息不重复抬头）。 -->
@@ -5651,6 +5616,7 @@ defineExpose({
         :turns="shareTurns"
         :session-id="props.sessionId"
         :title="`对话·${props.projectName ?? '未命名项目'}`"
+        :show-scope="false"
       />
     </div>
   </aside>
@@ -7122,43 +7088,6 @@ defineExpose({
   color: var(--lnk-text-secondary);
 }
 
-/* ---- 会话级分享勾选态：左侧 ☐ 列 ----
-   绝对定位 + 内容左留白：不改动 .agent-turn--user/--assistant 既有 flex 排版，
-   勾选态退出后不留残影（class 随 props 切换）。 */
-.agent-turn--share-select {
-  position: relative;
-  padding-left: 44px;
-}
-
-.agent-turn-check {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 40px;
-  height: 40px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: none;
-  background: none;
-  cursor: pointer;
-  color: var(--lnk-text-muted);
-}
-
-.agent-turn-check svg {
-  width: 20px;
-  height: 20px;
-}
-
-.agent-turn-check.is-checked {
-  color: var(--lnk-accent);
-}
-
-.agent-turn-check:focus-visible {
-  outline: 2px solid var(--lnk-accent);
-  outline-offset: 1px;
-  border-radius: 50%;
-}
+/* 2026-11-05：会话级 ☐ 勾选列样式随功能一并退役（对话页零选择态）。 */
 
 </style>
