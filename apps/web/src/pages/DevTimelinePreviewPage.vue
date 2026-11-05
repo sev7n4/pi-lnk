@@ -259,6 +259,23 @@ const e2aScenarios: Array<{
     ],
     nodes: [{ id: 'g1', type: 'image', data: { url: THUMB } }],
   },
+  {
+    name: '⑥ 含画布总览 tile（digest · spec 2026-11-05-canvas-digest）',
+    parts: [e2aDone('g1', 'image', '概念图', THUMB)],
+    nodes: [
+      { id: 'g1', type: 'image', data: { url: THUMB } },
+      {
+        id: 'd1',
+        type: 'text',
+        data: { digest: true, source: 'system-digest', title: '画布总览' },
+      },
+    ],
+  },
+  {
+    name: '⑦ 总览已删（S4：digest 节点不在画布 ⇒ tile 消失，与⑥对照）',
+    parts: [e2aDone('g1', 'image', '概念图', THUMB)],
+    nodes: [{ id: 'g1', type: 'image', data: { url: THUMB } }],
+  },
 ]
 
 // ④ 补拍回填：按钮切换模拟 backfill 回填晚到 done（计数反应式更新，无新事件）

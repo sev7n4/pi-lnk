@@ -120,3 +120,34 @@ describe('deliveryCountLabel — D-b 计数文案', () => {
     expect(deliveryCountLabel(23)).toBe('9+')
   })
 })
+
+describe('turnDeliveryItems — digest tile 派生（spec 2026-11-05-canvas-digest-design D5）', () => {
+  const digestNode = { id: 'd1', type: 'text', data: { digest: true, source: 'system-digest' } }
+
+  it('canvasNodes 含 digest 节点 ⇒ 清单末尾固定一枚「画布总览」tile（digest 标记）', () => {
+    const tl = feed([addNode('n1'), status('n1', 'done', 'https://x/a.png')])
+    const items = turnDeliveryItems(tl.parts, [
+      { id: 'n1', data: {} as Record<string, unknown> },
+      digestNode,
+    ])
+    expect(items.length).toBe(2)
+    expect(items[1]).toEqual({ nodeId: 'd1', nodeType: 'text', title: '画布总览', digest: true })
+  })
+
+  it('无 digest 节点 ⇒ 不含总览 tile', () => {
+    const tl = feed([addNode('n1'), status('n1', 'done', 'https://x/a.png')])
+    const items = turnDeliveryItems(tl.parts, [{ id: 'n1', data: {} as Record<string, unknown> }])
+    expect(items.length).toBe(1)
+  })
+
+  it('canvasNodes null（未知态）⇒ 保守不派生', () => {
+    const tl = feed([addNode('n1'), status('n1', 'done', 'https://x/a.png')])
+    expect(turnDeliveryItems(tl.parts, null).length).toBe(1)
+  })
+
+  it('S4 删除反映：digest 节点已删（不在 canvasNodes）⇒ tile 消失', () => {
+    const tl = feed([addNode('n1'), status('n1', 'done', 'https://x/a.png')])
+    const items = turnDeliveryItems(tl.parts, [{ id: 'n1', data: {} as Record<string, unknown> }])
+    expect(items.some((it) => it.digest)).toBe(false)
+  })
+})

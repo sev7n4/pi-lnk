@@ -233,12 +233,15 @@ function deliveryViewerNodeOf(
   return { id: node.id, type: node.type, data: node.data ?? undefined }
 }
 
-/** D-c 路由：viewer 解析+inject 命中 ⇒ 直开；否则（桌面/预览页/节点已删）定位兜底。 */
-function onDeliveryTileOpen(item: { nodeId: string }): void {
+/** D-c 路由：viewer 解析+inject 命中 ⇒ 直开；否则（桌面/预览页/节点已删）定位兜底。
+ *  D10（spec 2026-11-05-canvas-digest-design）：digest tile 命中 viewer ⇒ 追加 digest_open
+ *  打点（总览价值准入判据；桌面降级 locate 不打——价值判据=viewer 消费）。 */
+function onDeliveryTileOpen(item: { nodeId: string; digest?: true }): void {
   const node = deliveryViewerNodeOf(item.nodeId)
   if (node && deliveryViewer) {
     deliveryViewer(node)
     observeDeliveryCard('viewer_open', { nodeId: item.nodeId })
+    if (item.digest) observeDeliveryCard('digest_open', { nodeId: item.nodeId })
   } else {
     onDeliveryLocate(item.nodeId)
   }

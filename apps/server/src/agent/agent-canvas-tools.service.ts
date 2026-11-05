@@ -44,6 +44,7 @@ import {
 } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
 import { PersistRemoteService } from '../assets/persist-remote.service'
+import { buildDigestUpsertActions } from './canvas-digest.service'
 import { PUBLIC_ASSETS } from '../assets/public-assets.data'
 import { assertAudioKindMatchesModel } from '../studio/audio-kind'
 import { MaterialService } from '../canvas/material.service'
@@ -1599,6 +1600,28 @@ export class AgentCanvasToolsService {
     ]
     await this.applyOrStage(input.sessionId, actions, input.stage)
     return { actions }
+  }
+
+  /**
+   * Canvas Digest upsert（spec 2026-11-05-canvas-digest-design D2）：
+   * 系统管道写入（零审批/零计费/不进 agent 工具统计——不经 pi 工具层，直走 persist）。
+   * action 构造 = buildDigestUpsertActions 纯函数（单测在 canvas-digest.service.test.ts）；
+   * 落库复用既有 persist 通道（staged 冲突等异常由调用侧 fail-soft 吸收，S7）。
+   */
+  async upsertDigestNode(input: {
+    sessionId: string
+    userId: string
+    html: string
+    digestVersion: number
+  }): Promise<{ nodeId: string; actions: CanvasAction[] }> {
+    const { canvas } = await this.loadOwnedSession(input.sessionId, input.userId)
+    const { nodeId, actions } = buildDigestUpsertActions({
+      canvas: canvas as never,
+      html: input.html,
+      digestVersion: input.digestVersion,
+    })
+    await this.persist(input.sessionId, actions)
+    return { nodeId, actions }
   }
 
   /**

@@ -48,6 +48,8 @@
 
 - `docs/superpowers/plans/2026-11-04-e2a-ghost-delivery-summary.md`
 - `docs/superpowers/specs/2026-11-04-e2a-ghost-delivery-summary-design.md` ★design
+- `docs/superpowers/plans/2026-11-05-canvas-digest.md`
+- `docs/superpowers/specs/2026-11-05-canvas-digest-design.md` ★design
 - `docs/superpowers/specs/2026-11-02-points-display-single-source.md` ★design
 - `docs/superpowers/plans/2026-11-02-delivery-card-v1.md`
 - `docs/superpowers/specs/2026-10-28-askuser-mobile-multi-question-redesign.md` ★design

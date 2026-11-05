@@ -7,7 +7,7 @@
  */
 import { apiUrl } from '@/services/api-base'
 
-export type DeliveryMetricType = 'impression' | 'expand' | 'viewer_open' | 'locate'
+export type DeliveryMetricType = 'impression' | 'expand' | 'viewer_open' | 'locate' | 'digest_open'
 
 interface DeliveryMetricEvent {
   type: DeliveryMetricType

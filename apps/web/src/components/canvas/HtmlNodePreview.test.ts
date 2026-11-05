@@ -4,6 +4,7 @@ import HtmlNodePreview, {
   HTML_NODE_CSP,
   HTML_NODE_SANDBOX_ATTRS,
 } from './HtmlNodePreview.vue'
+import { buildTrustedNodeCsp } from './htmlNodePreviewContract'
 
 const SAMPLE = '<!DOCTYPE html><html><body><h1>hi</h1><script>1+1</script></body></html>'
 
@@ -61,5 +62,34 @@ describe('HtmlNodePreview 沙箱契约（规格 §4.3/§10 行为级守卫）', 
   it('空 content ⇒ 降级 pre 态不白屏（§4.8）', () => {
     const w = mount(HtmlNodePreview, { props: { content: '' } })
     expect(w.find('pre').exists()).toBe(true)
+  })
+})
+
+describe('trusted CSP 分级（spec 2026-11-05-canvas-digest-design §5.2）', () => {
+  it('buildTrustedNodeCsp：仅扩展 img-src 段并新增 media-src，其余段逐字符保留', () => {
+    const origin = 'http://119.29.173.89:8888'
+    const trusted = buildTrustedNodeCsp(origin)
+    expect(trusted).toContain(`img-src data: blob: ${origin}; media-src data: blob: ${origin};`)
+    // 剥掉受信扩展段后应逐字符还原出既有常量（除 img-src/media-src 外零改动）
+    expect(
+      trusted.replace(
+        `img-src data: blob: ${origin}; media-src data: blob: ${origin};`,
+        'img-src data: blob:;',
+      ),
+    ).toBe(HTML_NODE_CSP)
+  })
+
+  it('fail-closed：默认（无 trusted prop）srcdoc 仍用既有 HTML_NODE_CSP', () => {
+    const w = mount(HtmlNodePreview, { props: { content: SAMPLE } })
+    const doc = w.find('iframe').attributes('srcdoc') ?? ''
+    expect(doc).toContain(HTML_NODE_CSP)
+    expect(doc).not.toContain('media-src')
+  })
+
+  it('trusted ⇒ srcdoc 用受信 CSP（img/media-src 含本站 origin）', () => {
+    const w = mount(HtmlNodePreview, { props: { content: SAMPLE, trusted: true } })
+    const doc = w.find('iframe').attributes('srcdoc') ?? ''
+    expect(doc).toContain(`img-src data: blob: ${window.location.origin}`)
+    expect(doc).toContain('media-src')
   })
 })
