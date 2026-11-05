@@ -4823,7 +4823,7 @@ defineExpose({
                     @click="toggleMessageFeedback(msg.id, 'up')"
                   >
                     <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" :fill="messageFeedback[msg.id] === 'up' ? 'var(--lnk-accent)' : 'none'" :stroke="messageFeedback[msg.id] === 'up' ? 'var(--lnk-accent)' : 'currentColor'" stroke-width="1.5">
-                      <path stroke-linecap="round" stroke-linejoin="round" d="M7 11v8m0-8V7a2 2 0 0 1 2-2h1.5a1.5 1.5 0 0 1 1.4 1.02l1.12 3.36a2 2 0 0 0 1.9 1.34H17a2 2 0 0 1 2 2v1a2 2 0 0 1-2 2h-1.5l-.84 2.52A1.5 1.5 0 0 1 13.18 21H10a2 2 0 0 1-2-2v-8z" />
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M14 9V5a3 3 0 0 0-3-3L7 11v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3" />
                     </svg>
                   </button>
                   <button
@@ -4835,7 +4835,7 @@ defineExpose({
                     @click="toggleMessageFeedback(msg.id, 'down')"
                   >
                     <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" :fill="messageFeedback[msg.id] === 'down' ? 'var(--lnk-accent)' : 'none'" :stroke="messageFeedback[msg.id] === 'down' ? 'var(--lnk-accent)' : 'currentColor'" stroke-width="1.5">
-                      <path stroke-linecap="round" stroke-linejoin="round" d="M17 13V5m0 8v3a2 2 0 0 1-2 2h-1.5a1.5 1.5 0 0 1-1.4-1.02l-1.12-3.36a2 2 0 0 0-1.9-1.34H7a2 2 0 0 0-2 2v1a2 2 0 0 0 2 2h1.5l.84-2.52A1.5 1.5 0 0 0 10.82 3H14a2 2 0 0 1 2 2v8z" />
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.28A2 2 0 0 1 21 4v7a2 2 0 0 1-2 2h-3" />
                     </svg>
                   </button>
                   <button

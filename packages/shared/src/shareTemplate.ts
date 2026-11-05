@@ -82,8 +82,8 @@ const STYLE = `
   .wrap{max-width:680px;margin:0 auto;padding:16px;}
   .msg{display:flex;margin:12px 0;}
   .msg.user{justify-content:flex-end;}
-  .bubble{max-width:82%;padding:10px 14px;border-radius:14px;line-height:1.6;font-size:15px;word-break:break-word;overflow-wrap:anywhere;box-sizing:border-box;}
-  .msg.user .bubble{background:rgba(23,25,35,0.05);color:#1f2430;border:1px solid rgba(23,25,35,0.08);border-bottom-right-radius:4px;}
+  .bubble{padding:10px 14px;border-radius:14px;line-height:1.6;font-size:15px;word-break:break-word;overflow-wrap:anywhere;box-sizing:border-box;}
+  .msg.user .bubble{max-width:82%;background:rgba(23,25,35,0.05);color:#1f2430;border:1px solid rgba(23,25,35,0.08);border-bottom-right-radius:4px;}
   .msg.assistant .bubble{background:#fff;color:#1f2430;border:1px solid #e6e8ee;border-bottom-left-radius:4px;}
   .meta{font-size:12px;color:#9aa3b2;margin-top:4px;}
   details{margin:8px 0;background:#fff;border:1px solid #e6e8ee;border-radius:10px;padding:8px 12px;}

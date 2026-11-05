@@ -1,9 +1,35 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common'
+import { BadRequestException, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common'
 import { randomUUID } from 'crypto'
 import { promises as fs } from 'fs'
 import { join } from 'path'
 import { buildShareHtml, type ShareHtmlOptions, type ShareTurn } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
+
+/**
+ * 回合结构兜底校验。
+ *
+ * ⚠️ DTO 刻意不做嵌套校验（见 share.controller.ts 的说明：全局 whitelist 管道会剥字段），
+ * 故结构问题必须在此拦住——否则非法回合会被静默渲染成空气泡 + 兜底时间。
+ */
+function assertShareTurns(turns: unknown): asserts turns is ShareTurn[] {
+  if (!Array.isArray(turns)) throw new BadRequestException('turns 必须是数组')
+  for (const [i, t] of turns.entries()) {
+    if (!t || typeof t !== 'object') throw new BadRequestException(`turns[${i}] 结构不合法`)
+    const r = t as Partial<ShareTurn>
+    if (typeof r.id !== 'string' || !r.id) {
+      throw new BadRequestException(`turns[${i}].id 缺失`)
+    }
+    if (r.role !== 'user' && r.role !== 'assistant') {
+      throw new BadRequestException(`turns[${i}].role 非法`)
+    }
+    if (r.parts !== undefined && !Array.isArray(r.parts)) {
+      throw new BadRequestException(`turns[${i}].parts 非法`)
+    }
+    if (r.attachments !== undefined && !Array.isArray(r.attachments)) {
+      throw new BadRequestException(`turns[${i}].attachments 非法`)
+    }
+  }
+}
 
 const SHARE_TTL_DAYS = 30
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000 // 1h
@@ -77,6 +103,7 @@ export class ShareService implements OnModuleInit, OnModuleDestroy {
     turns: ShareTurn[],
     title?: string,
   ): Promise<CreateShareResult> {
+    assertShareTurns(turns)
     const id = randomUUID()
     const staticPath = join(this.shareDir, `${id}.html`)
     // 防御：个别客户端（旧缓存 bundle）可能下发缺 createdAt / 类型非 number 的 turns，

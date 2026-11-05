@@ -87,4 +87,11 @@ describe('buildShareHtml', () => {
 		expect(h).toContain('og:description')
 		expect(h).toContain('og:image')
 	})
+	it('助手回复满宽、用户气泡收窄（对齐产品本体：agent 内容不右侧留白）', () => {
+		const h = buildShareHtml([turn({ role: 'assistant' })])
+		// 通用 .bubble 规则不得限宽（否则助手内容被压到 82%，右侧留白）
+		expect(h).not.toMatch(/\n {2}\.bubble\{[^}]*max-width/)
+		// 限宽只作用于用户气泡
+		expect(h).toContain('.msg.user .bubble{max-width:82%')
+	})
 })

@@ -28,4 +28,11 @@ describe('AgentSideRail 分享图标判据静态契约', () => {
 			expect(b).not.toMatch(/[😀-🿿⚀-➿]/u)
 		}
 	})
+	it('有帮助/无帮助 为清晰线性拇指（Feather 拇指字形，非旧旋涡 path）', () => {
+		// 旧 path 把整只手旋转 180°，渲染成旋涡状，读不出「拇指向下」
+		expect(src).toContain('M14 9V5a3 3 0 0 0-3-3L7 11v11h11.28')
+		expect(src).toContain('M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72')
+		expect(src).not.toContain('M17 13V5m0 8v3a2 2 0 0 1-2 2h-1.5')
+		expect(src).not.toContain('M7 11v8m0-8V7a2 2 0 0 1 2-2h1.5')
+	})
 })
