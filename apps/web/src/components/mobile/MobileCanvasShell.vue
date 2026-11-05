@@ -170,12 +170,9 @@ const props = defineProps<{
   onNodePendingConfirm: (nodeId: string) => void
   /** 拒绝 = 走桌面同一套 propose cancel 语义 */
   onNodePendingCancel: (nodeId: string) => void
-  /** 会话级分享（Task 6）：chat 页签 ⋯ 菜单「分享会话」触发（可选，测试挂载可不传） */
+  /** 会话级分享：chat 页签「分享会话」入口触发（可选，测试挂载可不传）。
+   *  2026-11-05：勾选态/取消桥接已下线——对话页只有这一个入口，其余全在卡片内。 */
   onShare?: () => void
-  /** 会话级分享勾选态：本体页 ☐ 列 + 顶栏按勾选集分享。 */
-  shareSelectMode?: boolean
-  /** 取消勾选态。 */
-  onShareCancel?: () => void
 }>()
 
 /**
@@ -331,8 +328,6 @@ watch(
     @go-gallery="agentActions.goGallery"
     @fit-view="agentActions.fitView"
     @share="onShare"
-    :share-select-mode="props.shareSelectMode"
-    @share-cancel="props.onShareCancel?.()"
   />
   <!-- 2026-10-21：自动保存状态行——静默成功只报异常（失败红胶囊可点重试，保存中仅呼吸点）；
        多选态不出（与动作条抢位）。

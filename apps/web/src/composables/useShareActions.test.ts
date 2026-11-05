@@ -84,4 +84,77 @@ describe('useShareActions', () => {
 		const actions = useShareActions()
 		await expect(actions.upload([], 'sess-1')).rejects.toThrow(/forbidden/)
 	})
+
+	describe('shareViaSystem（卡片主行动 · 系统分享）', () => {
+		const nav = navigator as Navigator & { share?: (data: ShareData) => Promise<void> }
+		const withShare = (value: unknown) =>
+			Object.defineProperty(navigator, 'share', { value, configurable: true })
+		const withClipboard = () => {
+			const writeText = vi.fn().mockResolvedValue(undefined)
+			Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+			return writeText
+		}
+		const cleanup = () => {
+			// lib.dom 的 Navigator.share 为必需声明，delete 会触发 TS2790；用 Reflect 还原
+			Reflect.deleteProperty(nav, 'share')
+		}
+
+		it('在第一个 await 之前同步调用 navigator.share（iOS 手势安全）', async () => {
+			const share = vi.fn().mockResolvedValue(undefined)
+			withShare(share)
+			try {
+				const actions = useShareActions()
+				const pending = actions.shareViaSystem({ title: '对话·P', url: 'https://x/s.html' })
+				// 关键：不 await 就断言，证明 share() 处于点击同步调用栈内
+				expect(share).toHaveBeenCalledWith({
+					title: '对话·P',
+					text: '对话·P',
+					url: 'https://x/s.html',
+				})
+				await expect(pending).resolves.toBe('shared')
+			} finally {
+				cleanup()
+			}
+		})
+
+		it('浏览器不支持 Web Share ⇒ 降级复制链接（入口永不空转）', async () => {
+			const writeText = withClipboard()
+			withShare(undefined)
+			try {
+				const actions = useShareActions()
+				await expect(
+					actions.shareViaSystem({ title: 'T', url: 'https://x/s.html' }),
+				).resolves.toBe('copied')
+				expect(writeText).toHaveBeenCalledWith('https://x/s.html')
+			} finally {
+				cleanup()
+			}
+		})
+
+		it('用户取消系统分享 ⇒ cancelled（不弹错误提示）', async () => {
+			withShare(vi.fn().mockRejectedValue(new DOMException('cancel', 'AbortError')))
+			try {
+				const actions = useShareActions()
+				await expect(
+					actions.shareViaSystem({ title: 'T', url: 'https://x/s.html' }),
+				).resolves.toBe('cancelled')
+			} finally {
+				cleanup()
+			}
+		})
+
+		it('系统分享抛错 ⇒ 降级复制链接', async () => {
+			const writeText = withClipboard()
+			withShare(vi.fn().mockRejectedValue(new Error('not allowed')))
+			try {
+				const actions = useShareActions()
+				await expect(
+					actions.shareViaSystem({ title: 'T', url: 'https://x/s.html' }),
+				).resolves.toBe('copied')
+				expect(writeText).toHaveBeenCalledWith('https://x/s.html')
+			} finally {
+				cleanup()
+			}
+		})
+	})
 })

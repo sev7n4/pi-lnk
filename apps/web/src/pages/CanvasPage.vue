@@ -230,55 +230,47 @@ const canvasEditor = useCanvasEditorStore()
 const { registerLocateNodeHandler, locateNodeHandler, closeInspector, openInspector } = useMediaInspector()
 const sessionId = computed(() => route.params.sessionId as string)
 
-// 会话级分享（Task 6 + 用户裁决 2026-11-05）：**勾选态**——点顶栏「分享」后，
-// 本体页各条对话记录左侧出现 ☐（默认全部选中，可逐条取消），顶栏按勾选集分享。
+// 会话级分享（2026-11-05 真机走查六问 · 用户裁决）：**对话页零选择态**——
+// 本体页只留顶栏「分享」入口；点开即弹分享卡片，卡片 ✕ 一次关闭并完整复原。
+// ☐ 勾选列 / 顶栏 ✕ / 二次确认全部退役：模态遮罩下不再要求用户操作背景，
+// 也就不会再出现「背景冻住却要你去点它」和「清空后无法恢复」的死局。
+// 范围收敛为「全部 / 空」两态，由卡片内可点的「全选 ⇄ 取消全选」切换。
 // 回合级分享仍是单选本轮直开面板（AgentSideRail.openShare），两条链路互不干扰。
 const shareOpen = ref(false)
-const shareSelectMode = ref(false)
-const shareSelectedIds = ref<string[]>([])
+const shareIncludeAll = ref(true)
 
-/** 会话总回合数（面板顶部「已选 N / M」）。 */
+/** 会话总回合数（面板范围行 N / M）。 */
 const shareTotalCount = computed(() => useAgentStore().messages.length)
+const shareSelectedCount = computed(() => (shareIncludeAll.value ? shareTotalCount.value : 0))
 
-/** 勾选集 → ShareTurn（面板与上传共用同一集合；勾选一变即变）。 */
+/** 范围 → ShareTurn（面板与上传共用同一集合；范围一变即变）。 */
 const shareTurns = computed<ShareTurn[]>(() => {
+  if (!shareIncludeAll.value) return []
   const agent = useAgentStore()
-  const picked = new Set(shareSelectedIds.value)
-  return agent.messages.filter((m) => picked.has(m.id)).map((m) => toShareTurn(m, sessionId.value))
+  return agent.messages.map((m) => toShareTurn(m, sessionId.value))
 })
 
-/** 顶栏「分享」：进入勾选态（默认全选当前会话全部回合）。 */
+/** 顶栏「分享」：直接弹面板（默认纳入全部回合），对话页不进入任何特殊状态。 */
 function openShare() {
-  const agent = useAgentStore()
-  shareSelectedIds.value = agent.messages.map((m) => m.id)
-  shareSelectMode.value = true
-  // 用户裁决（2026-11-05）：点分享**直接弹面板**，不再需要顶栏 ✓ 二次确认；
-  // 面板顶部自带「☑ 全选 / ✕ 取消」，一步完成选择。
+  shareIncludeAll.value = true
   shareOpen.value = true
 }
 
-/** 勾选态：切换某条对话的勾选（真相在本页，AgentSideRail 只渲染 + 上抛）。 */
-function toggleShareSelect(id: string) {
-  shareSelectedIds.value = shareSelectedIds.value.includes(id)
-    ? shareSelectedIds.value.filter((x) => x !== id)
-    : [...shareSelectedIds.value, id]
-}
-
-/** 退出勾选态。 */
-function cancelShareSelect() {
-  shareSelectMode.value = false
-  shareSelectedIds.value = []
+/** 卡片 ✕ / 点遮罩：一次关闭，且把范围复位，保证下次打开仍是干净默认态。 */
+function closeShare() {
   shareOpen.value = false
+  shareIncludeAll.value = true
 }
 
-/** 面板「☑ 全选」：一键全选当前会话全部回合。 */
-function selectAllShare() {
-  shareSelectedIds.value = useAgentStore().messages.map((m) => m.id)
+/** 面板 v-model 变更分发：只有「打开」来自顶栏，其余统一走复原。 */
+function onShareOpenChange(open: boolean) {
+  if (open) openShare()
+  else closeShare()
 }
 
-/** 面板「✕ 取消」：一键清空勾选。 */
-function clearShareSelection() {
-  shareSelectedIds.value = []
+/** 卡片范围切换（true=纳入全部，false=清空）。 */
+function setShareIncludeAll(value: boolean) {
+  shareIncludeAll.value = value
 }
 
 
@@ -6523,9 +6515,6 @@ onUnmounted(() => {
         ref="agentRailRef"
         :session-id="sessionId"
         :project-name="sessionTitle"
-        :share-select-mode="shareSelectMode"
-        :share-selected-ids="shareSelectedIds"
-        @toggle-share-select="toggleShareSelect"
         :read-only="agentReadOnly"
         :mobile-canvas-view="mobileCanvasView"
         :mobile-canvas-imm="mobileCanvasImm"
@@ -6580,8 +6569,6 @@ onUnmounted(() => {
       :on-tab-change="onMobileTabChange"
       :on-save="saveCanvas"
       :on-share="openShare"
-      :share-select-mode="shareSelectMode"
-      :on-share-cancel="cancelShareSelect"
       :agent-actions="agentRailActions"
       :project-name="sessionTitle"
       :dock-add="handleDockAdd"
@@ -6647,14 +6634,14 @@ onUnmounted(() => {
       @close="closeContextMenu"
     />
     <ConversationShareSheet
-      v-model="shareOpen"
+      :model-value="shareOpen"
       :turns="shareTurns"
       :session-id="sessionId"
       :title="`对话·${sessionTitle}`"
-      :selected-count="shareSelectedIds.length"
+      :selected-count="shareSelectedCount"
       :total-count="shareTotalCount"
-      @select-all="selectAllShare"
-      @clear-all="clearShareSelection"
+      @update:model-value="onShareOpenChange"
+      @toggle-all="setShareIncludeAll"
     />
   </div>
 </template>

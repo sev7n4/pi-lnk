@@ -9,6 +9,7 @@ const h = vi.hoisted(() => {
 	const copyLink = vi.fn().mockResolvedValue(undefined)
 	const openOffline = vi.fn().mockResolvedValue(undefined)
 	const toImage = vi.fn().mockResolvedValue('data:image/png;base64,AAAA')
+	const shareViaSystem = vi.fn().mockResolvedValue('shared')
 	const qr = { value: null as string | null }
 	const showQr = vi.fn((_url: string) => {
 		qr.value = 'data:image/png;base64,QR'
@@ -16,7 +17,7 @@ const h = vi.hoisted(() => {
 	const showWeChat = vi.fn((_url: string) => {
 		qr.value = 'data:image/png;base64,QR'
 	})
-	return { upload, copyLink, openOffline, toImage, qr, showQr, showWeChat }
+	return { upload, copyLink, openOffline, toImage, shareViaSystem, qr, showQr, showWeChat }
 })
 
 vi.mock('@/composables/useShareActions', () => ({
@@ -29,6 +30,7 @@ vi.mock('@/composables/useShareActions', () => ({
 		showWeChat: h.showWeChat,
 		openOffline: h.openOffline,
 		toImage: h.toImage,
+		shareViaSystem: h.shareViaSystem,
 	}),
 }))
 
@@ -49,118 +51,168 @@ async function clickSel(sel: string) {
 	await flushPromises()
 	await new Promise((r) => setTimeout(r, 0))
 }
+const disabled = (sel: string) => (q(sel) as HTMLButtonElement | null)?.disabled === true
 
-describe('ConversationShareSheet', () => {
+async function settle() {
+	await flushPromises()
+	await new Promise((r) => setTimeout(r, 0))
+}
+
+describe('ConversationShareSheet（2026-11-05 真机六问）', () => {
 	let wrapper: ReturnType<typeof mount> | null = null
-	beforeEach(() => vi.clearAllMocks())
+	beforeEach(() => {
+		vi.clearAllMocks()
+		h.qr.value = null
+	})
 	afterEach(() => {
 		wrapper?.unmount()
 		wrapper = null
 	})
 
-	const mountSheet = (turns: ShareTurn[], modelValue = true) => {
-		wrapper = mount(ConversationShareSheet, { props: { turns, sessionId: 'sess-1', modelValue } })
+	const mountSheet = (turns: ShareTurn[], extra: Record<string, unknown> = {}) => {
+		wrapper = mount(ConversationShareSheet, {
+			props: { turns, sessionId: 'sess-1', modelValue: true, ...extra },
+		})
 		return wrapper
 	}
 
-	it('副标题显示「已选 N / M 条对话」（勾选集合由页面侧决定，面板不再内联筛选）', async () => {
+	it('④ 计数唯一：范围行只出现一次「已选 N / M 条」，无 subtitle 重复', async () => {
 		mountSheet([turn('a', 'user', 'hi'), turn('b', 'assistant', 'hello')])
-		await flushPromises()
-		expect(bodyText()).toContain('已选 2 / 2 条对话')
+		await settle()
+		expect((bodyText().match(/已选 2 \/ 2 条/g) ?? []).length).toBe(1)
+		expect(bodyText()).not.toContain('已选中')
+		expect(q('[data-testid="share-selected-count"]')).not.toBeNull()
 	})
 
-	it('选择行提供「全选 / 取消」一键操作（一步完成，不进二级）', async () => {
+	it('② 全选永远可点：默认全选显示「取消全选」，点击上抛 toggleAll(false)', async () => {
 		mountSheet([turn('a', 'user', 'hi')])
-		await flushPromises()
-		const all = q('[data-testid="share-select-all"]')
-		const clear = q('[data-testid="share-select-clear"]')
-		expect(all).not.toBeNull()
-		expect(clear).not.toBeNull()
+		await settle()
+		const toggle = q('[data-testid="share-select-all"]')
+		expect(toggle).not.toBeNull()
+		expect(disabled('[data-testid="share-select-all"]')).toBe(false)
+		expect(toggle!.textContent).toContain('取消全选')
 		await clickSel('[data-testid="share-select-all"]')
-		await clickSel('[data-testid="share-select-clear"]')
-		expect(wrapper!.emitted('selectAll')).toBeTruthy()
-		expect(wrapper!.emitted('clearAll')).toBeTruthy()
+		expect(wrapper!.emitted('toggleAll')?.at(-1)).toEqual([false])
 	})
 
-	it('结果视图替换菜单（二维码与动作网格不同屏）', async () => {
+	it('②/③ 0 条不死锁：动作禁用但「全选」仍可点并上抛 toggleAll(true)', async () => {
+		mountSheet([], { selectedCount: 0, totalCount: 13 })
+		await settle()
+		expect(bodyText()).toContain('已选 0 / 13 条')
+		expect(disabled('[data-testid="share-primary"]')).toBe(true)
+		expect(disabled('[data-testid="mode-qr"]')).toBe(true)
+		expect(bodyText()).toContain('点「全选」加入全部对话')
+		expect(disabled('[data-testid="share-select-all"]')).toBe(false)
+		expect(q('[data-testid="share-select-all"]')!.textContent).toContain('全选')
+		await clickSel('[data-testid="share-select-all"]')
+		expect(wrapper!.emitted('toggleAll')?.at(-1)).toEqual([true])
+	})
+
+	it('⑥ 主行动调系统分享，且点击时不再 await 上传（iOS 同步手势安全）', async () => {
 		mountSheet([turn('a', 'user', 'hi')])
-		await flushPromises()
+		await settle()
+		const uploadsBefore = h.upload.mock.calls.length
+		expect(uploadsBefore).toBe(1)
+		await clickSel('[data-testid="share-primary"]')
+		expect(h.shareViaSystem).toHaveBeenCalledWith({
+			title: '对话分享',
+			url: 'https://x/share/s1.html',
+		})
+		expect(h.upload.mock.calls.length).toBe(uploadsBefore)
+	})
+
+	it('⑤ 生成二维码：结果视图替换菜单（菜单不再同屏）', async () => {
+		mountSheet([turn('a', 'user', 'hi')])
+		await settle()
 		expect(q('[data-testid="share-menu"]')).not.toBeNull()
-		await clickSel('[data-testid="mode-wechat"]')
-		// 进入二维码视图后，菜单动作网格必须让位（不与结果同屏）
+		await clickSel('[data-testid="mode-qr"]')
 		expect(q('[data-testid="share-menu"]')).toBeNull()
 		expect(q('[data-testid="share-qr"]')).not.toBeNull()
+		expect(h.showQr).toHaveBeenCalledWith('https://x/share/s1.html')
 	})
 
-	it('面板内不再内联可选对话列表（选择已上移到对话页面本体）', async () => {
-		mountSheet([turn('a', 'user', 'hi'), turn('b', 'assistant', 'hello')])
-		await flushPromises()
-		// 旧的多选列表 / 单选条目必须消失
-		expect(q('[data-testid="share-list"]')).toBeNull()
-		expect(q('[data-testid="share-item-a"]')).toBeNull()
-		expect(q('[data-testid="share-item-b"]')).toBeNull()
+	it('① 卡片 ✕ 关闭一次即回对话页：emit update:modelValue=false', async () => {
+		mountSheet([turn('a', 'user', 'hi')])
+		await settle()
+		await clickSel('[data-testid="m-sheet-close"]')
+		expect(wrapper!.emitted('update:modelValue')?.at(-1)).toEqual([false])
 	})
 
-	it('打开即预上传并缓存 url（手势安全前置），且直接消费传入的全部 turns', async () => {
+	it('① 结果视图里的 ✕ 也直接关闭，不要求先点「返回」', async () => {
+		mountSheet([turn('a', 'user', 'hi')])
+		await settle()
+		await clickSel('[data-testid="mode-qr"]')
+		expect(q('[data-testid="share-qr"]')).not.toBeNull()
+		await clickSel('[data-testid="m-sheet-close"]')
+		expect(wrapper!.emitted('update:modelValue')?.at(-1)).toEqual([false])
+	})
+
+	it('结果视图「返回」回到菜单，菜单与结果互斥', async () => {
+		mountSheet([turn('a', 'user', 'hi')])
+		await settle()
+		await clickSel('[data-testid="mode-qr"]')
+		await clickSel('[data-testid="qr-back"]')
+		expect(q('[data-testid="share-menu"]')).not.toBeNull()
+		expect(q('[data-testid="share-qr"]')).toBeNull()
+	})
+
+	it('打开即预上传并缓存 url，直接消费传入的全部 turns', async () => {
 		mountSheet([turn('a', 'user', 'hi'), turn('b', 'assistant', 'hello')])
-		await flushPromises()
-		await new Promise((r) => setTimeout(r, 0))
+		await settle()
 		expect(h.upload).toHaveBeenCalledTimes(1)
-		// 不再二次筛选：传入几条就上传几条
 		const [uploadedTurns] = h.upload.mock.calls[0]
-		expect(uploadedTurns).toHaveLength(2)
 		expect(uploadedTurns.map((t: ShareTurn) => t.id).sort()).toEqual(['a', 'b'])
 	})
 
 	it('点击「复制链接」调用 copyLink（同步手势写入）', async () => {
 		mountSheet([turn('a', 'user', 'hi')])
-		await flushPromises()
-		await new Promise((r) => setTimeout(r, 0))
+		await settle()
 		await clickSel('[data-testid="mode-link"]')
 		expect(h.copyLink).toHaveBeenCalledWith('https://x/share/s1.html')
 	})
 
 	it('点击「离线打开」调用 openOffline（传入全部 turns）', async () => {
 		mountSheet([turn('a', 'user', 'hi')])
-		await flushPromises()
+		await settle()
 		await clickSel('[data-testid="mode-offline"]')
 		expect(h.openOffline).toHaveBeenCalledWith([expect.objectContaining({ id: 'a' })], undefined)
 	})
 
-	it('品牌渠道（微信）点击 → showQr 暴露二维码', async () => {
+	it('生成图片 → 预览区替换菜单', async () => {
 		mountSheet([turn('a', 'user', 'hi')])
-		await flushPromises()
-		await new Promise((r) => setTimeout(r, 0))
-		await clickSel('[data-testid="mode-wechat"]')
-		expect(h.showQr).toHaveBeenCalled()
-		expect(q('[data-testid="share-qr"]')).not.toBeNull()
-	})
-
-	it('生成图片 → 预览区出现', async () => {
-		mountSheet([turn('a', 'user', 'hi')])
-		await flushPromises()
+		await settle()
 		await clickSel('[data-testid="mode-image"]')
 		expect(h.toImage).toHaveBeenCalledWith([expect.objectContaining({ id: 'a' })], undefined)
 		expect(q('[data-testid="share-img"]')).not.toBeNull()
+		expect(q('[data-testid="share-menu"]')).toBeNull()
 	})
 
-	it('title prop 透传给 share 动作（「对话·项目名称」）', async () => {
-		wrapper = mount(ConversationShareSheet, {
-			props: { turns: [turn('a', 'user', 'hi')], sessionId: 'sess-1', modelValue: true, title: '对话·测试项目' },
-		})
-		await flushPromises()
-		await new Promise((r) => setTimeout(r, 0))
+	it('title prop 透传给上传 / 系统分享 / 图片 / 离线（「对话·项目名称」）', async () => {
+		mountSheet([turn('a', 'user', 'hi')], { title: '对话·测试项目' })
+		await settle()
 		expect(h.upload).toHaveBeenCalledWith(expect.anything(), 'sess-1', '对话·测试项目')
+		await clickSel('[data-testid="share-primary"]')
+		expect(h.shareViaSystem).toHaveBeenCalledWith(
+			expect.objectContaining({ title: '对话·测试项目' }),
+		)
 		await clickSel('[data-testid="mode-offline"]')
 		expect(h.openOffline).toHaveBeenCalledWith(expect.anything(), '对话·测试项目')
 		await clickSel('[data-testid="mode-image"]')
 		expect(h.toImage).toHaveBeenCalledWith(expect.anything(), '对话·测试项目')
 	})
 
-	it('close 事件：关闭回传 update:modelValue=false', async () => {
-		mountSheet([turn('a', 'user', 'hi')])
-		await flushPromises()
-		await clickSel('[data-testid="m-sheet-close"]')
-		expect(wrapper!.emitted('update:modelValue')?.at(-1)).toEqual([false])
+	it('回合级分享（showScope=false）不显示范围行，但动作仍可用', async () => {
+		mountSheet([turn('a', 'user', 'hi')], { showScope: false })
+		await settle()
+		expect(q('[data-testid="share-select-row"]')).toBeNull()
+		expect(q('[data-testid="share-primary"]')).not.toBeNull()
+		expect(q('[data-testid="share-menu"]')).not.toBeNull()
+	})
+
+	it('面板内不再内联可选对话清单（逐条勾选已退役）', async () => {
+		mountSheet([turn('a', 'user', 'hi'), turn('b', 'assistant', 'hello')])
+		await settle()
+		expect(q('[data-testid="share-list"]')).toBeNull()
+		expect(q('[data-testid="share-item-a"]')).toBeNull()
 	})
 })

@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
-// 静态契约：读源文件做正则断言（与 AgentSideRail.icon.test.ts 同款 ?raw 导入方式）。
-// 会话级分享勾选态（用户裁决 2026-11-05）：点顶栏「分享」后本体页各条对话记录左侧出现 ☐，
-// 默认全选，可逐条取消；勾选集真相在 CanvasPage，本组件只渲染 + 上抛切换。
+// 2026-11-05 真机走查第 3 问：对话框体 ☐ 列被模态遮罩冻住，用户够不着。
+// 裁决：☐ 列整体退役，对话页保持常态可操作；回合级分享入口保留。
 import raw from './AgentSideRail.vue?raw'
 
 const src = raw
@@ -9,29 +8,26 @@ const src = raw
 	.replace(/<!--[\s\S]*?-->/g, '')
 	.replace(/\/\/.*$/gm, '')
 
-describe('AgentSideRail 会话级分享勾选态契约', () => {
-	it('每条对话记录左侧渲染 ☐ 勾选钮（仅勾选态出现）', () => {
-		expect(src).toContain('data-testid="agent-turn-check"')
-		expect(src).toContain('v-if="props.shareSelectMode"')
-		expect(src).toContain('agent-turn--share-select')
+describe('AgentSideRail 对话页零选择态', () => {
+	it('不再渲染任何会话级 ☐ 勾选钮', () => {
+		expect(src).not.toContain('data-testid="agent-turn-check"')
+		expect(src).not.toContain('agent-turn--share-select')
+		expect(src).not.toContain('.agent-turn-check')
 	})
-	it('勾选钮只上抛 toggleShareSelect（勾选集真相在 CanvasPage）', () => {
-		expect(src).toContain("emit('toggleShareSelect', msg.id)")
-		expect(src).toContain('toggleShareSelect: [id: string]')
+
+	it('不再持有选择态 props / 切换事件', () => {
+		expect(src).not.toContain('shareSelectMode')
+		expect(src).not.toContain('shareSelectedIds')
+		expect(src).not.toContain('toggleShareSelect')
+		expect(src).not.toContain('isShareSelected')
 	})
-	it('勾选态样式：绝对定位 + 左侧留白（不改既有 flex 排版）', () => {
-		expect(src).toMatch(/\.agent-turn--share-select\s*\{[^}]*position:\s*relative/)
-		expect(src).toMatch(/\.agent-turn--share-select\s*\{[^}]*padding-left:\s*44px/)
-		expect(src).toMatch(/\.agent-turn-check\s*\{[^}]*position:\s*absolute/)
-	})
-	it('勾选钮用内联 SVG（禁 emoji），选中态描品牌色', () => {
-		const btn = src.match(/<button[^>]*data-testid="agent-turn-check"[\s\S]*?<\/button>/)
-		expect(btn).not.toBeNull()
-		expect(btn![0]).toContain('<svg')
-		expect(btn![0]).not.toMatch(/[\u{1F300}-\u{1FAFF}]/u)
-		expect(src).toMatch(/\.agent-turn-check\.is-checked\s*\{[^}]*color:\s*var\(--lnk-accent\)/)
-	})
-	it('回合级分享入口不受勾选态影响（仍单选本轮）', () => {
+
+	it('回合级分享入口不受影响（仍单选本轮直开面板）', () => {
 		expect(src).toContain('@click="openShare(msg)"')
+		// 组件挂载位于模板尾段，裁剪注释的正则会跨段吞掉该区 ⇒ 用原始源码断言
+		expect(raw).toContain('<ConversationShareSheet')
+		expect(raw).toContain('v-model="shareOpen"')
+		// 单轮分享没有可切换的范围 ⇒ 隐藏范围行，避免无效控件
+		expect(raw).toContain(':show-scope="false"')
 	})
 })
