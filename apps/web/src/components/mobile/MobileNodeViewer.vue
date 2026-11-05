@@ -10,6 +10,7 @@ import { useInkOverlay } from './annotate/useInkOverlay'
 import { useTextToSpeech } from '@/composables/useTextToSpeech'
 import { useNodeWaveform } from '@/composables/useNodeWaveform'
 import { formatMediaDuration } from '@/utils/mediaInfoFormat'
+import { claimAudioPlayback, releaseAudioPlayback } from '@/utils/audioPlayback'
 import MobileNodeWaveform from './MobileNodeWaveform.vue'
 import MobileAnnotationCapsule from './MobileAnnotationCapsule.vue'
 import MobileViewerChrome, { type MobileViewerChromeAction } from './MobileViewerChrome.vue'
@@ -152,7 +153,12 @@ function onBodyTouchStart(e: TouchEvent) {
   // 文本（长按留给拖选）/ 音频（§4.12.2：不挂 Menu，波形与进度拖动手势冲突）一律早退
   if (props.type === 'text' || props.type === 'audio') return
   if (annotating.value || editing.value || props.menuOpen) return
-  if (e.touches.length !== 1) return
+  // ⭐ 实施计划 v1.5「第二根手指取消长按」：双指按住缩放时若首指 500ms 内位移
+  //    <10px，旧实现只 return 不清计时器 ⇒ 弹 Menu 叠在放大态上、搅乱后续触摸。
+  if (e.touches.length !== 1) {
+    cancelLongPress()
+    return
+  }
   const t = e.touches[0]!
   lpStart = { x: t.clientX, y: t.clientY }
   lpTimer = window.setTimeout(fireLongPress, LONG_PRESS_MS)
@@ -171,6 +177,11 @@ function fireLongPress() {
 
 function onBodyTouchMove(e: TouchEvent) {
   if (!lpTimer || !lpStart) return
+  // 多指手势（捏合缩放）期间长按一律作废
+  if (e.touches.length > 1) {
+    cancelLongPress()
+    return
+  }
   const t = e.touches[0]
   if (!t) return
   if (Math.hypot(t.clientX - lpStart.x, t.clientY - lpStart.y) > LONG_PRESS_MOVE_PX) cancelLongPress()
@@ -627,6 +638,25 @@ const { peaks: wavePeaks, source: waveSource, loading: waveLoading } = useNodeWa
   url: () => (props.type === 'audio' ? props.data?.url : undefined),
 })
 
+/* ⭐ 2026-11-05：音频播放态 = 媒体事件驱动 + 乐观反馈 + 失败回滚。
+ * 旧实现只有 @play/@pause（无 @ended），短音频自然播完后 audioPlaying 残留 true，
+ * 下一次点击走 pause() 而非 play() ⇒ 真机「偶发点了没反应」；play() 被拒也不回滚。 */
+function onAudioPlay() {
+  audioPlaying.value = true
+  claimAudioPlayback(audioRef.value)
+}
+
+function onAudioPause() {
+  audioPlaying.value = false
+  releaseAudioPlayback(audioRef.value)
+}
+
+function onAudioEnded() {
+  audioPlaying.value = false
+  audioCurrent.value = 0
+  releaseAudioPlayback(audioRef.value)
+}
+
 function toggleAudioPlay() {
   const el = audioRef.value
   if (!el) return
@@ -634,9 +664,15 @@ function toggleAudioPlay() {
     el.pause()
     return
   }
-  void el.play().catch(() => {
-    /* 自动播放策略拦截：用户再点一次即可，不静默失败 */
-  })
+  audioPlaying.value = true
+  try {
+    const p = el.play() as Promise<void> | undefined
+    if (p && typeof p.catch === 'function') {
+      p.catch(() => { audioPlaying.value = false })
+    }
+  } catch {
+    /* jsdom 无媒体实现：保留乐观态，真实浏览器由 @play/@pause 校正 */
+  }
 }
 
 function onAudioTime() {
@@ -651,23 +687,43 @@ function onAudioMeta() {
 function onAudioSeek(e: Event) {
   const el = audioRef.value
   const v = Number((e.target as HTMLInputElement).value)
-  if (el && Number.isFinite(v)) el.currentTime = v
+  if (el && Number.isFinite(v)) {
+    el.currentTime = v
+    audioCurrent.value = v
+  }
 }
 
 const audioTimeLabel = computed(
   () => `${formatMediaDuration(audioCurrent.value) ?? '0:00'} / ${formatMediaDuration(audioDuration.value) ?? '--:--'}`,
 )
 
-/* ── 视频倍速循环（走查⑤ · W-32：进度条用原生 controls，倍速按钮补齐）── */
+/** 波形已播进度（iOS 语音备忘录范式：不靠颜色块表达播放态） */
+const audioProgress = computed(() =>
+  audioDuration.value > 0 ? Math.min(1, audioCurrent.value / audioDuration.value) : 0,
+)
+
+onBeforeUnmount(() => {
+  // 直接卸载（非 close 路径）也要让出播放权，避免「viewer 关了但磁贴还在响」
+  const el = audioRef.value
+  if (el && !el.paused) {
+    try { el.pause() } catch { /* 元素已卸载 */ }
+  }
+  releaseAudioPlayback(el)
+})
+
+/* ── 播放倍速（走查⑤ · W-32 泛化，2026-11-05 音频补齐）─────────────────
+ * 旧实现把倍速按钮 v-if 限死 video、playbackRate 只写给 videoRef ⇒ 音频 viewer
+ * 丢了 HTMLMediaElement 最基础的速率能力（iOS 原生 <audio controls> 自带速率菜单）。
+ * 现视频/音频共用同一速率循环，作用于当前媒体的 audioRef / videoRef。 */
 const PLAYBACK_RATES = [1, 1.5, 2, 0.5] as const
 const rateIdx = ref(0)
-const videoRate = computed(() => PLAYBACK_RATES[rateIdx.value]!)
-const videoRateLabel = computed(() => `${videoRate.value}x`)
+const playbackRate = computed(() => PLAYBACK_RATES[rateIdx.value]!)
+const rateLabel = computed(() => `${playbackRate.value}x`)
 
-function cycleVideoRate() {
+function cyclePlaybackRate() {
   rateIdx.value = (rateIdx.value + 1) % PLAYBACK_RATES.length
-  const el = videoRef.value
-  if (el) el.playbackRate = videoRate.value
+  const el = props.type === 'audio' ? audioRef.value : videoRef.value
+  if (el) el.playbackRate = playbackRate.value
 }
 
 /** 可滚动内容容器（文本阅读器等）—— 滚动守卫的真源（§6.2 退出表仲裁规则） */
@@ -681,6 +737,27 @@ const touchStartScrollTop = ref(0)
 
 /** 下滑关闭阈值（px）—— 超过即视为"往下滑关闭" */
 const SWIPE_CLOSE_THRESHOLD = 100
+
+/* ⭐ 2026-11-05 真机回归（双指放大后松手自动关闭）：
+ * 旧状态机没有「本次手势是否真正结束」的概念。真机 pinch 会派发**两次** touchend
+ * （touches 2→1→0）：第一次就把 gestureConsumed 清成 false、touchStartY 归零成
+ * 非法起点 0；两次抬指之间残留的单指 touchmove 又把 touchCurrentY 写成绝对
+ * clientY（几百 px）⇒ 第二次 touchend 算出 deltaY = 420 − 0 > 100 ⇒ requestClose()
+ * ⇒ 缩放态连同 ink 笔画/圈选载体一起被卸载，无法驻留放大态。
+ * 现引入 swipeArmed：只有「单指起始、未被缩放/多指消费、所有手指都已抬起」
+ * 的手势才允许做关闭判定；其余一律只复位不关闭。 */
+const swipeArmed = ref(false)
+
+/** 所有手指抬起 / 系统接管时一次性复位；绝不留下「起点 0 + 绝对坐标」的组合 */
+function resetTouchGesture() {
+  pinchState.value = null
+  panLast.value = null
+  gestureConsumed.value = false
+  swipeArmed.value = false
+  touchStartY.value = 0
+  touchCurrentY.value = 0
+  touchStartScrollTop.value = 0
+}
 
 /** 统一退出入口：先停播放，再 emit close */
 function requestClose() {
@@ -714,6 +791,7 @@ function onTouchStart(e: TouchEvent) {
       initMidY: mid.y,
     }
     gestureConsumed.value = true
+    swipeArmed.value = false
     panLast.value = null
     return
   }
@@ -721,9 +799,17 @@ function onTouchStart(e: TouchEvent) {
   if (props.type === 'image' && imgScale.value > 1 && e.touches.length === 1) {
     panLast.value = { x: e.touches[0]!.clientX, y: e.touches[0]!.clientY }
     gestureConsumed.value = true
+    swipeArmed.value = false
+    return
+  }
+  // 非图片 / 未进 pinch 的多指手势同样不参与关闭判定（评审 I5）
+  if (e.touches.length > 1) {
+    gestureConsumed.value = true
+    swipeArmed.value = false
     return
   }
   gestureConsumed.value = false
+  swipeArmed.value = true
   const y = e.touches?.[0]?.clientY ?? 0
   touchStartY.value = y
   touchCurrentY.value = y
@@ -773,34 +859,59 @@ function onTouchMove(e: TouchEvent) {
     return
   }
   // ⭐ 评审 I5：多点触控（捏合/换指）时 touches[0] 身份会跳变 ⇒ 位移不可信，
-  // 冻结本次手势（当前点回拨到起点），second finger 抬起后重新开始累计。
+  // 冻结本次手势（当前点回拨到起点），并把本次手势标记为已消费。
   if (e.touches.length > 1) {
+    gestureConsumed.value = true
+    swipeArmed.value = false
+    touchCurrentY.value = touchStartY.value
+    return
+  }
+  // ⭐ 缩放/多指手势期间（含第一根手指抬起后的残留单指）绝不累计关闭位移：
+  //    touchCurrentY 一旦写成绝对 clientY，配合已归零的起点就会被误判成几百 px 下滑。
+  if (!swipeArmed.value || gestureConsumed.value) {
     touchCurrentY.value = touchStartY.value
     return
   }
   touchCurrentY.value = e.touches?.[0]?.clientY ?? touchCurrentY.value
 }
 
-/** 系统接管手势（来电/通知）⇒ 只复位，不触发关闭（评审 M6） */
-function onTouchCancel() {
-  touchStartY.value = 0
-  touchCurrentY.value = 0
-  touchStartScrollTop.value = 0
-}
-
-function onTouchEnd() {
-  // ⭐ W-5：捏合/平移消费掉的本次触控不做关闭判定；缩回 1 时已复位。
-  if (gestureConsumed.value || pinchState.value) {
+/** 系统接管手势（来电/通知）⇒ 只复位，不触发关闭（评审 M6）；
+ *  缩放态/消费标记一并清掉，避免残留状态污染下一次手势。 */
+function onTouchCancel(e?: TouchEvent) {
+  const remaining = e?.touches?.length ?? 0
+  if (remaining > 0) {
     pinchState.value = null
     panLast.value = null
-    gestureConsumed.value = false
-    touchStartY.value = 0
-    touchCurrentY.value = 0
-    touchStartScrollTop.value = 0
+    return
+  }
+  resetTouchGesture()
+}
+
+function onTouchEnd(e?: TouchEvent) {
+  // ⭐ 真机双指 pinch：每根手指各派发一次 touchend（touches 2→1→0）。
+  //    还有手指在屏上 ⇒ 本次手势未结束：只收掉缩放态，绝不做关闭判定，
+  //    也绝不能提前清掉 gestureConsumed（旧实现正是清在这里，导致第二次误关）。
+  const remaining = e?.touches?.length ?? 0
+  if (remaining > 0) {
+    pinchState.value = null
+    panLast.value = null
+    return
+  }
+  // 消费掉的手势（捏合 / 平移 / 多指）：只复位，不关闭 ⇒ 放大态得以驻留
+  if (gestureConsumed.value || pinchState.value) {
+    resetTouchGesture()
     return
   }
   // ⭐ 评审 C1：标注态（含收笔后的异步合成期间）不触发关闭
-  if (annotating.value) return
+  if (annotating.value) {
+    resetTouchGesture()
+    return
+  }
+  // 无 touchstart 起点（或系统已接管）⇒ 位移不可信，不做判定
+  if (!swipeArmed.value) {
+    resetTouchGesture()
+    return
+  }
   // ⭐ 方向判据（2026-10-27 走查③修）：currentY − startY > 0 才是「下拉」。
   // 旧实现 startY − currentY > 100 = **上滑**关闭（方向写反），长文上滑滚动
   // 正中判据 ⇒ 读几行就回到画布。上滑永不关闭（iOS Photos 惯例：下滑关）。
@@ -814,9 +925,7 @@ function onTouchEnd() {
     // 可关；长文/审核层仅在滚到底后上滑才关——走查③「滚动途中永不关」不回退。
     requestClose()
   }
-  touchStartY.value = 0
-  touchCurrentY.value = 0
-  touchStartScrollTop.value = 0
+  resetTouchGesture()
 }
 
 defineExpose({ videoRef })
@@ -922,13 +1031,29 @@ defineExpose({ videoRef })
         ref="audioRef"
         :src="data?.url"
         preload="metadata"
-        @play="audioPlaying = true"
-        @pause="audioPlaying = false"
+        @play="onAudioPlay"
+        @pause="onAudioPause"
+        @ended="onAudioEnded"
         @timeupdate="onAudioTime"
         @loadedmetadata="onAudioMeta"
       />
+      <!-- 倍速：iOS 原生音频播放器的基础能力，自绘控件同样必须提供 -->
+      <button
+        class="viewer-speed viewer-audio-speed"
+        type="button"
+        :aria-label="`倍速 ${rateLabel}`"
+        data-testid="mobile-viewer-speed"
+        @click="cyclePlaybackRate"
+      >
+        {{ rateLabel }}
+      </button>
       <div class="viewer-audio-wave">
-        <MobileNodeWaveform :peaks="wavePeaks" :source="waveSource" :loading="waveLoading" />
+        <MobileNodeWaveform
+          :peaks="wavePeaks"
+          :source="waveSource"
+          :loading="waveLoading"
+          :progress="audioProgress"
+        />
       </div>
       <div
         class="viewer-audio-controls"
@@ -998,17 +1123,18 @@ defineExpose({ videoRef })
       @dismiss="capsuleVisible = false"
     />
 
-    <!-- 倍速循环（走查⑤ · W-32）：仅视频；进度条用原生 controls 不自制。
+    <!-- 倍速循环（走查⑤ · W-32；2026-11-05 音频在 .viewer-audio 内另有同款入口）。
+         视频进度条用原生 controls 不自制；两处共用 rateLabel / cyclePlaybackRate。
          ⭐ 回归④：原钉在容器 bottom 区被底部主栏盖住 ⇒ 收进 viewer-body（锚点=媒体区底部） -->
     <button
       v-if="type === 'video'"
       class="viewer-speed"
       type="button"
-      :aria-label="`倍速 ${videoRateLabel}`"
+      :aria-label="`倍速 ${rateLabel}`"
       data-testid="mobile-viewer-speed"
-      @click="cycleVideoRate"
+      @click="cyclePlaybackRate"
     >
-      {{ videoRateLabel }}
+      {{ rateLabel }}
     </button>
     </div><!-- /viewer-body -->
 
@@ -1131,6 +1257,7 @@ defineExpose({ videoRef })
 
 /* 音频波形查看器（D2 修订 2026-10-27）：波形居中 + 底部控制条 */
 .viewer-audio {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -1138,6 +1265,16 @@ defineExpose({ videoRef })
   justify-content: center;
   gap: var(--lnk-space-4);
   padding: var(--lnk-space-4) var(--lnk-space-4) calc(var(--lnk-space-8) + env(safe-area-inset-bottom));
+}
+
+/* 音频倍速：与视频倍速同款胶囊，锚在波形区右上，不挤占底部播放条（iOS 播放器惯例） */
+.viewer-audio-speed {
+  position: absolute;
+  top: var(--lnk-space-3);
+  right: var(--lnk-space-4);
+  bottom: auto;
+  left: auto;
+  z-index: 3;
 }
 
 .viewer-audio-wave {
@@ -1153,6 +1290,11 @@ defineExpose({ videoRef })
   gap: var(--lnk-space-3);
 }
 
+/* ⭐ 2026-11-05 真机反馈：退役实心品牌紫圆钮。它一度是 viewer 里唯一的大色块，
+   与 MobileViewerChrome §4.12.5「⛔ 禁实心大色块」及 Apple HIG Deference/Clarity
+   相悖；且前景误用签名面令牌 --lnk-accent-on-signature（浅紫压深紫，对比度不足）。
+   改用与右上 X / 底部毛玻璃操作条同源的叠层材质 + 中性前景：同几何、同按压反馈。
+   播放态由 play.fill / pause.fill 图标 + 波形已播进度表达（Never rely on color alone）。 */
 .viewer-audio-play {
   display: inline-flex;
   width: var(--lnk-touch-target);
@@ -1160,20 +1302,39 @@ defineExpose({ videoRef })
   align-items: center;
   justify-content: center;
   flex: none;
-  border: none;
+  border: 0.5px solid var(--lnk-glass-topline);
   border-radius: var(--lnk-radius-full);
-  background: var(--lnk-accent);
-  color: var(--lnk-accent-on-signature);
+  background: var(--lnk-surface-glass);
+  -webkit-backdrop-filter: blur(var(--lnk-glass-blur)) saturate(160%);
+  backdrop-filter: blur(var(--lnk-glass-blur)) saturate(160%);
+  color: var(--lnk-text-primary);
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
+  transition: transform var(--lnk-duration-base) var(--lnk-ease-decelerate),
+    background var(--lnk-duration-base) var(--lnk-ease-decelerate);
+}
+
+.viewer-audio-play:active {
+  transform: scale(0.92);
+  background: var(--lnk-pressed-overlay);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .viewer-audio-play {
+    transition: none;
+  }
+
+  .viewer-audio-play:active {
+    transform: none;
+  }
 }
 
 .viewer-audio-seek {
   flex: 1;
   min-width: 0;
   min-height: var(--lnk-touch-target);
-  accent-color: var(--lnk-accent);
+  accent-color: var(--lnk-text-primary);
 }
 
 .viewer-audio-time {

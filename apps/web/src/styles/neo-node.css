@@ -1576,8 +1576,17 @@
      方向沿 dash 流动，帮助视觉回溯上游节点
    ============================================================ */
 .vue-flow__edge .vue-flow__edge-path {
-  stroke: var(--canvas-edge-color, var(--neo-edge)) !important;
-  stroke-width: var(--canvas-edge-width, 1.5px);
+  /* ⭐ 2026-11-05 双端连线可见性根治（PC 纳入范围，SP-F 当时明确把桌面排除）：
+   * 原回退 --neo-edge alpha 0.3/0.22 × 1.5px × fitView 缩放（zoom 常 0.2~0.4）
+   * ⇒ 亚像素淡线，PC 与移动端都等于看不见（数据链路经生产取证完好，纯渲染层问题）。
+   * - 回退色改 L2 强边令牌（深浅成对），用户显式 --canvas-edge-color 仍第一优先；
+   * - vector-effect: non-scaling-stroke ⇒ 线宽按**屏幕像素**恒定，不再随 viewport
+   *   transform 一起被压细，这是 fitView 下"线消失"的根因级修复；
+   * - 2.5px + round 端点，让流动虚线在缩放后仍是连续可读的线段。 */
+  stroke: var(--canvas-edge-color, var(--lnk-canvas-edge-strong, var(--neo-edge))) !important;
+  stroke-width: var(--canvas-edge-width, 2.5px);
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
   filter: var(--canvas-edge-glow, none);
   transition: stroke 0.2s ease, stroke-width 0.2s ease;
 }

@@ -50,4 +50,25 @@ describe('MobileNodeWaveform', () => {
     const w = mount(MobileNodeWaveform, { props: { peaks: peaks(4, 0.5), source: 'real' } })
     expect(w.attributes('data-source')).toBe('real')
   })
+
+  // ⭐ 2026-11-05：iOS 语音备忘录式已播进度——播放态不再只靠按钮颜色/图标
+  it('progress=0.5 ⇒ 前半条 is-played，后半条保持未播', () => {
+    const w = mount(MobileNodeWaveform, { props: { peaks: peaks(8, 0.5), progress: 0.5 } })
+    const bars = w.findAll('.mobile-node-waveform-bar')
+    expect(bars.filter((b) => b.classes('is-played')).length).toBe(4)
+    expect(bars[3].classes('is-played')).toBe(true)
+    expect(bars[4].classes('is-played')).toBe(false)
+  })
+
+  it('不传 progress ⇒ 全未播（磁贴内联沿用旧视觉）', () => {
+    const w = mount(MobileNodeWaveform, { props: { peaks: peaks(4, 0.5) } })
+    expect(w.findAll('.mobile-node-waveform-bar.is-played').length).toBe(0)
+  })
+
+  it('progress 越界被夹到 0..1，不出现 NaN/整条点亮', () => {
+    const a = mount(MobileNodeWaveform, { props: { peaks: peaks(4, 0.5), progress: 3 } })
+    expect(a.findAll('.mobile-node-waveform-bar.is-played').length).toBe(4)
+    const b = mount(MobileNodeWaveform, { props: { peaks: peaks(4, 0.5), progress: -1 } })
+    expect(b.findAll('.mobile-node-waveform-bar.is-played').length).toBe(0)
+  })
 })

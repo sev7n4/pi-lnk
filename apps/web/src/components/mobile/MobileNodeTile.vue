@@ -17,6 +17,7 @@ import { formatElapsed } from '@/components/canvas/nodeTaskChrome'
 import NodePendingPrompt from '@/components/canvas/NodePendingPrompt.vue'
 import { isPartAnchoredNode } from '@/composables/useProposeAnchor'
 import { mediaInfoLine } from '@/utils/mediaInfoFormat'
+import { claimAudioPlayback, releaseAudioPlayback } from '@/utils/audioPlayback'
 import { getNeoNodeMeta } from '@/components/canvas/neoNodeMeta'
 import { useNodeMediaInfoFooter } from '@/composables/useNodeMediaInfoFooter'
 import type { NodeMediaInfoSummary } from '@/composables/useMediaInspector'
@@ -436,22 +437,55 @@ const { peaks: waveformPeaks, source: waveformSource, loading: waveformLoading }
   nodeId: () => props.id,
   url: () => props.data?.url,
 })
+/**
+ * ⭐ 2026-11-05 真机回归：播放态改「媒体事件驱动 + 乐观反馈 + 失败回滚」。
+ * 旧实现按钮内容恒为字符 '▶'，playing 只改 aria-label ⇒ 点了永远不变形态；
+ * 且 play() 被自动播放策略/音频焦点/未加载完的 src 拒绝时空吞 Promise、不回滚，
+ * 下一次点击会走 pause() 分支 ⇒ 要连点三次才出声（真机「偶发没反应」主因）。
+ */
+function onAudioPlay() {
+  playing.value = true
+  claimAudioPlayback(audioEl.value)
+}
+
+function onAudioPause() {
+  playing.value = false
+  releaseAudioPlayback(audioEl.value)
+}
+
+/** 自然播完 HTMLMediaElement 不保证触发 pause ⇒ 必须显式复位，否则重播卡死 */
+function onAudioEnded() {
+  playing.value = false
+  releaseAudioPlayback(audioEl.value)
+}
+
 function toggleAudio() {
   const el = audioEl.value
   if (!el) return
   if (playing.value) {
     el.pause()
-    playing.value = false
     return
   }
   playing.value = true
   try {
     const p = el.play() as Promise<void> | undefined
-    if (p && typeof p.catch === 'function') p.catch(() => {})
+    if (p && typeof p.catch === 'function') {
+      p.catch(() => { playing.value = false })
+    }
   } catch {
-    /* jsdom 无媒体实现，忽略 */
+    /* jsdom 无媒体实现：保留乐观态，真实浏览器由 @play/@pause 校正 */
   }
 }
+
+onBeforeUnmount(() => {
+  // 磁贴在 url 回填 / 生成完成重绘时会重建实例：旧实例必须停，否则「还在响但按钮显示未播」。
+  // 只停仍在播的（paused 是媒体真状态），避免对未播放元素调用媒体 API。
+  const el = audioEl.value
+  if (el && !el.paused) {
+    try { el.pause() } catch { /* 元素已卸载 */ }
+  }
+  releaseAudioPlayback(el)
+})
 
 function onTileClick() {
   /**
@@ -675,14 +709,37 @@ function handleTextTap() {
     -->
     <div v-else-if="type === 'audio' && data?.url" class="mobile-node-media-box">
       <div class="mobile-audio-wave">
-        <button class="mobile-audio-play" type="button" :aria-label="playing ? '暂停' : '播放'" @click.stop="toggleAudio">▶</button>
+        <button
+          class="mobile-audio-play"
+          type="button"
+          :aria-label="playing ? '暂停' : '播放'"
+          data-testid="mobile-audio-play"
+          @click.stop="toggleAudio"
+        >
+          <!-- SF Symbols 同构（play.fill / pause.fill）：⛔ 禁文本字符当图标，
+               且图标必须承载「当前动作」，播放中一眼可见可暂停 -->
+          <svg v-if="!playing" viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true" data-testid="mobile-audio-icon-play">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+          <svg v-else viewBox="0 0 24 24" width="22" height="22" fill="currentColor" aria-hidden="true" data-testid="mobile-audio-icon-pause">
+            <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
+          </svg>
+        </button>
         <MobileNodeWaveform
           :peaks="waveformPeaks"
           :source="waveformSource"
           :loading="waveformLoading"
         />
       </div>
-      <audio ref="audioEl" :src="data?.url" preload="metadata" @loadedmetadata="onAudioMeta" />
+      <audio
+        ref="audioEl"
+        :src="data?.url"
+        preload="metadata"
+        @play="onAudioPlay"
+        @pause="onAudioPause"
+        @ended="onAudioEnded"
+        @loadedmetadata="onAudioMeta"
+      />
     </div>
     <div v-else-if="type === 'text'" class="mobile-node-text-wrap">
       <p class="mobile-node-text">{{ data?.content || '空文本' }}</p>

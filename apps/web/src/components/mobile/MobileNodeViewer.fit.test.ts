@@ -46,4 +46,20 @@ describe('MobileNodeViewer 全屏查看器样式（fit）', () => {
   it('零 --neo-* 旧令牌', () => {
     expect(SRC).not.toContain('--neo-')
   })
+
+  // ⭐ 2026-11-05 真机反馈：音频播放钮曾是 viewer 里唯一实心品牌紫大色块
+  it('音频播放钮退役实心色块，与 chrome 同款毛玻璃 + 中性前景', () => {
+    const rule = /\.viewer-audio-play\s*\{([^}]*)\}/.exec(styleBlock(SRC))?.[1] ?? ''
+    expect(rule).toContain('background: var(--lnk-surface-glass)')
+    expect(rule).toContain('color: var(--lnk-text-primary)')
+    expect(rule).not.toContain('background: var(--lnk-accent)')
+    expect(rule).not.toContain('--lnk-accent-on-signature')
+  })
+
+  it('音频 viewer 补齐原生媒体能力：ended 复位 + playbackRate 倍速 + 波形进度', () => {
+    expect(SRC).toContain('@ended="onAudioEnded"')
+    expect(SRC).toContain('el.playbackRate = playbackRate.value')
+    expect(SRC).toContain('class="viewer-speed viewer-audio-speed"')
+    expect(SRC).toContain(':progress="audioProgress"')
+  })
 })
