@@ -16,6 +16,7 @@ import { buildMemoryTools } from "./memory.js";
 import { buildRemoveEdgesTools } from "./remove-edges.js";
 import { createRenderCanvasViewTools } from "./render-canvas-view.js";
 import { createViewCanvasMediaTools } from "./view-canvas-media.js";
+import { createReadMediaTools } from "./read-media.js";
 
 /** P0 批次：web_search/web_fetch（感知层）。TAVILY_API_KEY 未配置时由 config.ts 条件装配。 */
 export { buildWebTools };
@@ -120,4 +121,10 @@ export function buildRenderCanvasViewTools(client: NestClient): LnkpiTool[] {
  *  （tier=read，按需读画布/侧栏图片像素，复用 image-refine fetcher，零 Nest 改动）。 */
 export function buildViewCanvasMediaTools(client: NestClient): LnkpiTool[] {
 	return createViewCanvasMediaTools(client);
+}
+
+/** VISP S-7 恢复路径（spec 2026-11-05-agent-canvas-visual-perception-design.md）：
+ *  read_media（tier=read，直注失败/事后回看时经 Nest 唯一取图点回流像素）。 */
+export function buildReadMediaTools(client: NestClient): LnkpiTool[] {
+	return createReadMediaTools(client);
 }

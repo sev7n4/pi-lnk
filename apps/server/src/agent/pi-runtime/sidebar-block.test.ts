@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assignSidebarRefKeys, buildSidebarBlock } from "./sidebar-block";
+import { assignSidebarRefKeys, buildSidebarBlock, buildImageRecoveryHint } from "./sidebar-block";
 
 describe("侧栏 key 分配与素材块（sidebar_attachments.py 平移）", () => {
 	it("key 按 mediaType 分类计数，未知类型跳过", () => {
@@ -54,3 +54,21 @@ describe('B-2 minors', () => {
     expect(block).not.toContain('x'.repeat(201))
   })
 })
+
+describe("buildImageRecoveryHint（VISP S-7/M-9：直注失败时的恢复提示）", () => {
+	it("有图片附件 → 含 read_media 指引与 key；key 跨 mediaType 计数", () => {
+		const hint = buildImageRecoveryHint([
+			{ text: "文案", mediaType: "text" },
+			{ url: "http://h:8888/api/uploads/u1/a.png", mediaType: "image" },
+			{ url: "http://h:8888/api/uploads/u1/b.jpg", mediaType: "image" },
+		]);
+		expect(hint).toContain("read_media");
+		expect(hint).toContain('ref:"I1"');
+		expect(hint).toContain("I1, I2");
+	});
+
+	it("无图片附件 / undefined → 空串（不污染动态块）", () => {
+		expect(buildImageRecoveryHint([{ text: "文案", mediaType: "text" }])).toBe("");
+		expect(buildImageRecoveryHint(undefined)).toBe("");
+	});
+});

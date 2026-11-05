@@ -1,3 +1,5 @@
+import { imageSidebarRefKeys } from "@lnkpi/shared";
+
 /**
  * 侧栏参考素材块（#12）。key 分配 1:1 平移
  * services/agent-runtime/app/graph/sidebar_attachments.py:29-43（T/I/V/A 按 mediaType 计数）。 （注：老 LangGraph runtime 已于 2026-09-27 退役删除，该路径为历史语义出处）
@@ -53,4 +55,14 @@ export function buildSidebarBlock(attachments: SidebarBlockInput[]): string {
 		lines.push(url ? `${keys[i]}=${label} url=${url}` : `${keys[i]}=${label}`);
 	});
 	return lines.join("\n");
+}
+
+/**
+ * VISP S-7/M-9：直注失败时的恢复提示（动态块，R-V10 不吃 L6 预算）。
+ * 让模型知道恢复入口存在——2026-11-05 事故实证：模型拿到 [I1=文件名] 却不知道有任何取图手段。
+ */
+export function buildImageRecoveryHint(attachments?: SidebarBlockInput[]): string {
+	const keys = imageSidebarRefKeys(attachments ?? []);
+	if (!keys.length) return "";
+	return `\n【原图恢复】本轮图片未能以像素注入上下文。可调用 read_media(ref:"${keys[0]}") 查看原图（本轮图片标记：${keys.join(", ")}）。`;
 }
