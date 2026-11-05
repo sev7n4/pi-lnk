@@ -23,6 +23,8 @@ const props = defineProps<{
     generationStartedAt?: string
     generationRecordId?: string
     materialId?: string
+    /** 受信级 CSP 分流判据（§5.2）：仅系统 digest 管道写入 'system-digest'。 */
+    source?: string
   }
 }>()
 
@@ -160,6 +162,7 @@ function onHtmlSave(payload: { content: string; format: 'html' }) {
     <HtmlNodePreview
       v-if="previewOpen"
       :content="String(data.content ?? '')"
+      :trusted="String(data.source ?? '') === 'system-digest'"
       @save="onHtmlSave"
       @close="previewOpen = false"
     />

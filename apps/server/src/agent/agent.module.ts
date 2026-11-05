@@ -8,6 +8,8 @@ import { PointsModule } from '../points/points.module'
 import { PricingModule } from '../pricing/pricing.module'
 import { AgentCanvasToolsController } from './agent-canvas-tools.controller'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
+import { CanvasDigestService } from './canvas-digest.service'
+import { PrismaService } from '../prisma/prisma.service'
 import { CANVAS_ACTION_APPLIER, defaultCanvasActionApplier } from './canvas-action-applier'
 import { DeliveryMetricsController } from './delivery-metrics.controller'
 import { AgentController } from './agent.controller'
@@ -64,6 +66,15 @@ import { TurnStateService } from './turn-state.service'
     { provide: AUTO_RESUME_AGENT_PORT, useExisting: AgentService },
     // 画布动作落地实现（归属待定的 seam）：换实现只改这一行，调用点零改动
     { provide: CANVAS_ACTION_APPLIER, useValue: defaultCanvasActionApplier },
+    // Canvas Digest（spec 2026-11-05-canvas-digest-design）：回合末「画布总览」管道。
+    // 构造器参数是结构化端口（便于轻量单测），DI 走 useFactory 绑定真依赖；
+    // AgentService 侧 @Optional 注入（缺省 = flag off 等价，既有测试零破坏）。
+    {
+      provide: CanvasDigestService,
+      useFactory: (prisma: PrismaService, tools: AgentCanvasToolsService) =>
+        new CanvasDigestService(prisma, tools),
+      inject: [PrismaService, AgentCanvasToolsService],
+    },
   ],
   exports: [AgentService, AgentCanvasToolsService, AgentMemoryService],
 })

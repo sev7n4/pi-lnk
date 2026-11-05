@@ -5,7 +5,7 @@ export { HTML_NODE_CSP, HTML_NODE_SANDBOX_ATTRS } from './htmlNodePreviewContrac
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { HTML_NODE_CSP, HTML_NODE_SANDBOX_ATTRS } from './htmlNodePreviewContract'
+import { HTML_NODE_CSP, HTML_NODE_SANDBOX_ATTRS, buildTrustedNodeCsp } from './htmlNodePreviewContract'
 
 /**
  * HTML 文本节点沙箱预览面（规格 §5.4 组件契约；§4.3 沙箱判据）。
@@ -15,8 +15,14 @@ import { HTML_NODE_CSP, HTML_NODE_SANDBOX_ATTRS } from './htmlNodePreviewContrac
  * （CanvasNodeText.onSave 注释：updateNodeData 会被下一次页面 patch 的旧数据覆盖）。
  */
 const props = withDefaults(
-  defineProps<{ content: string; readonly?: boolean; embedded?: boolean }>(),
-  { readonly: false, embedded: false },
+  defineProps<{
+    content: string
+    readonly?: boolean
+    embedded?: boolean
+    /** 受信级 CSP 分流（§5.2）：仅 data.source==='system-digest' 时由调用方传 true（fail-closed）。 */
+    trusted?: boolean
+  }>(),
+  { readonly: false, embedded: false, trusted: false },
 )
 const emit = defineEmits<{
   (e: 'save', payload: { content: string; format: 'html' }): void
@@ -28,19 +34,23 @@ const draft = ref('')
 
 const degraded = computed(() => props.content.trim() === '')
 
-const CSP_META = `<meta http-equiv="Content-Security-Policy" content="${HTML_NODE_CSP}">`
+/** §5.2 分流：trusted ⇒ 受信级 CSP（img/media-src 放行本站媒体 origin）；其余逐字符既有常量。 */
+const activeCsp = computed(() =>
+  props.trusted ? buildTrustedNodeCsp(window.location.origin) : HTML_NODE_CSP,
+)
 /**
  * srcdoc 组装（§5.4，DOCTYPE 感知）：meta CSP 若前置于 DOCTYPE，文档首 token 非
  * `<!DOCTYPE>` ⇒ 落入 quirks mode（百分比高度 / 行高 / 盒模型全变，布局保真受损）。
  * 有 DOCTYPE 时插于其声明行之后（<html> 之前），无则前置——两种路径均保证
  * DOCTYPE 是文档第一个 token 且 meta 先于任何可执行内容生效。
  */
-function buildSrcdoc(content: string): string {
+function buildSrcdoc(content: string, csp: string): string {
+  const cspMeta = `<meta http-equiv="Content-Security-Policy" content="${csp}">`
   const m = /^\s*<!doctype\s+html[^>]*>/i.exec(content)
-  if (!m) return `${CSP_META}${content}`
-  return `${content.slice(0, m[0].length)}\n${CSP_META}${content.slice(m[0].length)}`
+  if (!m) return `${cspMeta}${content}`
+  return `${content.slice(0, m[0].length)}\n${cspMeta}${content.slice(m[0].length)}`
 }
-const srcdoc = computed(() => (degraded.value ? '' : buildSrcdoc(props.content)))
+const srcdoc = computed(() => (degraded.value ? '' : buildSrcdoc(props.content, activeCsp.value)))
 
 function openSource() {
   draft.value = props.content

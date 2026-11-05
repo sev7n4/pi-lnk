@@ -237,6 +237,7 @@ emits:  save(payload: { content: string; format: 'html' })  // 源码 tab 保存
   3. 移除本体（registry / tiering.test.ts / catalog 行）+ 保留一个版本的观察回退窗口；
   4. 下线期间 render-canvas-view **保持冻结**：只修 P0，不迭代新视图。
 - **V3**：格式家族化——`svg`（归并 `AgentSvgCard` 先例进同一 format/视图体系）、`csv` 表格视图；模板/组件库。
+- **Canvas Digest（2026-11-05，已实施 P0）**：系统级回合末「画布总览」HTML 产物（每回合固定输出、零 LLM、同节点原地翻新）——本规格 format:'html' 通道与渲染层的并行扩展，唯一交叉改动 = `htmlNodePreviewContract.ts` 新增受信级 CSP（`buildTrustedNodeCsp`，`data.source==='system-digest'` fail-closed 分流，既有常量逐字符不动）。规格见 `2026-11-05-canvas-digest-design.md`。
 
 ## 13. 配图规范自检
 

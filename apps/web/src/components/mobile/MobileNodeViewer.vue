@@ -50,6 +50,8 @@ const props = withDefaults(
       imageModel?: string
       imageAspect?: string
       imageResolution?: string
+      /** 受信级 CSP 分流判据（§5.2）：仅系统 digest 管道写入 'system-digest'。 */
+      source?: string
     }
     /**
      * 底部主栏动作（§4.11.6 可达性：高频操作放下方拇指区，顶部只放低频退出类）。
@@ -970,6 +972,7 @@ defineExpose({ videoRef })
       v-else-if="type === 'text' && isHtmlNode"
       class="viewer-reader viewer-reader--html"
       :content="String(data?.content ?? '')"
+      :trusted="String(data?.source ?? '') === 'system-digest'"
       embedded
     />
     <!-- 问题③ v2：编辑态 = 同一阅读面版式的 textarea（无盒无边框无标题，

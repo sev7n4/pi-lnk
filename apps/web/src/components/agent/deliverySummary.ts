@@ -12,15 +12,19 @@ export interface DeliveryItem {
   nodeId: string
   nodeType: string
   title: string
+  /** D5/D10（spec 2026-11-05-canvas-digest-design）：画布总览 tile 标记（tap 时追加 digest_open 打点）。 */
+  digest?: true
 }
 
 /** 本回合可交付产物清单：done 且有 nodeId 的 artifact part，事件到达序保序。
  *  `canvasNodes`（2026-11-05 真机修复 Q2）：提供数组时过滤 nodeId 已不在画布的项
  *  （remove_node 不回写事件投影 ⇒ part 仍 done，必须按画布现况裁清单）；
- *  null/undefined = 未接线/未知态，不过滤（预览页保守显示）。 */
+ *  null/undefined = 未接线/未知态，不过滤（预览页保守显示）。
+ *  D5 扩展：canvasNodes 中 `data.digest === true` 节点 ⇒ 清单末尾固定追加一枚
+ *  「画布总览」tile（回合末系统产物，时序在全部 artifact 之后）；已删则随之消失（S4）。 */
 export function turnDeliveryItems(
   parts: readonly TimelinePart[],
-  canvasNodes?: readonly { id: string }[] | null,
+  canvasNodes?: readonly { id: string; data?: Record<string, unknown> | null }[] | null,
 ): DeliveryItem[] {
   const items: DeliveryItem[] = []
   for (const p of parts) {
@@ -29,7 +33,12 @@ export function turnDeliveryItems(
   }
   if (!canvasNodes) return items
   const alive = new Set(canvasNodes.map((n) => n.id))
-  return items.filter((it) => alive.has(it.nodeId))
+  const filtered = items.filter((it) => alive.has(it.nodeId))
+  const digestNode = canvasNodes.find((n) => n.data?.digest === true)
+  if (digestNode) {
+    filtered.push({ nodeId: digestNode.id, nodeType: 'text', title: '画布总览', digest: true })
+  }
+  return filtered
 }
 
 /** 回合态判定（D-b）：存在 running artifact ⇒ 回合进行中，幽灵行不渲染。 */

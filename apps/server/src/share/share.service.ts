@@ -4,6 +4,7 @@ import { promises as fs } from 'fs'
 import { join } from 'path'
 import { buildShareHtml, type ShareHtmlOptions, type ShareTurn } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
+import { resolvePublicBaseUrl } from '../agent/canvas-digest.service'
 
 /**
  * 回合结构兜底校验。
@@ -74,9 +75,9 @@ export class ShareService implements OnModuleInit, OnModuleDestroy {
   }
 
   private get publicBaseUrl(): string {
-    return (
-      process.env.SHARE_PUBLIC_BASE_URL ?? process.env.API_PUBLIC_URL ?? 'http://119.29.173.89:8888'
-    )
+    // D8 抽取复用（spec 2026-11-05-canvas-digest-design）：解析链 SSOT 移至
+    // canvas-digest.service.resolvePublicBaseUrl（行为逐字符不变）。
+    return resolvePublicBaseUrl()
   }
 
   private get ogImageUrl(): string {

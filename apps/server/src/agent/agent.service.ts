@@ -41,6 +41,7 @@ import {
 } from '../points/session-event-bus.service'
 import { ZodError } from 'zod'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
+import { CanvasDigestService } from './canvas-digest.service'
 import {
   isLedgerComplete,
   ledgerGapFrom,
@@ -331,6 +332,12 @@ export class AgentService implements OnModuleInit {
     @Optional()
     @Inject(SessionEventBus)
     private readonly eventBus?: SessionEventBus,
+    // Canvas Digest（spec 2026-11-05-canvas-digest-design）：回合末「画布总览」管道。
+    // @Optional 保持既有测试/未装配零破坏（缺省 = undefined ⇒ 挂载点短路，
+    // 与 flag off 等价——S6「行为完全不存在」）。
+    @Optional()
+    @Inject(CanvasDigestService)
+    private readonly canvasDigest?: CanvasDigestService,
   ) {}
 
   /**
@@ -598,6 +605,17 @@ export class AgentService implements OnModuleInit {
       this.piLogger?.log?.(
         `out_of_turn_turn_persisted key=${threadKey} runId=${snapshot.runId} len=${snapshot.assistantText.length}`,
       )
+      // Canvas Digest（drain 路径无流可 yield ⇒ 只落库，实时同步随下一轮/刷新）。
+      if (this.canvasDigest?.isEnabled() && snapshot.canvasActions.length > 0) {
+        await this.canvasDigest
+          .maybeRender({ sessionId, userId, canvasActions: snapshot.canvasActions })
+          .catch((err: unknown) => {
+            this.piLogger?.warn?.(
+              `canvas_digest failed (drain, session=${sessionId}): ${err instanceof Error ? err.message : String(err)}`,
+            )
+            return null
+          })
+      }
     } catch (err) {
       this.piLogger?.warn?.(
         `out_of_turn_turn persist failed (key=${threadKey}, runId=${snapshot.runId}): ${
@@ -3860,6 +3878,25 @@ export class AgentService implements OnModuleInit {
       // ⛔ 不 await（fire-and-forget）：对账是**观测 + 自愈**，不是主链路
       // ⇒ 不能拖慢 run 收尾。自愈的状态下一轮被动态块注入（晚一轮，可接受）。
       void this.reconcileHistoryAfterTurn(client, sessionKey, effectiveThreadId)
+
+      // ── Canvas Digest（spec 2026-11-05-canvas-digest-design，图 1）──
+      // flag on 且本回合有画布动作 ⇒ 回合末产出/翻新「画布总览」节点。
+      // actions **只 yield 不 pushTraceEvent**：实时端即时应用（复用 canvas_action
+      // 通道），executionEvents 零噪音（刷新重放不重复）；刷新端经 persist 落库的
+      // canvasData 恢复。fail-soft S7：digest 失败只 warn，不影响回合收束。
+      if (this.canvasDigest?.isEnabled() && canvasActions.length > 0) {
+        const digestResult = await this.canvasDigest
+          .maybeRender({ sessionId, userId, canvasActions })
+          .catch((err: unknown) => {
+            this.piLogger?.warn?.(
+              `canvas_digest failed (session=${sessionId}): ${err instanceof Error ? err.message : String(err)}`,
+            )
+            return null
+          })
+        for (const action of digestResult?.actions ?? []) {
+          yield { type: 'canvas_action', data: action } as AgentStreamEvent
+        }
+      }
     } else {
       // shadow：事件已全程转发给前端（进度可见），到此为止——同一次 run 只记一本账。
       this.piLogger.warn(
