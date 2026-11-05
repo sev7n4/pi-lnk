@@ -101,7 +101,7 @@ describe('ConversationShareSheet', () => {
 		mountSheet([turn('a', 'user', 'hi')])
 		await flushPromises()
 		await clickSel('[data-testid="mode-offline"]')
-		expect(h.openOffline).toHaveBeenCalledWith([expect.objectContaining({ id: 'a' })])
+		expect(h.openOffline).toHaveBeenCalledWith([expect.objectContaining({ id: 'a' })], undefined)
 	})
 
 	it('品牌渠道（微信）点击 → showQr 暴露二维码', async () => {
@@ -117,8 +117,21 @@ describe('ConversationShareSheet', () => {
 		mountSheet([turn('a', 'user', 'hi')])
 		await flushPromises()
 		await clickSel('[data-testid="mode-image"]')
-		expect(h.toImage).toHaveBeenCalledWith([expect.objectContaining({ id: 'a' })])
+		expect(h.toImage).toHaveBeenCalledWith([expect.objectContaining({ id: 'a' })], undefined)
 		expect(q('[data-testid="share-img"]')).not.toBeNull()
+	})
+
+	it('title prop 透传给 share 动作（「对话·项目名称」）', async () => {
+		wrapper = mount(ConversationShareSheet, {
+			props: { turns: [turn('a', 'user', 'hi')], sessionId: 'sess-1', modelValue: true, title: '对话·测试项目' },
+		})
+		await flushPromises()
+		await new Promise((r) => setTimeout(r, 0))
+		expect(h.upload).toHaveBeenCalledWith(expect.anything(), 'sess-1', '对话·测试项目')
+		await clickSel('[data-testid="mode-offline"]')
+		expect(h.openOffline).toHaveBeenCalledWith(expect.anything(), '对话·测试项目')
+		await clickSel('[data-testid="mode-image"]')
+		expect(h.toImage).toHaveBeenCalledWith(expect.anything(), '对话·测试项目')
 	})
 
 	it('close 事件：关闭回传 update:modelValue=false', async () => {
