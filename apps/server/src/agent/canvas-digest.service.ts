@@ -219,7 +219,7 @@ export function renderDigestHtml(
 <body>
 <header class="header">
   <h1>画布总览</h1>
-  <span class="ver">第 ${snapshot.digestVersion} 版</span>
+  <span class="ver">第 ${escapeHtml(String(snapshot.digestVersion))} 版</span>
   <span class="time">更新 ${formatUpdatedAt(snapshot.updatedAt)}</span>
 </header>
 <div class="stats">${stats}</div>
@@ -337,7 +337,11 @@ export function buildDigestUpsertActions(input: {
       ],
     }
   }
-  const nodeId = `text-${Date.now()}-${Math.floor(Math.random() * 1e6)}`
+  // F2（final review）：确定性 id——add_node 在 applier 内对同 id 幂等（2026-10-01 修：
+  // 重放/并发 add 同 id ⇒ data 合并非重复 push）。并发 detached finalizeTurn 双 add
+  // 各自随机 id 会落两个 digest 节点（persist 串行只保 action 各落一次）；同 id 则
+  // 第二次事务内 re-apply 走合并分支 ⇒ 结构性收敛单节点，最后写赢（D6 拍板可接受）。
+  const nodeId = 'digest-canvas'
   // 放置：既有内容下方（空间序 y→x 的末尾，「总览在底部」心智）；空画布落 {80,80}。
   const maxY = input.canvas.nodes.reduce((m, n) => Math.max(m, n.position?.y ?? 0), 0)
   const position = input.canvas.nodes.length
@@ -415,13 +419,16 @@ export class CanvasDigestService {
         : { nodes: [], edges: [] }
 
       const snapshot = collectDigestSnapshot(canvas)
+      // F1（final review）：版本计算须在渲染**之前**并回填 snapshot——Header「第 N 版」
+      // 是本轮要写入的版本（= 既有 +1），不是既有值；曾恒渲染 collectDigestSnapshot
+      // 占位的 0 ⇒ Header 永远「第 0 版」（S2 违约）。
+      const prevVersion = canvas.nodes.find((n) => n.data?.digest === true)?.data
+        ?.digestVersion
+      const digestVersion = typeof prevVersion === 'number' ? prevVersion + 1 : 1
+      snapshot.digestVersion = digestVersion
       const html = renderDigestHtml(snapshot, { publicBaseUrl: resolvePublicBaseUrl() })
       if (!html) return null // 无可收录节点（D9 全过滤）
 
-      const prevVersion = canvas.nodes.find((n) => n.data?.digest === true)?.data
-        ?.digestVersion
-      const digestVersion =
-        typeof prevVersion === 'number' ? prevVersion + 1 : 1
       return await this.canvasTools.upsertDigestNode({
         sessionId: input.sessionId,
         userId: input.userId,

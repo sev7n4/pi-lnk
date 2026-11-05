@@ -288,6 +288,8 @@ describe('CanvasDigestService.maybeRender', () => {
     expect(call.html).toContain('画布总览')
     expect(call.digestVersion).toBe(1)
     expect(call.html).toContain('1 图片')
+    // F1（final review）：Header 版本号须为计算后的本轮版本（曾恒渲染 snapshot 里未回填的 0）
+    expect(call.html).toContain('第 1 版')
   })
 
   it('D6 二轮翻新：已有 digest 节点 ⇒ digestVersion 递增传递', async () => {
@@ -306,8 +308,10 @@ describe('CanvasDigestService.maybeRender', () => {
       userId: 'u1',
       canvasActions: [{ type: 'add_node', payload: {} } as never],
     })
-    const call = tools.upsertDigestNode.mock.calls[0]?.[0] as { digestVersion: number }
+    const call = tools.upsertDigestNode.mock.calls[0]?.[0] as { digestVersion: number; html: string }
     expect(call.digestVersion).toBe(4)
+    // F1：翻新轮 Header 同步「第 4 版」
+    expect(call.html).toContain('第 4 版')
   })
 
   it('S7 fail-soft：upsert 抛错 ⇒ resolve null 不向上抛', async () => {
