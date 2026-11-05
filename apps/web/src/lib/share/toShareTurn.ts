@@ -78,7 +78,21 @@ export function toShareTurn(msg: AgentStreamMessage, _sessionId?: string): Share
 		role: msg.role,
 		contentText: msg.content,
 		parts,
-		createdAt: Date.now(),
+		createdAt: normalizeCreatedAt((msg as { createdAt?: string | number }).createdAt),
 		attachments: attachmentField,
 	}
+}
+
+/**
+ * 取消息真实时间：优先用服务端下发的 `createdAt`（历史消息），
+ * 缺省/非法时回退到 `Date.now()`（仅本地刚发出、尚未回写的实时消息）。
+ * 之前写死 `Date.now()` 会导致所有分享消息都显示「分享那一刻」而非消息时刻（#6）。
+ */
+function normalizeCreatedAt(raw: string | number | undefined): number {
+	if (typeof raw === 'number' && !Number.isNaN(raw)) return raw
+	if (typeof raw === 'string' && raw.trim()) {
+		const t = Date.parse(raw)
+		if (!Number.isNaN(t)) return t
+	}
+	return Date.now()
 }

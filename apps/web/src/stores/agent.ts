@@ -53,6 +53,11 @@ export interface AgentStreamMessage {
   role: 'user' | 'assistant'
   content: string
   /**
+   * 消息真实时间（服务端 `AgentChatMessage.createdAt` 字符串，loadHistory 透传）。
+   * 供分享快照使用真实消息时刻，而非「分享那一刻」。本地刚发出的实时消息在回写前为空。
+   */
+  createdAt?: string | number
+  /**
    * pi 会话内该消息对应的 entry id（来自 `pi_message_end` 事件）。
    * ③ 重跑用：作为 `branchFromEntryId` 让后端 fork 出「截断到本条之前」的新分支线程。
    * 仅 user 消息会带（助手消息的 entryId 无重跑语义）。
@@ -1013,6 +1018,7 @@ export const useAgentStore = defineStore('agent', () => {
       id: persisted.id,
       role: persisted.role as 'user' | 'assistant',
       content: persisted.content,
+      createdAt: persisted.createdAt,
       // D5（P3）：queued 透传（读时派生值）。role 门：徽标只对 user 行有意义，
       // assistant 行归一 false（DB 列异常也不渲染徽标）。
       queued: persisted.role === 'user' && persisted.queued === true,
