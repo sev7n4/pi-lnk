@@ -230,12 +230,41 @@ const canvasEditor = useCanvasEditorStore()
 const { registerLocateNodeHandler, locateNodeHandler, closeInspector, openInspector } = useMediaInspector()
 const sessionId = computed(() => route.params.sessionId as string)
 
-// 会话级分享（Task 6）：默认全选 → 全部回合映射为 ShareTurn
+// 会话级分享（Task 6 + 用户裁决 2026-11-05）：**勾选态**——点顶栏「分享」后，
+// 本体页各条对话记录左侧出现 ☐（默认全部选中，可逐条取消），顶栏按勾选集分享。
+// 回合级分享仍是单选本轮直开面板（AgentSideRail.openShare），两条链路互不干扰。
 const shareOpen = ref(false)
 const shareTurns = ref<ShareTurn[]>([])
+const shareSelectMode = ref(false)
+const shareSelectedIds = ref<string[]>([])
+
+/** 顶栏「分享」：进入勾选态（默认全选当前会话全部回合）。 */
 function openShare() {
   const agent = useAgentStore()
-  shareTurns.value = [...agent.messages].map((m) => toShareTurn(m, sessionId.value))
+  shareSelectedIds.value = agent.messages.map((m) => m.id)
+  shareSelectMode.value = true
+}
+
+/** 勾选态：切换某条对话的勾选（真相在本页，AgentSideRail 只渲染 + 上抛）。 */
+function toggleShareSelect(id: string) {
+  shareSelectedIds.value = shareSelectedIds.value.includes(id)
+    ? shareSelectedIds.value.filter((x) => x !== id)
+    : [...shareSelectedIds.value, id]
+}
+
+/** 退出勾选态。 */
+function cancelShareSelect() {
+  shareSelectMode.value = false
+  shareSelectedIds.value = []
+}
+
+/** 顶栏「分享所选」：只分享勾选集（按消息原有顺序）。 */
+function confirmShare() {
+  const agent = useAgentStore()
+  const picked = new Set(shareSelectedIds.value)
+  shareTurns.value = agent.messages
+    .filter((m) => picked.has(m.id))
+    .map((m) => toShareTurn(m, sessionId.value))
   shareOpen.value = true
 }
 
@@ -6480,6 +6509,9 @@ onUnmounted(() => {
         ref="agentRailRef"
         :session-id="sessionId"
         :project-name="sessionTitle"
+        :share-select-mode="shareSelectMode"
+        :share-selected-ids="shareSelectedIds"
+        @toggle-share-select="toggleShareSelect"
         :read-only="agentReadOnly"
         :mobile-canvas-view="mobileCanvasView"
         :mobile-canvas-imm="mobileCanvasImm"
@@ -6534,6 +6566,10 @@ onUnmounted(() => {
       :on-tab-change="onMobileTabChange"
       :on-save="saveCanvas"
       :on-share="openShare"
+      :share-select-mode="shareSelectMode"
+      :share-selected-count="shareSelectedIds.length"
+      :on-share-confirm="confirmShare"
+      :on-share-cancel="cancelShareSelect"
       :agent-actions="agentRailActions"
       :project-name="sessionTitle"
       :dock-add="handleDockAdd"
