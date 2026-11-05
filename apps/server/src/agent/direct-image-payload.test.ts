@@ -3,7 +3,7 @@
  * IO（读盘/缩图）全 DI，测试不碰真实 uploads。
  */
 import { afterEach, describe, expect, it } from 'vitest'
-import { buildDirectImagePayload } from './direct-image-payload'
+import { buildDirectImagePayload, resolveUploadsFilePath } from './direct-image-payload'
 
 const PNG_1PX = Buffer.from([
   0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d,
@@ -90,5 +90,31 @@ describe('buildDirectImagePayload（T1）', () => {
     })
     expect(out?.images).toHaveLength(4)
     expect(out?.markers).toEqual(['[I1=f1.png]', '[I2=f2.png]', '[I3=f3.png]', '[I4=f4.png]'])
+  })
+
+  // 2026-11-05 生产事故回归：composer 上传是绝对公网 URL，旧实现只认 /uploads/ 相对形态
+  // → 回落容器内 fetch 宿主 IP（hairpin 挂死）→ 直通整轮静默失效。
+  describe('resolveUploadsFilePath（URL 形态判据，与 upstream-ref-inline 同语义）', () => {
+    it('绝对公网 URL（composer 实际形态，事故形态）→ 本地盘路径', () => {
+      expect(
+        resolveUploadsFilePath('http://119.29.173.89:8888/api/uploads/u1/1793856657500-799263b9.jpg'),
+      ).toContain('uploads/u1/1793856657500-799263b9.jpg')
+    })
+
+    it('相对 /api/uploads/ 与旧相对 /uploads/ 形态 → 本地盘路径', () => {
+      expect(resolveUploadsFilePath('/api/uploads/u1/a.png')).toContain('uploads/u1/a.png')
+      expect(resolveUploadsFilePath('/uploads/u1/a.png')).toContain('uploads/u1/a.png')
+    })
+
+    it('非 uploads 引用（外部图片 url）→ null（走网络 fetch）', () => {
+      expect(resolveUploadsFilePath('https://cdn.example.com/img/a.png')).toBeNull()
+    })
+
+    it('query 参数不破坏解析；非法 url → null', () => {
+      expect(resolveUploadsFilePath('http://119.29.173.89:8888/api/uploads/u1/a.png?token=x')).toContain(
+        'uploads/u1/a.png',
+      )
+      expect(resolveUploadsFilePath('not a url')).toBeNull()
+    })
   })
 })

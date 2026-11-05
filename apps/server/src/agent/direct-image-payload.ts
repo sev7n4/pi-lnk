@@ -13,6 +13,7 @@
 import { readFile } from 'fs/promises'
 import { join } from 'path'
 import { upstreamFetch } from '@lnkpi/agent'
+import { parseUploadRefPath } from '@lnkpi/shared'
 import { downscaleImageBuffer } from '../media/upstream-ref-downscale'
 import { supportsVisionModel } from './sidebar-vision'
 
@@ -65,10 +66,28 @@ function fileNameFromUrl(url: string): string {
   }
 }
 
+/**
+ * 把 uploads 引用解析为本地盘绝对路径；非 uploads 引用返回 null（走网络 fetch）。
+ *
+ * 2026-11-05 生产事故根因修复：composer 上传给出的是**绝对公网 URL**
+ * （`http://…:8888/api/uploads/{uid}/{file}`），旧实现只认 `/uploads/` 相对形态，
+ * 绝对形态回落 upstreamFetch → 容器内访问宿主公网 IP hairpin 挂死 →
+ * 每图静默 skip → 直通整轮失效。现与识图路径（upstream-ref-inline）对齐：
+ * 先走 shared `parseUploadRefPath`（同语义：绝对/相对 `/api/uploads/` 均可），
+ * 再兜旧相对形态 `/uploads/`。
+ */
+export function resolveUploadsFilePath(url: string): string | null {
+  const upload = parseUploadRefPath(url)
+  if (upload) return join(UPLOADS_ROOT, upload.userId, upload.fileName)
+  const m = /^\/uploads\/([^/]+)\/([^/?#]+)/.exec(url)
+  if (m) return join(UPLOADS_ROOT, m[1], m[2])
+  return null
+}
+
 /** 本地 uploads ref 读取（与 media/upstream-ref-downscale.readImageBuffer 同语义，独立实现便于 DI 缺省）。 */
 async function readUploadsBuffer(url: string): Promise<Buffer> {
-  const m = /^\/uploads\/([^/]+)\/([^/?#]+)/.exec(url)
-  if (m) return readFile(join(UPLOADS_ROOT, m[1], m[2]))
+  const localPath = resolveUploadsFilePath(url)
+  if (localPath) return readFile(localPath)
   let lastErr: unknown = null
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await new Promise((r) => setTimeout(r, 300 * attempt))

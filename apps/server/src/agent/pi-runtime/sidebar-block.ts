@@ -44,7 +44,13 @@ export function buildSidebarBlock(attachments: SidebarBlockInput[]): string {
 	const keys = assignSidebarRefKeys(valid);
 	const lines = ["侧栏参考素材："];
 	valid.forEach((item, i) => {
-		if (keys[i]) lines.push(`${keys[i]}=${labelOf(item)}`);
+		if (!keys[i]) return;
+		// 2026-11-05 生产事故（composer 图不进上下文）：只给文件名时模型拿不到真实 url，
+		// 试图 view_canvas_media(url:"文件名") 必败。媒体素材行补充完整 url 供恢复路径取用。
+		// labelFor（payload-images）只依赖 `[I{n}=` 前缀与行首 key，不受追加字段影响。
+		const label = labelOf(item);
+		const url = (item.url ?? "").trim();
+		lines.push(url ? `${keys[i]}=${label} url=${url}` : `${keys[i]}=${label}`);
 	});
 	return lines.join("\n");
 }

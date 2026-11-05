@@ -302,12 +302,14 @@ describe("tool_search（官方 search_tools 语义：搜索 → addedToolNames �
 		assert.deepEqual(res.addedToolNames, ["undo"]);
 	});
 
-	it("未命中 → 文本给完整目录（可点名再试），不激活", async () => {
+	it("未命中 → 文本给完整目录（可点名再试），不激活；目录明示未激活不可直调（2026-11-05 事故守卫）", async () => {
 		const { loader, deferredNames } = setup();
 		const res = await run(loader, { query: "no_such_capability_xyz" });
 		assert.ok(!res.addedToolNames || res.addedToolNames.length === 0);
 		const text = textOf(res);
 		assert.match(text, /没有匹配/);
+		assert.match(text, /未激活/);
+		assert.match(text, /再调一次|再搜/);
 		for (const n of deferredNames.slice(0, 5)) assert.match(text, new RegExp(n));
 	});
 

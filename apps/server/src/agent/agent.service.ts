@@ -2781,6 +2781,19 @@ export class AgentService implements OnModuleInit {
         `direct image payload build skipped (fail-soft): ${err instanceof Error ? err.message : String(err)}`,
       )
     }
+    // 2026-11-05 生产事故（composer 图不进上下文）补的可观测闸门：buildDirectImagePayload
+    // 内部单图失败是静默 skip，全部失败返回 undefined 时外面毫无声息——模型只能拿到
+    // 识图文本摘要，用户侧表现为「模型说看不见图」。有图片附件却没直通成功必须留痕。
+    if (!directImages) {
+      const imageCount = (piContext?.attachments ?? []).filter(
+        (a) => (a?.mediaType ?? '').trim().toLowerCase() === 'image',
+      ).length
+      if (imageCount > 0) {
+        this.piLogger?.warn?.(
+          `direct image payload not built: ${imageCount} image attachment(s) will NOT reach model context as pixels (model=${directImageModel ?? 'unknown'}, session=${sessionId}) — falling back to sidebar vision text block`,
+        )
+      }
+    }
     // ③ 侧栏识图前置：结果作为文本上下文并入 systemPrompt（失败返回 ''，不阻断）
     const visionBlock = directImages
       ? ''
