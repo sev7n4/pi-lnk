@@ -48,6 +48,7 @@ import { PUBLIC_ASSETS } from '../assets/public-assets.data'
 import { assertAudioKindMatchesModel } from '../studio/audio-kind'
 import { MaterialService } from '../canvas/material.service'
 import { sanitizeAgentMessageContent } from './agentMessageSanitize'
+import { runWithMessageSeq } from './agent-message-seq'
 import { StudioService, type StudioRefInput } from '../studio/studio.service'
 import { ImageSliceService } from '../studio/image-slice.service'
 import { VideoGenerationOrchestrator } from '../studio/video-generation.orchestrator'
@@ -3747,15 +3748,20 @@ export class AgentCanvasToolsService {
       return { id: '' }
     }
 
-    const message = await this.prisma.agentMessage.create({
-      data: {
-        sessionId: input.sessionId,
-        threadId: input.threadId,
-        role: input.role,
-        content,
-        toolCalls: input.toolCalls,
-      },
-    })
+    // P4-T1（投影面收口）：E1 简报写点统一取号（spec §7.1 接缝：唯一索引上线前
+    // 本写方必须已补 seq，否则步 4 迁移后简报落库撞 @@unique([threadId, seq])）。
+    const message = await runWithMessageSeq(this.prisma, input.threadId, (seq) =>
+      this.prisma.agentMessage.create({
+        data: {
+          sessionId: input.sessionId,
+          threadId: input.threadId,
+          role: input.role,
+          content,
+          seq,
+          toolCalls: input.toolCalls,
+        },
+      }),
+    )
     return { id: message.id }
   }
 

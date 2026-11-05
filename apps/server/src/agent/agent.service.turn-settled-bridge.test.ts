@@ -25,7 +25,12 @@ const msgEndWithUsage = () =>
 function buildService(eventBus: unknown, points?: unknown, pricing?: unknown): AgentService {
   const args: unknown[] = [
     {
-      agentMessage: { create: vi.fn().mockResolvedValue({}), findMany: vi.fn().mockResolvedValue([]) },
+      agentMessage: {
+        create: vi.fn().mockResolvedValue({}),
+        findMany: vi.fn().mockResolvedValue([]),
+        // P4-T1：seq 取号桩
+        aggregate: vi.fn().mockResolvedValue({ _max: { seq: null } }),
+      },
       agentThread: {
         findUnique: vi.fn().mockResolvedValue({ id: 's1:thread-a' }),
         upsert: vi.fn().mockResolvedValue({}),

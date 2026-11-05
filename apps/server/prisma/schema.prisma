@@ -461,9 +461,11 @@ model AgentMessage {
    * 此前分页/续传只能拿 `createdAt` 当游标 ⇒ 同毫秒写入的消息在页边界重复或漏掉，
    * 且历史与实时增量各记一本账、到达顺序一变就错位（M1 的根因）。
    *
-   * ⚠️ 当前是**临时可空态**：迁移 20261022043000 只加列不回填（见该文件的五步走说明）。
-   * 回填由后续迁移 `@@unique([threadId, seq])` 收口；在那之前**没有任何读路径依赖它**，
-   * 故可空不影响现有行为。回填的排序口径见 `computeSeqs`（createdAt, id 兜底 ⇒ 可重放）。
+   * 2026-11-05（P4-T2）步 4 收口：存量回填（ROW_NUMBER，口径=computeSeqs 的
+   * (createdAt, id) 全序）+ `@@unique([threadId, seq])`；运行时写方统一走
+   * `runWithMessageSeq`（agent-message-seq.ts，max+1 + P2002 重试）。
+   * 保持可空：SQLite 加 NOT NULL 需重建表（外键/索引逐一复刻，风险高）；
+   * 回填闸门（NOT NULL 临时表法）已保证索引上线时无 NULL，写方保证之后不产 NULL。
    */
   seq           Int?
   /**
@@ -485,6 +487,8 @@ model AgentMessage {
   @@unique([threadId, runId])
   /// user 消息身份键：同一条发言至多一行。消息重放、多次重试都命中即 no-op。
   @@unique([entryId])
+  /// 会话内全序（D6 / P4-T2 步 4）：同 thread 内 seq 至多一行。写方=runWithMessageSeq。
+  @@unique([threadId, seq])
   @@index([threadId, createdAt])
   @@index([sessionId, threadId, createdAt])
 }

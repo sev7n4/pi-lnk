@@ -80,6 +80,7 @@ describe('AgentService 在飞流注入 credit_tx（Epic 1 Task 5）', () => {
     const args: any[] = [
       {
         agentMessage: {
+          aggregate: async () => ({ _max: { seq: null } }),
           create: agentMessageCreate,
           findMany: vi.fn().mockResolvedValue([]),
           findFirst: vi.fn(),

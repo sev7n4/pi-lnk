@@ -104,7 +104,7 @@ describe('useAgentStore', () => {
     ])
   })
 
-  it('replaces existing messages when loading history', () => {
+  it('loads history and keeps unsynced local messages (P4-T3 M1 合并语义：不整体替换)', () => {
     const store = useAgentStore()
     store.addUserMessage('old message')
 
@@ -118,7 +118,9 @@ describe('useAgentStore', () => {
       },
     ])
 
-    expect(store.messages).toHaveLength(1)
+    // 旧契约（P1）是整体替换、本地气泡被吞——P4-T3 有意变更为合并：
+    // 历史权威行在前，本地未落库气泡保留在尾（agent.mergeHistory.test ①）
+    expect(store.messages.map((m) => m.content)).toEqual(['new message', 'old message'])
     expect(store.messages[0]).toEqual(
       expect.objectContaining({
         id: 'message-2',

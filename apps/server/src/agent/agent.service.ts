@@ -32,6 +32,7 @@ import {
 } from '@lnkpi/shared'
 import { buildSidebarBlock } from './pi-runtime/sidebar-block'
 import { decodeCursor, paginateVisibleRows } from './messages-cursor'
+import { runWithMessageSeq } from './agent-message-seq'
 import { normalizeIntent } from './intent-dedup'
 import { MaterialService } from '../canvas/material.service'
 import {
@@ -901,15 +902,19 @@ export class AgentService implements OnModuleInit {
     // P0-①：不再查 AgentMessage 历史喂 prompt —— 会话跨轮常驻，历史已在 pi 侧原生 context 里。
     // DB 仍按 sessionId + threadId 归属落库（前端消息列表与清空语义不受影响）。
     if (persistedUserContent) {
-      await this.prisma.agentMessage.create({
-        data: {
-          sessionId,
-          threadId: effectiveThreadId,
-          role: 'user',
-          content: persistedUserContent,
-          ...(validatedAttachments ? { attachments: JSON.stringify(validatedAttachments) } : {}),
-        },
-      })
+      // P4-T1（投影面收口）：seq 全部写点统一取号（@@unique([threadId, seq]) 上线前置）。
+      await runWithMessageSeq(this.prisma, effectiveThreadId, (seq) =>
+        this.prisma.agentMessage.create({
+          data: {
+            sessionId,
+            threadId: effectiveThreadId,
+            role: 'user',
+            content: persistedUserContent,
+            seq,
+            ...(validatedAttachments ? { attachments: JSON.stringify(validatedAttachments) } : {}),
+          },
+        }),
+      )
     }
 
     let assistantText = ''
@@ -1647,21 +1652,25 @@ export class AgentService implements OnModuleInit {
     const content = sanitizeAgentMessageContent('user', text)
     if (!content) return // 纯机器载荷（sanitize 判定）不产生用户可见气泡
     try {
-      await this.prisma.agentMessage.upsert({
-        where: { entryId: entry },
-        create: {
-          sessionId,
-          threadId: threadKey,
-          role: 'user',
-          content,
-          entryId: entry,
-          // D5：入队落库即「排队中」。终态由消费信号转 false（`queue_update`），
-          // 不转的话用户会永远看到「排队中」（plan Task 8 · Review Focus #3）。
-          queued: true,
-        },
-        // ⭐ 空操作 = 先到先得：重放/重试/双写都不得覆盖既有行。
-        update: {},
-      })
+      // P4-T1：create 分支统一取号（update 分支命中既有行不动 seq）。
+      await runWithMessageSeq(this.prisma, threadKey, (seq) =>
+        this.prisma.agentMessage.upsert({
+          where: { entryId: entry },
+          create: {
+            sessionId,
+            threadId: threadKey,
+            role: 'user',
+            content,
+            entryId: entry,
+            seq,
+            // D5：入队落库即「排队中」。终态由消费信号转 false（`queue_update`），
+            // 不转的话用户会永远看到「排队中」（plan Task 8 · Review Focus #3）。
+            queued: true,
+          },
+          // ⭐ 空操作 = 先到先得：重放/重试/双写都不得覆盖既有行。
+          update: {},
+        }),
+      )
     } catch (err) {
       this.piLogger?.warn?.(
         `queued user message persist skipped (fail-soft, thread=${threadKey}, entryId=${entry}): ${err instanceof Error ? err.message : String(err)}`,
@@ -4142,19 +4151,25 @@ export class AgentService implements OnModuleInit {
       // 与 metadata，presentation / executionEvents 才是这些行必须落库的原因。
       const content = normalizeAssistantText(assistantText)
       try {
-        await this.prisma.agentMessage.create({
-          data: {
-            sessionId,
-            threadId,
-            role: 'assistant',
-            content,
-            toolCalls: canvasActions.length ? JSON.stringify(canvasActions) : null,
-            linkedOutputs: opts.linkedOutputs?.length ? JSON.stringify(opts.linkedOutputs) : null,
-            metadata: opts.metadata ? JSON.stringify(opts.metadata) : null,
-            // 回合身份：落库即成为唯一键的一半（NULL 时唯一索引不生效，等价旧行为）。
-            runId: opts.runId ?? null,
-          },
-        })
+        // P4-T1：统一取号。⚠️ 重试耗尽后抛出的 P2002 落回下方 catch——那里既有
+        // 「runId 已被 owner 记账 = 预期 no-op」语义，seq 持续冲突（单实例下近不可能）
+        // 也被同一条路径安静降级，不新增静默成功面。
+        await runWithMessageSeq(this.prisma, threadId, (seq) =>
+          this.prisma.agentMessage.create({
+            data: {
+              sessionId,
+              threadId,
+              role: 'assistant',
+              content,
+              seq,
+              toolCalls: canvasActions.length ? JSON.stringify(canvasActions) : null,
+              linkedOutputs: opts.linkedOutputs?.length ? JSON.stringify(opts.linkedOutputs) : null,
+              metadata: opts.metadata ? JSON.stringify(opts.metadata) : null,
+              // 回合身份：落库即成为唯一键的一半（NULL 时唯一索引不生效，等价旧行为）。
+              runId: opts.runId ?? null,
+            },
+          }),
+        )
       } catch (err) {
         // 竞态兜底：上面的查存在与这里的 create 之间仍可能被另一条流抢先。
         // 唯一索引是唯一的裁决者——命中即说明 owner 已记账，本条安静 no-op。

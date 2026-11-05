@@ -32,6 +32,7 @@ describe('AgentService dock forwarding (pi-runtime)', () => {
     service = new AgentService(
       {
         agentMessage: {
+          aggregate: async () => ({ _max: { seq: null } }),
           create: agentMessageCreate,
           findMany: vi.fn().mockResolvedValue([]),
         },

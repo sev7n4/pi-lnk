@@ -87,6 +87,12 @@ export interface AgentStreamMessage {
   linkedOutputs?: LinkedCanvasOutput[]
   canvasActions?: CanvasAction[]
   /**
+   * P4-T3（M1 投影重建）：本地气泡的**push 时刻**（epoch ms）。服务端行没有该字段。
+   * 用途：loadHistory 合并时的去重/覆盖判定窗口（同 content ±60s ⇒ 同一条发言；
+   * assistant 行 createdAt ≥ 本地起点 ⇒ 权威行已覆盖陈旧流式气泡）。
+   */
+  localCreatedAt?: number
+  /**
    * P1（agent-turn-timeline-design §4）：有序时间线模型层。`parts` 顺序 = 事件到达序，
    * 唯一真相，替代「trace 步骤 + 独立 body + 独立产物」的槽位拼装。flag `turn_timeline`
    * 关闭时**不创建**（零成本），渲染层按 flag 切流。
@@ -344,6 +350,8 @@ export const useAgentStore = defineStore('agent', () => {
       id: nextLocalMessageId(),
       role: 'user',
       content,
+      // P4-T3（M1）：push 时刻留档，供 loadHistory 合并去重用（同 content ±60s 窗）
+      localCreatedAt: Date.now(),
       attachments: extras?.attachments?.map((attachment) => ({ ...attachment })),
       attachmentRefKeys: extras?.attachmentRefKeys ? [...extras.attachmentRefKeys] : undefined,
       // SEL-REF：复制一份，避免外部数组后续被改（选中态是 reactive 的）
@@ -381,6 +389,9 @@ export const useAgentStore = defineStore('agent', () => {
       id: nextLocalMessageId(),
       role: 'assistant',
       content: '',
+      // P4-T3（M1）：流式气泡起点留档——历史里出现「晚于起点」的 assistant 权威行
+      // ⇒ 本气泡是重连后的陈旧残留，合并时让位（agent.mergeHistory.test ⑤）
+      localCreatedAt: Date.now(),
       streaming: true,
       textReplaceHistory: [],
       executionTrace: createExecutionTrace(),
@@ -913,7 +924,37 @@ export const useAgentStore = defineStore('agent', () => {
     const historyHasSettled = history.some((persisted) =>
       parseMessageMetadata(persisted.metadata)?.executionEvents?.some((e) => e?.type === 'turn_settled'),
     )
-    messages.value = history.map(mapPersistedToMessage)
+    // P4-T3（M1 投影重建，spec 2026-10-21 §8 mergeHistoryAndLive）：
+    // 历史**权威但不独占**——本地乐观气泡（刚 push、服务端行还没进本批快照）不得被吞。
+    // 去重/覆盖判据（按确定性从强到弱）：
+    //   a. id 命中 ⇒ 服务端行已覆盖本地行（对账回填形态）；
+    //   b. user 行同 content 且 createdAt 距 localCreatedAt ≤60s ⇒ 同一条发言，本地让位
+    //      （clientId 未贯通的过渡口径，plan §刻意不做；窗防「连发两句『继续』」误杀）；
+    //   c. 本地 streaming assistant 气泡：历史出现 createdAt ≥ 其起点的 assistant 权威行
+    //      ⇒ finalizeTurn 已落库、本气泡是重连陈旧残留，让位；否则保留（live 权威，
+    //      服务端在收尾前不会有 assistant 行，正常流式中不误删）。
+    const historyIds = new Set(history.map((p) => p.id))
+    const kept: AgentStreamMessage[] = []
+    for (const m of messages.value) {
+      if (historyIds.has(m.id)) continue
+      if (m.role === 'user' && typeof m.localCreatedAt === 'number') {
+        const covered = history.some(
+          (p) =>
+            p.role === 'user' &&
+            p.content === m.content &&
+            Math.abs(Date.parse(p.createdAt) - m.localCreatedAt!) <= 60_000,
+        )
+        if (covered) continue
+      }
+      if (m.role === 'assistant' && m.streaming && typeof m.localCreatedAt === 'number') {
+        const superseded = history.some(
+          (p) => p.role === 'assistant' && Date.parse(p.createdAt) >= m.localCreatedAt!,
+        )
+        if (superseded) continue
+      }
+      kept.push(m)
+    }
+    messages.value = [...history.map(mapPersistedToMessage), ...kept]
     if (historyHasSettled) void useAuthStore().refreshPoints()
   }
 

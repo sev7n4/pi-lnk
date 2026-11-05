@@ -53,7 +53,7 @@ describe('AgentService pi-runtime switch (B4)', () => {
 
     service = new AgentService(
       {
-        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany },
+        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany, aggregate: vi.fn().mockResolvedValue({ _max: { seq: null } }) },
         agentThread: {
           findUnique: agentThreadFindUnique,
           upsert: agentThreadUpsert,
@@ -792,7 +792,7 @@ describe('AgentService pi-runtime prompt assembly (#12)', () => {
 
     service = new AgentService(
       {
-        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany },
+        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany, aggregate: vi.fn().mockResolvedValue({ _max: { seq: null } }) },
         agentThread: {
           findUnique: agentThreadFindUnique,
           upsert: agentThreadUpsert,
@@ -1306,7 +1306,7 @@ describe('AgentService B-2 ruleGroups + minors', () => {
     const sessionFindUnique = vi.fn().mockResolvedValue({ id: 's1', canvasData: null })
     const service = new AgentService(
       {
-        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany },
+        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany, aggregate: vi.fn().mockResolvedValue({ _max: { seq: null } }) },
         agentThread: { findUnique: agentThreadFindUnique, upsert: agentThreadUpsert, update: vi.fn() },
         session: { findUnique: sessionFindUnique, update: vi.fn() },
         idempotencyRecord: {
@@ -1359,7 +1359,7 @@ describe('AgentService B-2 ruleGroups + minors', () => {
     const sessionFindUnique = vi.fn().mockResolvedValue({ id: 's1', canvasData: null })
     const service = new AgentService(
       {
-        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany },
+        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany, aggregate: vi.fn().mockResolvedValue({ _max: { seq: null } }) },
         agentThread: { findUnique: agentThreadFindUnique, upsert: agentThreadUpsert, update: vi.fn() },
         session: { findUnique: sessionFindUnique, update: vi.fn() },
         idempotencyRecord: {
@@ -1407,7 +1407,7 @@ describe('AgentService B-2 ruleGroups + minors', () => {
     const agentMessageCreate = vi.fn().mockResolvedValue({})
     const service = new AgentService(
       {
-        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany },
+        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany, aggregate: vi.fn().mockResolvedValue({ _max: { seq: null } }) },
         agentThread: { findUnique: vi.fn().mockResolvedValue(null), upsert: vi.fn(), update: vi.fn() },
         session: { findUnique: vi.fn().mockResolvedValue({ id: 's1', canvasData: null }), update: vi.fn() },
         idempotencyRecord: {
@@ -1609,7 +1609,7 @@ describe('T1 多模态直通组装（Nest → pi-runtime prompt 顶层 images）
     sessionUpdate.mockResolvedValue({})
     service = new AgentService(
       {
-        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany },
+        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany, aggregate: vi.fn().mockResolvedValue({ _max: { seq: null } }) },
         agentThread: { findUnique: agentThreadFindUnique, upsert: agentThreadUpsert, update: agentThreadUpdate },
         session: { findUnique: sessionFindUnique, update: sessionUpdate },
         idempotencyRecord: {
@@ -1716,7 +1716,7 @@ describe('Q2 落库 content 归一化（finalizeTurn 实际写库值）', () => 
 
     service = new AgentService(
       {
-        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany },
+        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany, aggregate: vi.fn().mockResolvedValue({ _max: { seq: null } }) },
         agentThread: {
           findUnique: vi.fn().mockResolvedValue(null),
           upsert: vi.fn().mockResolvedValue({}),
@@ -1798,7 +1798,7 @@ describe('svg_card 落库 executionEvents（刷新恢复通道）', () => {
 
     service = new AgentService(
       {
-        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany },
+        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany, aggregate: vi.fn().mockResolvedValue({ _max: { seq: null } }) },
         agentThread: {
           findUnique: vi.fn().mockResolvedValue(null),
           upsert: vi.fn().mockResolvedValue({}),
@@ -1998,7 +1998,8 @@ describe('SEL-REF · C2：旧客户端 focusNodeId 的迁移期回落', () => {
     service = new AgentService(
       {
         agentMessage: {
-          create: vi.fn().mockResolvedValue({}),
+          aggregate: vi.fn().mockResolvedValue({ _max: { seq: null } }),
+create: vi.fn().mockResolvedValue({}),
           findMany: vi.fn().mockResolvedValue([]),
         },
         agentThread: {
@@ -2098,7 +2099,7 @@ describe('SEL-REF · C1：selection_binding 事件只在真注入时下发', () 
     delete process.env.SEL_REF_ENABLED
     service = new AgentService(
       {
-        agentMessage: { create: vi.fn().mockResolvedValue({}), findMany: vi.fn().mockResolvedValue([]) },
+        agentMessage: { create: vi.fn().mockResolvedValue({}), findMany: vi.fn().mockResolvedValue([]), aggregate: vi.fn().mockResolvedValue({ _max: { seq: null } }) },
         agentThread: {
           findUnique: vi.fn().mockResolvedValue(null),
           upsert: vi.fn().mockResolvedValue({}),

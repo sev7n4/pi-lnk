@@ -37,6 +37,7 @@ describe('AgentService.findDuplicateIntent（P4 意图级去重查询）', () =>
     service = new AgentService(
       {
         agentMessage: {
+          aggregate: async () => ({ _max: { seq: null } }),
           create: agentMessageCreate,
           findMany: agentMessageFindMany,
         },

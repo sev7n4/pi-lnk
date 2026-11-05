@@ -69,7 +69,12 @@ describe('长任务丢库复现 (multi-device Task 1)', () => {
 
     service = new AgentService(
       {
-        agentMessage: { create: agentMessageCreate, findMany: agentMessageFindMany },
+        agentMessage: {
+          create: agentMessageCreate,
+          findMany: agentMessageFindMany,
+          // P4-T1：seq 取号桩（恒空会话 ⇒ seq=1）
+          aggregate: vi.fn().mockResolvedValue({ _max: { seq: null } }),
+        },
         agentThread: {
           findUnique: agentThreadFindUnique,
           upsert: agentThreadUpsert,

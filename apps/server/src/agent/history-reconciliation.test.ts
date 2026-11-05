@@ -253,6 +253,7 @@ describe('reconcileHistory（对账判据）', () => {
 function makePrisma(messages: Array<{ id: string; content: string; createdAt?: Date }>) {
 	return {
 		agentMessage: {
+			aggregate: async () => ({ _max: { seq: null } }),
 			// 与实现一致：用 findFirst 取**最近一条**（createdAt 倒序的第一条）
 			findFirst: async () => {
 				const sorted = [...messages].sort(
@@ -393,6 +394,7 @@ describe('reconcileAfterTurn（编排：读 Nest → 调 snapshot → 比对 →
 	it('⛔ prisma 抛错 ⇒ fail-soft（返回、不抛出、不写状态）', async () => {
 		const prisma = {
 			agentMessage: {
+				aggregate: async () => ({ _max: { seq: null } }),
 				findFirst: async () => {
 					throw new Error('db down')
 				},

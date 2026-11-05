@@ -119,6 +119,7 @@ describe('AgentService 回合身份与单一写者（TURN-IDENTITY P0-1/P0-2）'
     service = new AgentService(
       {
         agentMessage: {
+          aggregate: async () => ({ _max: { seq: null } }),
           create: agentMessageCreate,
           findMany: agentMessageFindMany,
           findFirst: agentMessageFindFirst,

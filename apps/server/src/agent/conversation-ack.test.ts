@@ -68,6 +68,7 @@ describe('ConversationAck：流末尾 turn_ack 三态（D4 / multi-device Task 6
     service = new AgentService(
       {
         agentMessage: {
+          aggregate: async () => ({ _max: { seq: null } }),
           create: agentMessageCreate,
           findMany: agentMessageFindMany,
           findFirst: agentMessageFindFirst,
