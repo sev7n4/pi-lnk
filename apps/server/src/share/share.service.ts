@@ -78,15 +78,18 @@ export class ShareService implements OnModuleInit, OnModuleDestroy {
     // 防御：个别客户端（旧缓存 bundle）可能下发缺 createdAt / 类型非 number 的 turns，
     // 直接进 buildShareHtml 会渲染成「Invalid Date」。此处归一，保证服务端分享页永远
     // 有时间、不崩页（#2/#3 根因：旧端上送的原始消息无 createdAt 被永久落盘为静态页）。
-    const safeTurns: ShareTurn[] = (turns ?? []).map((t) => ({
-      ...t,
-      createdAt:
-        typeof t.createdAt === 'number' && !Number.isNaN(t.createdAt)
-          ? t.createdAt
-          : typeof t.createdAt === 'string' && t.createdAt.trim() && !Number.isNaN(Date.parse(t.createdAt))
-            ? Date.parse(t.createdAt)
-            : Date.now(),
-    }))
+    const safeTurns: ShareTurn[] = (turns ?? []).map((t) => {
+      // 运行时 DTO 可能把 createdAt 上送成字符串/缺失（旧 bundle），但 ShareTurn 类型声明为 number，
+      // 故先 as unknown 再判型，避免 TS 在 else 分支把 createdAt 收窄成 never 而禁止 .trim()。
+      const raw = t.createdAt as unknown
+      const createdAt =
+        typeof raw === 'number' && !Number.isNaN(raw)
+          ? raw
+          : typeof raw === 'string' && raw.trim() && !Number.isNaN(Date.parse(raw))
+            ? Date.parse(raw)
+            : Date.now()
+      return { ...t, createdAt }
+    })
     const og = this.deriveOg(safeTurns)
     const html = buildShareHtml(safeTurns, { inlineMedia: 'online', includeOg: true, og })
 
