@@ -180,7 +180,7 @@ P1 追加：模板真缩略图的加载失败降级打磨（类型图标 fallbac
 |---|---|---|
 | **P0** | 管道 + 完整视觉模板（§6.0 定稿：真缩略图/分区/双主题/D7-D10 全量）+ trusted CSP + flag on + 交付条接入 | 本规格即排期 |
 | **P1** | 缩略图失败降级打磨、digest 节点只读分支、空间序稳定性 | P0 上线复测通过 |
-| **P2（登记不做）** | 富版图鉴（html-craft S9 已覆盖，用户主动触发）、轻 LLM 润色、agent 读工具过滤 digest 节点、tile 定位回画布（宿主 postMessage 协议） | 凭使用证据（含 `digest_open` 率） |
+| **P2（登记不做）** | 富版图鉴（html-craft S9 已覆盖，用户主动触发）、轻 LLM 润色、agent 读工具过滤 digest 节点、tile 定位回画布（宿主 postMessage 协议）、**F5 多 digest 节点治理（见 §10）** | 凭使用证据（含 `digest_open` 率） |
 
 ## 10. 风险
 
@@ -189,6 +189,13 @@ P1 追加：模板真缩略图的加载失败降级打磨（类型图标 fallbac
 - **渲染体积**：D3 封顶兜底。
 - **并发翻新**：同会话并发 run 的 detached finalizeTurn ⇒ upsert 幂等吸收（D6），最后写赢可接受（总览本就是最新态投影）。
 - **媒体 URL 生命周期**：viewer 既有同源消费，无新增依赖。
+- **副本污染单节点契约（P1 部分收紧，F5 遗留）**：`duplicateSubgraphCore` 深拷贝 `data` ⇒ 副本会带
+  `digest:true`，画布出现第二个「总览」。P1 已收紧移动端长按菜单（剔除 `duplicate` /
+  `duplicate-upstream`）、viewer 底栏（digest ⇒ 空动作集）与桌面/移动写回路径。**遗留 F5（P2）**：
+  PC `CanvasContextMenu` 仍可复制；且服务端 `buildDigestUpsertActions` 用
+  `find(n => n.data?.digest === true)` 按数组序命中，副本若排到前面会翻新错节点 ⇒ 应改为**优先按
+  确定性 id `digest-canvas` 查找** + 多 digest 节点清理，并补「两个 digest 节点」回归用例。
+  （P1 不扩面：移动端入口收紧后，副本只能来自 PC，且副本通常追加在数组末尾，不影响当前翻新目标。）
 
 ## 11. 配图规范自检
 

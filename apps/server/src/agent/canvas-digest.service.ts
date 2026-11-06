@@ -226,12 +226,33 @@ export function renderDigestHtml(
 ${mediaSections}
 ${textSection}
 <footer class="footer">${footerBits.map(escapeHtml).join('<span aria-hidden="true">·</span>')}</footer>
+${DG_FAIL_SCRIPT}
 </body>
 </html>`
 }
 
 const DOC_ICON =
   '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>'
+
+const IMAGE_ICON =
+  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>'
+
+const VIDEO_ICON =
+  '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>'
+
+/**
+ * Task 6：媒体加载失败内联降级（spec §10 风险——裂图/黑框）。
+ * CSP script-src 'unsafe-inline' 已放行内联 handler（基线与 trusted 级均保留该段）；
+ * dgFail 查表取图标、替换整个 thumb 元素——图标常量在 JS 字符串里，无 HTML 属性引号嵌套。
+ */
+const DG_FAIL_SCRIPT = `<script>
+var DG_ICONS = { image: ${JSON.stringify(IMAGE_ICON)}, video: ${JSON.stringify(VIDEO_ICON)} };
+function dgFail(el, kind) {
+  if (!el || el.dataset.dgFailed) return;
+  el.dataset.dgFailed = '1';
+  el.outerHTML = '<span class="icon-fallback" aria-hidden="true">' + (DG_ICONS[kind] || '') + '</span>';
+}
+</script>`
 
 /** 媒体 tile：image 用 img；video 用 video 首帧（preload=metadata + #t=0.1）；audio 用图标占位。 */
 function renderTile(node: DigestNodeSnapshot, base?: string): string {
@@ -245,9 +266,9 @@ function renderTile(node: DigestNodeSnapshot, base?: string): string {
 
   let thumb: string
   if (node.nodeType === 'image') {
-    thumb = `<img src="${escapeHtml(absoluteUrl(String(node.url ?? ''), base))}" loading="lazy" alt="">`
+    thumb = `<img src="${escapeHtml(absoluteUrl(String(node.url ?? ''), base))}" loading="lazy" alt="" onerror="dgFail(this,'image')">`
   } else if (node.nodeType === 'video') {
-    thumb = `<video src="${escapeHtml(`${absoluteUrl(String(node.url ?? ''), base)}#t=0.1`)}" preload="metadata" muted playsinline tabindex="-1"></video>`
+    thumb = `<video src="${escapeHtml(`${absoluteUrl(String(node.url ?? ''), base)}#t=0.1`)}" preload="metadata" muted playsinline tabindex="-1" onerror="dgFail(this,'video')"></video>`
   } else {
     thumb = `<span class="icon-fallback" aria-hidden="true">${DOC_ICON}</span>`
   }

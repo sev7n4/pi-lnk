@@ -81,7 +81,7 @@ describe('renderDigestHtml', () => {
       }),
       OPTS,
     ) as string
-    expect(html).not.toContain('<script')
+    expect(html).not.toContain('<script>alert')
     expect(html).not.toContain('<img src=x')
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;')
     expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;')
@@ -344,5 +344,24 @@ describe('CanvasDigestService.maybeRender', () => {
     })
     expect(result).toBeNull()
     expect(tools.upsertDigestNode).not.toHaveBeenCalled()
+  })
+})
+
+describe('Task 6：媒体加载失败降级（spec §10 风险——裂图图标）', () => {
+  it('image/video tile 带内联 onerror 降级到类型图标；模板内含 dgFail 定义', () => {
+    const html = renderDigestHtml({
+      nodes: [
+        { id: 'i1', nodeType: 'image', title: '图', url: 'https://x/a.png' },
+        { id: 'v1', nodeType: 'video', title: '视频', url: 'https://x/a.mp4', durationSec: 30 },
+      ],
+      digestVersion: 1,
+      updatedAt: new Date('2026-11-05T12:00:00Z'),
+    }, { publicBaseUrl: 'https://x.example' })
+    expect(html).toContain("onerror=\"dgFail(this,'image')\"")
+    expect(html).toContain("onerror=\"dgFail(this,'video')\"")
+    expect(html).toContain('function dgFail')
+    expect(html).toContain('icon-fallback')
+    // 资源正常路径不受影响：src 照旧
+    expect(html).toContain('src="https://x/a.png"')
   })
 })

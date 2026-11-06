@@ -53,7 +53,10 @@ export function resolveMobileNodeActions(
   // 有产物才允许「产物类」操作（副本 / 存库 / 本地）
   const hasContent = state === 'confirmed' || state === 'pending' || state === 'error'
 
-  const keys: MobileNodeActionKey[] = ['edit']
+  // Task 7（canvas-digest §10 风险#1）：系统总览节点每轮由 finalizeTurn 翻新，
+  // 用户编辑会被覆盖 ⇒ 长按 Menu 不下发「编辑」入口（其余操作不受影响）。
+  const isSystemDigest = node.data?.digest === true
+  const keys: MobileNodeActionKey[] = isSystemDigest ? [] : ['edit']
   keys.push('rename')
   // ⭐ 「引用」按**状态分别**门控（规格 §6.4 两张裁剪集对「引用」的处置不同）：
   //   · empty：**保留**（§6.4「empty 裁剪集」明确含「引用」）
@@ -64,7 +67,10 @@ export function resolveMobileNodeActions(
   //   · pending / confirmed / error：**有**（全集）
   if (state !== 'generating') keys.push('reference')
   if (hasContent) {
-    keys.push('duplicate', 'duplicate-upstream', 'save-asset', 'save-local')
+    // Task 7：系统总览节点不给「复制」——duplicateSubgraphCore 深拷贝 data，
+    // 副本会带 digest:true ⇒ 画布出现第二个「总览」并污染单节点契约。
+    if (!isSystemDigest) keys.push('duplicate', 'duplicate-upstream')
+    keys.push('save-asset', 'save-local')
   }
   keys.push('multi-select')
   // 生成中不删（中断一个已消耗积分的任务）—— 规格 §6.4 / 拍板项 B1

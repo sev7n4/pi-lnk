@@ -214,3 +214,48 @@ describe('context: viewer（规格 v1.5 §4.12.2 / G-19）', () => {
     expect(all).toContain('edit')
   })
 })
+
+/**
+ * Task 7（canvas-digest §10 风险#1）：系统总览节点每轮翻新覆盖用户改动
+ * ⇒ 长按 Menu 不给「编辑」入口；其余操作（引用/删除等）保持原语义。
+ */
+describe('resolveMobileNodeActions 系统总览节点只读门控（Task 7）', () => {
+  const digestNode = {
+    id: 'd1',
+    type: 'text',
+    data: { digest: true, source: 'system-digest', format: 'html', content: '<p>x</p>' },
+  }
+
+  it('digest ⇒ 无 edit（canvas / viewer 两个上下文一致）', () => {
+    for (const context of ['canvas', 'viewer'] as const) {
+      const keys = resolveMobileNodeActions(digestNode, context)
+      expect(keys).not.toContain('edit')
+      const tiers = resolveMobileNodeMenuTiers(digestNode, context)
+      expect([...tiers.primary, ...tiers.more]).not.toContain('edit')
+    }
+  })
+
+  it('digest ⇒ 删除/引用等既有操作不受影响（只摘编辑）', () => {
+    const keys = resolveMobileNodeActions(digestNode)
+    expect(keys).toContain('delete')
+    expect(keys).toContain('reference')
+  })
+
+  it('digest ⇒ 不给「复制/含上游」入口（副本会带 digest:true ⇒ 画布出现第二个总览）', () => {
+    for (const context of ['canvas', 'viewer'] as const) {
+      const keys = resolveMobileNodeActions(digestNode, context)
+      expect(keys).not.toContain('duplicate')
+      expect(keys).not.toContain('duplicate-upstream')
+      const tiers = resolveMobileNodeMenuTiers(digestNode, context)
+      expect([...tiers.primary, ...tiers.more]).not.toContain('duplicate')
+    }
+    expect(resolveMobileNodeActions(digestNode)).toContain('save-asset')
+  })
+
+  it('非 digest 节点 edit 仍置顶、复制仍可用（防误伤）', () => {
+    const keys = resolveMobileNodeActions({ type: 'text', data: { format: 'html', content: '<p>x</p>' } })
+    expect(keys[0]).toBe('edit')
+    expect(keys).toContain('duplicate')
+    expect(keys).toContain('duplicate-upstream')
+  })
+})

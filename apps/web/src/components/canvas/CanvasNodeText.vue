@@ -25,6 +25,8 @@ const props = defineProps<{
     materialId?: string
     /** 受信级 CSP 分流判据（§5.2）：仅系统 digest 管道写入 'system-digest'。 */
     source?: string
+    /** Task 7：系统总览节点标记（finalizeTurn upsert 打入）⇒ 只读分支。 */
+    digest?: boolean
   }
 }>()
 
@@ -71,11 +73,15 @@ const showStatusInfoButton = computed(
 )
 
 function openEditor() {
+  // Task 7：digest 只读（脏数据 format 丢失时走 plain 分支也不能编辑）
+  if (isDigest.value) return
   draft.value = String(props.data.content ?? '')
   editorOpen.value = true
 }
 
 function onSave(md: string) {
+  // Task 7：与 openEditor 双保险——即便编辑器被外部触发，写回也必须拦住
+  if (isDigest.value) return
   if (patchCanvasNode && nodeId) {
     patchCanvasNode(nodeId, { content: md })
   } else {
@@ -85,6 +91,9 @@ function onSave(md: string) {
 
 const readonlyPage = inject(CANVAS_NODE_READONLY_KEY, false)
 const isHtml = computed(() => resolveTextNodeFormat(props.data.format) === 'html')
+// Task 7（spec 2026-11-05-canvas-digest §10 风险#1）：系统总览节点禁编辑——
+// 用户改动会被下轮 finalizeTurn 翻新覆盖，预览强制 readonly。
+const isDigest = computed(() => props.data.digest === true)
 const htmlSummary = computed(() => htmlNodeSummary(props.data as Record<string, unknown>))
 const previewOpen = ref(false)
 
@@ -96,6 +105,7 @@ function openHtmlPreview() {
 // 规格 §5.4：emit save → 宿主 patch 通路；patchCanvasNode 缺席（无 patch 通道的宿主）
 // 不落 updateNodeData fallback——预览本就不该在只读宿主打开（openHtmlPreview 已拦）。
 function onHtmlSave(payload: { content: string; format: 'html' }) {
+  if (isDigest.value) return // digest 翻新会覆盖用户编辑 ⇒ 系统节点不可写（双保险）
   if (patchCanvasNode && nodeId) {
     patchCanvasNode(nodeId, { content: payload.content, format: payload.format })
   }
@@ -111,7 +121,7 @@ function onHtmlSave(payload: { content: string; format: 'html' }) {
       title="双击打开 HTML 沙箱预览"
       @dblclick.stop="openHtmlPreview"
     >
-      <span class="neo-html-badge">HTML</span>
+      <span class="neo-html-badge">{{ isDigest ? '总览' : 'HTML' }}</span>
       <p class="neo-html-summary">{{ htmlSummary || 'HTML 产物' }}</p>
       <NodeStatusInfoButton
         v-if="showStatusInfoButton"
@@ -163,6 +173,7 @@ function onHtmlSave(payload: { content: string; format: 'html' }) {
       v-if="previewOpen"
       :content="String(data.content ?? '')"
       :trusted="String(data.source ?? '') === 'system-digest'"
+      :readonly="isDigest"
       @save="onHtmlSave"
       @close="previewOpen = false"
     />

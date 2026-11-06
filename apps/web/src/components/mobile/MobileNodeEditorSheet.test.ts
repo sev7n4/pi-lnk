@@ -169,3 +169,30 @@ describe('MobileNodeEditorSheet 轻量编辑器（D8 / J1 / K1）', () => {
     w.unmount()
   })
 })
+
+/**
+ * Task 7（spec 2026-11-05-canvas-digest §10 风险#1）：digest 节点只读分支——
+ * 系统总览产物，用户在改词 sheet 的任何编辑都会被下轮翻新覆盖 ⇒ 打开即只读。
+ */
+describe('MobileNodeEditorSheet digest 只读分支（Task 7）', () => {
+  const digestNode = {
+    id: 'd1',
+    type: 'text',
+    position: { x: 0, y: 0 },
+    data: { digest: true, source: 'system-digest', format: 'html', content: '<p>x</p>' },
+  } as any
+
+  it('digest ⇒ 只读面板：有系统产物说明、无发送出口', () => {
+    const w = mount(MobileNodeEditorSheet, { props: { node: digestNode }, global: { stubs: { teleport: true } } })
+    expect(w.find('[data-testid="mobile-editor-readonly"]').exists()).toBe(true)
+    expect(w.find('[data-testid="mobile-editor-send"]').exists()).toBe(false)
+    expect(w.text()).toContain('系统产物')
+  })
+
+  it('非 digest 节点不受影响：仍可发送', () => {
+    const imageNode = { id: 'n2', type: 'image', position: { x: 0, y: 0 }, data: { url: 'x.png', prompt: '一只猫' } } as any
+    const w = mount(MobileNodeEditorSheet, { props: { node: imageNode }, global: { stubs: { teleport: true } } })
+    expect(w.find('[data-testid="mobile-editor-readonly"]').exists()).toBe(false)
+    expect(w.find('[data-testid="mobile-editor-send"]').exists()).toBe(true)
+  })
+})
