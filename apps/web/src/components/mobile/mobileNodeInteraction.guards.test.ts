@@ -18,7 +18,10 @@ function stripComments(src: string): string {
 
 const policy = read('../../composables/mobileNodeOpenPolicy.ts')
 const policy2 = read('../../composables/mobileNodeActionPolicy.ts')
-const viewer = stripComments(read('./MobileNodeViewer.vue'))
+// Task 3：查看器渲染主体已抽到 presentation/NodeViewerView.vue，凡检查查看器
+// 渲染 / 样式 / 契约字符串（关闭钮、手势、退出即停、降级、命中区令牌、图标纪律）的
+// 源读断言改读 NodeViewerView.vue（薄壳 MobileNodeViewer 不再含这些）。
+const viewer = stripComments(read('../agent/presentation/NodeViewerView.vue'))
 const editor = stripComments(read('./MobileNodeEditorSheet.vue'))
 const annotate = stripComments(read('./MobileNodeAnnotateSheet.vue'))
 const actionSheet = stripComments(read('./MobileNodeActionSheet.vue'))
