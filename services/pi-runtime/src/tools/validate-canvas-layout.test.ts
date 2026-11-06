@@ -7,7 +7,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildValidateCanvasLayoutTools } from "./validate-canvas-layout.js";
+import { buildValidateCanvasLayoutTools, validateCanvasLayoutLocal } from "./validate-canvas-layout.js";
 import type { NestClient } from "./nest-client.js";
 import type { LnkpiToolContext } from "./types.js";
 
@@ -146,4 +146,76 @@ test("description 含中文触发词（重叠/布局结论），覆盖「凭印�
 	const desc = tool.description ?? "";
 	assert.ok(desc.includes("重叠"), "description must contain 重叠 trigger");
 	assert.ok(desc.includes("validate_canvas_layout") || desc.includes("报告"));
+});
+
+// ---- Phase 2b ④：node_ids 子集参数（聚焦新节点 vs 邻居，防全画布历史违规淹没报告）----
+
+test("node_ids 子集：只报涉及该节点的违规，其余违规不掺入", async () => {
+	const { client } = makeClient(
+		layoutPayload([
+			{ id: "n_a", x: 0, y: 0, w: 100, h: 100 },
+			{ id: "n_b", x: 50, y: 0, w: 100, h: 100 },
+			{ id: "n_c", x: 400, y: 0, w: 100, h: 100 },
+			{ id: "n_d", x: 450, y: 0, w: 100, h: 100 },
+		]),
+	);
+	const [tool] = buildValidateCanvasLayoutTools(client);
+	const out = parseOk(
+		(await run(tool, { node_ids: ["n_c"] })) as never as { content: Array<{ text: string }> },
+	);
+	const data = out.data as {
+		violations: Array<{ type: string; nodeIds: string[] }>;
+		summary: string;
+		focusedNodeIds: string[];
+	};
+	assert.equal(data.violations.length, 1);
+	assert.deepEqual(data.violations[0]!.nodeIds, ["n_c", "n_d"]);
+	assert.deepEqual(data.focusedNodeIds, ["n_c"]);
+	assert.ok(data.summary.includes("n_c") && !data.summary.includes("n_a"), "summary 只含聚焦违规");
+});
+
+test("node_ids 缺省 → 全量校验（无 focusedNodeIds 字段）", async () => {
+	const { client } = makeClient(
+		layoutPayload([
+			{ id: "n_a", x: 0, y: 0, w: 100, h: 100 },
+			{ id: "n_b", x: 50, y: 0, w: 100, h: 100 },
+			{ id: "n_c", x: 400, y: 0, w: 100, h: 100 },
+			{ id: "n_d", x: 450, y: 0, w: 100, h: 100 },
+		]),
+	);
+	const [tool] = buildValidateCanvasLayoutTools(client);
+	const out = parseOk((await run(tool, {})) as never as { content: Array<{ text: string }> });
+	const data = out.data as { violations: unknown[]; focusedNodeIds?: unknown };
+	assert.equal(data.violations.length, 2);
+	assert.equal(data.focusedNodeIds, undefined);
+});
+
+test("node_ids 全部未知 → 如实说明不回落全量（不编造「画布干净」）", async () => {
+	const { client } = makeClient(
+		layoutPayload([
+			{ id: "n_a", x: 0, y: 0, w: 100, h: 100 },
+			{ id: "n_b", x: 50, y: 0, w: 100, h: 100 },
+		]),
+	);
+	const [tool] = buildValidateCanvasLayoutTools(client);
+	const out = parseOk(
+		(await run(tool, { node_ids: ["ghost"] })) as never as { content: Array<{ text: string }> },
+	);
+	const data = out.data as { violations: unknown[]; summary: string; focusedNodeIds: string[] };
+	assert.equal(data.violations.length, 0);
+	assert.deepEqual(data.focusedNodeIds, []);
+	assert.ok(data.summary.includes("均不在当前画布"), `summary 应说明无匹配: ${data.summary}`);
+});
+
+test("validateCanvasLayoutLocal 镜像支持 focusNodeIds（与 shared §12b-④ 同语义）", () => {
+	const boxes = [
+		{ id: "a", x: 0, y: 0, width: 100, height: 100 },
+		{ id: "b", x: 50, y: 0, width: 100, height: 100 },
+		{ id: "c", x: 400, y: 0, width: 100, height: 100 },
+		{ id: "d", x: 450, y: 0, width: 100, height: 100 },
+	];
+	assert.equal(validateCanvasLayoutLocal({ nodes: boxes, focusNodeIds: ["a"] }).length, 1);
+	assert.equal(validateCanvasLayoutLocal({ nodes: boxes, focusNodeIds: [] }).length, 2);
+	assert.equal(validateCanvasLayoutLocal({ nodes: boxes, focusNodeIds: ["ghost"] }).length, 0);
+	assert.equal(validateCanvasLayoutLocal({ nodes: boxes }).length, 2);
 });

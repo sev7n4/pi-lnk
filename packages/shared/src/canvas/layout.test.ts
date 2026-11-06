@@ -3,6 +3,7 @@ import {
   getAbsolutePosition,
   getNodeSize,
   placeBatchNodes,
+  placeBatchNodesWithReport,
   validateCanvasLayout,
   type LayoutNode,
 } from './layout'
@@ -436,5 +437,86 @@ describe('validateCanvasLayout（VISP Phase 2 §8）', () => {
     })
     expect(out.filter((v) => v.type === 'OVERLAP')).toHaveLength(1)
     expect(out.filter((v) => v.type === 'MIN_SPACING')).toHaveLength(0)
+  })
+
+  it('§12b-④ focusNodeIds：只报涉及 focus 节点的违规（其余违规不掺入）', () => {
+    // a×b 重叠 + c×d 重叠，两组互不相干
+    const nodes = [
+      box('a', 0, 0, 100, 100),
+      box('b', 50, 0, 100, 100),
+      box('c', 400, 0, 100, 100),
+      box('d', 450, 0, 100, 100),
+    ]
+    const focusA = validateCanvasLayout({ nodes, focusNodeIds: ['a'] })
+    expect(focusA).toHaveLength(1)
+    expect(focusA[0]!.type).toBe('OVERLAP')
+    expect(focusA[0]!.nodeIds).toEqual(['a', 'b'])
+
+    const focusC = validateCanvasLayout({ nodes, focusNodeIds: ['c', 'd'] })
+    expect(focusC).toHaveLength(1)
+    expect(focusC[0]!.nodeIds).toEqual(['c', 'd'])
+  })
+
+  it('§12b-④ focusNodeIds 缺省或空数组 → 不过滤（全量违规）', () => {
+    const nodes = [box('a', 0, 0, 100, 100), box('b', 50, 0, 100, 100)]
+    expect(validateCanvasLayout({ nodes })).toHaveLength(1)
+    expect(validateCanvasLayout({ nodes, focusNodeIds: [] })).toHaveLength(1)
+  })
+
+  it('§12b-④ focusNodeIds 也过滤 OVERFLOW；focus 含画布外 id 时结果可为空', () => {
+    const nodes = [box('a', 0, 0, 100, 100), box('b', 50, 0, 100, 100), box('e', 290, 0, 20, 20)]
+    const input = { nodes, canvas: { width: 300, height: 300 } as { width: number; height: number } }
+    expect(validateCanvasLayout({ ...input, focusNodeIds: ['e'] })).toEqual([
+      expect.objectContaining({ type: 'OVERFLOW', nodeIds: ['e'] }),
+    ])
+    expect(validateCanvasLayout({ ...input, focusNodeIds: ['ghost'] })).toEqual([])
+  })
+
+  it('§12b-④ focusNodeIds 不破坏确定性（同输入重复 3 次逐字节相同）', () => {
+    const input = {
+      nodes: [box('a', 0, 0, 100, 100), box('b', 50, 0, 100, 100), box('c', 400, 0, 100, 100), box('d', 450, 0, 100, 100)],
+      focusNodeIds: ['a', 'c'],
+    }
+    const r1 = JSON.stringify(validateCanvasLayout(input))
+    const r2 = JSON.stringify(validateCanvasLayout(input))
+    const r3 = JSON.stringify(validateCanvasLayout(input))
+    expect(r1).toBe(r2)
+    expect(r2).toBe(r3)
+  })
+})
+
+describe('placeBatchNodesWithReport（VISP Phase 2b ③ 残余重叠显式化）', () => {
+  it('正常避让：residual 为空，placements 与 placeBatchNodes 输出等价', () => {
+    const existing = [node('n1', 'image', 400, 80), node('n2', 'image', 720, 80)]
+    const items = [{ key: 'a', type: 'image' }]
+    const edges = [{ source: 'n1', target: 'a' }]
+    const report = placeBatchNodesWithReport(existing, items, edges)
+    expect(report.residual).toEqual([])
+    expect(report.placements).toEqual(placeBatchNodes(existing, items, edges))
+  })
+
+  it('fail-open：24 步全冲突 ⇒ residual 含该 key 且 overlapArea>0（放置不阻塞但不再静默）', () => {
+    // 锚点 = n_ref 右缘 (700,60)；高墙障碍覆盖全部 24 个候选位（x 700..980 / y 60..1260）
+    const ref = node('n_ref', 'image', 380, 60)
+    const wall = node('n_wall', 'group', 680, 40)
+    wall.dimensions = { width: 340, height: 1200 }
+    const existing = [ref, wall]
+    const items = [{ key: 'a', type: 'image' }]
+    const edges = [{ source: 'n_ref', target: 'a' }]
+    const report = placeBatchNodesWithReport(existing, items, edges)
+    expect(report.residual).toHaveLength(1)
+    expect(report.residual[0]!.key).toBe('a')
+    expect(report.residual[0]!.overlapArea).toBeGreaterThan(0)
+  })
+
+  it('fail-open 择优不变：残余 placement 仍是重叠面积最小候选（与旧行为逐点一致）', () => {
+    const ref = node('n_ref', 'image', 380, 60)
+    const wall = node('n_wall', 'group', 680, 40)
+    wall.dimensions = { width: 340, height: 1200 }
+    const items = [{ key: 'a', type: 'image' }]
+    const edges = [{ source: 'n_ref', target: 'a' }]
+    expect(placeBatchNodesWithReport([ref, wall], items, edges).placements).toEqual(
+      placeBatchNodes([ref, wall], items, edges),
+    )
   })
 })
