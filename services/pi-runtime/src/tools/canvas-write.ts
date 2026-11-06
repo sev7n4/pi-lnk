@@ -16,6 +16,12 @@ import type { NodeStatusData } from "../session-manager.js";
 import type { PendingToolRegistry } from "../pending-registry.js";
 import { NestToolError } from "./nest-client.js";
 import { assertTextNodeFormat, TEXT_NODE_FORMATS } from "./text-format.js";
+import {
+	boxesFromSnapshot,
+	formatViolationReport,
+	LAYOUT_VALIDATION_MAX_DETAILS,
+	validateCanvasLayoutLocal,
+} from "./validate-canvas-layout.js";
 
 const CONNECT_NODES_MAX_EDGES = 20;
 /** SP-A：create_nodes_batch 单批上限（Nest 侧 BATCH_NODES_MAX 同值；工具层先拦，端点侧兜底）。 */
@@ -1097,8 +1103,7 @@ export function createCanvasWriteTools(
 				},
 				_u,
 				tc: LnkpiToolContext,
-			) => {
-				if (!tc.sessionId) throw new Error("create_nodes_batch requires sessionId in toolContext (missing sessionId)");
+			) => {				if (!tc.sessionId) throw new Error("create_nodes_batch requires sessionId in toolContext (missing sessionId)");
 				if (!Array.isArray(p.items) || p.items.length === 0) {
 					throw new Error("create_nodes_batch requires at least one item");
 				}
@@ -1125,21 +1130,45 @@ export function createCanvasWriteTools(
 					}
 					if (it.format !== undefined) assertTextNodeFormat(it.format);
 				}
-				return withWriteSignal(
-					await client.post("/agent/internal/add-nodes-batch", {
+				// L2 内联布局校验（2026-11-06 用户定向）：落地即读回布局跑确定性校验，
+				// 结果内联 validation 摘要——不靠模型主动调 validate_canvas_layout
+				// （A-6 生产实证：三轮全跳过）。服务端 add-nodes-batch 同步落库 ⇒ 读回即落地后状态。
+				// R-V8 fail-soft：读回失败不阻塞创建、不编造报告。
+				const created = await client.post("/agent/internal/add-nodes-batch", {
+					sessionId: tc.sessionId,
+					userId: tc.userId,
+					items: p.items.map((it) => ({
+						key: it.key,
+						title: it.title ?? it.prompt,
+						targetType: it.type,
+						prompt: it.prompt,
+						...(it.format !== undefined ? { format: it.format } : {}),
+					})),
+					edges: p.edges,
+				});
+				let validation: Record<string, unknown> | undefined;
+				try {
+					const snapshot = await client.post("/agent/internal/get-canvas-layout", {
 						sessionId: tc.sessionId,
-						userId: tc.userId,
-						items: p.items.map((it) => ({
-							key: it.key,
-							title: it.title ?? it.prompt,
-							targetType: it.type,
-							prompt: it.prompt,
-							...(it.format !== undefined ? { format: it.format } : {}),
-						})),
-						edges: p.edges,
-					}),
-					p.items.length,
-				);
+					});
+					const boxes = boxesFromSnapshot(snapshot);
+					if (boxes.length > 0) {
+						const all = validateCanvasLayoutLocal({ nodes: boxes });
+						validation = {
+							checked: boxes.length,
+							violations: all.slice(0, LAYOUT_VALIDATION_MAX_DETAILS),
+							...(all.length > LAYOUT_VALIDATION_MAX_DETAILS ? { truncated: true } : {}),
+							summary: formatViolationReport(boxes.length, all),
+						};
+					}
+				} catch {
+					// fail-soft：布局读回不可用 ≠ 创建失败；无 validation 字段即「未校验」。
+				}
+				const data =
+					validation !== undefined && created && typeof created === "object"
+						? { ...(created as Record<string, unknown>), validation }
+						: created;
+				return withWriteSignal(data, p.items.length);
 			},
 		},
 	];

@@ -1604,3 +1604,77 @@ describe("set_node_text description 路由线索（规格 §10 skill 接线守�
 		assert.match(tool.description, /load_skill\('html-craft'\)/);
 	});
 });
+
+// ══════════════════════════════════════════════════════════════
+// L2 内联校验（2026-11-06 用户定向）：create_nodes_batch 落地即读回布局跑确定性校验，
+// 结果内联 validation 摘要——不靠模型主动调 validate_canvas_layout（A-6 实证靠不住）。
+// R-V8：读回失败 fail-soft，不阻塞创建、不编造报告。
+describe("create_nodes_batch 内联布局校验（L2，落地即报）", () => {
+	function makeLayoutClient(layout: unknown, failReadback = false) {
+		const calls: Recorded[] = [];
+		const client = {
+			post: async (path: string, body: Record<string, unknown>) => {
+				calls.push({ path, body });
+				if (path === "/agent/internal/get-canvas-layout") {
+					if (failReadback) throw new Error("layout down");
+					return layout;
+				}
+				return { echoed: body };
+			},
+		};
+		return { client: client as never, calls };
+	}
+
+	function snapNode(id: string, x: number, y: number, w: number, h: number) {
+		return { id, absolutePosition: { x, y }, size: { w, h } };
+	}
+
+	async function runCreate(client: never) {
+		const tool = findTool(createCanvasWriteTools(client), "create_nodes_batch");
+		const res = await run(tool, { items: [{ key: "k1", type: "text", prompt: "p" }] });
+		return JSON.parse((res.content[0] as { type: "text"; text: string }).text) as Record<string, unknown>;
+	}
+
+	it("落地即读回布局 → data.validation 含确定性报告（OVERLAP 计入）", async () => {
+		const { client, calls } = makeLayoutClient({
+			nodes: [snapNode("a", 0, 0, 200, 100), snapNode("b", 80, 20, 200, 100)],
+		});
+		const out = await runCreate(client as never);
+		const v = (out.data as Record<string, unknown>).validation as Record<string, unknown>;
+		assert.ok(v, "validation must be attached");
+		assert.equal(v.checked, 2);
+		const violations = v.violations as Array<Record<string, unknown>>;
+		assert.equal(violations.length, 1);
+		assert.equal(violations[0]!.type, "OVERLAP");
+		assert.equal(typeof v.summary, "string");
+		// 创建请求在前，读回在后
+		assert.equal(calls[0]!.path, "/agent/internal/add-nodes-batch");
+		assert.equal(calls[1]!.path, "/agent/internal/get-canvas-layout");
+	});
+
+	it("读回失败 → fail-soft：创建结果原样返回，无 validation 字段（R-V8 不编造）", async () => {
+		const { client } = makeLayoutClient(null, true);
+		const out = await runCreate(client as never);
+		assert.equal((out.data as Record<string, unknown>).validation, undefined);
+		assert.equal(out.ok, true);
+	});
+
+	it("违规 > 10 → 截断到 10 并标 truncated", async () => {
+		const nodes = Array.from({ length: 12 }, (_, i) => snapNode(`n${i}`, 0, 0, 100, 100));
+		const { client } = makeLayoutClient({ nodes });
+		const out = await runCreate(client as never);
+		const v = (out.data as Record<string, unknown>).validation as Record<string, unknown>;
+		assert.equal((v.violations as unknown[]).length, 10);
+		assert.equal(v.truncated, true);
+	});
+
+	it("无重叠 → violations 空数组，无 truncated", async () => {
+		const { client } = makeLayoutClient({
+			nodes: [snapNode("a", 0, 0, 100, 100), snapNode("b", 500, 500, 100, 100)],
+		});
+		const out = await runCreate(client as never);
+		const v = (out.data as Record<string, unknown>).validation as Record<string, unknown>;
+		assert.deepEqual(v.violations, []);
+		assert.equal(v.truncated, undefined);
+	});
+});

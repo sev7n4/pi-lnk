@@ -126,6 +126,29 @@ export function formatViolationReport(nodeCount: number, violations: LayoutViola
 	return `【布局校验】画布 ${nodeCount} 个节点，检出 ${violations.length} 处违规：\n${lines.join("\n")}`;
 }
 
+/** 快照 → NodeBox（形态异常节点跳过，fail-soft 不编造几何）。
+ *  供 validate_canvas_layout 工具与 create_nodes_batch 内联校验共用（单一出处）。 */
+export function boxesFromSnapshot(snapshot: unknown): NodeBox[] {
+	const raw = Array.isArray((snapshot as { nodes?: unknown[] })?.nodes)
+		? (snapshot as { nodes: Array<Record<string, unknown>> }).nodes
+		: [];
+	const boxes: NodeBox[] = [];
+	for (const n of raw) {
+		if (typeof n?.id !== "string") continue;
+		const x = (n.absolutePosition as { x?: unknown } | undefined)?.x;
+		const y = (n.absolutePosition as { y?: unknown } | undefined)?.y;
+		const w = (n.size as { w?: unknown } | undefined)?.w;
+		const h = (n.size as { h?: unknown } | undefined)?.h;
+		if (typeof x !== "number" || typeof y !== "number" || typeof w !== "number" || typeof h !== "number")
+			continue; // 形态异常节点跳过（fail-soft，不编造几何）
+		boxes.push({ id: n.id, x, y, width: w, height: h });
+	}
+	return boxes;
+}
+
+/** 内联校验摘要上限（create_nodes_batch 结果附带；防大画布撑爆 payload）。 */
+export const LAYOUT_VALIDATION_MAX_DETAILS = 10;
+
 export function buildValidateCanvasLayoutTools(client: NestClient): LnkpiTool[] {
 	return [
 		{
@@ -166,18 +189,7 @@ export function buildValidateCanvasLayoutTools(client: NestClient): LnkpiTool[] 
 						details: undefined,
 					};
 				}
-				const raw = Array.isArray(snapshot?.nodes) ? snapshot.nodes : [];
-				const boxes: NodeBox[] = [];
-				for (const n of raw) {
-					if (typeof n?.id !== "string") continue;
-					const x = n.absolutePosition?.x;
-					const y = n.absolutePosition?.y;
-					const w = n.size?.w;
-					const h = n.size?.h;
-					if (typeof x !== "number" || typeof y !== "number" || typeof w !== "number" || typeof h !== "number")
-						continue; // 形态异常节点跳过（fail-soft，不编造几何）
-					boxes.push({ id: n.id, x, y, width: w, height: h });
-				}
+				const boxes = boxesFromSnapshot(snapshot);
 				const minSpacing =
 					typeof p?.min_spacing === "number" && Number.isFinite(p.min_spacing) && p.min_spacing > 0
 						? p.min_spacing
