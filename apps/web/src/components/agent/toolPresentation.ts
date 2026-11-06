@@ -76,6 +76,8 @@ export const TOOL_PRESENTATION: Record<string, ToolPresentation> = {
   view_canvas_media: { icon: '🎞️', verb: '查看画布素材' },
   // VISP S-7（2026-11-05）：read_media 取用户上传附件原图，与 view_canvas_media（画布节点）对望
   read_media: { icon: '📎', verb: '查看上传附件' },
+  // VISP Phase 2 Path C（2026-11-06）：确定性布局校验（R-V11：新工具必须登记，漏登=时间线零显示）
+  validate_canvas_layout: { icon: '📏', verb: '校验布局' },
 }
 
 const RUN_PREFIX_ICON = '🎨'

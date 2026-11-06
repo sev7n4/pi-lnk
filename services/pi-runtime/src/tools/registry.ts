@@ -17,6 +17,7 @@ import { buildRemoveEdgesTools } from "./remove-edges.js";
 import { createRenderCanvasViewTools } from "./render-canvas-view.js";
 import { createViewCanvasMediaTools } from "./view-canvas-media.js";
 import { createReadMediaTools } from "./read-media.js";
+import { buildValidateCanvasLayoutTools as createValidateCanvasLayoutTools } from "./validate-canvas-layout.js";
 
 /** P0 批次：web_search/web_fetch（感知层）。TAVILY_API_KEY 未配置时由 config.ts 条件装配。 */
 export { buildWebTools };
@@ -127,4 +128,11 @@ export function buildViewCanvasMediaTools(client: NestClient): LnkpiTool[] {
  *  read_media（tier=read，直注失败/事后回看时经 Nest 唯一取图点回流像素）。 */
 export function buildReadMediaTools(client: NestClient): LnkpiTool[] {
 	return createReadMediaTools(client);
+}
+
+/** VISP Phase 2 Path C（同 spec §2.1 S-4）：validate_canvas_layout
+ *  （tier=present，确定性布局校验；校验逻辑 = shared validateCanvasLayout 的镜像，
+ *  parity 由 contract-mirror 测试锁；数据面只读 get-canvas-layout）。 */
+export function buildValidateCanvasLayoutTools(client: NestClient): LnkpiTool[] {
+	return createValidateCanvasLayoutTools(client);
 }
