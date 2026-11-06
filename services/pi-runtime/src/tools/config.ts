@@ -1,6 +1,6 @@
 /** 工具装配与降级守卫：NEST env 齐全才启用工具，否则保持纯文本模式。 */
 import { NestClient, loadNestConfig } from "./nest-client.js";
-import { buildCanvasReadTools, buildCanvasWriteTools, buildUiCommandTools, buildAskUserTools, buildArrangeNodesTools, buildCanvasGroupTools, buildGenerationTools, buildWebTools, buildDeleteNodesTools, buildReadDocumentTools, buildMemoryTools, buildRemoveEdgesTools, buildRenderCanvasViewTools, buildViewCanvasMediaTools, buildReadMediaTools } from "./registry.js";
+import { buildCanvasReadTools, buildCanvasWriteTools, buildUiCommandTools, buildAskUserTools, buildArrangeNodesTools, buildCanvasGroupTools, buildGenerationTools, buildWebTools, buildDeleteNodesTools, buildReadDocumentTools, buildMemoryTools, buildRemoveEdgesTools, buildRenderCanvasViewTools, buildViewCanvasMediaTools, buildReadMediaTools, buildValidateCanvasLayoutTools } from "./registry.js";
 import type { LnkpiTool } from "./types.js";
 import { buildTodoTools, isTodoToolEnabled } from "./todo.js";
 import { createProposePlanTool } from "./propose-plan.js";
@@ -109,6 +109,8 @@ export function resolveToolsWithClient(
 		...buildRemoveEdgesTools(client),
 		// present 批次（2026-10-03 spec §5.1）：只读 SVG 卡片渲染，无条件注册。
 		...buildRenderCanvasViewTools(client),
+		// VISP Phase 2 Path C（2026-11-06 spec §2.1 S-4）：确定性布局校验，无条件注册。
+		...buildValidateCanvasLayoutTools(client),
 	];
 	return { tools, client, registry: deps.registry ?? null };
 }

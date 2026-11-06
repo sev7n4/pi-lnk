@@ -83,6 +83,11 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	// read_media（VISP S-7）：恢复路径必须无门槛可达（直注失败时模型靠它自救），
 	// 不得进延迟集——tool_search 触发率实测为 0，延迟即不可达（R-V10）。
 	"read_media",
+	// validate_canvas_layout（VISP Phase 2 Path C，R-V10）：确定性校验是「布局自述」的
+	// 事实源闸门（R-V6），必须在模型自述「没重叠」的同一轮可用；且常驻工具
+	// create_nodes_batch / arrange_nodes 会制造它要校验的场景（本文件铁律：
+	// 常驻不得给延迟工具的领域凑部分答案）⇒ 延迟即不可达。
+	"validate_canvas_layout",
 	"web_search",
 	"web_fetch",
 	"recall_memory",

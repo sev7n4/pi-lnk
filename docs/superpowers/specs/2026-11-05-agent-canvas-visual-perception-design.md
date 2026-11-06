@@ -3,6 +3,7 @@
 状态：**部分实施**（Phase 1a S-7 `read_media` 已上线并完成生产终验，2026-11-06；其余待实施）
 修订：**R2/R3**（2026-11-05）——R2：基于生产事故取证 + 上游 **0.99.2**（实际部署版本，非 vendor 镜像 0.85.1）源码实证回写：修正「用户图直注现状已有」的错误结论（N-4 / R-V1 / 关键澄清 / M-1 / A-1）；新增 S-7 `read_media` 恢复工具；新增 §12.1 上游基线与升级红利。R3：自审修补——S-2 触发通道（Nest→web 事件 + 关联 id 回执）定为硬前置 Spike；澄清 R-V3 预设降级 vs R-V1 故障静默边界；新增 R-V9（取图工具分工）/ R-V10（分层与 L6 预算纪律）；补 M-9 / A-9 恢复闭环场景与 `read_media` 单测要求。
 修订：**R4**（2026-11-06，实施回写）——Phase 1a（S-7 + PR #733/#737/#745）已上线：A-1/A-9 生产终验通过（会话 cmw4jld86，直注成功 + 模型零工具调用直接描述）。据此回写：R-V9 升级为运行时强制（`view_canvas_media` 对 uploads 引用 fail-fast 指路）；S-7/M-9 恢复闭环补**成功侧明示块**（`buildImageInjectedNotice`，终验实证的决定性引导）；§9 文件清单对齐实际落点（Nest `read-media.ts` 独立模块 + internal guard；shared `sidebarAttachments.ts`）；新增 R-V11（web 侧展示注册硬前置，#737 CI 实证遗漏）；§10 补工具计数断言同步；§12 标注进度。
+修订：**R5**（2026-11-06，Phase 2 实施适配）——S-4 实施发现两处规格假设与仓库纪律冲突，据实适配：① pi-runtime **刻意不依赖 `@lnkpi/shared`**（independence.test.ts 物理锁 + 镜像构建链约束）⇒ `validateCanvasLayout` SSOT 仍落 shared（§8 不变），工具侧**镜像实现** `validateCanvasLayoutLocal`，parity 由 contract-mirror 同源 fixture 测试锁（canvas-group `GROUP_COLOR_KEYS` / read-media `resolveSidebarRefLocal` 先例）；② 画布是**无限画布范式**（`get-canvas-layout` 不返回全局边界）⇒ §8 `ValidateInput.canvas` 改为**可选**——不传则不判 OVERFLOW（R-V8 不编造边界），工具首版不传边界 ⇒ 运行时报告类型为 OVERLAP/MIN_SPACING，OVERFLOW 由纯函数单测钉住待前端边界接线后启用。
 代号：**VISP**
 前置：
 - [`2026-10-06-selection-as-default-reference-design.md`](./2026-10-06-selection-as-default-reference-design.md)（SEL-REF，R-S8「回执由确定性 UI、不靠模型自述」是本规格 Path C 的同构约束）
@@ -176,7 +177,7 @@ flowchart LR
 |---|---|---|
 | 前端 | `apps/web/src/pages/CanvasPage.vue` 或新建 `apps/web/src/canvas/canvasSnapshot.ts` | **新增**画布视口序列化 PNG（S-2）；大画布降采样、封顶分辨率；fail-soft 返回错误供 `R-V8`。 |
 | runtime 工具 | `services/pi-runtime/src/tools/capture-canvas-view.ts` | **新建**（S-1）：调前端序列化接口拿 PNG → `fetchImageAsBlock` → 返回 `ImageContent`（像素直注）。tier=present。 |
-| runtime 工具 | `services/pi-runtime/src/tools/validate-canvas-layout.ts` | **新建**（S-4）：读画布节点绝对位置/尺寸 → 调 `validateCanvasLayout` 纯函数 → 返回违规报告。tier=present。 |
+| runtime 工具 | `services/pi-runtime/src/tools/validate-canvas-layout.ts` | **新建**（S-4）：读画布节点绝对位置/尺寸（`get-canvas-layout` 的 `absolutePosition`+`size`，服务端已算好）→ 调 `validateCanvasLayoutLocal`（**shared 纯函数的镜像**，R5：pi-runtime 无 shared 依赖）→ 返回确定性违规报告。tier=present。 |
 | runtime 工具 | `services/pi-runtime/src/tools/visual-memory.ts` | **新建**（S-3）：`save_visual_memory`（摘要 + 缩略图引用）、`recall_visual_memory`（回传摘要文本）。 |
 | runtime 工具 | `services/pi-runtime/src/tools/read-media.ts` | **新建**（S-7）：`read_media(ref)` → 调 Nest 内部端点取 base64 → 以 `{type:"image"}` block 回传 tool result（上游 `read` 模式）。tier=present。 |
 | Nest 内部端点 | `apps/server/src/agent/read-media.ts`（**实际落点，R4 修正**；规格初版写 `agent.controller.ts`） | **新增** `POST /agent/internal/read-media`：入参 attachment ref/url → `parseUploadRefPath` 本地盘直读（唯一取图点）→ 返回 base64 + mimeType；pod 不可达宿主 IP，必须 Nest 代理（S-7）。鉴权走既有 `agent-internal.guard.ts`（header `x-lnkpi-service-token` + env `LNKPI_INTERNAL_SERVICE_TOKEN`，非用户 JWT）；uploads 引用形态校验 + mime 白名单 + 超 2MB 缩图 + 穿越守卫（非法 ref 绝不发起网络 fetch）。 |
@@ -241,7 +242,11 @@ export interface LayoutViolation {
 export interface NodeBox { id: string; x: number; y: number; width: number; height: number }
 export interface ValidateInput {
   nodes: NodeBox[]
-  canvas: { width: number; height: number }
+  /**
+   * 画布边界（**可选，R5 修订**：无限画布范式下运行时无全局边界）。
+   * 不传则不判 OVERFLOW（R-V8 降级不编造——宁可不判也不拿假边界报越界）。
+   */
+  canvas?: { width: number; height: number }
   /** 可选：最小间距阈值，默认 0 */
   minSpacing?: number
 }
@@ -273,8 +278,9 @@ export function validateCanvasLayout(input: ValidateInput): LayoutViolation[]
 | `apps/server/src/agent/read-media.ts`（**实际落点**） | 加 `POST /agent/internal/read-media`（+ `read-media.test.ts`） | S-7，`parseUploadRefPath` 唯一取图点；鉴权 `agent-internal.guard`（R4 修正：初版写 agent.controller.ts） |
 | `packages/shared/src/sidebarAttachments.ts`（**实际落点**） | 加 `resolveSidebarRef` / `imageSidebarRefKeys`（+ test） | S-7，`I{n}` 标记 ↔ 附件 url 双端同源、与侧栏块编号同源（R4 补：初版遗漏） |
 | `apps/web/src/components/agent/toolPresentation.ts` | 登记新工具展示项（icon + verb） | R-V11，#737 实证：漏登 = 时间线零显示（R4 补） |
-| `packages/shared/src/canvas/layout.ts` | 加 `validateCanvasLayout` | §8 |
-| `packages/shared/src/canvas/layout.test.ts` | 加用例 | §8 |
+| `packages/shared/src/canvas/layout.ts` | 加 `validateCanvasLayout` | §8（SSOT；R5：canvas 可选） |
+| `packages/shared/src/canvas/layout.test.ts` | 加用例 | §8 九条（含 canvas 缺省不判 OVERFLOW） |
+| `services/pi-runtime/src/tools/validate-canvas-layout.contract-mirror.test.ts` | 加同源 fixture 镜像锁 | R5：pi-runtime 无 shared 依赖 ⇒ 镜像 + parity 锁 |
 | `services/pi-runtime/src/tools/registry.ts` | 注册 3 个新工具 | §5.2 |
 | `services/pi-runtime/src/tools/tiering.ts` | 分类新工具 | §5.2 |
 | `services/pi-runtime/src/payload-images.ts` | 复用（评估画布类上限） | R-V7 |
@@ -342,7 +348,7 @@ flowchart LR
 | 阶段 | 交付 | 前置 | 验收锚点 |
 |---|---|---|---|
 | **Phase 1（Path A + 恢复路径）** | 前端画布序列化 + `capture_canvas_view` + `read_media`（S-7）+ 像素治理 | 无（S-2 本阶段内解决；S-7 依赖 PR #733 已合并） | A-2 / A-3 / A-7 / A-8。**进度（R4）：S-7 已完成**（PR #733/#737/#745，A-1/A-8/A-9 生产终验通过 2026-11-06）；**剩余 Path A**（S-2 Spike + S-1 `capture_canvas_view`，A-2/A-3/A-7 待验收） |
-| **Phase 2（Path C）** | `validate_canvas_layout` + `validateCanvasLayout` 纯函数 | Phase 1 像素通路（校验对象来自同一画布状态） | A-6 + §8 单测 |
+| **Phase 2（Path C）** | `validate_canvas_layout` + `validateCanvasLayout` 纯函数 | Phase 1 像素通路（校验对象来自同一画布状态） | A-6 + §8 单测。**进度（R5）：已实施**（2026-11-06，SSOT shared + 工具镜像 + contract-mirror 锁 + tiering/registry/toolPresentation 接线；⏳ 待合并部署 + A-6 真机验收） |
 | **Phase 3（Path B）** | `save/recall_visual_memory` + 视觉分析 pass | Phase 2 校验（记忆摘要可由校验增强） | A-4 / A-5 |
 
 ### 12.1 上游基线核验（0.99.2 实证）与升级红利（R2 新增）

@@ -477,3 +477,96 @@ export function computeSnapGuides(
     snapped,
   }
 }
+
+// ---- VISP Phase 2（Path C，spec 2026-11-05-agent-canvas-visual-perception-design.md §8）----
+
+export type LayoutViolationType = 'OVERLAP' | 'OVERFLOW' | 'MIN_SPACING'
+
+export interface LayoutViolation {
+  type: LayoutViolationType
+  nodeIds: string[]
+  /** 人类可读的量化结果，如「交集 120x80px」/「右边界超出画布 40px」。 */
+  metric: string
+  severity: 'low' | 'medium' | 'high'
+}
+
+export interface NodeBox {
+  id: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export interface ValidateInput {
+  nodes: NodeBox[]
+  /**
+   * 画布边界（可选）。**不传则不判 OVERFLOW**（无限画布范式：运行时拿不到全局边界，
+   * R-V8 降级不编造——宁可不判也不能拿假边界报越界）。
+   */
+  canvas?: { width: number; height: number }
+  /** 最小间距阈值（px），默认 0 = 不判 MIN_SPACING。 */
+  minSpacing?: number
+}
+
+/** 两矩形的最短间距（不相交时 ≥0；相交返回 0，重叠对由 OVERLAP 报、此处跳过防双报）。 */
+function rectGap(a: NodeBox, b: NodeBox): number {
+  const dx = Math.max(a.x - (b.x + b.width), b.x - (a.x + a.width), 0)
+  const dy = Math.max(a.y - (b.y + b.height), b.y - (a.y + a.height), 0)
+  return Math.max(dx, dy)
+}
+
+/**
+ * 确定性布局校验（R-V5/R-V6：severity 由几何阈值定，不由模型定）。
+ * - OVERLAP：成对交集面积 > 0（相切不算），severity=high（视觉遮挡）
+ * - OVERFLOW：节点越出 canvas 边界（仅提供 canvas 时判定），severity=medium
+ * - MIN_SPACING：成对间距 < minSpacing（重叠对跳过，防双报），severity=low（观感拥挤）
+ * 输出顺序：按输入序 i<j 遍历 + 类型内枚举序 ⇒ 同输入逐字节同输出（§8-6）。
+ */
+export function validateCanvasLayout(input: ValidateInput): LayoutViolation[] {
+  const nodes = input.nodes
+  const minSpacing = input.minSpacing ?? 0
+  const violations: LayoutViolation[] = []
+  for (let i = 0; i < nodes.length; i++) {
+    const a = nodes[i]!
+    // OVERFLOW：每节点一条（聚合各边越界量），仅在有边界时判定。
+    if (input.canvas) {
+      const over: string[] = []
+      if (a.x < 0) over.push(`左边界超出画布 ${Math.round(-a.x)}px`)
+      if (a.y < 0) over.push(`上边界超出画布 ${Math.round(-a.y)}px`)
+      if (a.x + a.width > input.canvas.width)
+        over.push(`右边界超出画布 ${Math.round(a.x + a.width - input.canvas.width)}px`)
+      if (a.y + a.height > input.canvas.height)
+        over.push(`下边界超出画布 ${Math.round(a.y + a.height - input.canvas.height)}px`)
+      if (over.length > 0) {
+        violations.push({ type: 'OVERFLOW', nodeIds: [a.id], metric: over.join('；'), severity: 'medium' })
+      }
+    }
+    for (let j = i + 1; j < nodes.length; j++) {
+      const b = nodes[j]!
+      const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)
+      const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y)
+      if (w > 0 && h > 0) {
+        violations.push({
+          type: 'OVERLAP',
+          nodeIds: [a.id, b.id],
+          metric: `交集 ${Math.round(w)}x${Math.round(h)}px`,
+          severity: 'high',
+        })
+        continue // 重叠对已由 OVERLAP 报告，不再判 MIN_SPACING（防双报）
+      }
+      if (minSpacing > 0) {
+        const gap = rectGap(a, b)
+        if (gap < minSpacing) {
+          violations.push({
+            type: 'MIN_SPACING',
+            nodeIds: [a.id, b.id],
+            metric: `间距 ${Math.round(gap)}px < 阈值 ${Math.round(minSpacing)}px`,
+            severity: 'low',
+          })
+        }
+      }
+    }
+  }
+  return violations
+}

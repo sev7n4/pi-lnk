@@ -3,6 +3,7 @@ import {
   getAbsolutePosition,
   getNodeSize,
   placeBatchNodes,
+  validateCanvasLayout,
   type LayoutNode,
 } from './layout'
 import { rectsOverlap, type Rect } from './workflowImportPlacement'
@@ -346,5 +347,94 @@ describe('computeSnapGuides R1：粘滞释放带 + 切换余量', () => {
     expect(r4.vertical?.position, 'dist 4 ≤ 传入半径 4 命中').toBe(100)
     const r5 = computeSnapGuides({ x: 105, y: 200, w: 100, h: 50 }, cands, { snapRadius: 4 })
     expect(r5.vertical, 'dist 5 > 传入半径 4 不命中').toBeUndefined()
+  })
+})
+
+// ══════════════════════════════════════════════════════
+// VISP Phase 2（Path C，spec 2026-11-05-agent-canvas-visual-perception-design.md §8）
+// validateCanvasLayout：确定性布局校验纯函数——severity 由几何阈值定，不由模型定（R-V6）。
+// ⚠️ services/pi-runtime/src/tools/validate-canvas-layout.contract-mirror.test.ts
+//    以本 describe 的 fixture 为同源镜像锁；改任一侧必须同步另一侧与本文件。
+describe('validateCanvasLayout（VISP Phase 2 §8）', () => {
+  const box = (id: string, x: number, y: number, width: number, height: number) => ({ id, x, y, width, height })
+
+  it('§8-1 无节点 → []', () => {
+    expect(validateCanvasLayout({ nodes: [], canvas: { width: 1920, height: 1080 } })).toEqual([])
+  })
+
+  it('§8-2 两节点不重叠、在界内 → []', () => {
+    expect(
+      validateCanvasLayout({
+        nodes: [box('a', 0, 0, 100, 100), box('b', 200, 0, 100, 100)],
+        canvas: { width: 1920, height: 1080 },
+      }),
+    ).toEqual([])
+  })
+
+  it('§8-3 两节点重叠 120×80 → 1 条 OVERLAP，metric 含交集尺寸，severity=high', () => {
+    const out = validateCanvasLayout({ nodes: [box('a', 0, 0, 200, 100), box('b', 80, 20, 200, 100)] })
+    expect(out).toHaveLength(1)
+    expect(out[0]!.type).toBe('OVERLAP')
+    expect(out[0]!.nodeIds).toEqual(['a', 'b'])
+    expect(out[0]!.metric).toContain('120')
+    expect(out[0]!.metric).toContain('80')
+    expect(out[0]!.severity).toBe('high')
+  })
+
+  it('§8-4 一节点右边界超画布 40px → 1 条 OVERFLOW，severity=medium（仅提供 canvas 时判定）', () => {
+    const out = validateCanvasLayout({
+      nodes: [box('a', 0, 0, 100, 100), box('b', 1960, 500, 100, 100)],
+      canvas: { width: 1920, height: 1080 },
+    })
+    const overflows = out.filter((v) => v.type === 'OVERFLOW')
+    expect(overflows).toHaveLength(1)
+    expect(overflows[0]!.nodeIds).toEqual(['b'])
+    expect(overflows[0]!.metric).toContain('40')
+    expect(overflows[0]!.severity).toBe('medium')
+  })
+
+  it('§8-4b 未提供 canvas → 不判 OVERFLOW（无限画布范式，R-V8 不编造边界）', () => {
+    expect(
+      validateCanvasLayout({ nodes: [box('a', 999999, 999999, 100, 100)] }),
+    ).toEqual([])
+  })
+
+  it('§8-5 minSpacing=20 且实际间距 10 → 1 条 MIN_SPACING', () => {
+    const out = validateCanvasLayout({
+      nodes: [box('a', 0, 0, 100, 100), box('b', 110, 0, 100, 100)],
+      minSpacing: 20,
+    })
+    expect(out).toHaveLength(1)
+    expect(out[0]!.type).toBe('MIN_SPACING')
+    expect(out[0]!.nodeIds).toEqual(['a', 'b'])
+    expect(out[0]!.severity).toBe('low')
+  })
+
+  it('§8-6 同输入重复 3 次 → 3 次输出逐字节相同（无随机源）', () => {
+    const input = {
+      nodes: [box('a', 0, 0, 200, 100), box('b', 80, 20, 200, 100), box('c', 5000, 5000, 300, 300)],
+      canvas: { width: 1920, height: 1080 } as { width: number; height: number },
+      minSpacing: 12,
+    }
+    const r1 = JSON.stringify(validateCanvasLayout(input))
+    const r2 = JSON.stringify(validateCanvasLayout(input))
+    const r3 = JSON.stringify(validateCanvasLayout(input))
+    expect(r1).toBe(r2)
+    expect(r2).toBe(r3)
+  })
+
+  it('§8-7 边界相切（重叠面积 0）→ 不计 OVERLAP（>0 才计）', () => {
+    expect(
+      validateCanvasLayout({ nodes: [box('a', 0, 0, 100, 100), box('b', 100, 0, 100, 100)] }),
+    ).toEqual([])
+  })
+
+  it('§8-8 重叠对与间距对并存时不双报（重叠对跳过 MIN_SPACING）', () => {
+    const out = validateCanvasLayout({
+      nodes: [box('a', 0, 0, 200, 100), box('b', 80, 20, 200, 100)],
+      minSpacing: 40,
+    })
+    expect(out.filter((v) => v.type === 'OVERLAP')).toHaveLength(1)
+    expect(out.filter((v) => v.type === 'MIN_SPACING')).toHaveLength(0)
   })
 })
