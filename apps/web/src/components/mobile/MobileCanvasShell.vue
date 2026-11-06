@@ -187,6 +187,9 @@ const viewerBottomActions = computed(() => {
   const node = props.viewerNode
   if (!node) return []
   const data = (node.data ?? {}) as Record<string, unknown>
+  // Task 7（§10 风险#1）：系统总览节点每轮 finalizeTurn 翻新，用户编辑必被覆盖
+  // ⇒ 底栏不提供「编辑 / 改词」入口（比点进去才提示只读更符合 HIG 可用性）。
+  if (data.digest === true) return []
   const status = String(data.status ?? '')
   const isPending = status === 'pending_confirm' || status === 'pending'
   const isText = node.type === 'text'

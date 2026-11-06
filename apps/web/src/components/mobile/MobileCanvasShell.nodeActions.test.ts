@@ -424,3 +424,34 @@ describe('MobileCanvasShell 文本节点就地编辑（问题③ v2：viewer 内
     w.unmount()
   })
 })
+
+/**
+ * Task 7（canvas-digest §10 风险#1）：系统总览节点在 viewer 底栏不出现编辑/改词
+ * ——点进去才提示只读属于死路 UI，源头就不该给入口。
+ */
+describe('MobileCanvasShell 系统总览节点 viewer 只读（Task 7）', () => {
+  function mountViewer(data: Record<string, unknown>) {
+    return mount(MobileCanvasShell, {
+      props: baseProps({ viewerNode: { id: 'd1', type: 'text', data } }),
+      global: { stubs: { teleport: true } },
+      attachTo: document.body,
+    })
+  }
+
+  it('digest ⇒ viewer 底栏零编辑动作', () => {
+    const w = mountViewer({ digest: true, source: 'system-digest', format: 'html', content: '<p>x</p>' })
+    const viewer = w.findComponent({ name: 'MobileNodeViewer' })
+    expect(viewer.exists()).toBe(true)
+    expect(viewer.props('bottomActions')).toEqual([])
+    w.unmount()
+  })
+
+  it('非 digest 文本节点 ⇒ 底栏仍有 edit（防误伤）', () => {
+    const w = mountViewer({ format: 'html', content: '<p>x</p>' })
+    const viewer = w.findComponent({ name: 'MobileNodeViewer' })
+    expect(viewer.props('bottomActions')).toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: 'edit' })]),
+    )
+    w.unmount()
+  })
+})

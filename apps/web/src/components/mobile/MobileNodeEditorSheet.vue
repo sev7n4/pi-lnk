@@ -72,6 +72,9 @@ const emit = defineEmits<{
 }>()
 
 const nodeData = computed(() => (props.node.data ?? {}) as Record<string, unknown>)
+// Task 7（spec 2026-11-05-canvas-digest §10 风险#1）：digest = 系统回合末总览节点，
+// 任何编辑都会被下轮 finalizeTurn 翻新覆盖 ⇒ 打开即只读，不提供改词/发送出口。
+const isDigestNode = computed(() => nodeData.value.digest === true)
 const typeKey = computed(() => String(props.node.type ?? ''))
 
 /** 提示词初值（agent 提议时写入 `data.prompt`） */
@@ -163,9 +166,10 @@ function submit() {
         >
           取消
         </button>
-        <span class="nav-title">改词</span>
+        <span class="nav-title">{{ isDigestNode ? '画布总览' : '改词' }}</span>
         <!-- 主出口（J-3/J-7）：UI 短文案「发送」，完整语义在 aria-label -->
         <button
+          v-if="!isDigestNode"
           class="nav-send"
           type="button"
           :disabled="!canSubmit"
@@ -181,7 +185,11 @@ function submit() {
         </button>
       </header>
 
-      <div class="mobile-editor-body">
+      <div v-if="isDigestNode" class="mobile-editor-readonly" data-testid="mobile-editor-readonly">
+        <p class="ro-title">画布总览</p>
+        <p class="ro-desc">系统产物 · 随每轮对话自动更新，暂不支持在此编辑。如需调整画布内容，请直接对话。</p>
+      </div>
+      <div v-else class="mobile-editor-body">
         <!-- 产物上下文行（图 1 ②）：四类节点唯一差异化点 -->
         <div class="ctx-row" data-testid="mobile-editor-context">
           <span class="ctx-icon" aria-hidden="true">
@@ -371,6 +379,33 @@ function submit() {
   display: flex;
   flex-direction: column;
   padding: var(--lnk-space-2) var(--lnk-pad-card) var(--lnk-pad-card);
+}
+
+/* Task 7：系统总览节点只读说明面（与主体同几何；无输入框、无发送出口） */
+.mobile-editor-readonly {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--lnk-space-2);
+  padding: var(--lnk-space-2) var(--lnk-pad-card) var(--lnk-pad-card);
+  text-align: center;
+}
+
+.ro-title {
+  margin: 0;
+  font-size: var(--lnk-text-lg);
+  font-weight: var(--lnk-weight-semibold);
+  color: var(--lnk-text-primary);
+}
+
+.ro-desc {
+  margin: 0;
+  font-size: var(--lnk-text-sm);
+  line-height: var(--lnk-lh-sm);
+  color: var(--lnk-text-secondary);
 }
 
 /* 产物上下文行（图 1 ②）—— v2.1 瘦身：34px 图标盒 → 24px 内联图标 */

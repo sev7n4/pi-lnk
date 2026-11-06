@@ -86,3 +86,50 @@ describe('CanvasNodeText format 分支（规格 §4.2/§4.7）', () => {
     })
   })
 })
+
+/**
+ * Task 7（spec 2026-11-05-canvas-digest §10 风险#1）：digest 节点只读分支——
+ * 用户编辑会被下轮系统翻新覆盖，故 digest ⇒ 预览强制 readonly + 「总览」徽章。
+ */
+describe('CanvasNodeText digest 只读分支（Task 7）', () => {
+  it("digest ⇒ 「总览」徽章替换 HTML 徽章", () => {
+    const w = mountNode({ content: '<p>x</p>', format: 'html', digest: true, source: 'system-digest' })
+    expect(w.text()).toContain('总览')
+    expect(w.find('.neo-html-badge').text()).toBe('总览')
+  })
+
+  it('digest ⇒ 打开预览时 HtmlNodePreview 为 readonly', async () => {
+    const w = mountNode({ content: '<p>x</p>', format: 'html', digest: true, source: 'system-digest' })
+    await w.find('.neo-text-card--html').trigger('dblclick')
+    await nextTick()
+    const preview = w.findComponent({ name: 'HtmlNodePreview' })
+    expect(preview.props('readonly')).toBe(true)
+    expect(preview.props('trusted')).toBe(true)
+  })
+
+  it('非 digest html 节点不受影响：HTML 徽章 + preview 可编辑', async () => {
+    const w = mountNode({ content: '<p>x</p>', format: 'html' })
+    expect(w.find('.neo-html-badge').text()).toBe('HTML')
+    await w.find('.neo-text-card--html').trigger('dblclick')
+    await nextTick()
+    const preview = w.findComponent({ name: 'HtmlNodePreview' })
+    expect(preview.props('readonly')).toBe(false)
+  })
+
+  it('digest 且 format 丢失（脏数据）⇒ 沉浸编辑器不打开、写回被拦', async () => {
+    const patch = vi.fn()
+    const w = mountNode({ content: '旧文本', digest: true, source: 'system-digest' }, {
+      [CANVAS_NODE_PATCH_KEY as symbol]: patch,
+    })
+    const editor = w.findComponent({ name: 'PromptMarkdownEditor' })
+    expect(editor.exists()).toBe(true)
+    expect(editor.props('visible')).toBe(false)
+    await w.find('.neo-text-card').trigger('dblclick')
+    await nextTick()
+    expect(editor.props('visible')).toBe(false)
+    editor.vm.$emit('save', '用户改动')
+    await nextTick()
+    expect(patch).not.toHaveBeenCalled()
+    w.unmount()
+  })
+})
