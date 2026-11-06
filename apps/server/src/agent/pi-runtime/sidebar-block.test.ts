@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assignSidebarRefKeys, buildSidebarBlock, buildImageRecoveryHint } from "./sidebar-block";
+import { assignSidebarRefKeys, buildSidebarBlock, buildImageRecoveryHint, buildImageInjectedNotice } from "./sidebar-block";
 
 describe("侧栏 key 分配与素材块（sidebar_attachments.py 平移）", () => {
 	it("key 按 mediaType 分类计数，未知类型跳过", () => {
@@ -70,5 +70,23 @@ describe("buildImageRecoveryHint（VISP S-7/M-9：直注失败时的恢复提示
 	it("无图片附件 / undefined → 空串（不污染动态块）", () => {
 		expect(buildImageRecoveryHint([{ text: "文案", mediaType: "text" }])).toBe("");
 		expect(buildImageRecoveryHint(undefined)).toBe("");
+	});
+});
+
+describe("buildImageInjectedNotice（VISP 2026-11-06 生产事故：直注成功时明示图已在上下文）", () => {
+	it("有图片附件 → 明示像素已注入 + read_media 重读指引（键跨 mediaType 计数）", () => {
+		const notice = buildImageInjectedNotice([
+			{ text: "文案", mediaType: "text" },
+			{ url: "http://h:8888/api/uploads/u1/a.png", mediaType: "image" },
+			{ url: "http://h:8888/api/uploads/u1/b.jpg", mediaType: "image" },
+		]);
+		expect(notice).toContain("原图已注入");
+		expect(notice).toContain("I1, I2");
+		expect(notice).toContain('read_media(ref:"I1")');
+	});
+
+	it("无图片附件 / undefined → 空串", () => {
+		expect(buildImageInjectedNotice([{ text: "文案", mediaType: "text" }])).toBe("");
+		expect(buildImageInjectedNotice(undefined)).toBe("");
 	});
 });

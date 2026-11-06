@@ -21,6 +21,17 @@ function viewResult(payload: Record<string, unknown>): ViewResult {
 
 const NON_IMAGE_TYPES = new Set(["video", "audio", "text", "prompt"]);
 
+/**
+ * uploads 引用检测（2026-11-06 生产事故）：用户 composer 附件的引用形态是
+ * `/api/uploads/<userId>/<fileName>`（侧栏块给的绝对 URL 也落在该路径上）。
+ * 这类图**必须**走 read_media（Nest 侧读盘），pod 直 fetch 宿主公网 IP 是
+ * hairpin 死路（R2 实测）——历史上模型被本工具旧描述「url (e.g. from a sidebar
+ * attachment)」引导到这里，fetch 失败后只能答「图片加载失败」。
+ */
+export function isUploadsRefUrl(url: string): boolean {
+	return /(?:^|\/)api\/uploads\//.test(url);
+}
+
 export function createViewCanvasMediaTools(
 	client: NestClient,
 	deps: { fetchImpl?: typeof fetch } = {},
@@ -31,7 +42,7 @@ export function createViewCanvasMediaTools(
 			name: "view_canvas_media",
 			label: "查看图片内容",
 			description:
-				"View the actual pixels of an image (canvas node or media url). Use whenever the user asks about an image's visual content, references an image node, or a context placeholder says an image was removed from context. Params: node_id (canvas node, falls back to the current focus node) or url (direct media url, e.g. from a sidebar attachment). Returns the image itself in the result.",
+				"View the actual pixels of a CANVAS image node. Use when the user asks about a canvas node's image content, references an image node, or a context placeholder says an image was removed from context. Params: node_id (canvas node, falls back to the current focus node); url only for non-uploads direct media urls. For user-uploaded attachments (sidebar refs I*/J*, /api/uploads/ urls) use read_media(ref) instead — uploads urls are rejected here.",
 			parameters: Type.Object({
 				node_id: Type.Optional(
 					Type.String({
@@ -39,12 +50,12 @@ export function createViewCanvasMediaTools(
 							"Canvas image node id (e.g. n_abc123). Omit both params to use the current focus node.",
 					}),
 				),
-				url: Type.Optional(
-					Type.String({
-						description:
-							"Direct image url (e.g. from a sidebar attachment). Use when no node id is known.",
-					}),
-				),
+			url: Type.Optional(
+				Type.String({
+					description:
+						"Direct image url — non-uploads urls only. User-uploaded attachments (/api/uploads/) must use read_media(ref) instead.",
+				}),
+			),
 			}),
 			execute: async (
 				_id,
@@ -89,6 +100,16 @@ export function createViewCanvasMediaTools(
 					return viewResult({
 						ok: false,
 						error: "缺少图片来源：请传 node_id 或 url；可先 get_canvas_summary / get_node 找到目标节点 id",
+					});
+				}
+				// uploads 引用 fail-fast（2026-11-06 生产事故）：pod 直 fetch 宿主公网
+				// IP 是 hairpin 死路，与其让 fetch 超时后模型瞎猜，不如直接指路 read_media。
+				if (isUploadsRefUrl(url)) {
+					return viewResult({
+						ok: false,
+						redirect: "read_media",
+						error:
+							'这是用户上传附件的 uploads 引用，本工具无法读取。请改用 read_media 读取原图（如 read_media(ref:"I1"，ref 见侧栏参考素材块）。',
 					});
 				}
 				const fetched = await fetchImageAsBlock(url, { fetchImpl: deps.fetchImpl });

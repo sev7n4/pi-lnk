@@ -204,3 +204,33 @@ test("fetch 超大 → ok:false", async () => {
 	const res = await run(tool, { node_id: "n_1" });
 	assert.equal(JSON.parse(res.content[0]!.text!).ok, false);
 });
+
+test("uploads 引用（用户上传附件）→ fail-fast 指路 read_media，不发起 fetch（VISP R-V9 边界，2026-11-06 生产事故）", async () => {
+	let fetchCalls = 0;
+	const tool = viewTool(
+		fakeClient({ type: "image", data: { url: "http://x/api/uploads/u1/a.jpg" } }),
+		async (u) => {
+			fetchCalls++;
+			return fetch(u);
+		},
+	);
+	// 绝对公网 URL 形态（生产事故形态：http://host:8888/api/uploads/...，pod hairpin 不可达）
+	const res1 = await run(tool, { url: "http://119.29.173.89:8888/api/uploads/cmrn3/1793929785907-cce4b166.jpg" });
+	const out1 = JSON.parse(res1.content[0]!.text!);
+	assert.equal(out1.ok, false);
+	assert.match(out1.error, /read_media/);
+	assert.equal(out1.redirect, "read_media");
+	// 相对形态
+	const res2 = await run(tool, { url: "/api/uploads/cmrn3/1793929785907-cce4b166.jpg" });
+	const out2 = JSON.parse(res2.content[0]!.text!);
+	assert.equal(out2.ok, false);
+	assert.match(out2.error, /read_media/);
+	assert.equal(out2.redirect, "read_media");
+	// node_id 取到的 data.url 也是 uploads 形态 → 同样指路
+	const res3 = await run(tool, { node_id: "n_1" });
+	const out3 = JSON.parse(res3.content[0]!.text!);
+	assert.equal(out3.ok, false);
+	assert.match(out3.error, /read_media/);
+	// 三次调用全部 fail-fast，零次真实 fetch
+	assert.equal(fetchCalls, 0);
+});
