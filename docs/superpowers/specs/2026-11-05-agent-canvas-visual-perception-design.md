@@ -1,7 +1,8 @@
 # Agent 视觉感知：工具门控直注 + Chronicle 派生记忆 + 确定性校验 — 设计规格
 
-状态：**待评审**（调研 + 规格产出，2026-11-05）
+状态：**部分实施**（Phase 1a S-7 `read_media` 已上线并完成生产终验，2026-11-06；其余待实施）
 修订：**R2/R3**（2026-11-05）——R2：基于生产事故取证 + 上游 **0.99.2**（实际部署版本，非 vendor 镜像 0.85.1）源码实证回写：修正「用户图直注现状已有」的错误结论（N-4 / R-V1 / 关键澄清 / M-1 / A-1）；新增 S-7 `read_media` 恢复工具；新增 §12.1 上游基线与升级红利。R3：自审修补——S-2 触发通道（Nest→web 事件 + 关联 id 回执）定为硬前置 Spike；澄清 R-V3 预设降级 vs R-V1 故障静默边界；新增 R-V9（取图工具分工）/ R-V10（分层与 L6 预算纪律）；补 M-9 / A-9 恢复闭环场景与 `read_media` 单测要求。
+修订：**R4**（2026-11-06，实施回写）——Phase 1a（S-7 + PR #733/#737/#745）已上线：A-1/A-9 生产终验通过（会话 cmw4jld86，直注成功 + 模型零工具调用直接描述）。据此回写：R-V9 升级为运行时强制（`view_canvas_media` 对 uploads 引用 fail-fast 指路）；S-7/M-9 恢复闭环补**成功侧明示块**（`buildImageInjectedNotice`，终验实证的决定性引导）；§9 文件清单对齐实际落点（Nest `read-media.ts` 独立模块 + internal guard；shared `sidebarAttachments.ts`）；新增 R-V11（web 侧展示注册硬前置，#737 CI 实证遗漏）；§10 补工具计数断言同步；§12 标注进度。
 代号：**VISP**
 前置：
 - [`2026-10-06-selection-as-default-reference-design.md`](./2026-10-06-selection-as-default-reference-design.md)（SEL-REF，R-S8「回执由确定性 UI、不靠模型自述」是本规格 Path C 的同构约束）
@@ -80,7 +81,7 @@
 | S-4 | **Path C**：新增 `validate_canvas_layout` 工具（tier=present），复用 `packages/shared/src/canvas/layout.ts` 的 `overlapArea` / `rectsOverlap` / `getNodeSize` / `getAbsolutePosition` 计算重叠/越界/溢出，输出确定性违规报告。 |
 | S-5 | **跨切守卫**：在 `propose_generation` 落位、批量 `arrange_nodes`、以及 agent 视觉自述（"这个没重叠吧"）之后，建议性接 `validate_canvas_layout`，把确定性报告作为事实源。 |
 | S-6 | **像素治理复用**：`capture_canvas_view` 产出的图片 part 统一走 `payload-images.ts` 的出站治理（超大剔除、历史降级、本轮优先）。 |
-| S-7 | **`read_media` 恢复工具（R2 新增）**：agent 直注失败或事后回看时的恢复路径——工具调 Nest 内部端点（`parseUploadRefPath` 本地盘直读，**唯一取图点**）→ base64 → 以 **image block 回传 tool result**（同上游 harness `read` 工具模式，v0.99.2 harness/tools/read.ts:47-99）。tier=present。**必须走 Nest 代理**：pi-runtime pod 对宿主公网 IP:8888 不可达（实测 fetch failed），pod 侧自取图不可行。参数形态：`ref` 接受侧栏标记 `I{n}` 或完整 url（事故实证模型只能拿到 `[I1=文件名]` 级别的线索）；像素上限沿用 `fetchImageAsBlock` 语义（2MB + mime 白名单），超限走缩图而非报错。**恢复闭环（R3 补）**：直注失败/被治理剔除时，识图兜底动态块追加一行「原图未能注入，可用 `read_media(I{n})` 查看」，让模型知道恢复入口存在。 |
+| S-7 | **`read_media` 恢复工具（R2 新增）**：agent 直注失败或事后回看时的恢复路径——工具调 Nest 内部端点（`parseUploadRefPath` 本地盘直读，**唯一取图点**）→ base64 → 以 **image block 回传 tool result**（同上游 harness `read` 工具模式，v0.99.2 harness/tools/read.ts:47-99）。tier=present。**必须走 Nest 代理**：pi-runtime pod 对宿主公网 IP:8888 不可达（实测 fetch failed），pod 侧自取图不可行。参数形态：`ref` 接受侧栏标记 `I{n}` 或完整 url（事故实证模型只能拿到 `[I1=文件名]` 级别的线索）；像素上限沿用 `fetchImageAsBlock` 语义（2MB + mime 白名单），超限走缩图而非报错。**恢复闭环（R3 补）**：直注失败/被治理剔除时，识图兜底动态块追加一行「原图未能注入，可用 `read_media(I{n})` 查看」，让模型知道恢复入口存在。**成功侧明示块（R4 补，PR #745）**：直注**成功**时同步注入明示块（`buildImageInjectedNotice`：告知「原图已注入上下文，直接描述即可」+ `read_media(ref:"I{n}")` 重读入口）——生产终验实证这是决定性引导：模型得知图已在 context 后零工具调用直接描述，从源头消除误调。 |
 
 ### 2.2 明确不做
 
@@ -140,8 +141,9 @@ flowchart TD
 | **R-V1** | **用户上传图走原生直注，走 canonical 入口，不新增平行链路**：像素以 `ImageContent` 经 pi canonical 入口（`Agent.prompt(text, images)` / `Lane.prompt`，v0.99.2 agent.ts:372-427、lane.ts:511/1135）进入 user 消息；vision 判定收敛上游 SSOT（`Model.input.includes("image")`，v0.99.2 transform-messages.ts:36），Nest 侧 `supportsVisionModel` 白名单降级为"成本门控"（避免给 text 模型白送 5MB base64），判定来源必须与上游一致；直注失败必须显性（逐图结果 + turn 级遥测），禁止静默降级到文本摘要。 |
 | **R-V2** | **Path A 必须工具门控**：`capture_canvas_view` 由 agent 主动调用；未调用时画布像素**绝不**进入上下文（成本控制，§调研输入）。 |
 | **R-V3** | **Path A 看时给原生像素**：底层模型多模态则直注像素；非多模态降级为视觉模型描述（同 WorkBuddy `ViewImage` 混合形态），但**默认目标态是多模态直注**。**与 R-V1 的边界（R3 澄清）**：R-V3 是*预设降级*（可预期的设计路径，返回带明确文案"以下为视觉模型描述，非原始像素"），R-V1 禁止的是*故障静默*（取图失败却无任何信号地退化）——预设降级必须自报身份，故障必须显性留痕，二者都不允许"无信号降级"。 |
-| **R-V9** | **两个取图工具的分工（R3 新增）**：`view_canvas_media` 面向**画布节点产物**（node_id/url，既有契约不动）；`read_media` 面向**用户附件与恢复路径**（`I{n}` 标记/uploads 引用）。二者不合并、不互相替代；`read_media` 不接受画布节点引用（节点走 `view_canvas_media`），避免语义重叠。 |
+| **R-V9** | **两个取图工具的分工（R3 新增；R4 升级为运行时强制）**：`view_canvas_media` 面向**画布节点产物**（node_id/url，既有契约不动）；`read_media` 面向**用户附件与恢复路径**（`I{n}` 标记/uploads 引用）。二者不合并、不互相替代；`read_media` 不接受画布节点引用（节点走 `view_canvas_media`），避免语义重叠。**运行时强制（R4，PR #745）**：`view_canvas_media` 以 `isUploadsRefUrl` 检测 `/api/uploads/` 引用（绝对/相对形态均匹配）→ 零网络请求直接返回 `{ok:false, error:"…请改用 read_media(ref:…)", redirect:"read_media"}`；工具描述同步收敛（删除 "sidebar attachment" 引导语），使 uploads 引用只可能到达 `read_media`。生产事故实证：旧描述的 "url (e.g. from a sidebar attachment)" 会主动把模型引向错误工具 + hairpin 死路。 |
 | **R-V10** | **新工具的分层与预算纪律（R3 新增）**：本规格 5 个新工具全部 tier=present（**不进延迟集**，规避「哪个资产点名了它」判据——未点名工具进延迟集即不可达）；**不新增静态规则文案**（L6 预算余量仅 68 字符，见 AGENTS.md 变更影响面矩阵），恢复提示等引导语一律走动态块；若未来需要在 prompt 规则中点名，必须走 6 处同步 + `pnpm prompt:lint` 预算检查。 |
+| **R-V11** | **新增常驻工具必须登记 web 侧展示注册（R4 新增，#737 CI 实证遗漏）**：每个新工具必须在 `apps/web/src/components/agent/toolPresentation.ts` 登记展示项（icon + verb 人话），否则 agent 执行时间线对该工具**零显示**（用户看不到调用发生）。同时必须同步 `services/pi-runtime/src/tools/config.test.ts` 的三计数断言（工具计数 48/50/48，每 +1 工具 ×3）。剩余 4 个工具（`capture_canvas_view` / `validate_canvas_layout` / `save_visual_memory` / `recall_visual_memory`）均适用。 |
 | **R-V4** | **Path B 只存派生摘要，不存裸像素进上下文**：`recall_visual_memory` 回传摘要文本 + 缩略图引用，裸图不进上下文（Chronicle 式，控制成本 + 可检索）。 |
 | **R-V5** | **Path B 作用域受限**：仅画布产物与用户显式选定的参考图；**禁止**环境截屏/后台录屏（N-1）。 |
 | **R-V6** | **Path C 是事实源**：任何视觉自述/改动后，违规判定以 `validate_canvas_layout` 确定性报告为准，模型**可表达**但不能**担保**（同 R-S8）。 |
@@ -177,7 +179,7 @@ flowchart LR
 | runtime 工具 | `services/pi-runtime/src/tools/validate-canvas-layout.ts` | **新建**（S-4）：读画布节点绝对位置/尺寸 → 调 `validateCanvasLayout` 纯函数 → 返回违规报告。tier=present。 |
 | runtime 工具 | `services/pi-runtime/src/tools/visual-memory.ts` | **新建**（S-3）：`save_visual_memory`（摘要 + 缩略图引用）、`recall_visual_memory`（回传摘要文本）。 |
 | runtime 工具 | `services/pi-runtime/src/tools/read-media.ts` | **新建**（S-7）：`read_media(ref)` → 调 Nest 内部端点取 base64 → 以 `{type:"image"}` block 回传 tool result（上游 `read` 模式）。tier=present。 |
-| Nest 内部端点 | `apps/server/src/agent/agent.controller.ts`（或独立 internal controller） | **新增** `/agent/internal/read-media`：入参 attachment ref/url → `parseUploadRefPath` 本地盘直读（唯一取图点）→ 返回 base64 + mimeType；pod 不可达宿主 IP，必须 Nest 代理（S-7）。 |
+| Nest 内部端点 | `apps/server/src/agent/read-media.ts`（**实际落点，R4 修正**；规格初版写 `agent.controller.ts`） | **新增** `POST /agent/internal/read-media`：入参 attachment ref/url → `parseUploadRefPath` 本地盘直读（唯一取图点）→ 返回 base64 + mimeType；pod 不可达宿主 IP，必须 Nest 代理（S-7）。鉴权走既有 `agent-internal.guard.ts`（header `x-lnkpi-service-token` + env `LNKPI_INTERNAL_SERVICE_TOKEN`，非用户 JWT）；uploads 引用形态校验 + mime 白名单 + 超 2MB 缩图 + 穿越守卫（非法 ref 绝不发起网络 fetch）。 |
 | 几何原语 | `packages/shared/src/canvas/layout.ts` | **新增** `validateCanvasLayout` 纯函数（§8），复用 `overlapArea`/`rectsOverlap`/`getNodeSize`/`getAbsolutePosition`。 |
 | 出站治理 | `services/pi-runtime/src/payload-images.ts` | **复用**（R-V7）；若画布截图常 >8MB 阈值，评估对"画布态"类的专门上限（不绕过治理）。 |
 | 工具注册 | `services/pi-runtime/src/tools/registry.ts` | 注册 `capture_canvas_view` / `validate_canvas_layout` / `save_visual_memory` / `recall_visual_memory` / `read_media`。 |
@@ -213,7 +215,7 @@ flowchart LR
 | M-6 | agent 视觉自述"这两个没重叠" | `validate_canvas_layout` 报告实际有重叠 → 以报告为准纠正（R-V6）。 |
 | M-7 | 序列化失败（画布渲染异常） | `capture_canvas_view` 返回明确错误（R-V8），agent 退化为 SVG 示意，不编造。 |
 | M-8 | 视口外触发录屏类需求 | 明确拒绝环境截屏，仅限画布产物（N-1）。 |
-| M-9 | 直注失败（取图断点回归 / 图被治理剔除） | 识图兜底动态块含「可用 `read_media(I{n})` 查看」提示（S-7）；agent 调用后经 Nest 代理拿到 image block，恢复成功（R-V9 分工内）。 |
+| M-9 | 直注失败（取图断点回归 / 图被治理剔除） | 识图兜底动态块含「可用 `read_media(I{n})` 查看」提示（S-7）；agent 调用后经 Nest 代理拿到 image block，恢复成功（R-V9 分工内）。✅ 2026-11-06 生产终验：直注成功场景模型零工具调用直接描述（明示块生效），误调场景 fail-fast 指路生效（PR #745）。 |
 
 ## 7. 数据与状态变更
 
@@ -268,7 +270,9 @@ export function validateCanvasLayout(input: ValidateInput): LayoutViolation[]
 | `services/pi-runtime/src/tools/validate-canvas-layout.ts` | 新建 | S-4 |
 | `services/pi-runtime/src/tools/visual-memory.ts` | 新建 | S-3 |
 | `services/pi-runtime/src/tools/read-media.ts` | 新建 | S-7，Nest 代理取图 → image block 回传 |
-| `apps/server/src/agent/agent.controller.ts`（internal 端点） | 加 `/agent/internal/read-media` | S-7，`parseUploadRefPath` 唯一取图点 |
+| `apps/server/src/agent/read-media.ts`（**实际落点**） | 加 `POST /agent/internal/read-media`（+ `read-media.test.ts`） | S-7，`parseUploadRefPath` 唯一取图点；鉴权 `agent-internal.guard`（R4 修正：初版写 agent.controller.ts） |
+| `packages/shared/src/sidebarAttachments.ts`（**实际落点**） | 加 `resolveSidebarRef` / `imageSidebarRefKeys`（+ test） | S-7，`I{n}` 标记 ↔ 附件 url 双端同源、与侧栏块编号同源（R4 补：初版遗漏） |
+| `apps/web/src/components/agent/toolPresentation.ts` | 登记新工具展示项（icon + verb） | R-V11，#737 实证：漏登 = 时间线零显示（R4 补） |
 | `packages/shared/src/canvas/layout.ts` | 加 `validateCanvasLayout` | §8 |
 | `packages/shared/src/canvas/layout.test.ts` | 加用例 | §8 |
 | `services/pi-runtime/src/tools/registry.ts` | 注册 3 个新工具 | §5.2 |
@@ -290,20 +294,22 @@ export function validateCanvasLayout(input: ValidateInput): LayoutViolation[]
 
 | # | 验收 |
 |---|---|
-| A-1 | M-1：用户上传截图，模型回答能对上图内容（PR #733 合并部署后生产复测；pi transcript 中 image part ≥ 1 为机检判据）。 |
+| A-1 | M-1：用户上传截图，模型回答能对上图内容（PR #733 合并部署后生产复测；pi transcript 中 image part ≥ 1 为机检判据）。✅ **2026-11-06 生产终验通过**（会话 cmw4jld86：image part=1（566KB base64 在 prompt）、模型直接输出构图描述、input=7822+cacheRead=8192）。 |
 | A-2 | M-2：未调 `capture_canvas_view` 前，上下文中**无**画布截图；调用后才出现（R-V2）。 |
 | A-3 | M-3：大画布查看，token 占用在预算内（降采样 + payload 治理生效）。 |
 | A-4 | M-4：`recall_visual_memory` 回传摘要文本，裸像素不进上下文（R-V4）。 |
 | A-5 | M-5：显式保存参考图记忆，作用域正确，无录屏（R-V5）。 |
 | A-6 | M-6：`validate_canvas_layout` 检出的重叠，模型自述被纠正（R-V6）。 |
 | A-7 | M-7：序列化失败返回错误、退化为 SVG 示意（R-V8）。 |
-| A-8 | S-7：直注失败场景下（或显式回看），`read_media` 经 Nest 代理取图，tool result 含 image block，模型能看到像素（pod 侧无外网依赖）。 |
-| A-9 | M-9：直注失败 → 动态块出现 `read_media` 恢复提示 → agent 调用成功（恢复闭环全链路）。 |
+| A-8 | S-7：直注失败场景下（或显式回看），`read_media` 经 Nest 代理取图，tool result 含 image block，模型能看到像素（pod 侧无外网依赖）。✅ 2026-11-06 生产取证通过（read-media 端点三连探针全绿；生产复测脚本 23/23 PASS）。 |
+| A-9 | M-9：直注失败 → 动态块出现 `read_media` 恢复提示 → agent 调用成功（恢复闭环全链路）。✅ 2026-11-06 生产终验通过（成功侧明示块路径：模型零工具调用直接描述——恢复闭环未触发即最优结果；fail-fast 指路经回归测试钉死）。 |
 
 ### 10.3 回归（必须绿）
 
 - `pnpm --filter @lnkpi/shared test`（`layout` 用例）
 - `services/pi-runtime` 的 `tiering` / `payload-images` / `dynamic-budget` 用例（除 §9 映射新增）
+- 新增/移除工具时同步 `tools/config.test.ts` 三计数断言（当前基线 48/50/48，R4 补：漏改 = CI 红，#737 实证）
+- 新增工具展示登记（R-V11）后 web 侧 A5 门禁通过
 - `render_canvas_view` 既有 SVG 示意用例**不变**（N-3 互补而非替代）
 - `pnpm prompt:lint`（静态规则未动，N-6）
 
@@ -335,7 +341,7 @@ flowchart LR
 
 | 阶段 | 交付 | 前置 | 验收锚点 |
 |---|---|---|---|
-| **Phase 1（Path A + 恢复路径）** | 前端画布序列化 + `capture_canvas_view` + `read_media`（S-7）+ 像素治理 | 无（S-2 本阶段内解决；S-7 依赖 PR #733 已合并） | A-2 / A-3 / A-7 / A-8 |
+| **Phase 1（Path A + 恢复路径）** | 前端画布序列化 + `capture_canvas_view` + `read_media`（S-7）+ 像素治理 | 无（S-2 本阶段内解决；S-7 依赖 PR #733 已合并） | A-2 / A-3 / A-7 / A-8。**进度（R4）：S-7 已完成**（PR #733/#737/#745，A-1/A-8/A-9 生产终验通过 2026-11-06）；**剩余 Path A**（S-2 Spike + S-1 `capture_canvas_view`，A-2/A-3/A-7 待验收） |
 | **Phase 2（Path C）** | `validate_canvas_layout` + `validateCanvasLayout` 纯函数 | Phase 1 像素通路（校验对象来自同一画布状态） | A-6 + §8 单测 |
 | **Phase 3（Path B）** | `save/recall_visual_memory` + 视觉分析 pass | Phase 2 校验（记忆摘要可由校验增强） | A-4 / A-5 |
 
