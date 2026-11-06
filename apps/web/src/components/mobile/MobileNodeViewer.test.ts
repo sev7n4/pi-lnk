@@ -10,6 +10,9 @@ import { fileURLToPath } from 'node:url'
 
 // ⚠️ vitest 是 ESM ⇒ `__dirname` 不可用（仓库既有约定：fileURLToPath(import.meta.url)）
 const HERE = dirname(fileURLToPath(import.meta.url))
+// Task 3：渲染主体已抽到 presentation/NodeViewerView.vue，凡检查「渲染标记 / 样式 /
+// 契约字符串」的源读断言都改读 NodeViewerView.vue（薄壳 MobileNodeViewer 不再含这些）。
+const PRESENTATION = join(HERE, '..', 'agent', 'presentation')
 
 // 播放互斥协调器是模块级单例，用例之间必须清空，避免跨用例 pause 干扰
 afterEach(() => resetAudioPlaybackForTest())
@@ -233,7 +236,7 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
     })
 
     it('容器 overscroll-behavior:none（回归⑤：压浏览器下拉刷新抢手势）', () => {
-      const src = readFileSync(join(HERE, 'MobileNodeViewer.vue'), 'utf8')
+      const src = readFileSync(join(PRESENTATION, 'NodeViewerView.vue'), 'utf8')
       const rootRule = /\.mobile-node-viewer\s*\{([^}]*)\}/.exec(src)?.[1] ?? ''
       expect(rootRule).toMatch(/overscroll-behavior:\s*none/)
     })
@@ -286,7 +289,7 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
     })
 
     it('静态契约：音频波形标注底图分支已随 Q 退役（v1.5 §4.12.8，captureBaseImage 无 audio 分支）', () => {
-      const src = readFileSync(join(HERE, 'MobileNodeViewer.vue'), 'utf-8')
+      const src = readFileSync(join(PRESENTATION, 'NodeViewerView.vue'), 'utf-8')
       expect(src).not.toContain("if (type === 'audio')")
     })
 
@@ -326,7 +329,7 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
     })
 
     it('容器 overscroll-behavior:none（回归⑤：压浏览器下拉刷新抢手势）', () => {
-      const src = readFileSync(join(HERE, 'MobileNodeViewer.vue'), 'utf8')
+      const src = readFileSync(join(PRESENTATION, 'NodeViewerView.vue'), 'utf8')
       const rootRule = /\.mobile-node-viewer\s*\{([^}]*)\}/.exec(src)?.[1] ?? ''
       expect(rootRule).toMatch(/overscroll-behavior:\s*none/)
     })
@@ -439,7 +442,7 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
 
     it('标注态下画布覆盖层独占手势（touch-action: none ⇒ 单指不滚动/缩放）', () => {
       const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'image', data: { url: 'https://x/a.png' } } })
-      const src = readFileSync(join(HERE, 'MobileNodeViewer.vue'), 'utf-8')
+      const src = readFileSync(join(PRESENTATION, 'NodeViewerView.vue'), 'utf-8')
       expect(src).toMatch(/\.viewer-ink\s*\{[^}]*touch-action:\s*none/)
       w.unmount()
     })
@@ -554,7 +557,7 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
     })
 
     it('批注态锁滚动：.viewer-review.is-annotating ⇒ touch-action:none（V-17a）', () => {
-      const src = readFileSync(join(HERE, 'MobileNodeViewer.vue'), 'utf-8')
+      const src = readFileSync(join(PRESENTATION, 'NodeViewerView.vue'), 'utf-8')
       const rule = /\.viewer-review\.is-annotating\s*\{([^}]*)\}/.exec(src)?.[1] ?? ''
       expect(rule).toMatch(/touch-action:\s*none/)
     })

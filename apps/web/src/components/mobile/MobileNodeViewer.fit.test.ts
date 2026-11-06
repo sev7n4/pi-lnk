@@ -4,7 +4,9 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-const SRC = readFileSync(join(HERE, 'MobileNodeViewer.vue'), 'utf8')
+// Task 3：渲染主体（含 <style scoped> 与 .mobile-node-viewer / .viewer-media 等规则）
+// 已抽到 presentation/NodeViewerView.vue，故样式源读断言改读该文件。
+const SRC = readFileSync(join(HERE, '..', 'agent', 'presentation', 'NodeViewerView.vue'), 'utf8')
 
 function styleBlock(src: string): string {
   const m = /<style scoped>([\s\S]*?)<\/style>/.exec(src)

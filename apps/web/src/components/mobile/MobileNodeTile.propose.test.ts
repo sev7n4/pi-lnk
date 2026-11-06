@@ -7,6 +7,9 @@ import NodeRenderer from '@/components/canvas/NodeRenderer.vue'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const TILE = readFileSync(join(HERE, 'MobileNodeTile.vue'), 'utf8')
+// 共享渲染组件（行为/样式真实出处）：MobileNodeTile 仅是手势壳，
+// 样式纪律与「被动 <p>」契约必须落到真实渲染的 NodeTileView 上才算数。
+const SHARED = readFileSync(join(HERE, '../agent/presentation/NodeTileView.vue'), 'utf8')
 
 function setMobile(on: boolean) {
   window.matchMedia = vi.fn().mockImplementation((q: string) => ({
@@ -112,14 +115,18 @@ describe('R4-T1 提议内容上瓦片', () => {
     expect(TILE).toMatch(/imageAspect\?: string/)
   })
 
-  it('样式纪律：新增样式只用 --lnk-* 令牌（无裸 hex / rgba）', () => {
-    const block = /<style scoped>([\s\S]*?)<\/style>/.exec(TILE)?.[1] ?? ''
-    const lines = block
-      .split('\n')
-      .filter((l) => l.includes('mobile-node-params') || l.includes('mobile-node-pending'))
-      .join('\n')
-    expect(lines).not.toMatch(/#[0-9a-fA-F]{3,8}/)
-    expect(lines).not.toMatch(/rgba?\(/)
+  it('样式纪律：NodeTileView 真实样式只用 --lnk-* 令牌（无裸 hex / rgba）', () => {
+    // ⚠️ 必须读 NodeTileView（真实渲染出处），而非手势壳 MobileNodeTile。
+    // 壳的 <style scoped> 没有 mobile-node-params 选择器，读壳会让匹配恒为空 → 空洞。
+    // ⚠️ 必须抓「整段规则体」（含花括号），不能只扫选择器那一行 ——
+    //   否则属性行上的裸色（如 color:#fff）会被逐行 filter 漏掉，断言名存实亡。
+    const block = /<style scoped>([\s\S]*?)<\/style>/.exec(SHARED)?.[1] ?? ''
+    const rules =
+      [...block.matchAll(/\.mobile-node-params\s*\{[\s\S]*?\}/g)].map((m) => m[0])
+    expect(rules, '应能在 NodeTileView 的 scoped 样式中找到 .mobile-node-params 规则').toHaveLength(1)
+    const body = rules.join('\n')
+    expect(body).not.toMatch(/#[0-9a-fA-F]{3,8}/)
+    expect(body).not.toMatch(/rgba?\(/)
   })
 
   it('§16-④ 长提示词（>80 字）→ 显示「点按查看全文」引导（短提示词不显示）', () => {
@@ -133,7 +140,9 @@ describe('R4-T1 提议内容上瓦片', () => {
   })
 
   it('§16-④ 引导行是被动提示（磁贴内不挂按钮——tap 手势归页面级单一出处）', () => {
-    const src = TILE.replace(/<!--[\s\S]*?-->/g, '')
+    // ⚠️ 必须读 NodeTileView（真实渲染出处）。壳里只有 JS 注释锚点，
+    // 读壳会让正则匹配注释而非真实标记 → 空洞断言。
+    const src = SHARED.replace(/<!--[\s\S]*?-->/g, '')
     const hintTag = /<p[^>]*mobile-node-propose-hint[^>]*>/.exec(src)?.[0] ?? ''
     expect(hintTag, '引导行应为 p 被动提示且带 testid').toContain(
       'data-testid="mobile-node-propose-hint"',
