@@ -631,7 +631,7 @@ describe('z-index 语义阶梯消费（§13.2）', () => {
   const consumers: Array<[string, string, RegExp]> = [
     ['components/mobile/MobileTopBar.vue', 'chrome', /z-index:\s*var\(--lnk-z-chrome\)/],
     ['components/canvas/WorkspaceTopBar.vue', 'chrome', /z-index:\s*var\(--lnk-z-chrome\)/],
-    ['components/mobile/MobileNodeViewer.vue', 'overlay', /z-index:\s*var\(--lnk-z-overlay\)/],
+    ['components/agent/presentation/NodeViewerView.vue', 'overlay', /z-index:\s*var\(--lnk-z-overlay\)/],
     ['components/mobile/MobileSheet.vue', 'modal', /z-index:\s*var\(--lnk-z-modal\)/],
   ]
   it('全屏竞争层四文件必须消费 z 令牌，不得回写裸数字', () => {
@@ -641,8 +641,8 @@ describe('z-index 语义阶梯消费（§13.2）', () => {
     }
   })
 
-  it('MobileNodeViewer 根元素必须 Teleport 到 body（§13.2/B3：脱离 shell 祖先 stacking context）', () => {
-    const src = readFileSync(join(HERE, '..', 'components/mobile/MobileNodeViewer.vue'), 'utf8')
+  it('NodeViewerView 根元素必须 Teleport 到 body（§13.2/B3：脱离 shell 祖先 stacking context）', () => {
+    const src = readFileSync(join(HERE, '..', 'components/agent/presentation/NodeViewerView.vue'), 'utf8')
     const tpl = src.slice(src.indexOf('<template>'), src.indexOf('</template>'))
     expect(tpl).toMatch(/<Teleport to="body">/)
     // 有效性配对：viewer 根 testid 必须在 Teleport 内部（防"加了 Teleport 但包错层"）

@@ -29,10 +29,12 @@ describe('移动端新建流闭环', () => {
   })
 
   it('编辑器入口改由空瓦片承担：CTA 文案 + tap 空节点路由（替代 auto-open）', () => {
-    // 空瓦片有明确的行动提示（MobileNodeTile 的 emptyCtaLabel），tap 空节点
+    // 空瓦片有明确的行动提示（NodeTileView 的 emptyCtaLabel；MobileNodeTile 已重构为
+    // 薄壳，渲染整体上移至共享组件 NodeTileView），tap 空节点
     // 经 mobileNodeOpenPolicy 的 empty 行路由到编辑 sheet。
+    // ⚠️ 源读断言须指向真实渲染归属地 NodeTileView（Ruling 3：禁止在薄壳上做空洞断言）。
     const tile = readFileSync(
-      join(HERE, '..', 'components', 'mobile', 'MobileNodeTile.vue'),
+      join(HERE, '..', 'components', 'agent', 'presentation', 'NodeTileView.vue'),
       'utf8',
     )
     expect(tile).toContain('emptyCtaLabel')
