@@ -66,3 +66,18 @@ export function buildImageRecoveryHint(attachments?: SidebarBlockInput[]): strin
 	if (!keys.length) return "";
 	return `\n【原图恢复】本轮图片未能以像素注入上下文。可调用 read_media(ref:"${keys[0]}") 查看原图（本轮图片标记：${keys.join(", ")}）。`;
 }
+
+/**
+ * VISP 2026-11-06 生产事故：直注**成功**时的明示块（R-V10 动态块，不吃 L6 预算）。
+ *
+ * 事故实证：直注成功（image part 已进 prompt、无降级占位、上游网关收图正常），
+ * 但模型仍按「侧栏参考块给了 I1=url」的文本线索去调 view_canvas_media(url) 取图
+ * ——pod 直 fetch uploads 绝对 URL 撞 hairpin 死路 → 报告「图片加载失败」。
+ * 弱视觉注意力的模型不会主动意识到「图就在我的 context 里」，需要一句话点破，
+ * 并把重读入口（read_media）一并给出，避免它临时找工具时选错。
+ */
+export function buildImageInjectedNotice(attachments?: SidebarBlockInput[]): string {
+	const keys = imageSidebarRefKeys(attachments ?? []);
+	if (!keys.length) return "";
+	return `\n【原图已注入】本轮 ${keys.length} 张图片（${keys.join(", ")}）已作为图像像素随用户消息注入，请直接查看并描述，无需调用任何取图工具。若确实看不清，可调用 read_media(ref:"${keys[0]}") 重新读取原图。`;
+}
