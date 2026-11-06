@@ -4,6 +4,7 @@
 修订：**R2/R3**（2026-11-05）——R2：基于生产事故取证 + 上游 **0.99.2**（实际部署版本，非 vendor 镜像 0.85.1）源码实证回写：修正「用户图直注现状已有」的错误结论（N-4 / R-V1 / 关键澄清 / M-1 / A-1）；新增 S-7 `read_media` 恢复工具；新增 §12.1 上游基线与升级红利。R3：自审修补——S-2 触发通道（Nest→web 事件 + 关联 id 回执）定为硬前置 Spike；澄清 R-V3 预设降级 vs R-V1 故障静默边界；新增 R-V9（取图工具分工）/ R-V10（分层与 L6 预算纪律）；补 M-9 / A-9 恢复闭环场景与 `read_media` 单测要求。
 修订：**R4**（2026-11-06，实施回写）——Phase 1a（S-7 + PR #733/#737/#745）已上线：A-1/A-9 生产终验通过（会话 cmw4jld86，直注成功 + 模型零工具调用直接描述）。据此回写：R-V9 升级为运行时强制（`view_canvas_media` 对 uploads 引用 fail-fast 指路）；S-7/M-9 恢复闭环补**成功侧明示块**（`buildImageInjectedNotice`，终验实证的决定性引导）；§9 文件清单对齐实际落点（Nest `read-media.ts` 独立模块 + internal guard；shared `sidebarAttachments.ts`）；新增 R-V11（web 侧展示注册硬前置，#737 CI 实证遗漏）；§10 补工具计数断言同步；§12 标注进度。
 修订：**R5**（2026-11-06，Phase 2 实施适配）——S-4 实施发现两处规格假设与仓库纪律冲突，据实适配：① pi-runtime **刻意不依赖 `@lnkpi/shared`**（independence.test.ts 物理锁 + 镜像构建链约束）⇒ `validateCanvasLayout` SSOT 仍落 shared（§8 不变），工具侧**镜像实现** `validateCanvasLayoutLocal`，parity 由 contract-mirror 同源 fixture 测试锁（canvas-group `GROUP_COLOR_KEYS` / read-media `resolveSidebarRefLocal` 先例）；② 画布是**无限画布范式**（`get-canvas-layout` 不返回全局边界）⇒ §8 `ValidateInput.canvas` 改为**可选**——不传则不判 OVERFLOW（R-V8 不编造边界），工具首版不传边界 ⇒ 运行时报告类型为 OVERLAP/MIN_SPACING，OVERFLOW 由纯函数单测钉住待前端边界接线后启用。
+修订：**R6**（2026-11-06，Phase 2b 防线分层回写）——Phase 2 Path C 已上线（PR #748，master `ad650fd3`），**A-6 生产验收 FAIL**（会话 cmw4jld86 20:14-20:21 实证：用户三轮问「没重叠吧」，模型全程零调用 `validate_canvas_layout`——第 1 轮猜了不存在的 `get_canvas_layout` 吃 vendor 硬编码 unavailable 无恢复路径，第 2 轮纯凭印象自述「无重叠」；注册面无问题，缺的是**决策时刻的引导**）。据此新增 **R-V12 防线三层模型**（详见 §4.5）：L1 落位层（`placeBatchNodes` 碰撞感知已有）/ L2 结果内联报告层（`create_nodes_batch` 落地即读回校验已实施，PR #749）/ L3 引导面（`arrange_nodes` 结果 hint + validate 中文触发词已实施，PR #749）。残余待办见 §12 Phase 2b。
 代号：**VISP**
 前置：
 - [`2026-10-06-selection-as-default-reference-design.md`](./2026-10-06-selection-as-default-reference-design.md)（SEL-REF，R-S8「回执由确定性 UI、不靠模型自述」是本规格 Path C 的同构约束）
@@ -145,6 +146,7 @@ flowchart TD
 | **R-V9** | **两个取图工具的分工（R3 新增；R4 升级为运行时强制）**：`view_canvas_media` 面向**画布节点产物**（node_id/url，既有契约不动）；`read_media` 面向**用户附件与恢复路径**（`I{n}` 标记/uploads 引用）。二者不合并、不互相替代；`read_media` 不接受画布节点引用（节点走 `view_canvas_media`），避免语义重叠。**运行时强制（R4，PR #745）**：`view_canvas_media` 以 `isUploadsRefUrl` 检测 `/api/uploads/` 引用（绝对/相对形态均匹配）→ 零网络请求直接返回 `{ok:false, error:"…请改用 read_media(ref:…)", redirect:"read_media"}`；工具描述同步收敛（删除 "sidebar attachment" 引导语），使 uploads 引用只可能到达 `read_media`。生产事故实证：旧描述的 "url (e.g. from a sidebar attachment)" 会主动把模型引向错误工具 + hairpin 死路。 |
 | **R-V10** | **新工具的分层与预算纪律（R3 新增）**：本规格 5 个新工具全部 tier=present（**不进延迟集**，规避「哪个资产点名了它」判据——未点名工具进延迟集即不可达）；**不新增静态规则文案**（L6 预算余量仅 68 字符，见 AGENTS.md 变更影响面矩阵），恢复提示等引导语一律走动态块；若未来需要在 prompt 规则中点名，必须走 6 处同步 + `pnpm prompt:lint` 预算检查。 |
 | **R-V11** | **新增常驻工具必须登记 web 侧展示注册（R4 新增，#737 CI 实证遗漏）**：每个新工具必须在 `apps/web/src/components/agent/toolPresentation.ts` 登记展示项（icon + verb 人话），否则 agent 执行时间线对该工具**零显示**（用户看不到调用发生）。同时必须同步 `services/pi-runtime/src/tools/config.test.ts` 的三计数断言（工具计数 48/50/48，每 +1 工具 ×3）。剩余 4 个工具（`capture_canvas_view` / `validate_canvas_layout` / `save_visual_memory` / `recall_visual_memory`）均适用。 |
+| **R-V12** | **布局防重叠的三层防线（R6 新增，A-6 生产 FAIL 实证驱动）**：「确保不重叠」**不依赖模型自觉调校验工具**（生产实证三轮全跳过），按层收口——**L1 落位层**：`placeBatchNodes`（shared/layout.ts）创建落位本就碰撞感知（24 次重试取最小重叠候选，fail-open 不阻塞创建）；**L2 结果内联报告层**：`create_nodes_batch` 成功后服务端同步落库 ⇒ 即刻读回 `get-canvas-layout` 跑 `validateCanvasLayoutLocal`，`validation` 摘要（`checked`/`violations`≤10/`truncated`/`summary`）内联进结果 payload，读回失败 fail-soft 不阻塞创建、不编造报告（R-V8）；**`arrange_nodes` 刻意不做内联读回**——canvasCommands 是单向异步命令，即刻读回拿到的是重排前状态，报告会误导 ⇒ 以结果 `hint` 指路代替（#745 `buildImageInjectedNotice`「决策时刻递条」同款模式）；**L3 引导面**：`validate_canvas_layout` 描述补中文触发场景（用户问重叠/间距/越界或准备主张布局结论时必须先调）+ `arrange_nodes` 结果 hint（PR #749）。L2/L3 残余待办见 §12 Phase 2b。 |
 | **R-V4** | **Path B 只存派生摘要，不存裸像素进上下文**：`recall_visual_memory` 回传摘要文本 + 缩略图引用，裸图不进上下文（Chronicle 式，控制成本 + 可检索）。 |
 | **R-V5** | **Path B 作用域受限**：仅画布产物与用户显式选定的参考图；**禁止**环境截屏/后台录屏（N-1）。 |
 | **R-V6** | **Path C 是事实源**：任何视觉自述/改动后，违规判定以 `validate_canvas_layout` 确定性报告为准，模型**可表达**但不能**担保**（同 R-S8）。 |
@@ -305,7 +307,7 @@ export function validateCanvasLayout(input: ValidateInput): LayoutViolation[]
 | A-3 | M-3：大画布查看，token 占用在预算内（降采样 + payload 治理生效）。 |
 | A-4 | M-4：`recall_visual_memory` 回传摘要文本，裸像素不进上下文（R-V4）。 |
 | A-5 | M-5：显式保存参考图记忆，作用域正确，无录屏（R-V5）。 |
-| A-6 | M-6：`validate_canvas_layout` 检出的重叠，模型自述被纠正（R-V6）。 |
+| A-6 | M-6：`validate_canvas_layout` 检出的重叠，模型自述被纠正（R-V6）。⚠️ **2026-11-06 20:14-20:21 生产首验 FAIL**（会话 cmw4jld86：用户三轮问「没重叠吧」，模型零调用本工具——第 1 轮猜了不存在的 `get_canvas_layout` 吃 vendor unavailable 无恢复路径，第 2 轮纯凭印象自述「无重叠」；详见 R-V12）→ R6 修复（PR #749：create 内联校验 + 引导面）⏳ 待部署复测。 |
 | A-7 | M-7：序列化失败返回错误、退化为 SVG 示意（R-V8）。 |
 | A-8 | S-7：直注失败场景下（或显式回看），`read_media` 经 Nest 代理取图，tool result 含 image block，模型能看到像素（pod 侧无外网依赖）。✅ 2026-11-06 生产取证通过（read-media 端点三连探针全绿；生产复测脚本 23/23 PASS）。 |
 | A-9 | M-9：直注失败 → 动态块出现 `read_media` 恢复提示 → agent 调用成功（恢复闭环全链路）。✅ 2026-11-06 生产终验通过（成功侧明示块路径：模型零工具调用直接描述——恢复闭环未触发即最优结果；fail-fast 指路经回归测试钉死）。 |
@@ -314,7 +316,7 @@ export function validateCanvasLayout(input: ValidateInput): LayoutViolation[]
 
 - `pnpm --filter @lnkpi/shared test`（`layout` 用例）
 - `services/pi-runtime` 的 `tiering` / `payload-images` / `dynamic-budget` 用例（除 §9 映射新增）
-- 新增/移除工具时同步 `tools/config.test.ts` 三计数断言（当前基线 48/50/48，R4 补：漏改 = CI 红，#737 实证）
+- 新增/移除工具时同步 `tools/config.test.ts` 三计数断言（当前基线 **49/51/49**，R6 修正——#748 起含 `validate_canvas_layout`；漏改 = CI 红，#737 实证）
 - 新增工具展示登记（R-V11）后 web 侧 A5 门禁通过
 - `render_canvas_view` 既有 SVG 示意用例**不变**（N-3 互补而非替代）
 - `pnpm prompt:lint`（静态规则未动，N-6）
@@ -348,7 +350,8 @@ flowchart LR
 | 阶段 | 交付 | 前置 | 验收锚点 |
 |---|---|---|---|
 | **Phase 1（Path A + 恢复路径）** | 前端画布序列化 + `capture_canvas_view` + `read_media`（S-7）+ 像素治理 | 无（S-2 本阶段内解决；S-7 依赖 PR #733 已合并） | A-2 / A-3 / A-7 / A-8。**进度（R4）：S-7 已完成**（PR #733/#737/#745，A-1/A-8/A-9 生产终验通过 2026-11-06）；**剩余 Path A**（S-2 Spike + S-1 `capture_canvas_view`，A-2/A-3/A-7 待验收） |
-| **Phase 2（Path C）** | `validate_canvas_layout` + `validateCanvasLayout` 纯函数 | Phase 1 像素通路（校验对象来自同一画布状态） | A-6 + §8 单测。**进度（R5）：已实施**（2026-11-06，SSOT shared + 工具镜像 + contract-mirror 锁 + tiering/registry/toolPresentation 接线；⏳ 待合并部署 + A-6 真机验收） |
+| **Phase 2（Path C）** | `validate_canvas_layout` + `validateCanvasLayout` 纯函数 | Phase 1 像素通路（校验对象来自同一画布状态） | A-6 + §8 单测。**进度（R6）：已上线**（PR #748，master `ad650fd3`，2026-11-06；A-6 生产首验 FAIL → 修复进 Phase 2b） |
+| **Phase 2b（防线分层，R6）** | **已实施**：L2 `create_nodes_batch` 内联校验 + L3 引导面（PR #749）。**待做**：① propose 卡布局角标（web applier 应用后本地跑 shared 纯函数，确认前可见）；② 生成 finalize 再校验 + Digest「布局告警」tile（媒体真实尺寸落地后节点盒变化是重叠大头）；③ `placeBatchNodes` 残余重叠显式化（24 次后仍有残余时写进返回值）；④ `validate_canvas_layout` 加 `node_ids` 子集参数（聚焦新节点 vs 邻居）；⑤ 用户拖拽后前端防抖校验角标（web 直用 `@lnkpi/shared`，不经 agent 工具） | PR #749（runtime 部分）；① ⑤ 为 web 侧、② 为 Nest+digest 侧 | A-6 复测（模型行为级）+ 内联校验单测（已绿 651/651） |
 | **Phase 3（Path B）** | `save/recall_visual_memory` + 视觉分析 pass | Phase 2 校验（记忆摘要可由校验增强） | A-4 / A-5 |
 
 ### 12.1 上游基线核验（0.99.2 实证）与升级红利（R2 新增）

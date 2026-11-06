@@ -165,6 +165,15 @@ export function createArrangeNodesTools(client?: NestClient): LnkpiTool[] {
 			let degraded: ArrangeDegradedReason | undefined;
 			let edges: ArrangeEdge[] | undefined = mode === "along_edges" ? p.edges : undefined;
 
+			// A-6 指路条（2026-11-06 生产实证，会话 cmw4jld86）：模型凭 verified:true
+			// 自述「无重叠」，全程未调 validate_canvas_layout。verified 只是 id 存在性
+			// 与落位自检，不含重叠/间距担保 ⇒ 在决策时刻的结果里当场指路（#745
+			// buildImageInjectedNotice 明示块同款模式）。无 client 保持逐字节旧行为。
+			const hint =
+				client && tc?.sessionId
+					? "hint: verified 仅代表节点 id 存在性与落位自检，不含重叠/间距担保。向用户主张「无重叠」「排列整齐」等布局结论前，先调用 validate_canvas_layout 取确定性报告（报告为准，不凭印象）。"
+					: undefined;
+
 			if (client && tc?.sessionId) {
 				try {
 					const layout = (await client.post("/agent/internal/get-canvas-layout", {
@@ -220,7 +229,15 @@ export function createArrangeNodesTools(client?: NestClient): LnkpiTool[] {
 			// 事件层只出 `tool="arrange_nodes"`。mode 分布改由工具结果里的 `details.mode` 观测。
 
 			return uiResult(
-				{ mode, gap, arranged: nodeIds.length - missing.length, missing, degraded, verified },
+				{
+					mode,
+					gap,
+					arranged: nodeIds.length - missing.length,
+					missing,
+					degraded,
+					verified,
+					...(hint ? { hint } : {}),
+				},
 				[{
 					type: "arrange_nodes",
 					nodeIds,

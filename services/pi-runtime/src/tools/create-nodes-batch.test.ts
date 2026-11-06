@@ -136,7 +136,10 @@ test("create_nodes_batch：4 项白名单类型 → 放行", async () => {
 		undefined as never,
 		undefined as never,
 	);
-	assert.equal(calls.length, 1);
+	// 2026-11-06 L2 内联校验：创建请求 + 落地后布局读回（fail-soft），共 2 次
+	assert.equal(calls.length, 2);
+	assert.equal(calls[0]!.path, "/agent/internal/add-nodes-batch");
+	assert.equal(calls[1]!.path, "/agent/internal/get-canvas-layout");
 });
 
 test("create_nodes_batch：toolContext 缺 sessionId → fail-closed（不达 Nest）", async () => {
