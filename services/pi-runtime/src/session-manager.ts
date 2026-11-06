@@ -729,7 +729,14 @@ export function appendPromptBlocks(base: string, blocks: readonly string[]): str
 	return parts.join("\n\n");
 }
 
-/** 会话身份：BYOK 时 provider 为 `byok-<12hex>`（providerRef 哈希），平台时为 `agnes`。 */
+/**
+ * 会话身份。provider 二态（model-assembly.assembleModel）：
+ * - Nest 注入 llm override（现状所有会话都发）→ `byok-<12hex>` = sha1(providerRef) 前 12 位，
+ *   **platform 渠道同形**（`platform::agnes-2.5-flash` → byok-ea8288a2e48b）——`byok-` 前缀只是
+ *   「会话注入渠道」的命名空间，不代表用户自带 key（平台 key/baseUrl 同样走这条路）。
+ *   判渠道真源 = 反算 sha1(providerRef)，别按前缀望文生义。
+ * - llm 缺省（旧客户端兼容路径）→ env 装配的内置 `agnes`（AGNES_API_KEY / AGNES_BASE_URL）。
+ */
 export interface LlmIdentity {
 	provider: string;
 	model: string;
