@@ -204,3 +204,44 @@ const here = dirname(fileURLToPath(import.meta.url))
 function readSelf(): string {
   return readFileSync(join(here, 'AgentTurnTimeline.vue'), 'utf8')
 }
+
+// ── 2026-11-06：文本/HTML/总览 tile 分叉（规格 #636 §4.7 + E2-a D-d）───────
+describe('AgentTurnTimeline — 交付条文本系产物可区分', () => {
+  it('纯文本 ⇒ 文档图标 + 左下「文本」小字，无 HTML/总览图标', async () => {
+    const w = mountTimeline([artifact({ nodeId: 't1', nodeType: 'text', title: '文案' })], {
+      nodes: [canvasNode('t1', 'text', { content: '一段文案' })],
+    })
+    await w.find('[data-test="delivery-toggle"]').trigger('click')
+    const tile = w.find('[data-test="delivery-tile-t1"]')
+    expect(tile.exists()).toBe(true)
+    expect(tile.find('[data-testid="delivery-tile-icon-html"]').exists()).toBe(false)
+    expect(tile.find('[data-testid="delivery-tile-type"]').text()).toBe('文本')
+    w.unmount()
+  })
+
+  it('format:html ⇒ 代码图标 + 左下「HTML」小字（入口即可预期沙箱预览）', async () => {
+    const w = mountTimeline([artifact({ nodeId: 't1', nodeType: 'text', title: '落地页' })], {
+      nodes: [canvasNode('t1', 'text', { format: 'html', content: '<html><title>落地页</title></html>' })],
+    })
+    await w.find('[data-test="delivery-toggle"]').trigger('click')
+    const tile = w.find('[data-test="delivery-tile-t1"]')
+    expect(tile.find('[data-testid="delivery-tile-icon-html"]').exists()).toBe(true)
+    expect(tile.find('[data-testid="delivery-tile-type"]').text()).toBe('HTML')
+    w.unmount()
+  })
+
+  it('digest 系统产物 ⇒ 网格图标 + 「总览」小字，不与 agent HTML 混用', async () => {
+    const w = mountTimeline([artifact({ nodeId: 'n1', url: 'https://x/a.png' })], {
+      nodes: [
+        canvasNode('n1', 'image', { url: 'https://x/a.png' }),
+        canvasNode('d1', 'text', { digest: true, format: 'html', source: 'system-digest' }),
+      ],
+    })
+    await w.find('[data-test="delivery-toggle"]').trigger('click')
+    const tile = w.find('[data-test="delivery-tile-d1"]')
+    expect(tile.exists()).toBe(true)
+    expect(tile.find('[data-testid="delivery-tile-icon-digest"]').exists()).toBe(true)
+    expect(tile.find('[data-testid="delivery-tile-type"]').text()).toBe('总览')
+    w.unmount()
+  })
+})

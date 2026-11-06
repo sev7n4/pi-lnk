@@ -31,7 +31,7 @@ import {
 import { resolveModelDisplayName } from '@/utils/model-display'
 import { tuneSheetOpen, tuneNodeId, openProposeTuneSheet } from './proposeWaitActions'
 import { CANVAS_NODE_CANCEL_KEY, isViewableNodeType, MOBILE_NODE_OPEN_VIEWER_KEY } from '@/composables/canvasNodeActions'
-import { deliveryCountLabel, hasRunningGeneration, turnDeliveryItems } from '@/components/agent/deliverySummary'
+import { deliveryCountLabel, hasRunningGeneration, turnDeliveryItems, type DeliveryItem } from '@/components/agent/deliverySummary'
 import { observeDeliveryCard } from '@/components/agent/deliveryMetrics'
 import ProposeTuneSheet from './ProposeTuneSheet.vue'
 
@@ -262,6 +262,21 @@ function deliveryDurationLabel(nodeId: string): string {
   const min = Math.floor(totalSec / 60)
   const sec = totalSec % 60
   return min > 0 ? `${min}:${String(sec).padStart(2, '0')}` : `0:${String(sec).padStart(2, '0')}`
+}
+
+/**
+ * D-d 左下类型小字（2026-11-06 补齐）：tile 只按 nodeType 分图标时，
+ * 纯文本 / HTML 产物 / 画布总览三者共用同一文档图标、点开后却分别是
+ * 阅读器与沙箱预览，入口零提示。这里按 format / digest 派生可读类型名。
+ * ⚠️ 纯派生自 DeliveryItem，不读节点正文、不做内容嗅探（文本节点规格 §4.2）。
+ */
+function deliveryTypeLabel(item: DeliveryItem): string {
+  if (item.digest) return '总览'
+  if (item.nodeType === 'text') return item.format === 'html' ? 'HTML' : '文本'
+  if (item.nodeType === 'audio') return '音频'
+  if (item.nodeType === 'video') return '视频'
+  if (item.nodeType === 'image') return '图片'
+  return ''
 }
 
 /** tile 缩略图地址：复用 artifactUrl（part.url 优先、resolveNodeUrl 兜底）。 */
@@ -823,6 +838,32 @@ const rootClass = computed(() =>
               stroke-linecap="round"
               aria-hidden="true"
             ><path d="M4 12v0M8 8v8M12 5v14M16 9v6M20 11v2" /></svg>
+            <!-- HTML 产物换网页/代码图标：与纯文本文档图标分叉（文本节点规格 §4.7 的入口提示） -->
+            <svg
+              v-else-if="item.nodeType === 'text' && item.format === 'html' && !item.digest"
+              class="tile-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              data-testid="delivery-tile-icon-html"
+            ><path d="m8 8-4 4 4 4M16 8l4 4-4 4M14 5l-4 14" /></svg>
+            <!-- 画布总览：系统产物单独一枚网格图标 -->
+            <svg
+              v-else-if="item.nodeType === 'text' && item.digest"
+              class="tile-icon"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+              data-testid="delivery-tile-icon-digest"
+            ><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></svg>
             <svg
               v-else-if="item.nodeType === 'text'"
               class="tile-icon"
@@ -845,6 +886,8 @@ const rootClass = computed(() =>
               stroke-linejoin="round"
               aria-hidden="true"
             ><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="1.6" /><path d="M4.5 18.5 10 13l4 4 2.5-2.5 3 3" /></svg>
+            <!-- D-d 左下类型小字：与右下时长徽标对称，补齐规格未落项 -->
+            <span v-if="deliveryTypeLabel(item)" class="tile-type" data-testid="delivery-tile-type">{{ deliveryTypeLabel(item) }}</span>
             <span v-if="deliveryDurationLabel(item.nodeId)" class="duration">{{ deliveryDurationLabel(item.nodeId) }}</span>
           </button>
           <button
@@ -1314,6 +1357,17 @@ const rootClass = computed(() =>
 .delivery-tile .duration {
   position: absolute;
   right: 4px;
+  bottom: 3px;
+  padding: 0 3px;
+  border-radius: 4px;
+  background: var(--lnk-hi-bg);
+  font-size: 10px;
+  color: var(--lnk-hi-text);
+}
+/* D-d 左下类型小字：与右下时长徽标对称，令牌同源（禁硬编码色） */
+.delivery-tile .tile-type {
+  position: absolute;
+  left: 4px;
   bottom: 3px;
   padding: 0 3px;
   border-radius: 4px;

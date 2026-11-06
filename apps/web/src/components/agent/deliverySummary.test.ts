@@ -131,7 +131,9 @@ describe('turnDeliveryItems — digest tile 派生（spec 2026-11-05-canvas-dige
       digestNode,
     ])
     expect(items.length).toBe(2)
-    expect(items[1]).toEqual({ nodeId: 'd1', nodeType: 'text', title: '画布总览', digest: true })
+    // 2026-11-06：digest 节点本体是 format:'html' 的系统产物 ⇒ tile 带格式标签，
+    // 让交付条能用专用图标/「总览」小字与 agent HTML 产物、纯文本区分。
+    expect(items[1]).toEqual({ nodeId: 'd1', nodeType: 'text', title: '画布总览', digest: true, format: 'html' })
   })
 
   it('无 digest 节点 ⇒ 不含总览 tile', () => {
@@ -149,5 +151,45 @@ describe('turnDeliveryItems — digest tile 派生（spec 2026-11-05-canvas-dige
     const tl = feed([addNode('n1'), status('n1', 'done', 'https://x/a.png')])
     const items = turnDeliveryItems(tl.parts, [{ id: 'n1', data: {} as Record<string, unknown> }])
     expect(items.some((it) => it.digest)).toBe(false)
+  })
+})
+
+// ── 2026-11-06：文本/HTML 产物显示区分（规格 #636 §4.7 / E2-a D-d）──────────
+describe('turnDeliveryItems — 文本系 format 纯派生', () => {
+  it('canvasNodes 里 text 节点显式 format:html ⇒ item.format === html', () => {
+    const tl = feed([addNode('t1', 'text', '落地页'), status('t1', 'done')])
+    const items = turnDeliveryItems(tl.parts, [
+      { id: 't1', data: { content: '<!DOCTYPE html><title>落地页</title>', format: 'html' } },
+    ])
+    expect(items).toEqual([
+      { nodeId: 't1', nodeType: 'text', title: '落地页', format: 'html' },
+    ])
+  })
+
+  it('纯文本 / 非法 format ⇒ 不写字段（fail-soft 降级 plain，历史派生结果不变）', () => {
+    const tl = feed([addNode('t1', 'text', '文案'), status('t1', 'done')])
+    const plain = turnDeliveryItems(tl.parts, [{ id: 't1', data: { content: '一段文案' } }])
+    expect(plain).toEqual([{ nodeId: 't1', nodeType: 'text', title: '文案' }])
+    const bogus = turnDeliveryItems(tl.parts, [{ id: 't1', data: { format: 'jsx' } }])
+    expect(bogus).toEqual([{ nodeId: 't1', nodeType: 'text', title: '文案' }])
+  })
+
+  it('⛔ 不做内容嗅探：content 长得像 HTML 但未标 format ⇒ 仍按纯文本', () => {
+    const tl = feed([addNode('t1', 'text', '文案'), status('t1', 'done')])
+    const items = turnDeliveryItems(tl.parts, [
+      { id: 't1', data: { content: '<html><body>hi</body></html>' } },
+    ])
+    expect(items[0]?.format).toBeUndefined()
+  })
+
+  it('⛔ 非文本节点即便 data.format 恰好是 html 也不写字段（容器格式不是产物格式）', () => {
+    const tl = feed([addNode('i1', 'image', '配图'), status('i1', 'done', 'https://x/a.png')])
+    const items = turnDeliveryItems(tl.parts, [{ id: 'i1', data: { format: 'html' } }])
+    expect(items[0]).toEqual({ nodeId: 'i1', nodeType: 'image', title: '配图' })
+  })
+
+  it('canvasNodes null（未知态）⇒ 不派生 format，保守显示', () => {
+    const tl = feed([addNode('t1', 'text', '文案'), status('t1', 'done')])
+    expect(turnDeliveryItems(tl.parts, null)[0]?.format).toBeUndefined()
   })
 })

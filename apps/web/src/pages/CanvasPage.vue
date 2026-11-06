@@ -35,6 +35,7 @@ import { shouldBlockCanvasOverwrite, type CanvasLoadState } from './canvas/canva
 import { createViewportRestorer, createViewportTracker } from '@/composables/useCanvasViewport'
 import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
 import { annotateEdgesForSelection } from '@/utils/edgeHighlight'
+import { isValidCanvasConnection } from '@/utils/canvasEdgeValidation'
 import { useGenerationPolling, parseRecordText, parseRecordUrl, parseRecordUrls, parseRecordLastFrameUrl, type GenerationPollTask } from '@/composables/useGenerationPolling'
 import { buildNodeMediaInfoSummary, useMediaInspector } from '@/composables/useMediaInspector'
 import { useGenerationFailureToast, shouldToastForFailure } from '@/composables/useGenerationFailureToast'
@@ -1500,15 +1501,16 @@ const nodeTypes = {
 
 /**
  * SP-D（ADR-0014）：连线前的廉价本地拦截（拖线时即时反馈）。
- * 只拦「确定非法」的两类：自环 + 本地已存在的同向对；
- * 环检测不在前端做（前端不知远端完整图，实时判环必误拦/漏拦）——以服务端为权威。
+ * 判据单一真源 = `utils/canvasEdgeValidation.ts`。
+ *
+ * ⭐ 2026-11-06：VueFlow 1.48 会把本函数同时用于 `setEdges()` 批量加载的已有边
+ * （`createGraphEdges` 逐条调用 `state.isValidConnection`）。旧实现只判「同向对已
+ * 存在 ⇒ false」，导致加载时每条边都匹配到自己被判 EDGE_INVALID 全量丢弃 ⇒ 双端
+ * 零连线。真源按对象形态区分：批量回放的 `Edge`（带 id 键）放行，拖拽的
+ * `Connection`（无 id 键）仍拦自环与重复；不依赖 id 值，避免历史脏数据再次踩坑。
  */
-function isValidConnection(connection: Connection | null): boolean {
-  if (!connection?.source || !connection.target) return false
-  if (connection.source === connection.target) return false
-  return !edges.value.some(
-    (e) => e.source === connection.source && e.target === connection.target,
-  )
+function isValidConnection(connection: Connection | Edge | null): boolean {
+  return isValidCanvasConnection(connection, edges.value)
 }
 
 async function onConnect(connection: Connection) {
