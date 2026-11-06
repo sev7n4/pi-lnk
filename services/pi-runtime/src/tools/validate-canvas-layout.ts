@@ -138,6 +138,8 @@ export function buildValidateCanvasLayoutTools(client: NestClient): LnkpiTool[] 
 				"severity is computed by geometric rules, not opinions). " +
 				"Use this as the source of truth after batch-creating nodes, arranging layout, or BEFORE " +
 				"claiming things like 'these nodes don't overlap' — the report, not your impression, is authoritative. " +
+				"触发时机：用户问「节点有没有重叠/间距够不够/有没有超出」，或你准备向用户主张任何布局结论" +
+				"（如「没重叠」「排列整齐」「分布均匀」）时，必须先调用本工具，以报告为准，不凭印象。 " +
 				"Params: min_spacing (optional, px threshold, e.g. 20).",
 			parameters: Type.Object({
 				min_spacing: Type.Optional(

@@ -136,3 +136,14 @@ test("schema 不含 sessionId（上下文注入字段不进模型参数面）", 
 	const [tool] = buildValidateCanvasLayoutTools(client);
 	assert.ok(!JSON.stringify(tool.parameters).includes("sessionId"));
 });
+
+// A-6 指路（2026-11-06 生产实证）：工具描述必须含中文触发场景——
+// 生产里模型凭印象自述「无重叠」而未调本工具（描述当时为纯英文+英文场景词）。
+test("description 含中文触发词（重叠/布局结论），覆盖「凭印象主张布局」场景", () => {
+	const { client } = makeClient(layoutPayload([]));
+	const tool = buildValidateCanvasLayoutTools(client).find((t) => t.name === "validate_canvas_layout");
+	assert.ok(tool, "validate_canvas_layout not registered");
+	const desc = tool.description ?? "";
+	assert.ok(desc.includes("重叠"), "description must contain 重叠 trigger");
+	assert.ok(desc.includes("validate_canvas_layout") || desc.includes("报告"));
+});

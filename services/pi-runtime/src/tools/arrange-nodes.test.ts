@@ -253,3 +253,30 @@ describe("arrange_nodes 契约描述（语义分层可发现性）", () => {
 		assert.match(tool!.description, /写错或缺参会直接报错/);
 	});
 });
+
+// ══════════════════════════════════════════════════════════════
+// A-6 指路条（2026-11-06 生产实证，会话 cmw4jld86 20:14-20:21）：
+// 模型凭 arrange 的 verified:true 自述「无重叠」，全程未调 validate_canvas_layout。
+// 修法沿用 #745 明示块模式——在决策时刻的工具结果里递指路条。
+describe("arrange_nodes A-6 布局结论指路条", () => {
+	it("有 client → payload.hint 指向 validate_canvas_layout（触发词含「重叠」）", async () => {
+		const { tool } = setup(fakeClient({ nodes: [{ id: "a" }, { id: "b" }], edges: [] }));
+		const r = await run(tool!, { node_ids: ["a", "b"], mode: "grid" });
+		const hint = payloadOf(r)["hint"];
+		assert.equal(typeof hint, "string");
+		assert.ok(String(hint).includes("validate_canvas_layout"), "hint must point to validate_canvas_layout");
+		assert.ok(String(hint).includes("重叠"), "hint must name the claim scenario");
+	});
+
+	it("降级路径（verified=false）同样带 hint（更不能凭空主张）", async () => {
+		const { tool } = setup(brokenClient());
+		const r = await run(tool!, { node_ids: ["a", "b"], mode: "grid" });
+		assert.equal(typeof payloadOf(r)["hint"], "string");
+	});
+
+	it("无 client（纯文本模式）→ 逐字节旧行为，无 hint", async () => {
+		const { tool } = setup();
+		const r = await run(tool!, { node_ids: ["a", "b"], mode: "grid" });
+		assert.equal(payloadOf(r)["hint"], undefined);
+	});
+});
