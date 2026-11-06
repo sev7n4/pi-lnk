@@ -83,3 +83,38 @@ test("mirror §8-7 相切面积 0 不计 OVERLAP；§8-8 重叠对跳过 MIN_SPA
 	assert.equal(out.filter((v) => v.type === "OVERLAP").length, 1);
 	assert.equal(out.filter((v) => v.type === "MIN_SPACING").length, 0);
 });
+
+// ---- Phase 2b ④：focusNodeIds 子集（fixture 与 shared §12b-④ 同源）----
+
+test("mirror §12b-④ focusNodeIds 只留涉及 focus 的违规；缺省/空数组全量", () => {
+	const boxes = [
+		box("a", 0, 0, 100, 100),
+		box("b", 50, 0, 100, 100),
+		box("c", 400, 0, 100, 100),
+		box("d", 450, 0, 100, 100),
+	];
+	const focusA = validateCanvasLayoutLocal({ nodes: boxes, focusNodeIds: ["a"] });
+	assert.equal(focusA.length, 1);
+	assert.deepEqual(focusA[0]!.nodeIds, ["a", "b"]);
+	const focusCD = validateCanvasLayoutLocal({ nodes: boxes, focusNodeIds: ["c", "d"] });
+	assert.equal(focusCD.length, 1);
+	assert.deepEqual(focusCD[0]!.nodeIds, ["c", "d"]);
+	assert.equal(validateCanvasLayoutLocal({ nodes: boxes }).length, 2);
+	assert.equal(validateCanvasLayoutLocal({ nodes: boxes, focusNodeIds: [] }).length, 2);
+	assert.equal(validateCanvasLayoutLocal({ nodes: boxes, focusNodeIds: ["ghost"] }).length, 0);
+});
+
+test("mirror §12b-④ focusNodeIds 过滤 OVERFLOW 且不破坏确定性", () => {
+	const input = {
+		nodes: [box("a", 0, 0, 100, 100), box("b", 50, 0, 100, 100), box("e", 1960, 0, 100, 100)],
+		canvas: { width: 1920, height: 1080 },
+		focusNodeIds: ["e"],
+	};
+	const out = validateCanvasLayoutLocal(input);
+	assert.equal(out.length, 1);
+	assert.equal(out[0]!.type, "OVERFLOW");
+	assert.deepEqual(out[0]!.nodeIds, ["e"]);
+	const r1 = JSON.stringify(validateCanvasLayoutLocal(input));
+	const r2 = JSON.stringify(validateCanvasLayoutLocal(input));
+	assert.equal(r1, r2);
+});

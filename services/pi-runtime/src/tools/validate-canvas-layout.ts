@@ -43,6 +43,8 @@ interface ValidateInput {
 	nodes: NodeBox[];
 	canvas?: { width: number; height: number };
 	minSpacing?: number;
+	/** 聚焦子集（Phase 2b ④，与 shared 同语义）：缺省/空数组 = 不过滤。 */
+	focusNodeIds?: string[];
 }
 
 /** 两矩形的最短间距（不相交时 ≥0；相交返回 0，重叠对由 OVERLAP 报、此处跳过防双报）。 */
@@ -62,6 +64,9 @@ function rectGap(a: NodeBox, b: NodeBox): number {
 export function validateCanvasLayoutLocal(input: ValidateInput): LayoutViolation[] {
 	const nodes = input.nodes;
 	const minSpacing = input.minSpacing ?? 0;
+	// 聚焦子集（Phase 2b ④）：缺省/空数组 = 不过滤；非空 = 只留涉及 focus 的违规。
+	const focus =
+		input.focusNodeIds && input.focusNodeIds.length > 0 ? new Set(input.focusNodeIds) : null;
 	const violations: LayoutViolation[] = [];
 	for (let i = 0; i < nodes.length; i++) {
 		const a = nodes[i]!;
@@ -103,7 +108,8 @@ export function validateCanvasLayoutLocal(input: ValidateInput): LayoutViolation
 			}
 		}
 	}
-	return violations;
+	if (!focus) return violations;
+	return violations.filter((v) => v.nodeIds.some((id) => focus.has(id)));
 }
 
 // ---- 工具 ----
@@ -163,13 +169,26 @@ export function buildValidateCanvasLayoutTools(client: NestClient): LnkpiTool[] 
 				"claiming things like 'these nodes don't overlap' — the report, not your impression, is authoritative. " +
 				"触发时机：用户问「节点有没有重叠/间距够不够/有没有超出」，或你准备向用户主张任何布局结论" +
 				"（如「没重叠」「排列整齐」「分布均匀」）时，必须先调用本工具，以报告为准，不凭印象。 " +
-				"Params: min_spacing (optional, px threshold, e.g. 20).",
+				"Params: min_spacing (optional, px threshold, e.g. 20); node_ids (optional, " +
+				"focus subset — only report violations involving these nodes, e.g. the nodes you " +
+				"just created vs their neighbors).",
 			parameters: Type.Object({
 				min_spacing: Type.Optional(
 					Type.Number({ description: "最小间距阈值（px），如 20；缺省不判间距" }),
 				),
+				node_ids: Type.Optional(
+					Type.Array(Type.String(), {
+						description:
+							"聚焦子集（可选）：只报告涉及这些节点的违规（如刚创建的节点 vs 邻居）；缺省校验全画布",
+					}),
+				),
 			}),
-			execute: async (_id, p: { min_spacing?: number }, _u, tc: LnkpiToolContext) => {
+			execute: async (
+				_id,
+				p: { min_spacing?: number; node_ids?: string[] },
+				_u,
+				tc: LnkpiToolContext,
+			) => {
 				let snapshot: LayoutSnapshot;
 				try {
 					snapshot = (await client.post("/agent/internal/get-canvas-layout", {
@@ -189,17 +208,57 @@ export function buildValidateCanvasLayoutTools(client: NestClient): LnkpiTool[] 
 						details: undefined,
 					};
 				}
-				const boxes = boxesFromSnapshot(snapshot);
-				const minSpacing =
-					typeof p?.min_spacing === "number" && Number.isFinite(p.min_spacing) && p.min_spacing > 0
-						? p.min_spacing
-						: undefined;
-				const violations = validateCanvasLayoutLocal({ nodes: boxes, minSpacing });
-				const summary = formatViolationReport(boxes.length, violations);
+			const boxes = boxesFromSnapshot(snapshot);
+			const minSpacing =
+				typeof p?.min_spacing === "number" && Number.isFinite(p.min_spacing) && p.min_spacing > 0
+					? p.min_spacing
+					: undefined;
+			// 聚焦子集（Phase 2b ④）：仅保留画布上真实存在的 id（未知 id 不报错、不编造）。
+			const knownIds = new Set(boxes.map((b) => b.id));
+			const providedIds =
+				Array.isArray(p?.node_ids) && p.node_ids.length > 0
+					? [...new Set(p.node_ids.filter((id) => typeof id === "string"))]
+					: undefined;
+			if (providedIds && providedIds.every((id) => !knownIds.has(id))) {
+				// 显式传了 node_ids 但没有一个落在画布上 ⇒ 如实说明，不回落全量（防误读为「画布干净」）。
 				return {
-					content: [{ type: "text", text: JSON.stringify({ ok: true, data: { violations, summary } }) }],
+					content: [
+						{
+							type: "text",
+							text: JSON.stringify({
+								ok: true,
+								data: {
+									violations: [],
+									summary: `【布局校验】node_ids 中的节点均不在当前画布（画布共 ${boxes.length} 个节点），未校验任何违规。请核对节点 id 后重试，或省略 node_ids 校验全画布。`,
+									focusedNodeIds: [],
+								},
+							}),
+						},
+					],
 					details: undefined,
 				};
+			}
+			const focusNodeIds = providedIds
+				? providedIds.filter((id) => knownIds.has(id))
+				: undefined;
+			const violations = validateCanvasLayoutLocal({ nodes: boxes, minSpacing, focusNodeIds });
+			const summary = formatViolationReport(boxes.length, violations);
+			return {
+				content: [
+					{
+						type: "text",
+						text: JSON.stringify({
+							ok: true,
+							data: {
+								violations,
+								summary,
+								...(focusNodeIds ? { focusedNodeIds: focusNodeIds } : {}),
+							},
+						}),
+					},
+				],
+				details: undefined,
+			};
 			},
 		},
 	];

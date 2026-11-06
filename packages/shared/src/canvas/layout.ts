@@ -236,13 +236,34 @@ function resolveAnchor(
  * bbox+pad12 冲突时垂直步进避让（上限 24 次，仍冲突 fail-open 取重叠最小）；收官 snapToGrid(20)。
  * 纯函数：无随机、无时钟、无视图依赖——同输入同输出（金样测试可锁）。
  */
-export function placeBatchNodes(
+export interface PlacementResidual {
+  /** 本批 items 的 key（Nest 侧映射回 nodeId）。 */
+  key: string
+  /** fail-open 落位与既有/先落节点的总重叠面积（px²，>0）。 */
+  overlapArea: number
+}
+
+export interface PlaceBatchReport {
+  placements: Map<string, { x: number; y: number }>
+  /**
+   * 残余重叠（Phase 2b ③）：24 次重试仍避不开时 fail-open 落位，此处显式列出
+   * **重叠面积 > 0** 的 key——放置永不阻塞创建，但不再静默。
+   */
+  residual: PlacementResidual[]
+}
+
+/**
+ * 放置内核（带报告版）：行为与 placeBatchNodes 逐点一致，额外把 fail-open 残余重叠
+ * 写进返回值（VISP Phase 2b ③——L1 落位层的自白，供 Nest addNodesBatch 透出）。
+ */
+export function placeBatchNodesWithReport(
   existing: LayoutNode[],
   items: Array<{ key: string; type: string }>,
   edges?: Array<{ source: string; target: string }>,
-): Map<string, { x: number; y: number }> {
+): PlaceBatchReport {
   const result = new Map<string, { x: number; y: number }>()
-  if (items.length === 0) return result
+  const residual: PlacementResidual[] = []
+  if (items.length === 0) return { placements: result, residual }
   const obstacles = obstacleRects(existing)
   const anchor = resolveAnchor(existing, items, edges ?? [])
   let cursorX = anchor.x
@@ -281,6 +302,10 @@ export function placeBatchNodes(
           y = candidate.y
         }
       }
+      // Phase 2b ③：残余重叠显式化（>0 才记；0 面积的 pad 膨胀碰触不算残余）
+      if (bestOverlap > 0 && Number.isFinite(bestOverlap)) {
+        residual.push({ key: item.key, overlapArea: bestOverlap })
+      }
     }
 
     const snapped = { x: snapToGrid(x), y: snapToGrid(y) }
@@ -288,7 +313,16 @@ export function placeBatchNodes(
     obstacles.push(toRect(snapped.x, snapped.y, size.w, size.h))
     cursorX = snapped.x + size.w + PLACEMENT_H_GAP
   }
-  return result
+  return { placements: result, residual }
+}
+
+/** 兼容入口：等价 placeBatchNodesWithReport(...).placements（既有调用方零迁移）。 */
+export function placeBatchNodes(
+  existing: LayoutNode[],
+  items: Array<{ key: string; type: string }>,
+  edges?: Array<{ source: string; target: string }>,
+): Map<string, { x: number; y: number }> {
+  return placeBatchNodesWithReport(existing, items, edges).placements
 }
 
 export type AlignSixWay = 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom'
@@ -507,6 +541,11 @@ export interface ValidateInput {
   canvas?: { width: number; height: number }
   /** 最小间距阈值（px），默认 0 = 不判 MIN_SPACING。 */
   minSpacing?: number
+  /**
+   * 聚焦子集（可选，Phase 2b ④）：只保留**涉及这些节点**的违规（nodeIds 与 focus 有交集）。
+   * 缺省 / 空数组 = 不过滤（全量）。用途：聚焦「新节点 vs 其邻居」，避免全画布历史违规淹没报告。
+   */
+  focusNodeIds?: string[]
 }
 
 /** 两矩形的最短间距（不相交时 ≥0；相交返回 0，重叠对由 OVERLAP 报、此处跳过防双报）。 */
@@ -526,6 +565,9 @@ function rectGap(a: NodeBox, b: NodeBox): number {
 export function validateCanvasLayout(input: ValidateInput): LayoutViolation[] {
   const nodes = input.nodes
   const minSpacing = input.minSpacing ?? 0
+  // 聚焦子集（Phase 2b ④）：缺省/空数组 = 不过滤；非空 = 只留涉及 focus 的违规。
+  const focus =
+    input.focusNodeIds && input.focusNodeIds.length > 0 ? new Set(input.focusNodeIds) : null
   const violations: LayoutViolation[] = []
   for (let i = 0; i < nodes.length; i++) {
     const a = nodes[i]!
@@ -568,5 +610,6 @@ export function validateCanvasLayout(input: ValidateInput): LayoutViolation[] {
       }
     }
   }
-  return violations
+  if (!focus) return violations
+  return violations.filter((v) => v.nodeIds.some((id) => focus.has(id)))
 }

@@ -73,7 +73,7 @@ import {
   createGroupFromSelection,
   getAbsolutePosition,
   getNodeSize,
-  placeBatchNodes,
+  placeBatchNodesWithReport,
   layoutNodesAlongEdges,
   layoutNodesInGrid,
   moveNodes,
@@ -1009,12 +1009,14 @@ export class AgentCanvasToolsService {
 
     const prefs = await this.loadAccountGenPrefs(input.userId)
 
-    // 放置内核：一次性算全批（锚点感知 edges 引用的既有节点；本批 key 天然不进锚点统计）
-    const placements = placeBatchNodes(
+    // 放置内核：一次性算全批（锚点感知 edges 引用的既有节点；本批 key 天然不进锚点统计）。
+    // Phase 2b ③：用带报告版——fail-open 残余重叠显式透出，放置不阻塞但不再静默。
+    const placementReport = placeBatchNodesWithReport(
       canvas.nodes as LayoutNode[],
       input.items.map((it) => ({ key: it.key, type: String(it.targetType || 'image') })),
       input.edges,
     )
+    const placements = placementReport.placements
 
     const actions: CanvasAction[] = []
     const mapping: Array<{ key: string; nodeId: string }> = []
@@ -1114,7 +1116,18 @@ export class AgentCanvasToolsService {
     }
 
     await this.applyOrStage(input.sessionId, actions, input.stage)
-    return { nodes: mapping, actions }
+    // Phase 2b ③：残余重叠显式化——fail-open 落位的 key 映射回 nodeId 透出（无残余不带字段）。
+    const nodeIdByKey = new Map(mapping.map((m) => [m.key, m.nodeId]))
+    const placementResidual = placementReport.residual.map((r) => ({
+      key: r.key,
+      nodeId: nodeIdByKey.get(r.key) ?? r.key,
+      overlapArea: Math.round(r.overlapArea),
+    }))
+    return {
+      nodes: mapping,
+      actions,
+      ...(placementResidual.length > 0 ? { placementResidual } : {}),
+    }
   }
 
   /**

@@ -2,9 +2,15 @@
 // 此处 re-export 保 Nest 侧既有 import 面不变；行为等价由 Task 1 金样测试 + 本文件既有测试锁。
 // 2026-10-21：NODE_SIZES 随上移收敛为当前 NodeType 4 项（image/video/audio/text）——prompt 已于
 // 2026-10-17 下线、group/shot/sceneComposer 于 2026-10-19 下线，存量历史节点统一走 fallback。
-import { getAbsolutePosition, getNodeSize, placeBatchNodes, type LayoutNode } from '@lnkpi/shared'
+import {
+  getAbsolutePosition,
+  getNodeSize,
+  placeBatchNodes,
+  placeBatchNodesWithReport,
+  type LayoutNode,
+} from '@lnkpi/shared'
 
-export { getAbsolutePosition, getNodeSize, placeBatchNodes, type LayoutNode }
+export { getAbsolutePosition, getNodeSize, placeBatchNodes, placeBatchNodesWithReport, type LayoutNode }
 
 /** 分组框相对子节点包围盒的留白（与 web 端 GROUP_PADDING 同值，视觉一致）。 */
 export const GROUP_PADDING = 80

@@ -307,6 +307,45 @@ describe('AgentCanvasToolsService', () => {
     expect(canvas.nodes[1].position).toEqual({ x: 400, y: 80 })
   })
 
+  it('addNodesBatch 正常避让 ⇒ 返回无 placementResidual 字段（Phase 2b ③）', async () => {
+    const result = await svc.addNodesBatch({
+      sessionId: 's1',
+      userId: 'u1',
+      items: [{ key: 'a', title: 'A', targetType: 'image' }],
+    })
+    expect(result.placementResidual).toBeUndefined()
+  })
+
+  it('addNodesBatch fail-open 残余 ⇒ placementResidual 显式透出（key→nodeId 映射 + overlapArea）', async () => {
+    // 高墙障碍覆盖锚点后全部 24 个候选位（与 shared layout.test.ts 同源 fixture）
+    canvas = {
+      nodes: [
+        { id: 'n_ref', type: 'image', position: { x: 380, y: 60 }, data: {} },
+        {
+          id: 'n_wall',
+          type: 'group',
+          position: { x: 680, y: 40 },
+          dimensions: { width: 340, height: 1200 },
+          data: {},
+        },
+      ],
+      edges: [],
+    }
+    const result = await svc.addNodesBatch({
+      sessionId: 's1',
+      userId: 'u1',
+      items: [{ key: 'a', title: 'A', targetType: 'image' }],
+      edges: [{ source: 'n_ref', target: 'a' }],
+    })
+    expect(result.placementResidual).toHaveLength(1)
+    const residual = result.placementResidual![0]!
+    expect(residual.key).toBe('a')
+    expect(residual.nodeId).toBe(result.nodes[0]!.nodeId)
+    expect(residual.overlapArea).toBeGreaterThan(0)
+    // 节点仍被创建（fail-open 语义不变，放置永不阻塞）
+    expect(canvas.nodes).toHaveLength(3)
+  })
+
   it('connectNodes adds edges', async () => {
     canvas = {
       nodes: [
