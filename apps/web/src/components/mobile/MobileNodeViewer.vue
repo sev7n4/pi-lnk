@@ -711,10 +711,15 @@ onBeforeUnmount(() => {
   releaseAudioPlayback(el)
 })
 
-/* ── 播放倍速（走查⑤ · W-32 泛化，2026-11-05 音频补齐）─────────────────
- * 旧实现把倍速按钮 v-if 限死 video、playbackRate 只写给 videoRef ⇒ 音频 viewer
- * 丢了 HTMLMediaElement 最基础的速率能力（iOS 原生 <audio controls> 自带速率菜单）。
- * 现视频/音频共用同一速率循环，作用于当前媒体的 audioRef / videoRef。 */
+/* ── 音频播放倍速（2026-11-06 收敛）────────────────────────────────────
+ * `playbackRate` 是 HTMLMediaElement 的 JS API，audio/video 都有；但「原生控件条
+ * 是否画出倍速菜单」由浏览器自绘、非标准保证：iOS Safari 的 <video controls>
+ * 常带 1× 速率按钮，<audio controls> 的控件条一般没有。因此：
+ * - 视频：完全交给原生 <video controls>（本项目 <video> 已挂 controls），删除
+ *   自绘倍速按钮——它既与原生菜单重复（两套速率真源不同步），又钉在原生控件条
+ *   左端压住播放键/进度滑竿。
+ * - 音频：<audio> 无 controls，波形/播放/进度/倍速全部自绘，倍速是唯一速率入口。
+ * ⛔ 旧注释「iOS 原生 <audio controls> 自带速率菜单」是错误陈述，勿再引用。 */
 const PLAYBACK_RATES = [1, 1.5, 2, 0.5] as const
 const rateIdx = ref(0)
 const playbackRate = computed(() => PLAYBACK_RATES[rateIdx.value]!)
@@ -722,7 +727,7 @@ const rateLabel = computed(() => `${playbackRate.value}x`)
 
 function cyclePlaybackRate() {
   rateIdx.value = (rateIdx.value + 1) % PLAYBACK_RATES.length
-  const el = props.type === 'audio' ? audioRef.value : videoRef.value
+  const el = audioRef.value
   if (el) el.playbackRate = playbackRate.value
 }
 
@@ -1037,16 +1042,6 @@ defineExpose({ videoRef })
         @timeupdate="onAudioTime"
         @loadedmetadata="onAudioMeta"
       />
-      <!-- 倍速：iOS 原生音频播放器的基础能力，自绘控件同样必须提供 -->
-      <button
-        class="viewer-speed viewer-audio-speed"
-        type="button"
-        :aria-label="`倍速 ${rateLabel}`"
-        data-testid="mobile-viewer-speed"
-        @click="cyclePlaybackRate"
-      >
-        {{ rateLabel }}
-      </button>
       <div class="viewer-audio-wave">
         <MobileNodeWaveform
           :peaks="wavePeaks"
@@ -1087,6 +1082,20 @@ defineExpose({ videoRef })
           @input="onAudioSeek"
         />
         <span class="viewer-audio-time">{{ audioTimeLabel }}</span>
+        <!-- 倍速归位到底部播放控制条（2026-11-06）：<audio> 无 controls ⇒ 波形/播放/
+             进度/倍速全部自绘，倍速是唯一速率入口。原钉在波形区右上，与右上 X
+             （z-index:4）重叠 36×40px 被压住；移入控制条后随 chrome 整体显隐，
+             沉浸态不留孤立的常驻第三类控件（§4.12.5 顶部只放退出类）。 -->
+        <button
+          class="viewer-speed viewer-audio-speed"
+          :class="{ 'viewer-speed-hidden': !chromeVisible }"
+          type="button"
+          :aria-label="`倍速 ${rateLabel}`"
+          data-testid="mobile-viewer-speed"
+          @click="cyclePlaybackRate"
+        >
+          {{ rateLabel }}
+        </button>
       </div>
     </div>
     <!-- S5：text 分支——format:'html' ⇒ embedded 沙箱预览面（HtmlNodePreview embedded
@@ -1123,19 +1132,10 @@ defineExpose({ videoRef })
       @dismiss="capsuleVisible = false"
     />
 
-    <!-- 倍速循环（走查⑤ · W-32；2026-11-05 音频在 .viewer-audio 内另有同款入口）。
-         视频进度条用原生 controls 不自制；两处共用 rateLabel / cyclePlaybackRate。
-         ⭐ 回归④：原钉在容器 bottom 区被底部主栏盖住 ⇒ 收进 viewer-body（锚点=媒体区底部） -->
-    <button
-      v-if="type === 'video'"
-      class="viewer-speed"
-      type="button"
-      :aria-label="`倍速 ${rateLabel}`"
-      data-testid="mobile-viewer-speed"
-      @click="cyclePlaybackRate"
-    >
-      {{ rateLabel }}
-    </button>
+    <!-- ⭐ 2026-11-06：视频自绘倍速按钮退役。原生 <video controls> 自带播放/进度/
+         时间/全屏，iOS Safari 与 Chrome 的控件条通常还带 1× 速率菜单；自绘胶囊既
+         与原生菜单形成两套不同步的速率真源，又钉在 .viewer-body 左下正压住原生
+         控件条左端。视频倍速一律交给原生控件，本项目不再提供第二套入口。 -->
     </div><!-- /viewer-body -->
 
     <!--
@@ -1186,13 +1186,13 @@ defineExpose({ videoRef })
 /* 标注入口按钮（44px 触控目标，§4.11.6）—— 2026-10-28 浮动圆钮退役：
    入口统一进底部工具栏（真机反馈①两套几何并存），.viewer-annotate 样式随迁。 */
 
-/* 倍速循环按钮（走查⑤）：左下角，与右下「圈选」对称（44px 触控目标） */
+/* 音频倍速胶囊（2026-11-06 归位）：**文档流**内，属于底部播放控制条，
+   不再是 .viewer-body 上的 absolute 浮层（原左下压住原生视频控件条、音频右上
+   与 X 重叠）。视频已退役自绘倍速，本类只服务音频。 */
 .viewer-speed {
-  position: absolute;
-  left: var(--lnk-space-2);
-  bottom: calc(var(--lnk-space-3) + env(safe-area-inset-bottom, 0px));
-  z-index: 3;
+  position: static;
   display: inline-flex;
+  flex: none;
   min-width: var(--lnk-touch-target);
   height: var(--lnk-touch-target);
   align-items: center;
@@ -1207,6 +1207,21 @@ defineExpose({ videoRef })
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
+  transition: opacity var(--lnk-duration-base) var(--lnk-ease-decelerate);
+}
+
+/* 随 chrome 沉浸态整体淡出：与右上 X / 底部操作条同一显隐节奏。
+   ⛔ 用 opacity 不用 display/visibility —— 控制条是 flex 行，移除节点会让
+   进度滑竿突然变宽（跳变），沉浸态也要保持几何稳定。 */
+.viewer-speed-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .viewer-speed {
+    transition: none;
+  }
 }
 
 /* 画笔覆盖层：标注态独占手势（touch-action: none ⇒ 单指不滚动/缩放） */
@@ -1267,15 +1282,9 @@ defineExpose({ videoRef })
   padding: var(--lnk-space-4) var(--lnk-space-4) calc(var(--lnk-space-8) + env(safe-area-inset-bottom));
 }
 
-/* 音频倍速：与视频倍速同款胶囊，锚在波形区右上，不挤占底部播放条（iOS 播放器惯例） */
-.viewer-audio-speed {
-  position: absolute;
-  top: var(--lnk-space-3);
-  right: var(--lnk-space-4);
-  bottom: auto;
-  left: auto;
-  z-index: 3;
-}
+/* 音频倍速：控制条内的最后一枚控件（播放 → 进度 → 时间 → 倍速）。
+   ⛔ 不再 absolute 锚波形区右上：那里是右上 X（z-index:4）的独占区，
+   旧版 36×40px 重叠且倍速 z-index:3 被压住。 */
 
 .viewer-audio-wave {
   flex: 1;

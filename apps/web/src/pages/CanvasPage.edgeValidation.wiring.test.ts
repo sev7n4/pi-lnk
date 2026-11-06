@@ -28,13 +28,24 @@ describe('SP-D 手拉边校验收口（静态契约）', () => {
     )
   })
 
-  it('isValidConnection 拦自环 + 本地已存在同向对（不做实时判环）', () => {
+  it('isValidConnection 委托判据单一真源（2026-11-06 零连线根因修复）', () => {
     const fn = /function isValidConnection\([\s\S]*?\n\}/.exec(CP)?.[0] ?? ''
     expect(fn, '必须能定位 isValidConnection').not.toBe('')
-    expect(fn).toContain('connection.source === connection.target')
-    expect(fn).toContain('.some(')
+    expect(fn, '不得在本页重写判据（会与 VueFlow 的 setEdges 批量校验冲突）').toContain(
+      'return isValidCanvasConnection(connection, edges.value)',
+    )
+    expect(CP).toContain("from '@/utils/canvasEdgeValidation'")
     // D5：环检测以服务端为准，前端不引入 cycle/DFS 判定
     expect(fn, '前端不做实时环检测').not.toMatch(/cycle|dfs|DFS|visited/i)
+  })
+
+  it('判据真源在 utils/canvasEdgeValidation.ts，且对回放边放行自己', () => {
+    const src = readFileSync(join(HERE, '..', 'utils', 'canvasEdgeValidation.ts'), 'utf8')
+    expect(src).toContain('connection.source === connection.target')
+    expect(src, '回放边按对象形态放行，不依赖 id 值').toContain("'id' in connection")
+    expect(src).toContain('.some(')
+    // 棘轮：禁止退回「按 id 值匹配本地边集」（历史缺 id 数据会再次全量丢弃）
+    expect(src).not.toContain('e.id === id')
   })
 
   it('onConnect 走 canvasApi.connectNodes 服务通道', () => {

@@ -202,14 +202,16 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
       expect(w.find('audio').attributes('preload')).toBe('metadata')
     })
 
-    it('媒体区收进 .viewer-body；圈选在底栏（入口统一）、倍速在 body 内（绝对锚点=媒体区底）', () => {
+    it('媒体区收进 .viewer-body；圈选在底栏；视频倍速退役交给原生 controls', () => {
       const img = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'image', data: { url: 'x.png' } } })
       const body = img.find('.viewer-body')
       expect(body.exists()).toBe(true)
       expect(img.find('[data-testid="mobile-viewer-bottom-annotate"]').exists()).toBe(true)
       img.unmount()
       const vid = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'video', data: { url: 'x.mp4' } } })
-      expect(vid.find('.viewer-body [data-testid="mobile-viewer-speed"]').exists()).toBe(true)
+      // 原生控件条自带播放/进度/时间/全屏（iOS Safari 通常还有 1× 速率菜单）⇒ 不再自绘
+      expect(vid.find('video').attributes('controls')).toBeDefined()
+      expect(vid.find('[data-testid="mobile-viewer-speed"]').exists()).toBe(false)
       vid.unmount()
     })
 
@@ -295,14 +297,16 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
 
   // ── 回归③④：底部互殴结构性修复 ─────────────────────────────────────────
   describe('底部布局结构（回归③④：viewer-body + 文档流主栏）', () => {
-    it('媒体区收进 .viewer-body；圈选在底栏（入口统一）、倍速在 body 内（绝对锚点=媒体区底）', () => {
+    it('媒体区收进 .viewer-body；圈选在底栏；视频倍速退役交给原生 controls', () => {
       const img = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'image', data: { url: 'x.png' } } })
       const body = img.find('.viewer-body')
       expect(body.exists()).toBe(true)
       expect(img.find('[data-testid="mobile-viewer-bottom-annotate"]').exists()).toBe(true)
       img.unmount()
       const vid = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'video', data: { url: 'x.mp4' } } })
-      expect(vid.find('.viewer-body [data-testid="mobile-viewer-speed"]').exists()).toBe(true)
+      // 原生控件条自带播放/进度/时间/全屏（iOS Safari 通常还有 1× 速率菜单）⇒ 不再自绘
+      expect(vid.find('video').attributes('controls')).toBeDefined()
+      expect(vid.find('[data-testid="mobile-viewer-speed"]').exists()).toBe(false)
       vid.unmount()
     })
 
@@ -341,35 +345,27 @@ describe('MobileNodeViewer（退出通道 · D2）', () => {
     }
   })
 
-  // ── 视频倍速（走查⑤ · W-32：原生进度条已有，倍速循环按钮补齐）──────────
-  it('video: 倍速按钮存在，循环 1→1.5→2→0.5→1 且作用到 video.playbackRate', async () => {
+  // ── 倍速收敛（2026-11-06）：视频交原生，音频保留自绘且归位控制条 ──────────
+  it('video: 不自绘倍速，原生 <video controls> 是唯一速率入口', () => {
     const w = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'video', data: { url: 'x.mp4' } } })
-    const btn = w.find('[data-testid="mobile-viewer-speed"]')
-    expect(btn.exists()).toBe(true)
-    // ⭐ §13.2 Teleport **stub** 渲染下每次状态更新重建子树：点击时元素被赋 rate 后随即
-    //    重建 ⇒ 新 video 元素回默认 1、旧按钮 wrapper 文本恒 '1x'（真机真实 Teleport 为
-    //    原地 patch，无此伪象）。断言策略：首点击断 video 元素副作用（证明 @click→
-    //    cycleVideoRate→el.playbackRate 接线），label 循环用 fresh find 断状态机。
-    const speedBtn = () => w.find('[data-testid="mobile-viewer-speed"]')
-    const video = w.find('video').element as HTMLVideoElement
-    expect(speedBtn().text()).toBe('1x')
-    await speedBtn().trigger('click')
-    expect(video.playbackRate).toBe(1.5)
-    expect(speedBtn().text()).toBe('1.5x')
-    await speedBtn().trigger('click')
-    expect(speedBtn().text()).toBe('2x')
-    await speedBtn().trigger('click')
-    expect(speedBtn().text()).toBe('0.5x')
-    await speedBtn().trigger('click')
-    expect(speedBtn().text()).toBe('1x')
+    expect(w.find('[data-testid="mobile-viewer-speed"]').exists()).toBe(false)
+    expect(w.find('video').attributes('controls')).toBeDefined()
+    expect(w.find('.viewer-audio-controls').exists()).toBe(false)
+    w.unmount()
   })
 
-  it('倍速按钮出现在两种可播放媒体上、图片无播放（2026-11-05 音频补齐）', () => {
+  it('倍速按钮只在音频播放控制条内；视频/图片都没有（视频靠原生菜单）', () => {
     const img = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'image', data: { url: 'x.png' } } })
     expect(img.find('[data-testid="mobile-viewer-speed"]').exists()).toBe(false)
     img.unmount()
+    const vid = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'video', data: { url: 'x.mp4' } } })
+    expect(vid.find('[data-testid="mobile-viewer-speed"]').exists()).toBe(false)
+    vid.unmount()
     const aud = mount(MobileNodeViewer, { global: { stubs: { teleport: true } }, props: { type: 'audio', data: { url: 'x.mp3' } } })
-    expect(aud.find('[data-testid="mobile-viewer-speed"]').exists()).toBe(true)
+    const btn = aud.find('[data-testid="mobile-viewer-speed"]')
+    expect(btn.exists()).toBe(true)
+    // 归位到控制条内（不再是波形区右上 absolute 浮层，避免与右上 X 重叠被压住）
+    expect(aud.find('.viewer-audio-controls [data-testid="mobile-viewer-speed"]').exists()).toBe(true)
     aud.unmount()
   })
 

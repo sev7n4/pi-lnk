@@ -6,6 +6,7 @@
  * D-b：N=0 由调用方整行隐藏（本模块以空数组表达）；failed / pending 不计入；
  *      计数文案 >9 收敛为「9+」。
  */
+import { resolveTextNodeFormat, type TextNodeFormat } from '@lnkpi/shared'
 import type { TimelinePart } from '@/components/agent/turnTimeline'
 
 export interface DeliveryItem {
@@ -14,6 +15,13 @@ export interface DeliveryItem {
   title: string
   /** D5/D10（spec 2026-11-05-canvas-digest-design）：画布总览 tile 标记（tap 时追加 digest_open 打点）。 */
   digest?: true
+  /**
+   * 2026-11-06：文本系产物的内容格式（规格 #636 §4.4）。artifact part 本身不带
+   * format，唯一真源是画布节点本体 data.format ⇒ 按 nodeId 从 canvasNodes 派生。
+   * 仅在显式 html 时出现（plain/markdown 省略该字段，保持历史派生结果逐字不变），
+   * ⛔ 禁止按内容嗅探推断（§4.2）。
+   */
+  format?: TextNodeFormat
 }
 
 /** 本回合可交付产物清单：done 且有 nodeId 的 artifact part，事件到达序保序。
@@ -32,11 +40,21 @@ export function turnDeliveryItems(
     items.push({ nodeId: p.nodeId, nodeType: p.nodeType, title: p.title })
   }
   if (!canvasNodes) return items
-  const alive = new Set(canvasNodes.map((n) => n.id))
-  const filtered = items.filter((it) => alive.has(it.nodeId))
+  const byId = new Map(canvasNodes.map((n) => [n.id, n]))
+  const alive = new Set(byId.keys())
+  // 纯派生：文本系节点按 data.format 补出格式标签，供 tile 图标/小字区分
+  // 「点开是阅读器还是沙箱预览」。未知/缺省 ⇒ resolve 为 plain ⇒ 不写字段。
+  const filtered = items.map((it) => {
+    // format 只属于文本系产物：图片/音视频节点的 data.format 是文件容器格式
+    // （png/mp3/mp4 …），绝不能被当成 HTML 产物标签派生。
+    if (it.nodeType !== 'text') return it
+    const node = byId.get(it.nodeId)
+    const format = resolveTextNodeFormat(node?.data?.format)
+    return format === 'html' ? { ...it, format } : it
+  }).filter((it) => alive.has(it.nodeId))
   const digestNode = canvasNodes.find((n) => n.data?.digest === true)
   if (digestNode) {
-    filtered.push({ nodeId: digestNode.id, nodeType: 'text', title: '画布总览', digest: true })
+    filtered.push({ nodeId: digestNode.id, nodeType: 'text', title: '画布总览', digest: true, format: 'html' })
   }
   return filtered
 }

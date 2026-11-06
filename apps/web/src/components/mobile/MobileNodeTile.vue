@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
+import { htmlNodeSummary, resolveTextNodeFormat, stripHtmlTags } from '@lnkpi/shared'
 import { useLongPress } from '@/composables/useLongPress'
 import { resolveMobileNodeTapIntent } from '@/composables/mobileNodeOpenPolicy'
 import {
@@ -39,6 +40,14 @@ const props = defineProps<{
     url?: string
     poster?: string
     content?: string
+    /**
+     * 文本系内容格式（规格 #636 §4.4 白名单 plain|markdown|html）。
+     * ⚠️ 读取侧一律经 resolveTextNodeFormat 归一化：未知/缺省降级 plain，
+     * 禁止按内容嗅探自动切换（§4.2）。磁贴只认显式 format === 'html'。
+     */
+    format?: string
+    /** Canvas Digest 系统产物标记（§10：节点卡显示「总览」徽章） */
+    digest?: boolean
     status?: string
     generationStartedAt?: string
     /** 提议的提示词（propose 建节点时写入 data.prompt）——R4-T1 起在瓦片上直接可见 */
@@ -301,11 +310,27 @@ const attributeLine = computed(() => {
   return mediaInfoText.value
 })
 
-/** 文本节点底部属性行：字数（名称归头部；空文本不渲染） */
+/**
+ * 规格 #636 §4.7：HTML 产物在节点卡上 =「HTML 徽章 + 摘要」，⛔ 节点卡不跑 iframe
+ * （多节点画布逐帧跑 iframe 性能不可接受）。PC 节点卡已落，移动端磁贴补齐。
+ * 摘要判据复用 shared SSOT：label > <title> > strip 首段，≤40 字符。
+ */
+const isHtmlNode = computed(() =>
+  props.type === 'text' && resolveTextNodeFormat(props.data?.format) === 'html',
+)
+const htmlSummary = computed(() =>
+  htmlNodeSummary(props.data as Record<string, unknown> | undefined),
+)
+/** 系统总览产物沿用同一徽章位（§10），与 agent HTML 产物区分开 */
+const isDigestNode = computed(() => props.type === 'text' && props.data?.digest === true)
+
+/** 文本节点底部属性行：字数（名称归头部；空文本不渲染）。
+ *  HTML 用剥标签后的可见字数——标签串计入字数会失真且暴露源码长度。 */
 const textAttrLine = computed(() => {
   const content = props.data?.content ?? ''
   if (!content) return ''
-  return `${content.length} 字`
+  const visible = isHtmlNode.value ? stripHtmlTags(content).length : content.length
+  return `${visible} 字`
 })
 
 /**
@@ -740,6 +765,13 @@ function handleTextTap() {
         @ended="onAudioEnded"
         @loadedmetadata="onAudioMeta"
       />
+    </div>
+    <div v-else-if="type === 'text' && isHtmlNode" class="mobile-node-html-wrap">
+      <!-- §4.7：徽章 + 摘要，不跑 iframe（预览留给 viewer 的沙箱面）。
+           宿主 DOM 一律 {{ }} 插值 / textContent，⛔ 绝不 v-html 注入 content。 -->
+      <span class="mobile-node-html-badge" data-testid="mobile-node-html-badge">{{ isDigestNode ? '总览' : 'HTML' }}</span>
+      <p class="mobile-node-html-summary" data-testid="mobile-node-html-summary">{{ htmlSummary || (isDigestNode ? '画布总览' : 'HTML 产物') }}</p>
+      <span class="mobile-node-html-hint">点按预览</span>
     </div>
     <div v-else-if="type === 'text'" class="mobile-node-text-wrap">
       <p class="mobile-node-text">{{ data?.content || '空文本' }}</p>
@@ -1260,6 +1292,50 @@ function handleTextTap() {
   word-break: break-word;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
+}
+
+/* HTML 格式文本节点磁贴（规格 #636 §4.7）：徽章 + 摘要，节点卡不跑 iframe。
+   全部消费 L2/L3 令牌，⛔ 不写死 hex/rgba（theme-usage 棘轮）。 */
+.mobile-node-html-wrap {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--lnk-space-2);
+  padding: var(--lnk-space-3);
+  box-sizing: border-box;
+}
+
+.mobile-node-html-badge {
+  flex: none;
+  padding: 2px var(--lnk-space-2);
+  border: 0.5px solid var(--lnk-border-default);
+  border-radius: var(--lnk-radius-full);
+  background: var(--lnk-surface-sunken);
+  color: var(--lnk-text-primary);
+  font-size: var(--lnk-text-xs);
+  font-weight: var(--lnk-weight-medium);
+  letter-spacing: 0.04em;
+}
+
+.mobile-node-html-summary {
+  display: -webkit-box;
+  width: 100%;
+  margin: 0;
+  overflow: hidden;
+  color: var(--lnk-text-primary);
+  font-size: var(--lnk-text-sm);
+  line-height: var(--lnk-lh-sm);
+  word-break: break-word;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.mobile-node-html-hint {
+  flex: none;
+  color: var(--lnk-text-muted);
+  font-size: var(--lnk-text-xs);
 }
 
 /* R4-T1：提议内容容器（提示词卡 + 参数摘要）
