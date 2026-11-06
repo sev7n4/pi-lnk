@@ -20,6 +20,10 @@ const h = vi.hoisted(() => {
 	return { upload, copyLink, openOffline, toImage, shareViaSystem, qr, showQr, showWeChat }
 })
 
+vi.mock('element-plus', () => ({
+	ElMessage: { error: vi.fn(), success: vi.fn() },
+}))
+
 vi.mock('@/composables/useShareActions', () => ({
 	useShareActions: () => ({
 		loading: { value: false },
@@ -214,5 +218,29 @@ describe('ConversationShareSheet（2026-11-05 真机六问）', () => {
 		await settle()
 		expect(q('[data-testid="share-list"]')).toBeNull()
 		expect(q('[data-testid="share-item-a"]')).toBeNull()
+	})
+
+	it('生成图片失败：不进空白结果页、给出可见反馈、busy 复位可重试', async () => {
+		const { ElMessage } = await import('element-plus')
+		h.toImage.mockRejectedValueOnce(new Error('canvas too large'))
+		mountSheet([turn('a', 'user', 'hi')])
+		await settle()
+		await clickSel('[data-testid="mode-image"]')
+		expect(q('[data-testid="share-img"]')).toBeNull()
+		expect(q('[data-testid="share-menu"]')).not.toBeNull()
+		expect(disabled('[data-testid="mode-image"]')).toBe(false)
+		expect(ElMessage.error).toHaveBeenCalledWith(expect.stringContaining('图片生成失败'))
+	})
+
+	it('图片结果页：操作行在长图之前，返回/保存都不用滚到底', async () => {
+		mountSheet([turn('a', 'user', 'hi')])
+		await settle()
+		await clickSel('[data-testid="mode-image"]')
+		const result = q('[data-testid="share-img"]')!
+		const opsIndex = Array.from(result.children).findIndex((c) => c.classList.contains('share-result__ops'))
+		const imgIndex = Array.from(result.children).findIndex((c) => c.classList.contains('share-result__img'))
+		expect(opsIndex).toBeGreaterThanOrEqual(0)
+		expect(imgIndex).toBeGreaterThan(opsIndex)
+		expect(q('[data-testid="img-dl"]')).not.toBeNull()
 	})
 })

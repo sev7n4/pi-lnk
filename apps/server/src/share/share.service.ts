@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, Logger, OnModuleDestroy, OnModuleInit 
 import { randomUUID } from 'crypto'
 import { promises as fs } from 'fs'
 import { join } from 'path'
-import { buildShareHtml, type ShareHtmlOptions, type ShareTurn } from '@lnkpi/shared'
+import { buildShareHtml, type ShareHtmlOptions, type ShareTurn, type ShareTurnPart } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
 import { resolvePublicBaseUrl } from '../agent/canvas-digest.service'
 
@@ -95,7 +95,14 @@ export class ShareService implements OnModuleInit, OnModuleDestroy {
       ''
     const title = (raw || '对话分享').slice(0, 60)
     const description = (raw || '来自 lnkpi 的对话分享').slice(0, 100)
-    return { title, description, image: this.ogImageUrl }
+    // 社交预览优先用会话里的第一张产物图；无图才回退默认 OG 图
+    const firstImage = turns
+      .flatMap((t) => t.parts ?? [])
+      .find(
+        (p): p is Extract<ShareTurnPart, { type: 'image' }> =>
+          p.type === 'image' && /^https?:\/\//i.test(p.url),
+      )
+    return { title, description, image: firstImage?.url || this.ogImageUrl }
   }
 
   /** 双写：① 落盘静态 HTML（含 OG）② 落库。任一失败均回滚另一边的副作用。 */

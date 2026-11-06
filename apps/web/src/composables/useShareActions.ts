@@ -10,6 +10,14 @@ export interface ShareUploadResult {
 	url: string
 }
 
+/** 生成图片的固定宽度（与分享模板 .wrap 的 max-width 一致）。 */
+const SHARE_IMAGE_WIDTH = 680
+/**
+ * canvas 面积上限（保守值）。iOS Safari 对 canvas 有面积/边长硬限制，
+ * 长会话在 pixelRatio:2 下会产出 1360×数万像素的图 ⇒ 截图失败或下半截空白。
+ */
+const MAX_IMAGE_PIXELS = 12_000_000
+
 /** 系统分享的结果，供面板给出不打扰的反馈（HIG：系统面板自己负责成败反馈）。 */
 export type ShareViaSystemResult = 'shared' | 'copied' | 'cancelled' | 'failed'
 
@@ -78,21 +86,43 @@ export function useShareActions() {
 		}
 	}
 
-	/** 生成图片：模板渲染进隐藏层 → html-to-image → 返回 PNG dataURL。 */
+	/**
+	 * 生成图片：模板渲染进离屏层 → html-to-image → 返回 PNG dataURL。
+	 *
+	 * ⚠️ 三个已实证的静默失败源（2026-11-06 逐像素取证）：
+	 *  ① 离屏层 `position:fixed; left:-99999px` 会被 html-to-image 原样克隆进 SVG
+	 *     foreignObject，内容整体被推出画布 ⇒ 产出**全透明空白图**（不透明像素 0.00%）。
+	 *     必须用 `style` 选项在 clone 上覆盖定位；只改原节点没用。
+	 *  ② 外链图（CDN 无 CORS）预内联失败后若保留原 url，html-to-image 会抛
+	 *     `[object Event]` ⇒ 点按钮无任何反馈。改由 `prepareOfflineTurns` 降级为占位卡。
+	 *  ③ 未传 `height` + 固定 pixelRatio:2 ⇒ 长会话超 iOS canvas 面积上限。
+	 */
 	async function toImage(turns: ShareTurn[], title?: string): Promise<string> {
-		// 图片须预内联为 data: URI 再截图：外链图片会让 html-to-image 的 canvas 被跨域污染
-		// 而静默失败（「生成图片点了没反应」的根因，#5）。与 openOffline 共用同一预内联通道。
 		const prepared = await prepareOfflineTurns(turns)
 		const html = buildShareHtml(prepared, { inlineMedia: 'offline', title })
 		const el = document.createElement('div')
 		el.style.position = 'fixed'
 		el.style.left = '-99999px'
 		el.style.top = '0'
-		el.style.width = '680px'
+		el.style.width = `${SHARE_IMAGE_WIDTH}px`
 		el.innerHTML = html
 		document.body.appendChild(el)
 		try {
-			return await toPng(el, { width: 680, cacheBust: true, pixelRatio: 2 })
+			// 显式量高：fixed 离屏节点的默认尺寸会被 html-to-image 算小，导致尾部被裁
+			const height = Math.max(1, el.scrollHeight || el.clientHeight || 1)
+			const pixelRatio = Math.max(
+				0.4,
+				Math.min(2, Math.sqrt(MAX_IMAGE_PIXELS / (SHARE_IMAGE_WIDTH * height))),
+			)
+			return await toPng(el, {
+				width: SHARE_IMAGE_WIDTH,
+				height,
+				cacheBust: true,
+				pixelRatio,
+				backgroundColor: '#f5f6f8',
+				// 关键：只作用于 clone，原节点仍留在视口外，用户不会看到闪屏
+				style: { position: 'static', left: '0', top: '0', width: `${SHARE_IMAGE_WIDTH}px` },
+			})
 		} finally {
 			document.body.removeChild(el)
 		}
@@ -163,21 +193,24 @@ async function prepareOfflineTurns(turns: ShareTurn[]): Promise<ShareTurn[]> {
 type ShareAttachment = NonNullable<ShareTurn['attachments']>[number]
 
 async function inlineAttachment(a: ShareAttachment): Promise<ShareAttachment> {
-	if (a.kind !== 'image' || a.url.startsWith('data:')) return a
+	if (a.kind !== 'image' || !a.url || a.url.startsWith('data:')) return a
 	try {
 		const token = localStorage.getItem('token')
 		const res = await fetch(a.url, token ? { headers: { Authorization: `Bearer ${token}` } } : undefined)
-		if (!res.ok) return { ...a, url: '' }
+		if (!res.ok) return { ...a, url: '', thumbUrl: a.url }
 		const blob = await res.blob()
 		const dataUrl = await blobToDataUrl(blob)
 		return { ...a, url: dataUrl }
 	} catch {
-		return { ...a, url: '' }
+		// 外链图（CDN 无 CORS）抓不到 ⇒ 清空 url 让模板渲染占位卡，
+		// thumbUrl 保留原地址作为「在线查看」入口。绝不能保留外链 <img>：
+		// html-to-image 会因此抛错/污染 canvas，生成图片整条链路静默失败。
+		return { ...a, url: '', thumbUrl: a.url }
 	}
 }
 
 async function inlineImagePart(p: ShareTurnPart): Promise<ShareTurnPart> {
-	if (p.type === 'image' && !p.url.startsWith('data:')) {
+	if (p.type === 'image' && p.url && !p.url.startsWith('data:')) {
 		try {
 			const token = localStorage.getItem('token')
 			const res = await fetch(p.url, token ? { headers: { Authorization: `Bearer ${token}` } } : undefined)
@@ -186,8 +219,9 @@ async function inlineImagePart(p: ShareTurnPart): Promise<ShareTurnPart> {
 				return { ...p, url: dataUrl }
 			}
 		} catch {
-			/* 降级：保留原 url（离线时显示 alt 文本） */
+			/* 落到下面的占位卡降级 */
 		}
+		return { type: 'image', url: '', caption: p.caption, fallbackUrl: p.url }
 	}
 	return p
 }
