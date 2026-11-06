@@ -144,6 +144,8 @@ async function onOpenOffline() {
 	busy.value = true
 	try {
 		await actions.openOffline(props.turns, props.title)
+	} catch {
+		ElMessage.error('离线页面生成失败，请试试「复制链接」')
 	} finally {
 		busy.value = false
 	}
@@ -154,6 +156,10 @@ async function onMakeImage() {
 	try {
 		imagePreview.value = await actions.toImage(props.turns, props.title)
 		view.value = 'image'
+	} catch {
+		// 生成图片曾因外链图跨域 / canvas 超限静默失败且无任何反馈 ⇒ 停在菜单并明确告知
+		imagePreview.value = null
+		ElMessage.error('图片生成失败，请试试「复制链接」分享完整对话')
 	} finally {
 		busy.value = false
 	}
@@ -291,7 +297,7 @@ const sheetTitle = computed(() =>
 		<!-- ============ L1 图片结果视图（替换菜单） ============ -->
 		<template v-else>
 			<div class="share-result" data-testid="share-img">
-				<img v-if="imagePreview" :src="imagePreview" alt="对话图片" class="share-result__img" />
+				<!-- 操作行在长图之前：会话图可达数千像素高，放底部等于让用户滚到底才能返回 -->
 				<div class="share-result__ops">
 					<button type="button" class="share-chip" data-testid="img-back" @click="onBack">返回</button>
 					<a
@@ -303,6 +309,8 @@ const sheetTitle = computed(() =>
 						>保存到相册</a
 					>
 				</div>
+				<img v-if="imagePreview" :src="imagePreview" alt="对话图片" class="share-result__img" />
+				<p class="share-result__tip">长图可上下滚动查看 · 长按图片可直接保存</p>
 			</div>
 		</template>
 	</MobileSheet>
@@ -492,7 +500,10 @@ const sheetTitle = computed(() =>
 
 .share-result__img {
 	max-width: 100%;
+	max-height: 46vh;
+	object-fit: contain;
 	border-radius: var(--lnk-radius-lg);
+	background: var(--lnk-surface-sunken);
 }
 
 .share-result__tip {

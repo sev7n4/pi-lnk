@@ -80,6 +80,23 @@ describe('ShareService.createShare', () => {
     expect(html).not.toContain('<img src=x onerror=alert(1)>')
   })
 
+  it('社交预览优先用会话第一张产物图（旧实现恒用默认 OG 图）', async () => {
+    const res = await svc.createShare('sess-og', [
+      turn({ parts: [{ type: 'image', url: 'https://cdn/first.png', caption: '海报' }] }),
+    ])
+    const html = await fs.readFile(join(tmp, `${res.shareId}.html`), 'utf8')
+    expect(html).toContain('content="https://cdn/first.png"')
+  })
+
+  it('托管页时间固定 UTC+8（容器是 UTC，旧实现慢 8 小时）', async () => {
+    const res = await svc.createShare('sess-tz', [
+      turn({ createdAt: Date.UTC(2026, 10, 6, 1, 20, 3) }),
+    ])
+    const html = await fs.readFile(join(tmp, `${res.shareId}.html`), 'utf8')
+    expect(html).toContain('2026/11/6 09:20:03')
+    expect(html).not.toContain('2026/11/6 01:20:03')
+  })
+
   it('DB 写入失败时清理已落盘静态文件，避免孤儿文件', async () => {
     ;(prisma.conversation_shares.create as unknown as { mockRejectedValueOnce: (e: Error) => void }).mockRejectedValueOnce(
       new Error('db down'),
