@@ -124,7 +124,9 @@ describe('底部锚定元素落位（2026-10-21 真机：＋FAB 被裸条盖掉�
 
   it('--lnk-agent-dock-h 发布源改为实测裸条（贴底容器高度在画布视图不可靠）', () => {
     expect(rail).toContain('bareBarRef')
-    expect(railCode).toContain('mobileDockRO.observe(bareBarRef.value)')
+    // 发布逻辑已抽到 useAgentDock（AgentSideRail 仅持有 ref 并透传）；契约钉在实测裸条这一意图上
+    const dock = readComponent('agent/useAgentDock.ts')
+    expect(dock).toContain('mobileDockRO.observe(bareBarRef.value)')
     // 有效性配对：裸条元素确实挂了 ref
     expect(rail).toMatch(/ref="bareBarRef"/)
   })

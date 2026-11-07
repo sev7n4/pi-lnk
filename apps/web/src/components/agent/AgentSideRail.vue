@@ -150,6 +150,7 @@ import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
 import { useUtteranceRotation } from '@/composables/useUtteranceRotation'
 import { shouldShowModelChip } from './composer/modelSkillDedup'
 import { barShape } from './composer/mobileBarLayout'
+import { useAgentDock } from './useAgentDock'
 import { sanitizeHistoryMessages } from './historySanitize'
 import { classifyGesture } from './composer/holdGesture'
 import UniversalModelSelector from '@/components/canvas/UniversalModelSelector.vue'
@@ -261,65 +262,7 @@ const pickMode = useCanvasRefPickMode()
 const pickModeActive = pickMode.active
 const { isMobileLayout } = useAgentMobileLayout()
 
-const panelTeleported = computed(() => floating.value || isMobileLayout.value)
-
-/* ---- 移动端贴底裸条高度发布（studio dock / 底部锚定元素避让用）----
- * 消费者：DockStudioToolbar（移动端）、MobileCanvasCreateFab、MobileSaveStatus、
- * MobileMultiSelectBar、SelectionBatchProgressCard —— 它们要避让的是**底部那条
- * 裸条**（composer 表面），不是整个贴底容器。
- * ⚠️ 2026-10-21 真机走查：原先发布的是「贴底容器」实测高度——画布视图里容器高度
- * 不可靠（实测 0），⇒ 所有底部锚定元素集体下移，与裸条**同位互压**（＋FAB 被盖掉
- * 一半、只剩一个紫色月牙）。改为直接实测裸条本身：裸条是画布视图底部唯一真实表面，
- * 隐藏时（沉浸态 / dock 展开）高度 0 ⇒ 清位公式自动归位。 */
-const panelShellRef = ref<HTMLElement | null>(null)
-const bareBarRef = ref<HTMLElement | null>(null)
-let mobileDockRO: ResizeObserver | null = null
-function publishMobileDockHeight(height: number) {
-  document.documentElement.style.setProperty(
-    '--lnk-agent-dock-h',
-    `${Math.max(0, Math.round(height))}px`,
-  )
-}
-function ensureMobileDockRO() {
-  if (!isMobileLayout.value || mobileDockRO) return
-  mobileDockRO = new ResizeObserver((entries) => {
-    const height = entries[0]?.contentRect.height ?? 0
-    publishMobileDockHeight(height)
-  })
-  // 移动端首载时 watch(immediate) 先于模板挂载，ref 可能还是 null ⇒ onMounted 再兜底补挂
-  if (bareBarRef.value) mobileDockRO.observe(bareBarRef.value)
-  else if (panelShellRef.value) mobileDockRO.observe(panelShellRef.value)
-}
-watch(
-  () => bareBarRef.value,
-  (el) => {
-    if (!isMobileLayout.value || !mobileDockRO || !el) return
-    mobileDockRO.disconnect()
-    mobileDockRO.observe(el)
-    publishMobileDockHeight(el.getBoundingClientRect().height)
-  },
-  { immediate: true },
-)
-watch(isMobileLayout, (mobile) => {
-  if (mobile) {
-    ensureMobileDockRO()
-  } else if (mobileDockRO) {
-    mobileDockRO.disconnect()
-    mobileDockRO = null
-    document.documentElement.style.setProperty('--lnk-agent-dock-h', '0px')
-  }
-}, { immediate: true })
-onMounted(ensureMobileDockRO)
-onUnmounted(() => {
-  mobileDockRO?.disconnect()
-  mobileDockRO = null
-  publishMobileDockHeight(0)
-})
-
-const asidePanelWidth = computed(() => {
-  if (!open.value || floating.value || isMobileLayout.value) return '0px'
-  return `${panelWidth.value}px`
-})
+/* dock/panel 定位、桌面浮窗拖拽/调宽、移动端裸条高度发布 —— 已抽到 useAgentDock（见下方调用） */
 
 const agent = useAgentStore()
 const auth = useAuthStore()
@@ -1484,6 +1427,9 @@ function onDrop(event: DragEvent) {
 const open = ref(false)
 /** 浮动窗口模式：面板脱离侧栏，悬浮在画布上，可拖拽 */
 const floating = ref(false)
+/** 浮窗/裸条 DOM 锚（传给 useAgentDock 做移动端高度测量） */
+const panelShellRef = ref<HTMLElement | null>(null)
+const bareBarRef = ref<HTMLElement | null>(null)
 
 /**
  * 移动端（P1-5）：底部裸条**常驻**——画布始终露出且可点（无 sheet / 无遮罩），
@@ -1498,8 +1444,6 @@ watch(isMobileLayout, (mobile) => {
 }, { immediate: true })
 
 /* ---- 宽度：默认可容纳 dock 底部参数一排，支持拖拉调宽 ---- */
-const PANEL_MIN_W = 420
-const PANEL_MAX_W = 760
 const PANEL_DEFAULT_W = 500
 const panelWidth = ref(PANEL_DEFAULT_W)
 const resizing = ref(false)
@@ -1509,9 +1453,11 @@ const floatPos = ref({ x: 0, y: 0 })
 const floatWidth = ref(PANEL_DEFAULT_W)
 const dragging = ref(false)
 
-function clamp(v: number, min: number, max: number) {
-  return Math.min(Math.max(v, min), max)
-}
+// Phase 3 拆解：dock/panel 定位 + 桌面浮窗拖拽/调宽 + 移动端裸条高度发布，抽到 useAgentDock。
+const { panelTeleported, asidePanelWidth, toggleFloating, startDrag, startResize } = useAgentDock({
+  open, floating, panelWidth, floatWidth, floatPos, dragging, resizing,
+  bareBarRef, panelShellRef, isMobileLayout,
+})
 
 const { preferences, load: loadProviderBootstrap } = useProviderBootstrap()
 const planningModel = ref(preferences.value?.defaultTextModel ?? '')
@@ -1741,67 +1687,7 @@ function onExportPack(
   emit('exportPack', nodeIds, exportMode)
 }
 
-function toggleFloating() {
-  if (isMobileLayout.value) return
-  floating.value = !floating.value
-  if (floating.value) {
-    // 首次浮出时把面板放到画布右侧默认位置
-    floatWidth.value = clamp(panelWidth.value, PANEL_MIN_W, window.innerWidth - 48)
-    floatPos.value = {
-      x: Math.max(16, window.innerWidth - floatWidth.value - 40),
-      y: 56,
-    }
-  }
-}
-
-/* ---- 浮窗拖拽（按住头部空白处移动） ---- */
-function startDrag(event: MouseEvent) {
-  if (!floating.value || isMobileLayout.value) return
-  if ((event.target as HTMLElement).closest('button, input, textarea')) return
-  event.preventDefault()
-  dragging.value = true
-  const offsetX = event.clientX - floatPos.value.x
-  const offsetY = event.clientY - floatPos.value.y
-  const onMove = (ev: MouseEvent) => {
-    floatPos.value = {
-      x: clamp(ev.clientX - offsetX, -floatWidth.value + 120, window.innerWidth - 120),
-      y: clamp(ev.clientY - offsetY, 0, window.innerHeight - 64),
-    }
-  }
-  const onUp = () => {
-    dragging.value = false
-    window.removeEventListener('mousemove', onMove)
-    window.removeEventListener('mouseup', onUp)
-  }
-  window.addEventListener('mousemove', onMove)
-  window.addEventListener('mouseup', onUp)
-}
-
-/* ---- 左边缘拖拉调宽（侧栏 / 浮窗通用） ---- */
-function startResize(event: MouseEvent) {
-  if (isMobileLayout.value) return
-  event.preventDefault()
-  resizing.value = true
-  const floatRight = floatPos.value.x + floatWidth.value
-  const onMove = (ev: MouseEvent) => {
-    if (floating.value) {
-      const width = clamp(floatRight - ev.clientX, PANEL_MIN_W, PANEL_MAX_W)
-      floatWidth.value = width
-      floatPos.value = { ...floatPos.value, x: floatRight - width }
-    } else {
-      // 桌面 docks 在左侧（CanvasPage 用 flex-row-reverse 把侧栏翻到左）：
-      // 侧栏左缘贴屏幕 x=0，宽度即鼠标到左缘的距离。
-      panelWidth.value = clamp(ev.clientX, PANEL_MIN_W, PANEL_MAX_W)
-    }
-  }
-  const onUp = () => {
-    resizing.value = false
-    window.removeEventListener('mousemove', onMove)
-    window.removeEventListener('mouseup', onUp)
-  }
-  window.addEventListener('mousemove', onMove)
-  window.addEventListener('mouseup', onUp)
-}
+/* toggleFloating / startDrag / startResize 已移到 useAgentDock（见上方调用） */
 
 function newAgentSession() {
   clearComposer()
