@@ -1,13 +1,13 @@
 # SSE 对话页视图层统一设计规格（移动端为锚）
 
-状态：已复核待开工（方向已验证 · WIP 已接管 · 统一 worktree 基于 origin/master，2026-11-06 复核）
+状态：已复核待开工（方向已验证 · WIP 已接管 · 统一 worktree 基于 origin/master 当前 HEAD，2026-11-06 复核；2026-11-07 修订 §13.1 基线硬编码陷阱 + 数字统一）
 前置：
 - `2026-10-21-multi-device-consistency-design.md`（多端同会话一致性 · 执行/观测/投影/队列四层）
 - `2026-10-25-mobile-node-lifecycle-design.md`（移动端节点生命周期与载体分工）
 - `2026-10-06-selection-as-default-reference-design.md`（画布选中 = Agent 默认指代）
 - 关联取证：`docs/architecture/sse-conversation-readonly-analysis.md`（只读取证，未搬入本规格）
 分支约定：实现走 feature 分支 + PR + squash merge。
-复核依据：2026-11-05 初核 + 2026-11-06 生产态（origin/master 676c5a64）复核，见 §13 / §13.1。
+复核依据：2026-11-05 初核 + 2026-11-06 生产态（origin/master）+ 2026-11-07 基线刷新（当前 HEAD 59eeab32）复核，见 §13 / §13.1。
 
 ---
 
@@ -132,7 +132,7 @@ flowchart LR
 
 ### 6.3 拆 God Component（Phase 3 验收）
 - 移动 chat 子树从 `AgentSideRail` 迁出（移动 chat 改走共享 Content + 移动壳 + `agentCommandClient`）。
-- 原文件降级为 `PCDockShell`，**删除 30 处 `isMobileLayout` 分支**。
+- 原文件降级为 `PCDockShell`，**删除 29 处 `isMobileLayout` 分支**（生产态实测值，见 §13.1；正文旧写 30 为估算，以此为准）。
 - ⚠️ **生命周期坑**：`AgentSideRail` 当前是**常驻挂载**（移动端靠 CSS `hidden` 切非 chat 页签），其 `onMounted` 负责加载历史（见 `CanvasPage.vue:6384-6387` 注释）。抽离对话内容时必须把「历史加载 + SSE 订阅 bootstrap」一并迁入共享内容组件，**不能简单 `v-if` 删掉**，否则移动端 chat 历史永不加载。
 
 ## 7. 数据与状态变更
@@ -149,8 +149,8 @@ flowchart LR
 ## 9. 文件级改动清单
 
 - **新增**：`components/agent/presentation/NodeView*.vue`（由 `MobileNodeViewer`/`MobileNodeTile` 提升）；`agentCommandClient` 模块。
-- **修改**：`AgentSideRail.vue`（删 30 处 `isMobileLayout` + 删内联 `fetch` + 降级为 dock 壳）；`CanvasPage.vue`（移动 chat 改接共享 Content）；`MobileCanvasShell.vue`（移动 chat 经 Content 渲染的桥接）。
-- **删除**：PC 冗余画布节点渲染 `components/agent/presentation/` 下被共享层取代的部分（约 1100–1450 行，见 §1.6 实测）。
+- **修改**：`AgentSideRail.vue`（删 29 处 `isMobileLayout` + 删内联 `fetch` + 降级为 dock 壳）；`CanvasPage.vue`（移动 chat 改接共享 Content）；`MobileCanvasShell.vue`（移动 chat 经 Content 渲染的桥接）。
+- **删除**：PC 冗余画布节点渲染 `components/agent/presentation/` 下被共享层取代的部分（约 1100–1450 行，存量规模见 §13.1 复核 #3 的 `presentation` 目录实测）。
 - **保留零触碰**：`MobileCanvasShell` 壳层、`MobileTabBar`、`MobileNodeViewer` 内的手势接线（迁走后改由壳层注入）。
 
 ## 10. 测试策略与验收标准（含目视验收）
@@ -191,17 +191,17 @@ flowchart LR
 | 7 | L1「内联 POST」存疑 | 确认 `AgentSideRail.vue:2625` 确有 `fetch(apiUrl('/api/agent/chat/conversation'))` | 前提坐实 |
 | 8 | 共享层"另起中立层" | PC 已有 `presentation` 概念（`setPresentation` / svgCard vs node-graph），锚定移动端后应**复用并扩展**该枚举 | 目标架构改用既有枚举 |
 
-**仍只读的开放项（待办）**：`AgentSideRail` 逐行分类的精确瘦身账单（当前 6574 行 / 30 处 `isMobileLayout`）；移动端 24 组件的可抬升性矩阵（是否纯内容 / 夹带哪些移动 composable）。
+**仍只读的开放项（待办）**：`AgentSideRail` 逐行分类的精确瘦身账单（当前 7092 行 / 29 处 `isMobileLayout`，生产态 59eeab32 实测）；移动端 24 组件的可抬升性矩阵（是否纯内容 / 夹带哪些移动 composable）。
 
 ### 13.1 2026-11-06 开工前复核（基于生产态 origin/master）
 
-> ⚠️ **基线纠正**：本地 `master`（#640, `27b06658`）落后生产 `origin/master`（`676c5a64`）约 106 个已合入 PR（#641–#746）。本轮复核一律以**生产态 `origin/master`** 为准；下文数字为生产态实测，非本地陈旧基线，规格正文 §1 等处旧数字（如 6574/30）以本节为准。
+> ⚠️ **基线纠正**：本地 `master`（#640, `27b06658`）落后生产 `origin/master` 约 106 个已合入 PR（#641–#746）。本轮复核一律以**生产态 `origin/master` 当前 HEAD（动态）** 为准；下文数字为当时生产态实测，非本地陈旧基线。⚠️ **2026-11-07 补充**：本段原写的固定 SHA `676c5a64` 现也已陈旧（位于 #743/#744/#751 之前），**不得再作为 worktree 基线**——见 §13.1 末条红线。规格正文 §1 等处旧数字（如 6574/30）以本节为准。
 
 规格基准 2026-11-05；期间多端一致性 P0–P4 等已合入生产。开工前对核心前提与依赖落地做了生产态复核：
 
 | # | 复核项 | 生产态（origin/master）结论 | 处置 |
 |---|---|---|---|
-| 1 | 核心前提：移动 chat 仍走 `AgentSideRail`（mobileAppTab） | **仍成立**：`AgentSideRail.vue` 内 `mobileAppTab` 3 处、`CanvasPage.vue` 11 处；组件 **7087 行 / 29 `isMobileLayout`**（注：2026-11-05 草稿记 6574/30，系本地 #640 陈旧基线；生产态已演进为 7087/29） | 前提保留，数字以生产态为准 |
+| 1 | 核心前提：移动 chat 仍走 `AgentSideRail`（mobileAppTab） | **仍成立**：`AgentSideRail.vue` 内 `mobileAppTab` 3 处、`CanvasPage.vue` 11 处；组件 **7092 行 / 29 `isMobileLayout`**（生产态 59eeab32 实测；2026-11-05 草稿记 6574/30 系本地 #640 陈旧基线；2026-11-06 生产态曾记 7087，随合入演进） | 前提保留，数字以生产态为准 |
 | 2 | 依赖底座（多端一致性 P0–P4） | **已在生产态落地**：#716 P0 统一事件通道 / #720 P2 durable / #726 P3 ack / #729 P4 projection —— 规格「不做」的底层已稳定，方向得到验证 | 战略 GO |
 | 3 | 锚定落点 `components/agent/presentation/` | **仍成立**：目录存在（AgentNodeGraph 617 / AgentSvgCard 74 / AgentDeliveryCards 69 / AgentPresentationHost 248 + 新增 AgentProseBlock 59 / AgentShotTable 54 / AgentStepper 44 / AgentMacroSchemeCards 75 / AgentDeliverySummaryTable 113 / AgentTopoCardList 95） | 落点保留 |
 | 4 | 移动锚组件 | **仍存在且为更优锚**：`MobileNodeViewer` **1234**、`MobileNodeTile` **1348**、`MobileReadingSurface`278/`MobileViewerChrome`228/`MobileNodeStatusBar`198（生产态实测；本地 #640 曾见 1315/1406，已被后续 PR 收敛） | 锚更稳，Phase 1 抬升收益更大 |
@@ -211,7 +211,7 @@ flowchart LR
 **✅ 开工阻塞已解除（WIP 已接管）**：本地 `master` 的未提交 WIP（原 43 文件 / +1758 行，命中 `AgentSideRail.vue`/`MobileNodeViewer.vue`/`MobileNodeTile.vue`/`CanvasPage.vue`/`turnTimeline.ts`/`stores/agent.ts` 等目标文件）已安全接管至 **`feat/propose-exec-inline`** 分支（基于 #640，commit `e37c8c12`），主仓 `master` 工作区已清空、零触碰。
 
 - ⚠️ **WIP 分支落后生产**：`feat/propose-exec-inline` 基于 #640，现落后 `origin/master` 约 106 PR；后续按特性拆分前须先 rebase 到 `origin/master`（可能与 #641–#746 中同类文件改动冲突，需人工解）。
-- **统一 worktree 须基于 `origin/master`（676c5a64）**：不得基于本地陈旧 #640，否则将在旧代码上开工。
+- 🔴 **统一 worktree 须基于 `origin/master` 当前 HEAD（动态），禁止写死任何固定 SHA**：不得基于本地陈旧 #640，否则将在旧代码上开工；也**不得写死历史上的生产态 SHA（如曾写的 `676c5a64`）——该 SHA 位于 #743/#744/#751 之前，照此切 worktree 会从落后基线建包，把已验证修复整链回退到生产**。2026-11-06 真实踩坑：用 `676c5a64` 之后的落后 worktree（`fe7d5c3d`，基线 `676c5a64`）建包部署，回退了 #735–#744 共 17 个 master 提交，表现为双端连线不可见、音频倍速遮挡、分享面板等已修复功能复现。正确做法：开工前 `gh api repos/<owner>/<repo>/branches/master` 取最新 SHA，基于该 SHA 切 worktree；部署前再核建包源含所有前置修复。
 
 ---
 
