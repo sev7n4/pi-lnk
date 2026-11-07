@@ -147,11 +147,10 @@ import { barShape } from './composer/mobileBarLayout'
 import { useAgentDock } from './useAgentDock'
 import { sanitizeHistoryMessages } from './historySanitize'
 import { classifyGesture } from './composer/holdGesture'
-import { visibleAssistantContent, visibleUserContent, isUserSystemEvent, hasRenderableSvgCard, hasRenderableNodeGraph, nodeGraphPayload, shouldShowMessageBubbleText, isPreparingPlaceholder, shouldRenderSchemeDraftProse, canReuseTurn, useTimeline } from './agentMessageRender'
+import { visibleAssistantContent, visibleUserContent, isUserSystemEvent, hasRenderableSvgCard, hasRenderableNodeGraph, nodeGraphPayload, shouldShowMessageBubbleText, isPreparingPlaceholder, shouldRenderSchemeDraftProse, canReuseTurn, useTimeline, bubbleSummaryLine, historyPresentation, historyMacroSelectedIds } from './agentMessageRender'
 import UniversalModelSelector from '@/components/canvas/UniversalModelSelector.vue'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
 import { formatDuration as formatTraceDuration } from '@/components/agent/executionStepLabels'
-import { turnSummaryLine } from '@/components/agent/executionTraceReducer'
 import { formatSessionTime } from '@/utils/formatSessionTime'
 import { randomId } from '@/utils/randomId'
 import { submitAnswers } from '@/components/agent/agentAnswers'
@@ -770,16 +769,6 @@ function canvasOutputsForMessage(msg: AgentStreamMessage) {
   })
 }
 
-/**
- * P0（agent-turn-timeline-design §5 P0-4）：回合摘要行（节点/张数/耗时/tokens）。
- * 仅在本回合**已结束**（非 streaming）且确有 trace 时给出，供模板在产物之后渲染。
- * 旧实现把该行写死在 AgentExecutionTrace 组件内（ul 之后），而 trace 又排在正文/产物之前，
- * 导致「回合末才算出的统计行」永远压在产物之上；现独立渲染、落在时间线最末（产物之后）。
- */
-function bubbleSummaryLine(msg: AgentStreamMessage): string | null {
-  if (msg.role !== 'assistant' || msg.streaming || !msg.executionTrace) return null
-  return turnSummaryLine(msg.executionTrace)
-}
 
 
 /**
@@ -1152,21 +1141,6 @@ async function onAskCancel(callId: string | undefined) {
     agent.resolveQuestionPart(callId, 'pending_answer')
     ElMessage.error('提交失败，请重试')
   }
-}
-function historyPresentation(msg: AgentStreamMessage): AgentPresentationEnvelope | null {
-  if (msg.role !== 'assistant' || msg.streaming || !msg.presentation) return null
-  // svg_card 走独立挂载（紧邻本函数调用点的 AgentSvgCard），不进 Host 的 stepper 布局：
-  // 落库重放路径不恢复 stepper，进了只会渲染一条空进度条。spec §4.6。
-  if (msg.presentation.kind === 'svg_card') return null
-  return msg.presentation
-}
-
-function historyMacroSelectedIds(presentation: AgentPresentationEnvelope): string[] {
-  const schemes = presentation.body?.schemes ?? []
-  const recommended = schemes.filter((s) => s.recommended).map((s) => String(s.id))
-  if (recommended.length) return recommended
-  const maxSelect = presentation.body?.max_select ?? 2
-  return schemes.slice(0, maxSelect).map((s) => String(s.id))
 }
 
 const canSubmitComposer = computed(() =>
