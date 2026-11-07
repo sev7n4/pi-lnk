@@ -13,21 +13,25 @@ import { describe, expect, it } from 'vitest'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const sfc = readFileSync(join(here, 'AgentSideRail.vue'), 'utf8')
+// 第八刀（strangler-fig）：Queue-Draft 簇已迁入 useAgentQueue。
+// queuedSlots 声明 / queueDraftAsPending·dismissQueued·markQueueApplied 函数体 + QueuedSlot 接口
+// 改在该 composable 源码里校验；模板动作调用改用 queue. 前缀。
+const queueSrc = readFileSync(join(here, './useAgentQueue.ts'), 'utf8')
 
 /** 花括号配平提取函数全文（按函数名前缀定位，不锁形参表）。 */
-function requireFnBody(signature: string): string {
-  const start = sfc.indexOf(signature)
+function requireFnBody(signature: string, source: string = sfc): string {
+  const start = source.indexOf(signature)
   if (start === -1) throw new Error(`未找到函数：${signature}`)
   let depth = 0
   let opened = false
-  for (let i = start + signature.length; i < sfc.length; i++) {
-    const ch = sfc[i]
+  for (let i = start + signature.length; i < source.length; i++) {
+    const ch = source[i]
     if (ch === '{') {
       depth++
       opened = true
     } else if (ch === '}') {
       depth--
-      if (opened && depth === 0) return sfc.slice(start, i + 1)
+      if (opened && depth === 0) return source.slice(start, i + 1)
     }
   }
   throw new Error(`函数体未闭合：${signature}`)
@@ -43,38 +47,40 @@ describe('插话多槽位（P2）', () => {
     // 单槽位的病态形态
     expect(sfc).not.toMatch(/const queued = ref<QueuedSlot \| null>\(null\)/)
     // 数组 + 追加语义（不能是 `= [{...}]` 的覆盖赋值）
+    // 注：queuedSlots 声明留在 SFC（第八刀按设计不迁），故改在 sfc 校验。
     expect(sfc).toMatch(/const queuedSlots = ref<QueuedSlot\[\]>\(\[\]\)/)
-    const body = requireFnBody('async function queueDraftAsPending(')
+    const body = requireFnBody('async function queueDraftAsPending(', queueSrc)
     expect(body).toMatch(/queuedSlots\.value = \[\s*\.\.\.queuedSlots\.value,/)
   })
 
   it('槽位带本地 id 供 v-for 定位（pending 态还没有 entryId）', () => {
-    const slot = /interface QueuedSlot \{[\s\S]*?\n\}/.exec(sfc)
+    const slot = /interface QueuedSlot \{[\s\S]*?\n\}/.exec(queueSrc)
     expect(slot, '未找到 QueuedSlot 接口').toBeTruthy()
     expect(slot![0]).toContain('id: string')
+    // 注：queuedSlots 留 SFC 顶层，模板 v-for 无 queue. 前缀。
     expect(tpl).toMatch(/v-for="slot in queuedSlots"\s*:key="slot\.id"/)
   })
 
   it('每个气泡的动作都带槽位实参（撤回/放弃/取回不得整批误伤）', () => {
-    expect(tpl).toMatch(/@click="deliverQueued\('steer', slot\)"/)
-    expect(tpl).toMatch(/@click="deliverQueued\('followup', slot\)"/)
-    expect(tpl).toMatch(/@click="dismissQueued\(slot\)"/)
-    expect(tpl).toMatch(/@click="requeueQueued\(slot\)"/)
-    expect(tpl).toMatch(/@click="withdrawQueued\(slot\)"/)
+    expect(tpl).toMatch(/@click="queue\.deliverQueued\('steer', slot\)"/)
+    expect(tpl).toMatch(/@click="queue\.deliverQueued\('followup', slot\)"/)
+    expect(tpl).toMatch(/@click="queue\.dismissQueued\(slot\)"/)
+    expect(tpl).toMatch(/@click="queue\.requeueQueued\(slot\)"/)
+    expect(tpl).toMatch(/@click="queue\.withdrawQueued\(slot\)"/)
   })
 
   it('放弃只收这一条（按 id 过滤，不是整批清空）', () => {
-    const body = requireFnBody('function dismissQueued(')
+    const body = requireFnBody('function dismissQueued(', queueSrc)
     expect(body).toMatch(/filter\(\(s\) => s\.id !== slot\.id\)/)
   })
 
   it('applied 只推进最早那条已入队的，后面的不许谎报「已接住」', () => {
-    const body = requireFnBody('function markQueueApplied(')
+    const body = requireFnBody('function markQueueApplied(', queueSrc)
     expect(body).toMatch(/find\(\(s\) => s\.state === 'accepted'\)/)
   })
 
   it('满了不吞草稿：上限检查在清空输入框之前，且给出提示', () => {
-    const body = requireFnBody('async function queueDraftAsPending(')
+    const body = requireFnBody('async function queueDraftAsPending(', queueSrc)
     const capAt = body.indexOf('MAX_QUEUED_SLOTS')
     const clearAt = body.indexOf("input.value = ''")
     expect(capAt, '没有槽位上限 ⇒ 无限堆叠会顶掉对话阅读区').toBeGreaterThan(-1)

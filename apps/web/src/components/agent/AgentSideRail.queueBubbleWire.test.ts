@@ -16,6 +16,9 @@ import { requireFnBody } from './sfcSource'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const sfc = readFileSync(join(here, 'AgentSideRail.vue'), 'utf8')
+// 第八刀（strangler-fig）：Queue-Draft 簇已迁入 useAgentQueue。
+// deliverQueued 函数体 / queuedEntryIds 声明改在该 composable 源码里校验。
+const queueSrc = readFileSync(join(here, './useAgentQueue.ts'), 'utf8')
 
 describe('插话气泡接线（pi_message_end → 落点判定）', () => {
   it('pi_message_end 事件交给 applyPiUserMessageEvent 判定（不内联判定逻辑）', () => {
@@ -41,7 +44,7 @@ describe('插话气泡接线（pi_message_end → 落点判定）', () => {
   })
 
   it('插话入队成功时登记 entryId（它是「这条是插话」的权威凭据）', () => {
-    const body = requireFnBody(sfc, 'async function deliverQueued(')
+    const body = requireFnBody(queueSrc, 'async function deliverQueued(')
 
     // 有效性配对：确实登记了
     expect(body).toContain('queuedEntryIds.add(')
