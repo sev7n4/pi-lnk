@@ -66,6 +66,25 @@ describe('diffCanvasData', () => {
     warn.mockRestore()
   })
 
+  it('P1b：digest / digestVersion / source 属系统管道 ⇒ 客户端陈旧值一律不进 PATCH', () => {
+    // 事故形态：浏览器本地副本停在 ver=4，服务端已到 ver=5；回拉后 diff 若把这
+    // 三个键提交，就会把服务端版本覆盖回 4（生产 nginx 实证 573 次客户端 PATCH）。
+    const saved = d([{
+      id: 'digest-canvas', type: 'text', position: { x: 0, y: 900 },
+      data: { digest: true, digestVersion: 5, source: 'system-digest', content: '<html>新</html>' },
+    }])
+    const current = d([{
+      id: 'digest-canvas', type: 'text', position: { x: 0, y: 900 },
+      data: { digest: true, digestVersion: 4, source: 'system-digest', content: '<html>新</html>' },
+    }])
+    const out = diffCanvasData(saved, current)
+    expect(out.droppedKeys).toBe(1)
+    expect(out.ops).toEqual([])
+    for (const key of ['digest', 'digestVersion', 'source']) {
+      expect(CLIENT_FORBIDDEN_NODE_DATA_KEYS.has(key)).toBe(true)
+    }
+  })
+
   it('白名单外键「有→无」同样丢弃，不产生 null 覆盖', () => {
     const saved = d([{ id: 'n1', type: 'image', position: { x: 0, y: 0 }, data: { errorMessage: 'x', title: 'a' } }])
     const current = d([{ id: 'n1', type: 'image', position: { x: 0, y: 0 }, data: { title: 'a' } }])

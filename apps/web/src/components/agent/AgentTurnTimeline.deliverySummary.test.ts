@@ -3,6 +3,7 @@ import { mount } from '@vue/test-utils'
 import AgentTurnTimeline from './AgentTurnTimeline.vue'
 import { MOBILE_NODE_OPEN_VIEWER_KEY } from '@/composables/canvasNodeActions'
 import type { TimelinePart } from './turnTimeline'
+import type { DeliveryItem } from './deliverySummary'
 
 /**
  * E2-a 回合产物幽灵摘要（规格 2026-11-04-e2a-ghost-delivery-summary §3 D-b/D-c/E-d）：
@@ -22,9 +23,20 @@ const artifact = (over: Partial<Extract<TimelinePart, { kind: 'artifact' }>> = {
 
 const canvasNode = (id: string, type: string, data: Record<string, unknown> = {}) => ({ id, type, data })
 
-function mountTimeline(parts: TimelinePart[], opts: { viewer?: ReturnType<typeof vi.fn>; nodes?: unknown[] | null } = {}) {
+function mountTimeline(
+  parts: TimelinePart[],
+  opts: {
+    viewer?: ReturnType<typeof vi.fn>
+    nodes?: unknown[] | null
+    digestEntry?: DeliveryItem | null
+  } = {},
+) {
   return mount(AgentTurnTimeline, {
-    props: { parts, canvasNodes: (opts.nodes === undefined ? [] : opts.nodes) as never },
+    props: {
+      parts,
+      canvasNodes: (opts.nodes === undefined ? [] : opts.nodes) as never,
+      ...(opts.digestEntry === undefined ? {} : { digestEntry: opts.digestEntry }),
+    },
     global: opts.viewer
       ? { provide: { [MOBILE_NODE_OPEN_VIEWER_KEY as symbol]: opts.viewer } }
       : undefined,
@@ -230,7 +242,7 @@ describe('AgentTurnTimeline — 交付条文本系产物可区分', () => {
     w.unmount()
   })
 
-  it('digest 系统产物 ⇒ 网格图标 + 「总览」小字，不与 agent HTML 混用', async () => {
+  it('P1a：系统总览不进「本轮产物」清单（零产物/历史回合不再虚报）', async () => {
     const w = mountTimeline([artifact({ nodeId: 'n1', url: 'https://x/a.png' })], {
       nodes: [
         canvasNode('n1', 'image', { url: 'https://x/a.png' }),
@@ -238,10 +250,27 @@ describe('AgentTurnTimeline — 交付条文本系产物可区分', () => {
       ],
     })
     await w.find('[data-test="delivery-toggle"]').trigger('click')
-    const tile = w.find('[data-test="delivery-tile-d1"]')
-    expect(tile.exists()).toBe(true)
-    expect(tile.find('[data-testid="delivery-tile-icon-digest"]').exists()).toBe(true)
-    expect(tile.find('[data-testid="delivery-tile-type"]').text()).toBe('总览')
+    expect(w.find('[data-test="delivery-tile-n1"]').exists()).toBe(true)
+    expect(w.find('[data-test="delivery-tile-d1"]').exists()).toBe(false)
+    expect(w.find('[data-test="digest-entry"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('P1a：digestEntry 只在最后一轮传入 ⇒ 独立「画布总览」入口，点击走 viewer（含 digest_open）', async () => {
+    const viewer = vi.fn()
+    // 纯聊天回合（只有 text part、零 artifact）仍是真实渲染的 timeline 回合
+    const w = mountTimeline([{ kind: 'text', id: 't-1', text: '好的', status: 'done' }], {
+      viewer,
+      nodes: [canvasNode('d1', 'text', { digest: true, format: 'html', source: 'system-digest' })],
+      digestEntry: { nodeId: 'd1', nodeType: 'text', title: '画布总览', digest: true, format: 'html' },
+    })
+    // 零产物回合 ⇒ 交付条整行隐藏，但会话级总览入口仍可用
+    expect(w.find('[data-test="delivery-toggle"]').exists()).toBe(false)
+    const entry = w.find('[data-test="digest-entry"]')
+    expect(entry.exists()).toBe(true)
+    expect(entry.text()).toContain('画布总览')
+    await entry.trigger('click')
+    expect(viewer).toHaveBeenCalledTimes(1)
     w.unmount()
   })
 })

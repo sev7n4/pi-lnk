@@ -17,6 +17,8 @@ export interface DigestNodeSnapshot {
   durationSec?: number
   /** 透传字段：text 节点正文仅用于 D4 边界测试断言不被渲染。 */
   content?: string
+  /** P2：生命周期状态（只用于 Footer 未收录分类，不进收录分区/不读正文）。 */
+  status?: string
 }
 
 export interface DigestSnapshot {
@@ -105,8 +107,27 @@ export function renderDigestHtml(
   const capped = collected.slice(0, DIGEST_NODE_CAP)
   const overflowCount = collected.length - capped.length
 
-  // D9 未收录计数：有正据节点数之外的画布节点（draft/生成中）。
-  const pendingCount = snapshot.nodes.length - collected.length
+  // D9 未收录计数：有正据节点数之外的画布节点。
+  // P2（2026-11-07 生产实证）：旧实现把全部未收录项一律写「生成中」，但该会话
+  // 4 项其实是 4 张 failed 图片，另有 1 个 draft 空文本节点 ⇒ 用户误以为还在跑。
+  // 现按生命周期状态分桶；未知/缺省状态保守沿用旧文案「生成中」（历史快照零变化）。
+  const excluded = snapshot.nodes.filter((n) => !hasEvidence(n))
+  const pendingBuckets: Record<'generating' | 'failed' | 'draft', number> = {
+    generating: 0,
+    failed: 0,
+    draft: 0,
+  }
+  for (const node of excluded) {
+    const status = String(node.status ?? '').trim()
+    if (status === 'failed' || status === 'error') pendingBuckets.failed += 1
+    else if (status === 'draft' || status === 'pending_confirm') pendingBuckets.draft += 1
+    else pendingBuckets.generating += 1
+  }
+  const pendingLabels = [
+    pendingBuckets.generating > 0 ? `${pendingBuckets.generating} 项生成中未收录` : null,
+    pendingBuckets.failed > 0 ? `${pendingBuckets.failed} 项生成失败未收录` : null,
+    pendingBuckets.draft > 0 ? `${pendingBuckets.draft} 项待完成未收录` : null,
+  ].filter((b): b is string => b !== null)
 
   const base = opts.publicBaseUrl
 
@@ -146,9 +167,11 @@ export function renderDigestHtml(
     : ''
 
   const footerBits = [
-    pendingCount > 0 ? `${pendingCount} 项生成中未收录` : null,
+    ...pendingLabels,
     overflowCount > 0 ? `其余 ${overflowCount} 项未收录` : null,
-    '系统生成',
+    // P2 命名区分（2026-11-07 截图研判）：用户自建「画布内容总结」与系统总览名称近似，
+    // 容易被混为一谈；Footer 明确「系统自动生成 + 当前画布快照（非用户产物）」。
+    '系统自动生成 · 当前画布快照',
   ].filter((b): b is string => b !== null)
 
   return `<!DOCTYPE html>
@@ -324,9 +347,33 @@ export function collectDigestSnapshot(canvas: DigestRawCanvas): DigestSnapshot {
               : undefined
             : undefined,
         content: nodeType === 'text' && typeof data.content === 'string' ? data.content : undefined,
+        status: typeof data.status === 'string' ? data.status : undefined,
       }
     })
   return { nodes, digestVersion: 0, updatedAt: new Date() }
+}
+
+/**
+ * P1b：下一版版本号（双源自愈）。
+ *
+ * 2026-11-07 生产事故：客户端回拉/PATCH 循环把陈旧的 `digestVersion` 回灌，
+ * 元数据卡在 4、HTML Header 已是「第 5 版」⇒ 旧判据「meta+1」使 Header 永远
+ * 停在第 5 版。根因已由「系统专属字段禁写」收口，这里对**存量脏状态**做收敛：
+ * 同时读节点元数据与上一版 HTML Header，取较大者 +1，保证版本号继续单调前进，
+ * 并在下一轮把元数据写回与 Header 一致。HTML Header 是本渲染器生成的确定形态，
+ * 仅认 `<span class="ver">第 N 版</span>`，不按正文里的「第 N 版」字样猜测。
+ */
+export function resolveNextDigestVersion(canvas: DigestRawCanvas): number {
+  const node = canvas.nodes.find((n) => n.data?.digest === true)
+  if (!node) return 1
+  const data = node.data ?? {}
+  const meta = typeof data.digestVersion === 'number' && Number.isFinite(data.digestVersion)
+    ? Math.max(0, Math.floor(data.digestVersion))
+    : 0
+  const content = typeof data.content === 'string' ? data.content : ''
+  const m = content.match(/<span class="ver">第\s*(\d+)\s*版<\/span>/)
+  const fromHtml = m ? Number(m[1]) : 0
+  return Math.max(meta, Number.isFinite(fromHtml) ? fromHtml : 0) + 1
 }
 
 /**
@@ -443,9 +490,8 @@ export class CanvasDigestService {
       // F1（final review）：版本计算须在渲染**之前**并回填 snapshot——Header「第 N 版」
       // 是本轮要写入的版本（= 既有 +1），不是既有值；曾恒渲染 collectDigestSnapshot
       // 占位的 0 ⇒ Header 永远「第 0 版」（S2 违约）。
-      const prevVersion = canvas.nodes.find((n) => n.data?.digest === true)?.data
-        ?.digestVersion
-      const digestVersion = typeof prevVersion === 'number' ? prevVersion + 1 : 1
+      // P1b：版本取自「元数据 + 上一版 HTML Header」双源 max+1，存量脏状态可自愈。
+      const digestVersion = resolveNextDigestVersion(canvas)
       snapshot.digestVersion = digestVersion
       const html = renderDigestHtml(snapshot, { publicBaseUrl: resolvePublicBaseUrl() })
       if (!html) return null // 无可收录节点（D9 全过滤）

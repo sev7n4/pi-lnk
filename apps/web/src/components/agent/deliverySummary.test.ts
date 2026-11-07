@@ -6,7 +6,9 @@ import {
   type TurnTimeline,
 } from '@/components/agent/turnTimeline'
 import {
+  canvasDigestEntry,
   deliveryCountLabel,
+  digestEntryForTurn,
   hasRunningGeneration,
   turnDeliveryItems,
 } from '@/components/agent/deliverySummary'
@@ -121,36 +123,45 @@ describe('deliveryCountLabel — D-b 计数文案', () => {
   })
 })
 
-describe('turnDeliveryItems — digest tile 派生（spec 2026-11-05-canvas-digest-design D5）', () => {
+describe('P1a（2026-11-07）总览与「本轮产物」清单解耦', () => {
   const digestNode = { id: 'd1', type: 'text', data: { digest: true, source: 'system-digest' } }
 
-  it('canvasNodes 含 digest 节点 ⇒ 清单末尾固定一枚「画布总览」tile（digest 标记）', () => {
+  it('canvasNodes 含 digest 节点 ⇒ turnDeliveryItems 仍只有本轮 artifacts，零 digest tile', () => {
     const tl = feed([addNode('n1'), status('n1', 'done', 'https://x/a.png')])
     const items = turnDeliveryItems(tl.parts, [
       { id: 'n1', data: {} as Record<string, unknown> },
       digestNode,
     ])
-    expect(items.length).toBe(2)
-    // 2026-11-06：digest 节点本体是 format:'html' 的系统产物 ⇒ tile 带格式标签，
-    // 让交付条能用专用图标/「总览」小字与 agent HTML 产物、纯文本区分。
-    expect(items[1]).toEqual({ nodeId: 'd1', nodeType: 'text', title: '画布总览', digest: true, format: 'html' })
-  })
-
-  it('无 digest 节点 ⇒ 不含总览 tile', () => {
-    const tl = feed([addNode('n1'), status('n1', 'done', 'https://x/a.png')])
-    const items = turnDeliveryItems(tl.parts, [{ id: 'n1', data: {} as Record<string, unknown> }])
     expect(items.length).toBe(1)
+    expect(items[0].nodeId).toBe('n1')
+    expect(items.some((it) => it.digest)).toBe(false)
   })
 
-  it('canvasNodes null（未知态）⇒ 保守不派生', () => {
+  it('零产物回合（纯聊天）即使有总览节点 ⇒ 清单为空 ⇒ 交付条隐藏', () => {
+    const tl = feed([{ type: 'text_delta', data: { text: '好的' } }])
+    expect(turnDeliveryItems(tl.parts, [digestNode])).toEqual([])
+    expect(deliveryCountLabel(turnDeliveryItems(tl.parts, [digestNode]).length)).toBe('')
+  })
+
+  it('canvasDigestEntry：有 digest 节点则返回带 digest/format 的 tile；已删/未知态 ⇒ null（S4）', () => {
+    expect(canvasDigestEntry([digestNode])).toEqual({
+      nodeId: 'd1', nodeType: 'text', title: '画布总览', digest: true, format: 'html',
+    })
+    expect(canvasDigestEntry([{ id: 'n1', data: {} }])).toBeNull()
+    expect(canvasDigestEntry([])).toBeNull()
+    expect(canvasDigestEntry(null)).toBeNull()
+  })
+
+  it('digestEntryForTurn：历史回合一律 null（不注入当时还不存在的总览）', () => {
+    const entry = canvasDigestEntry([digestNode])!
+    expect(digestEntryForTurn(entry, true)).toEqual(entry)
+    expect(digestEntryForTurn(entry, false)).toBeNull()
+    expect(digestEntryForTurn(null, true)).toBeNull()
+  })
+
+  it('canvasNodes null（未知态）⇒ turnDeliveryItems 保守不派生、不追加总览', () => {
     const tl = feed([addNode('n1'), status('n1', 'done', 'https://x/a.png')])
     expect(turnDeliveryItems(tl.parts, null).length).toBe(1)
-  })
-
-  it('S4 删除反映：digest 节点已删（不在 canvasNodes）⇒ tile 消失', () => {
-    const tl = feed([addNode('n1'), status('n1', 'done', 'https://x/a.png')])
-    const items = turnDeliveryItems(tl.parts, [{ id: 'n1', data: {} as Record<string, unknown> }])
-    expect(items.some((it) => it.digest)).toBe(false)
   })
 })
 

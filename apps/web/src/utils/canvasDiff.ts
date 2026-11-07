@@ -6,8 +6,9 @@
  * - 节点按 id 分桶：新增=add_node、删除=remove_node、存活=逐字段 diff。
  * - 存活节点：position 浅比较；data 键级浅比较，**仅提交变化键**（服务端
  *   applyCanvasActions 的 update_node 是键级 merge，未提交键原样保留）。
- * - 客户端白名单外键（服务端五键）的变化直接丢弃并计数——patch 语义下客户端
- *   根本不该持有它们的「改动」（status 由 Nest 生成链路推进；与 B2 ratchet 同一纪律）。
+ * - 服务端专属键（见 CLIENT_FORBIDDEN_NODE_DATA_KEYS）的变化直接丢弃并计数——patch
+ *   语义下客户端根本不该持有它们的「改动」（status 由 Nest 生成链路推进；
+ *   digest* / source 由 Canvas Digest 系统管道推进；与 B2 ratchet 同一纪律）。
  * - 空差异 ⇒ ops=[] ⇒ 上层零请求（消灭「无变更也 PUT」的历史浪费面）。
  *
  * 已知边界（规格 §3.2 口径内）：
@@ -22,13 +23,24 @@
  */
 import type { CanvasAction, CanvasData } from '@lnkpi/shared'
 
-/** 服务端专属键（与 sessions-canvas-patch.ts CLIENT_FORBIDDEN_NODE_DATA_KEYS 同名单——两份常量，勿漂移）。 */
+/**
+ * 服务端专属键（与 sessions-canvas-patch.ts CLIENT_FORBIDDEN_NODE_DATA_KEYS 同名单——两份常量，勿漂移）。
+ *
+ * P1b（2026-11-07 生产事故）：`digest` / `digestVersion` / `source` 一并收口。
+ * 画布总览节点由系统管道写入，前端本地副本天然滞后；回合结束后的回拉/PATCH 循环
+ * 曾把陈旧的 `digestVersion` 回写覆盖服务端新版本 ⇒ HTML Header 恒停「第 5 版」、
+ * 元数据卡在 4（生产 nginx 实证同一会话 573 次客户端 PATCH）。这三个键是系统所有，
+ * 客户端一律不得提交（含 `source`：受信级 CSP 判据，客户端不可自封 system-digest）。
+ */
 export const CLIENT_FORBIDDEN_NODE_DATA_KEYS: ReadonlySet<string> = new Set([
   'status',
   'generationRecordId',
   'generationStartedAt',
   'errorMessage',
   'proposalEpoch',
+  'digest',
+  'digestVersion',
+  'source',
 ])
 
 interface DiffNode {

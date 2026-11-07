@@ -110,6 +110,27 @@ describe('renderDigestHtml', () => {
     expect(html).toContain('1 项生成中未收录')
   })
 
+  it('P2 未收录按状态分桶：failed / draft / generating 各自成文案，不再一律「生成中」', () => {
+    const html = renderDigestHtml(
+      fixture({
+        nodes: [
+          { id: 'ok', nodeType: 'image', title: '已产出', url: '/a.png' },
+          { id: 'f1', nodeType: 'image', title: '失败的图', status: 'failed' },
+          { id: 'f2', nodeType: 'image', title: '报错的图', status: 'error' },
+          { id: 'd1', nodeType: 'text', status: 'draft' },
+          { id: 'g1', nodeType: 'image', title: '正在出图', status: 'generating' },
+          { id: 'u1', nodeType: 'image', title: '状态未知' },
+        ],
+      }),
+      OPTS,
+    ) as string
+    expect(html).toContain('2 项生成失败未收录')
+    expect(html).toContain('1 项待完成未收录')
+    // 状态缺省保守归入「生成中」，历史快照文案零变化
+    expect(html).toContain('2 项生成中未收录')
+    expect(html).not.toContain('5 项生成中未收录')
+  })
+
   it('D3 封顶：101 节点只渲染 100 + 其余 1 项未收录', () => {
     const nodes = Array.from({ length: 101 }, (_, i) => ({
       id: `img${i}`,
@@ -151,7 +172,13 @@ describe('renderDigestHtml', () => {
 
 // ── Task 2：触发判定 / 快照采集 / upsert 编排（spec D1/D2/D6/S6/S7）──
 
-import { CanvasDigestService, buildDigestUpsertActions, collectDigestSnapshot } from './canvas-digest.service'
+import {
+  CanvasDigestService,
+  buildDigestUpsertActions,
+  collectDigestSnapshot,
+  resolveNextDigestVersion,
+} from './canvas-digest.service'
+import { applyCanvasActions } from '@lnkpi/agent'
 
 type RawNode = {
   id: string
@@ -363,5 +390,65 @@ describe('Task 6：媒体加载失败降级（spec §10 风险——裂图图标
     expect(html).toContain('icon-fallback')
     // 资源正常路径不受影响：src 照旧
     expect(html).toContain('src="https://x/a.png"')
+  })
+})
+
+// ── P1b（2026-11-07 生产事故）：版本号落地 + 双源自愈 ────────────────────────
+describe('P1b resolveNextDigestVersion（元数据 + 上一版 HTML Header 双源）', () => {
+  const digestNode = (data: Record<string, unknown>) => ({
+    id: 'digest-canvas', type: 'text', data: { digest: true, ...data },
+  })
+
+  it('无 digest 节点 ⇒ 1', () => {
+    expect(resolveNextDigestVersion(canvasOf([]))).toBe(1)
+  })
+
+  it('元数据正常 ⇒ +1；元数据与 Header 一致 ⇒ +1', () => {
+    expect(resolveNextDigestVersion(canvasOf([digestNode({ digestVersion: 4 })]))).toBe(5)
+    expect(
+      resolveNextDigestVersion(
+        canvasOf([digestNode({ digestVersion: 4, content: '<span class="ver">第 4 版</span>' })]),
+      ),
+    ).toBe(5)
+  })
+
+  it('事故形态：元数据被客户端回灌成 4、HTML 已是第 5 版 ⇒ 取 max 得 6（自愈）', () => {
+    const next = resolveNextDigestVersion(
+      canvasOf([digestNode({ digestVersion: 4, content: '<span class="ver">第 5 版</span>' })]),
+    )
+    expect(next).toBe(6)
+  })
+
+  it('脏正文的「第 99 版」不算数（只认渲染器 Header 形态）；非法元数据不抛', () => {
+    expect(
+      resolveNextDigestVersion(canvasOf([digestNode({ digestVersion: 3, content: '第 99 版' })])),
+    ).toBe(4)
+    expect(
+      resolveNextDigestVersion(canvasOf([digestNode({ digestVersion: 'x' })])),
+    ).toBe(1)
+  })
+})
+
+describe('P1b 落库链路：buildDigestUpsertActions → applier.apply', () => {
+  it('update_node 经真实 applier 后 digestVersion/content/status 全部落地（防字段被剥）', () => {
+    const before = canvasOf([
+      { id: 'img1', type: 'image', position: { x: 0, y: 0 }, data: { title: '图', url: '/a.png' } },
+      {
+        id: 'd1', type: 'text', position: { x: 80, y: 900 },
+        data: { digest: true, digestVersion: 4, status: 'completed', content: '旧' },
+      },
+    ])
+    const { actions } = buildDigestUpsertActions({
+      canvas: before,
+      html: '<span class="ver">第 5 版</span>',
+      digestVersion: 5,
+    })
+    const after = applyCanvasActions(before as never, actions)
+    const node = after.nodes.find((n) => n.id === 'd1')
+    expect(node?.data?.digestVersion).toBe(5)
+    expect(node?.data?.content).toBe('<span class="ver">第 5 版</span>')
+    expect(node?.data?.status).toBe('completed')
+    expect(node?.data?.digest).toBe(true)
+    expect(after.nodes).toHaveLength(2)
   })
 })

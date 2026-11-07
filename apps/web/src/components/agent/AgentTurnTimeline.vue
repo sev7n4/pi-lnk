@@ -45,6 +45,11 @@ const props = defineProps<{
    * 不读 store（ledger R1/R2：canvasEditor 是精修编辑器 store，不含画布节点）。
    */
   canvasNodes?: ProposalCanvasNode[] | null
+  /**
+   * P1a（2026-11-07）：会话级「画布总览」入口，由 SideRail 只对**最后一轮**传入。
+   * 刻意不放进 deliveryItems ⇒ 不计入「查看本轮产物 · N」、不进撤销清单。
+   */
+  digestEntry?: DeliveryItem | null
   streaming?: boolean
   /**
    * P2-2：dense = 活体钉底（composer 上方）变体。**只调行密度与折叠默认值**，
@@ -902,6 +907,21 @@ const rootClass = computed(() =>
         </div>
       </div>
     </div>
+
+    <!-- P1a（2026-11-07）画布总览：会话级单一入口，与本轮产物清单解耦。
+         零产物回合也可渲染（用户仍能打开总览），但「查看本轮产物 · N」保持隐藏，
+         且不由 SideRail 向历史回合传入 ⇒ 历史回合不会凭空多出一枚总览磁贴。
+         复用 delivery-toggle 既有样式，零新增 token。 -->
+    <button
+      v-if="digestEntry"
+      type="button"
+      class="delivery-toggle"
+      data-test="digest-entry"
+      :aria-label="'打开 ' + digestEntry.title"
+      @click="onDeliveryTileOpen(digestEntry)"
+    >
+      {{ digestEntry.title }} · 当前画布
+    </button>
 
     <!-- R-C（2026-11-02 卡片 UX 优化）：参数微调 Sheet——挂载在 parts 循环外。
          「调整」入口（proposal 卡 data-test=tune）经 openProposeTuneSheet 置模块级 ref
