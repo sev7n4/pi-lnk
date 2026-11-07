@@ -6,7 +6,7 @@ vi.mock('@/components/agent/executionTraceReducer', () => ({
   turnSummaryLine: vi.fn(() => 'SUMMARY_LINE'),
 }))
 
-import { historyPresentation, historyMacroSelectedIds, bubbleSummaryLine } from './agentMessageRender'
+import { historyPresentation, historyMacroSelectedIds, bubbleSummaryLine, parseMessageMetadataSafe } from './agentMessageRender'
 
 function userMsg(partial: Partial<AgentStreamMessage> = {}): AgentStreamMessage {
   return { role: 'user', streaming: false, content: '', ...partial } as unknown as AgentStreamMessage
@@ -76,5 +76,19 @@ describe('bubbleSummaryLine', () => {
   it('assistant 有 trace 返回 turnSummaryLine 结果', () => {
     const trace = { foo: 'bar' } as never
     expect(bubbleSummaryLine(assistantMsg({ streaming: false, executionTrace: trace }))).toBe('SUMMARY_LINE')
+  })
+})
+
+describe('parseMessageMetadataSafe', () => {
+  it('空/undefined 返回 undefined', () => {
+    expect(parseMessageMetadataSafe(undefined)).toBeUndefined()
+    expect(parseMessageMetadataSafe('')).toBeUndefined()
+  })
+  it('合法 JSON 解析为对象', () => {
+    const raw = JSON.stringify({ executionEvents: [{ type: 'x', data: 1 }] })
+    expect(parseMessageMetadataSafe(raw)).toEqual({ executionEvents: [{ type: 'x', data: 1 }] })
+  })
+  it('畸形 JSON 返回 undefined（不抛）', () => {
+    expect(parseMessageMetadataSafe('{not json')).toBeUndefined()
   })
 })

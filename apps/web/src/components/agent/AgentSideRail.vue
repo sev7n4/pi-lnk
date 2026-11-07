@@ -147,7 +147,7 @@ import { barShape } from './composer/mobileBarLayout'
 import { useAgentDock } from './useAgentDock'
 import { sanitizeHistoryMessages } from './historySanitize'
 import { classifyGesture } from './composer/holdGesture'
-import { visibleAssistantContent, visibleUserContent, isUserSystemEvent, hasRenderableSvgCard, hasRenderableNodeGraph, nodeGraphPayload, shouldShowMessageBubbleText, isPreparingPlaceholder, shouldRenderSchemeDraftProse, canReuseTurn, useTimeline, bubbleSummaryLine, historyPresentation, historyMacroSelectedIds } from './agentMessageRender'
+import { visibleAssistantContent, visibleUserContent, isUserSystemEvent, hasRenderableSvgCard, hasRenderableNodeGraph, nodeGraphPayload, shouldShowMessageBubbleText, isPreparingPlaceholder, shouldRenderSchemeDraftProse, canReuseTurn, useTimeline, bubbleSummaryLine, historyPresentation, historyMacroSelectedIds, parseMessageMetadataSafe } from './agentMessageRender'
 import UniversalModelSelector from '@/components/canvas/UniversalModelSelector.vue'
 import { useCanvasRefPickMode } from '@/composables/useCanvasRefPickMode'
 import { formatDuration as formatTraceDuration } from '@/components/agent/executionStepLabels'
@@ -1566,15 +1566,6 @@ async function refreshThreadCheckpoint() {
   syncCancelledFromThreadState(null)
 }
 
-/** P1#5/#7：assistant message metadata JSON 安全解析（畸形返回 undefined）。 */
-function parseMessageMetadataSafe(raw?: string): { executionEvents?: Array<{ type: string; data: unknown }> } | undefined {
-  if (!raw) return undefined
-  try {
-    return JSON.parse(raw) as { executionEvents?: Array<{ type: string; data: unknown }> }
-  } catch {
-    return undefined
-  }
-}
 
 /** P1#6 缩略图 url 源：canvasNodes 按 nodeId 查 url。 */
 function resolveCanvasNodeUrl(nodeId: string): string | undefined {

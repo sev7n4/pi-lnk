@@ -198,3 +198,17 @@ export function bubbleSummaryLine(msg: AgentStreamMessage): string | null {
   if (msg.role !== 'assistant' || msg.streaming || !msg.executionTrace) return null
   return turnSummaryLine(msg.executionTrace)
 }
+
+
+/**
+ * P1#5/#7：assistant message metadata JSON 安全解析（畸形返回 undefined）。
+ * 纯函数；历史加载路径用其从落库 metadata 还原 executionEvents。
+ */
+export function parseMessageMetadataSafe(raw?: string): { executionEvents?: Array<{ type: string; data: unknown }> } | undefined {
+  if (!raw) return undefined
+  try {
+    return JSON.parse(raw) as { executionEvents?: Array<{ type: string; data: unknown }> }
+  } catch {
+    return undefined
+  }
+}
