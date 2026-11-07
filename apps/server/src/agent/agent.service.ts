@@ -606,8 +606,19 @@ export class AgentService implements OnModuleInit {
       this.piLogger?.log?.(
         `out_of_turn_turn_persisted key=${threadKey} runId=${snapshot.runId} len=${snapshot.assistantText.length}`,
       )
-      // Canvas Digest 已在 finalizeTurn 内部（唯一收束点）触发；drain 无流可 yield
-      // ⇒ 只落库，实时同步随下一轮/刷新（规格 v1.2 定稿）。
+      // Canvas Digest 主链已在 finalizeTurn 内部（唯一收束点）触发；drain 无流可 yield
+      // ⇒ actions 只落库，实时同步随下一轮/刷新（规格 v1.2 定稿）。
+      // §9.1 P3（v1.6）：简报轮的 snapshot.canvasActions 通常为空 ⇒ 主链 D1 双闸门
+      // 跳过 digest，而生成完成的 url 回填正发生在这一条收束链上。落库后走一次
+      // **独立旁路**，仅在 stale 非空时补渲染总览（零写入则完全不动画布）。
+      // fail-soft：旁路自带 catch，此处再包一层，void 链不得产生 unhandled rejection。
+      if (this.canvasDigest) {
+        await this.canvasDigest.maybeRepairOutOfTurn({ sessionId, userId }).catch((err: unknown) => {
+          this.piLogger?.warn?.(
+            `canvas_digest out_of_turn_repair failed (session=${sessionId}): ${err instanceof Error ? err.message : String(err)}`,
+          )
+        })
+      }
     } catch (err) {
       this.piLogger?.warn?.(
         `out_of_turn_turn persist failed (key=${threadKey}, runId=${snapshot.runId}): ${

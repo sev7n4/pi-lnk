@@ -510,6 +510,64 @@ export class CanvasDigestService {
     return CanvasDigestService.isEnabled()
   }
 
+  /** 读当前画布态（主链与旁路共用；JSON 异常由各自 fail-soft 外层吞掉）。 */
+  private async readCanvas(sessionId: string): Promise<DigestRawCanvas | null> {
+    const session = await this.prisma.session.findUnique({
+      where: { id: sessionId },
+      select: { canvasData: true },
+    })
+    if (!session) return null
+    return session.canvasData
+      ? (JSON.parse(session.canvasData) as DigestRawCanvas)
+      : { nodes: [], edges: [] }
+  }
+
+  /**
+   * 渲染 + upsert 的**共用**内部函数（spec §9.1 v1.6）。
+   * 主链 maybeRender 与旁路 maybeRepairOutOfTurn 都只走这一处，避免两套渲染口径漂移。
+   */
+  private async renderFromCanvas(input: {
+    sessionId: string
+    userId: string
+    canvasActions: readonly CanvasAction[]
+  }): Promise<{ nodeId: string; actions: CanvasAction[] } | null> {
+    const canvas = await this.readCanvas(input.sessionId)
+    if (!canvas) return null
+
+    const snapshot = collectDigestSnapshot(canvas)
+    // F1（final review）：版本计算须在渲染**之前**并回填 snapshot——Header「第 N 版」
+    // 是本轮要写入的版本（= 既有 +1），不是既有值；曾恒渲染 collectDigestSnapshot
+    // 占位的 0 ⇒ Header 永远「第 0 版」（S2 违约）。
+    // P1b：版本取自「元数据 + 上一版 HTML Header」双源 max+1，存量脏状态可自愈。
+    const digestVersion = resolveNextDigestVersion(canvas)
+    snapshot.digestVersion = digestVersion
+
+    // §9.1 P3 可观测：仅 warn，不改触发架构 / 不改 HTML / 不写画布 / 不影响返回值。
+    // fail-soft 与 S7 同源：探针自身异常不得阻断总览渲染。
+    try {
+      const staleIds = findDigestStaleIds({ canvas, canvasActions: [...input.canvasActions] })
+      if (staleIds.length > 0) {
+        this.logger.warn(
+          `digest_stale session=${input.sessionId} ver=${digestVersion} missing=${staleIds.length} ids=${staleIds.slice(0, 10).join(',')} — 画布已有正据节点未进入上一版总览（回合外画布态变更，§9.1 P3 准入证据）`,
+        )
+      }
+    } catch (err) {
+      this.logger.warn(
+        `digest_stale_probe_failed session=${input.sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+
+    const html = renderDigestHtml(snapshot, { publicBaseUrl: resolvePublicBaseUrl() })
+    if (!html) return null // 无可收录节点（D9 全过滤）
+
+    return await this.canvasTools.upsertDigestNode({
+      sessionId: input.sessionId,
+      userId: input.userId,
+      html,
+      digestVersion,
+    })
+  }
+
   async maybeRender(input: {
     sessionId: string
     userId?: string
@@ -519,51 +577,60 @@ export class CanvasDigestService {
       if (!CanvasDigestService.isEnabled()) return null // S6：flag off 全链路零行为
       if (!input.canvasActions.length) return null // D1：纯聊天回合跳过
       if (!input.userId) return null
-
-      const session = await this.prisma.session.findUnique({
-        where: { id: input.sessionId },
-        select: { canvasData: true },
-      })
-      if (!session) return null
-      const canvas: DigestRawCanvas = session.canvasData
-        ? (JSON.parse(session.canvasData) as DigestRawCanvas)
-        : { nodes: [], edges: [] }
-
-      const snapshot = collectDigestSnapshot(canvas)
-      // F1（final review）：版本计算须在渲染**之前**并回填 snapshot——Header「第 N 版」
-      // 是本轮要写入的版本（= 既有 +1），不是既有值；曾恒渲染 collectDigestSnapshot
-      // 占位的 0 ⇒ Header 永远「第 0 版」（S2 违约）。
-      // P1b：版本取自「元数据 + 上一版 HTML Header」双源 max+1，存量脏状态可自愈。
-      const digestVersion = resolveNextDigestVersion(canvas)
-      snapshot.digestVersion = digestVersion
-
-      // §9.1 P3 可观测：仅 warn，不改触发架构 / 不改 HTML / 不写画布 / 不影响返回值。
-      // fail-soft 与 S7 同源：探针自身异常不得阻断总览渲染。
-      try {
-        const staleIds = findDigestStaleIds({ canvas, canvasActions: input.canvasActions })
-        if (staleIds.length > 0) {
-          this.logger.warn(
-            `digest_stale session=${input.sessionId} ver=${digestVersion} missing=${staleIds.length} ids=${staleIds.slice(0, 10).join(',')} — 画布已有正据节点未进入上一版总览（回合外画布态变更，§9.1 P3 准入证据）`,
-          )
-        }
-      } catch (err) {
-        this.logger.warn(
-          `digest_stale_probe_failed session=${input.sessionId}: ${err instanceof Error ? err.message : String(err)}`,
-        )
-      }
-
-      const html = renderDigestHtml(snapshot, { publicBaseUrl: resolvePublicBaseUrl() })
-      if (!html) return null // 无可收录节点（D9 全过滤）
-
-      return await this.canvasTools.upsertDigestNode({
+      return await this.renderFromCanvas({
         sessionId: input.sessionId,
         userId: input.userId,
-        html,
-        digestVersion,
+        canvasActions: input.canvasActions,
       })
     } catch (err) {
       this.logger.warn(
         `canvas_digest skipped (session=${input.sessionId}): ${err instanceof Error ? err.message : String(err)}`,
+      )
+      return null
+    }
+  }
+
+  /**
+   * §9.1 P3（v1.6）：回合外 url 回填后的**独立旁路补渲染**。
+   *
+   * 事故形态（2026-11-07 真机会话 `cmw64jxx3008sp901h3vkvd7r`）：out-of-turn 简报轮
+   * 收束时 `snapshot.canvasActions` 为空 ⇒ 主链 D1 双闸门跳过 ⇒ 已回填 url 的节点
+   * 永远进不了总览；此后若无带画布动作的回合，就永久停在上一版
+   * （生产实证 `digestVersion=2` 只收录 4 张图里的 2 张）。
+   *
+   * 纪律（§9.1 五条硬约束）：
+   *  ① 不动 `finalizeTurn` 唯一触发源——本入口只在 out-of-turn 收束后显式调用；
+   *  ② 不监听画布写入事件 ⇒ digest 自身 upsert 不会递归触发；
+   *  ③ stale 闸门：仅「当前有正据 ∩ 不在上一版收录集合」非空时才写；客户端 PATCH 不经过此路径；
+   *  ④ 独立 flag `CANVAS_DIGEST_OUT_OF_TURN_REPAIR`（缺省 on）+ fail-soft，void 链不冒泡；
+   *  ⑤ 与主链共用 `renderFromCanvas`，渲染/版本/HTML 口径零漂移。
+   * 首次无上一版 HTML 时 `findDigestStaleIds` 返回空 ⇒ 不越权代主链创建首个总览。
+   */
+  async maybeRepairOutOfTurn(input: {
+    sessionId: string
+    userId?: string
+  }): Promise<{ nodeId: string; actions: CanvasAction[] } | null> {
+    try {
+      if (!CanvasDigestService.isEnabled()) return null
+      if (process.env.CANVAS_DIGEST_OUT_OF_TURN_REPAIR === 'off') return null
+      if (!input.userId) return null
+      const canvas = await this.readCanvas(input.sessionId)
+      if (!canvas) return null
+      // 传空 actions ⇒ 第三条「本轮未触碰」恒成立，stale = 所有
+      //「当前有正据但不在上一版收录集合」的节点。
+      const staleIds = findDigestStaleIds({ canvas, canvasActions: [] })
+      if (!staleIds.length) return null // ③ 零写入、零版本号自增
+      this.logger.warn(
+        `canvas_digest_out_of_turn_repair session=${input.sessionId} stale=${staleIds.length} ids=${staleIds.slice(0, 10).join(',')}`,
+      )
+      return await this.renderFromCanvas({
+        sessionId: input.sessionId,
+        userId: input.userId,
+        canvasActions: [],
+      })
+    } catch (err) {
+      this.logger.warn(
+        `canvas_digest_out_of_turn_repair skipped (session=${input.sessionId}): ${err instanceof Error ? err.message : String(err)}`,
       )
       return null
     }
