@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { CanvasAction, CanvasData } from '@lnkpi/shared'
+import { applyCanvasActions as applyCanvasActionsSSOT } from '@lnkpi/shared'
 import {
   applyActionsToFlow,
   canvasDataToFlow,
@@ -300,4 +301,55 @@ describe('mergeNodeData 吸收态守卫（规格 2026-11-04-generation-terminal-
     ])
     expect(out.nodes[0].data.status).toBe('error')
   })
+})
+
+// ── Phase 5 双端一致锁（spec §8：收敛为单一 applier，配变异测试锁双端一致）──────────
+// 同一组「共同 action」（不含侧车 set_groups / set_composition_run_group，web 实时通道不处理）
+// 经 web `applyActionsToFlow`（Flow ⇄ CanvasData 投影）与共享 SSOT（CanvasData 直跑）应产出
+// 同一份 CanvasData。任一端行为漂移都会让 toEqual 失败——这是双端同源的回归契约。
+function flowToData(ns: FlowNode[], es: FlowEdge[]): CanvasData {
+  return {
+    nodes: ns.map((n) => ({ id: n.id, type: (n.type ?? 'text') as CanvasData['nodes'][0]['type'], position: n.position, data: n.data })),
+    edges: es.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+  }
+}
+function resultToData(r: { nodes: FlowNode[]; edges: FlowEdge[]; viewport?: { x: number; y: number; zoom: number } }): CanvasData {
+  const out: CanvasData = {
+    nodes: r.nodes.map((n) => ({ id: n.id, type: (n.type ?? 'text') as CanvasData['nodes'][0]['type'], position: n.position, data: n.data })),
+    edges: r.edges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+  }
+  if (r.viewport) out.viewport = r.viewport
+  return out
+}
+
+describe('Phase 5 双端一致锁：applyActionsToFlow ≡ 共享 SSOT（共同 action 集）', () => {
+  const scenarios: { name: string; nodes: FlowNode[]; edges: FlowEdge[]; actions: CanvasAction[] }[] = [
+    { name: 'add_node', nodes: [], edges: [], actions: [{ type: 'add_node', payload: { id: 'n1', nodeType: 'image', position: { x: 5, y: 6 }, data: { title: 'A' } } }] },
+    { name: 'update_node', nodes: [node('n1', { title: '旧', keep: 1 })], edges: [], actions: [{ type: 'update_node', payload: { id: 'n1', data: { title: '新' } } }] },
+    { name: 'remove_node', nodes: [node('a'), node('b')], edges: [edge('e1', 'a', 'b')], actions: [{ type: 'remove_node', payload: { id: 'a' } }] },
+    { name: 'add_edge 无 id', nodes: [node('a'), node('b')], edges: [], actions: [{ type: 'add_edge', payload: { source: 'a', target: 'b' } }] },
+    { name: 'add_edge 有 id', nodes: [node('a'), node('b')], edges: [], actions: [{ type: 'add_edge', payload: { id: 'x', source: 'a', target: 'b' } }] },
+    { name: 'remove_edge', nodes: [node('a'), node('b')], edges: [edge('e1', 'a', 'b'), edge('e2', 'b', 'a')], actions: [{ type: 'remove_edge', payload: { id: 'e1' } }] },
+    { name: 'set_viewport', nodes: [], edges: [], actions: [{ type: 'set_viewport', payload: { viewport: { x: 10, y: 20, zoom: 1.5 } } }] },
+    { name: '混合批量', nodes: [], edges: [], actions: [
+      { type: 'add_node', payload: { id: 'image-1', nodeType: 'image', position: { x: 80, y: 80 }, data: { status: 'draft' } } },
+      { type: 'add_node', payload: { id: 'image-2', nodeType: 'image', position: { x: 400, y: 80 }, data: { status: 'draft' } } },
+      { type: 'add_edge', payload: { id: 'e-1-2', source: 'image-1', target: 'image-2' } },
+    ] },
+    { name: 'add_node 父偏移', nodes: [node('p')], edges: [], actions: [{ type: 'add_node', payload: { id: 'c', nodeType: 'image', parentShotId: 'p' } }] },
+    { name: 'guard 终态→generating', nodes: [node('n1', { status: 'error', generationRecordId: 'rec-1' })], edges: [], actions: [{ type: 'update_node', payload: { id: 'n1', data: { status: 'generating' } } }] },
+    { name: 'guard stale pending_confirm', nodes: [node('img-1', { status: 'generating', prompt: '旧' })], edges: [], actions: [{ type: 'update_node', payload: { id: 'img-1', data: { status: 'pending_confirm', prompt: '新' } } }] },
+    { name: 'add_node 同 id 幂等', nodes: [], edges: [], actions: [
+      { type: 'add_node', payload: { id: 'n1', nodeType: 'image', position: { x: 5, y: 6 }, data: { title: 'A' } } },
+      { type: 'add_node', payload: { id: 'n1', nodeType: 'image', position: { x: 5, y: 6 }, data: { title: 'A' } } },
+    ] },
+  ]
+
+  for (const s of scenarios) {
+    it(`一致：${s.name}`, () => {
+      const flowOut = applyActionsToFlow([...s.nodes], [...s.edges], s.actions)
+      const dataOut = applyCanvasActionsSSOT(flowToData(s.nodes, s.edges), s.actions)
+      expect(resultToData(flowOut)).toEqual(dataOut)
+    })
+  }
 })
