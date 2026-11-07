@@ -25,15 +25,29 @@ function stripComments(s: string): string {
 }
 
 const code = stripComments(src)
+// Phase 3 strangler-fig 第六刀（#770）：propose/ask 阻塞等待交互已抽离到 useAgentPropose.ts，
+// 守卫逻辑随之迁入 composable。源级 ratchet 改读 composable；.vue 内联的 creditsLineVisible /
+// agentStream 看门狗豁免仍读组件源。
+const proposeSrc = readFileSync(join(here, './useAgentPropose.ts'), 'utf8')
+const proposeCode = stripComments(proposeSrc)
 
 function fnBlock(signature: string): string {
   const re = new RegExp(`${signature.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?\\n\\}`)
   return code.match(re)?.[0] ?? ''
 }
 
+// 抽离后守卫逻辑位于 composable（函数嵌套在 useAgentPropose 内，闭合 brace 带缩进），
+// 故用 \n\s*\} 截到函数自身的闭合 brace（而非包住整个 composable 的顶层 brace）。
+function proposeFnBlock(signature: string): string {
+  // 守卫函数均为 useAgentPropose 的 2 空格缩进子成员，其自身闭合 brace 恰在 2 空格列；
+  // 函数体内嵌套的 if/try/对象字面量 brace 均 ≥4 空格，故以 \n  \} 精确截到函数本体。
+  const re = new RegExp(`${signature.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?\n  \}`)
+  return proposeCode.match(re)?.[0] ?? ''
+}
+
 describe('propose 等待结算单飞 + 乐观翻态（多确认入口收敛）', () => {
   it('confirmProposeWait：单飞守卫 + 成功后乐观翻终态（P1-A：reason 按 Nest 回执分流）', () => {
-    const block = fnBlock('async function confirmProposeWait(')
+    const block = proposeFnBlock('async function confirmProposeWait(')
     expect(block, '必须能定位 confirmProposeWait').not.toBe('')
     expect(block, '单飞：已结算 callId 必须短路').toContain('settledProposeCallIds.has(callId)')
     expect(block, '成功后必须本地翻终态（不等旁听 resolved；P1-A expired 回执翻 timeout）').toContain(
@@ -42,7 +56,7 @@ describe('propose 等待结算单飞 + 乐观翻态（多确认入口收敛）',
   })
 
   it('cancelProposeForNode：单飞守卫 + 成功后乐观翻 aborted + 拒发 stale clear-propose', () => {
-    const block = fnBlock('async function cancelProposeForNode(')
+    const block = proposeFnBlock('async function cancelProposeForNode(')
     expect(block, '必须能定位 cancelProposeForNode').not.toBe('')
     expect(block, '单飞：已结算 callId 必须短路').toContain('settledProposeCallIds.has(callId)')
     expect(block, '取消的乐观翻态语义 = aborted（P1-A expired 回执翻 timeout）').toContain(
@@ -55,10 +69,15 @@ describe('propose 等待结算单飞 + 乐观翻态（多确认入口收敛）',
   })
 
   it('乐观翻态必须经 trackWaitingUser 回喂时间线（单一真相，不另起并行状态）', () => {
-    const block = fnBlock('function resolveProposePartLocally(')
+    const block = proposeFnBlock('function resolveProposePartLocally(')
     expect(block, '必须能定位 resolveProposePartLocally').not.toBe('')
     expect(block).toContain('agent.trackWaitingUser')
     expect(block).toContain("status: 'resolved'")
+  })
+
+  it('组件必须仍经 defineExpose 暴露 composable 的确认/取消入口（strangler 收口不丢契约）', () => {
+    expect(code, '必须仍暴露 confirmProposeWait').toContain('propose.confirmProposeWait')
+    expect(code, '必须仍暴露 cancelProposeForNode').toContain('propose.cancelProposeForNode')
   })
 })
 
