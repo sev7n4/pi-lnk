@@ -13,6 +13,9 @@ import { describe, expect, it } from 'vitest'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const sfc = readFileSync(join(here, 'AgentSideRail.vue'), 'utf8')
+// 第八刀（strangler-fig）：Queue-Draft 簇已迁入 useAgentQueue。
+// withdrawQueued/requeueQueued/deliverQueued 函数体 + QueuedSlot 接口改在该 composable 源码里校验。
+const queueSrc = readFileSync(join(here, './useAgentQueue.ts'), 'utf8')
 
 /**
  * 花括号配平提取函数全文；缺失即 throw（保持非空类型，免得一处处 `!` 断言）。
@@ -21,19 +24,19 @@ const sfc = readFileSync(join(here, 'AgentSideRail.vue'), 'utf8')
  * withdrawQueued/requeueQueued/deliverQueued 都加了 slot 形参，锁死完整签名会让
  * 「签名演进」把守卫全打红 —— 而契约（端点、顺序、门控）其实一点没变。
  */
-function requireFnBody(signature: string): string {
-  const start = sfc.indexOf(signature)
+function requireFnBody(signature: string, source: string = sfc): string {
+  const start = source.indexOf(signature)
   if (start === -1) throw new Error(`未找到函数：${signature}`)
   let depth = 0
   let opened = false
-  for (let i = start + signature.length; i < sfc.length; i++) {
-    const ch = sfc[i]
+  for (let i = start + signature.length; i < source.length; i++) {
+    const ch = source[i]
     if (ch === '{') {
       depth++
       opened = true
     } else if (ch === '}') {
       depth--
-      if (opened && depth === 0) return sfc.slice(start, i + 1)
+      if (opened && depth === 0) return source.slice(start, i + 1)
     }
   }
   throw new Error(`函数体未闭合：${signature}`)
@@ -41,7 +44,7 @@ function requireFnBody(signature: string): string {
 
 describe('插话撤回接线（P0）', () => {
   it('withdrawQueued 真的打服务端撤回端点，不是只清前端', () => {
-    const body = requireFnBody('async function withdrawQueued(')
+    const body = requireFnBody('async function withdrawQueued(', queueSrc)
 
     // 有效性配对：确实委托给专用撤回方法。⚠️ Phase 2 起端点已上收进
     // `agentCommandClient.postCancelQueued`，此处锁「withdrawQueued 真的调用它」
@@ -63,7 +66,7 @@ describe('插话撤回接线（P0）', () => {
   })
 
   it('已入队的取回必须先撤回（否则同句话会同时存在两条）', () => {
-    const body = requireFnBody('async function requeueQueued(')
+    const body = requireFnBody('async function requeueQueued(', queueSrc)
 
     // 有效性配对：先判断是否已入队
     expect(body).toContain('entryId')
@@ -73,10 +76,10 @@ describe('插话撤回接线（P0）', () => {
   })
 
   it('entryId 由入队响应提取并落进槽位（撤回键的来源）', () => {
-    const deliver = requireFnBody('async function deliverQueued(')
+    const deliver = requireFnBody('async function deliverQueued(', queueSrc)
     expect(deliver).toMatch(/\.entryId\s*=/)
 
-    const slot = /interface QueuedSlot \{[\s\S]*?\n\}/.exec(sfc)
+    const slot = /interface QueuedSlot \{[\s\S]*?\n\}/.exec(queueSrc)
     expect(slot, '未找到 QueuedSlot 接口').toBeTruthy()
     expect(slot![0]).toContain('entryId')
   })
@@ -86,13 +89,13 @@ describe('插话撤回接线（P0）', () => {
     const tpl = sfc
       .slice(sfc.indexOf('<template>'), sfc.lastIndexOf('</template>'))
       .replace(/<!--[\s\S]*?-->/g, '')
-    expect(tpl).toContain('withdrawQueued')
+    expect(tpl).toContain('queue.withdrawQueued')
     // 出现条件必须带 entryId 门控（多槽位后是 slot.entryId）
-    expect(tpl).toMatch(/v-if="slot\.entryId[^"]*"[\s\S]{0,200}@click="withdrawQueued\(slot\)"/)
+    expect(tpl).toMatch(/v-if="slot\.entryId[^"]*"[\s\S]{0,200}@click="queue\.withdrawQueued\(slot\)"/)
   })
 
   it('already_consumed 必须如实告知，不得当成撤回成功', () => {
-    const body = requireFnBody('async function withdrawQueued(')
+    const body = requireFnBody('async function withdrawQueued(', queueSrc)
     expect(body).toContain('already_consumed')
     // 撤回成功与否以 outcome 判定，不是「请求没报错就算成功」
     expect(body).toMatch(/outcome\s*===\s*'cancelled'/)

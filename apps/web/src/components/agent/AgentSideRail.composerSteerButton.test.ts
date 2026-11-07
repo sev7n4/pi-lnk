@@ -21,6 +21,9 @@ const sfc = readFileSync(join(here, 'AgentSideRail.vue'), 'utf8')
 // 第七刀（strangler-fig）：composer 簇（含 composerDraftText）已迁入 useAgentComposer，
 // 故草稿判定的契约改在该 composable 源码里校验（与 waitSettle 读 useAgentPropose 同理）。
 const composerSrc = readFileSync(join(here, './useAgentComposer.ts'), 'utf8')
+// 第八刀（strangler-fig）：Queue-Draft 簇（含 queueDraftAsPending）已迁入 useAgentQueue，
+// 故挂起函数体的契约改在该 composable 源码里校验。
+const queueSrc = readFileSync(join(here, './useAgentQueue.ts'), 'utf8')
 
 /**
  * 提取唯一的 <DockGenerateButton ... /> 自闭合标签块。
@@ -107,7 +110,7 @@ describe('composer 按钮态随草稿切换（流式中可插话）', () => {
       'onComposerSubmit() 未复用 queueDraftAsPending() —— 回车与按钮会分叉出两套挂起逻辑',
     ).toContain('queueDraftAsPending')
 
-    const queue = requireFnBody(sfc, 'async function queueDraftAsPending()')
+    const queue = requireFnBody(queueSrc, 'async function queueDraftAsPending()')
 
     // 只挂起、不投递：steer/followUp 的送达时机必须由用户在气泡上二选一
     expect(queue).toContain("state: 'pending'")
