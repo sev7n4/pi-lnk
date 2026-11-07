@@ -74,13 +74,14 @@ describe('user 消息 entryId 回填接线（2026-10-21，统一身份）', () =
     ).toContain('persistEntryId')
   })
 
-  it('回填函数打的是专用端点，且静默失败（不打断对话流）', () => {
+  it('回填函数委托给 agentCommandClient.postPersistEntryId（专用端点），且静默失败', () => {
     const body = requireFnBody(sfc, 'async function persistUserEntryId(')
 
-    expect(body).toContain('/api/agent/chat/user/entry-id')
+    // Phase 2：端点已上收进 agentCommandClient.postPersistEntryId。此处锁「真的委托给专用方法」
+    // （完整调用形态 `postPersistEntryId({`，不能只 contains 端点串 —— 藏进 `if (false)` 也通过，变异实测过）。
+    // 端点命中由 agentCommandClient.test.ts 锁（postPersistEntryId → /api/agent/chat/user/entry-id）。
+    expect(body).toMatch(/postPersistEntryId\(\s*\{/)
     // fail-soft：只影响「刷新后能否重跑」这个增强项，不该冒泡打断用户
     expect(body).toMatch(/catch\s*(\(\s*\))?\s*\{/)
-    // 有效性配对：确实发了请求
-    expect(body).toContain("method: 'POST'")
   })
 })
