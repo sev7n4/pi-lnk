@@ -81,14 +81,13 @@ import type { AgentPresentationEnvelope, NodeGraphBodyPayload } from '@/componen
 import { useAgentPropose } from '@/components/agent/useAgentPropose'
 import { useAgentComposer } from '@/components/agent/useAgentComposer'
 import { useAgentQueue, type QueuedSlot } from '@/components/agent/useAgentQueue'
+import { useAgentThread, type AgentThreadRow } from '@/components/agent/useAgentThread'
 import { isRunCancelledState } from '@/components/agent/agentInterruptGate'
 import {
   buildIdempotencyKey,
-  clearForkedThreadId,
   createAgentThreadId,
   persistActiveThreadId,
   persistForkedThreadId,
-  resolveBootstrapThreadId,
   checkRuntimeHealthViaNest,
   RUNTIME_UNREACHABLE_SNIPPET,
   RECONCILE_MAX_POLLS,
@@ -151,16 +150,6 @@ import { submitAnswers } from '@/components/agent/agentAnswers'
 import { hasBubbleText } from '@/components/agent/bubbleVisibility'
 import { ElMessage } from 'element-plus'
 
-interface AgentThreadRow {
-  id: string
-  title: string
-  updatedAt: string
-  createdAt: string
-  /** H0-c：迁移置非空 ⇒ 历史面板渲染禁用态（legacy 线程即将合并到主对话） */
-  archivedAt?: string | null
-  /** H1-b：服务端 groupBy 随 threads 行带回的计数（bootstrap 不再全量下载消息为数数，D3） */
-  messageCount?: number
-}
 
 const props = defineProps<{
   sessionId: string
@@ -1104,59 +1093,11 @@ async function fetchThreads(): Promise<AgentThreadRow[] | null> {
   }
 }
 
-/** H0-c（规格 §2/§5.2 谓词解耦）：归档行（迁移置 archivedAt）渲染禁用态，停止「点了没反应」。
- *  谓词必须是 archivedAt 而非 id 比较——在役 fork（重跑）分支 id 同为 sessionId:后缀 复合键。
- *  合并迁移注（2026-10-29）：PC 侧栏历史入口已随 ADR-0015 删除，现消费方为移动端对话历史面板。
- */
-function isArchivedThread(thread: AgentThreadRow): boolean {
-  return thread.archivedAt != null
-}
 
-async function selectThread(threadId: string) {
-  // 多端共享对话（2026-10-26）：只允许切到确定式共享 threadId（= sessionId）。
-  // 历史面板可能列出旧的随机 thread，切到它们会让本端与该画布其它设备发散，
-  // 故直接忽略（关闭面板、不切换）。
-  if (threadId !== props.sessionId) {
-    historyOpen.value = false
-    return
-  }
-  if (threadId === agentThreadId.value) {
-    historyOpen.value = false
-    return
-  }
-  clearComposer()
-  agentThreadId.value = threadId
-  persistActiveThreadId(props.sessionId, threadId)
-  // 守卫保证此处 threadId === sessionId（共享线程）：用户显式离开重跑分支，
-  // 必须同步清 fork key，否则下次刷新 resolveBootstrapThreadId 会把本端弹回分支
-  // ——「返回主对话」活不过一次刷新（Phase 1 评审发现 F1）。
-  clearForkedThreadId(props.sessionId)
-  historyOpen.value = false
-  taskProgress.value = emptyTaskProgress()
-  runCancelled.value = false
-  threadRunState.value = null
-  cancelledPresentation.value = null
-  cancelledProgressText.value = null
-  recoveredPhaseHint.value = null
-  await loadHistory()
-  void refreshThreadCheckpoint()
-}
 
-async function bootstrapThread() {
-  clearComposer()
-  agent.clear()
-  taskProgress.value = emptyTaskProgress()
-  const list = await fetchThreads()
-  threads.value = list ?? threads.value
-  agentThreadId.value = await resolveBootstrapThreadId(props.sessionId, { threads: list })
-  persistActiveThreadId(props.sessionId, agentThreadId.value)
-  await loadHistory()
-  void refreshThreadCheckpoint()
-  scrollToBottom(true)
-}
 
 onMounted(() => {
-  void bootstrapThread()
+  void threadApi.bootstrapThread()
   // A3：回访作品带数据 —— 挂载即拉（断点中立：PC 左栏与移动端对话框顶部都展示，
   // 不再是移动端专属）。projects 来自 useProjectWorkspace 单一数据源，作品带与抽屉共用。
   void loadProjects()
@@ -1178,7 +1119,7 @@ watch(
     cancelledPresentation.value = null
     cancelledProgressText.value = null
     recoveredPhaseHint.value = null
-    void bootstrapThread()
+    void threadApi.bootstrapThread()
   },
 )
 
@@ -1235,58 +1176,8 @@ function onExportPack(
 
 /* toggleFloating / startDrag / startResize 已移到 useAgentDock（见上方调用） */
 
-function newAgentSession() {
-  clearComposer()
-  agent.clear()
-  taskProgress.value = emptyTaskProgress()
-  runCancelled.value = false
-  threadRunState.value = null
-  cancelledPresentation.value = null
-  cancelledProgressText.value = null
-  recoveredPhaseHint.value = null
-  agentThreadId.value = createAgentThreadId(props.sessionId)
-  persistActiveThreadId(props.sessionId, agentThreadId.value)
-  ElMessage.info('已开始新对话')
-  // 新会话：列表清空，跟随状态一并复位（否则会卡在「回看历史」态）
-  followLatest.value = true
-  hasNewBelow.value = false
-}
 
-function syncCancelledFromThreadState(
-  state:
-    | {
-        phase?: string | null
-        runCancelled?: boolean | null
-        presentation?: AgentPresentationEnvelope | null
-      }
-    | null
-    | undefined,
-): boolean {
-  threadRunState.value = state
-    ? { phase: state.phase ?? null, runCancelled: state.runCancelled ?? null }
-    : null
-  const cancelled = isRunCancelledState(state)
-  if (cancelled) {
-    cancelledPresentation.value = state?.presentation ?? null
-  } else if (!runCancelled.value) {
-    // A gate-preserved stop leaves the checkpoint uncancelled; keep the local callout.
-    cancelledPresentation.value = null
-    cancelledProgressText.value = null
-  }
-  return cancelled
-}
 
-/**
- * 重连/切换线程时的终态对账。
- *
- * H1-c（规格 2026-10-28 §5.2）：thread-state 读取已退役（恒返 null 的死端点连同前端
- * 调用一并删除）。恒 null 下只可能同步「运行已停止」这一项 ⇒ 与退役前生产现状
- * （端点恒返 null）行为一致，仅做一次状态复位。
- * 终态判定待 H3 seq 游标窗重接 turnState（规格 §12）。
- */
-async function refreshThreadCheckpoint() {
-  syncCancelledFromThreadState(null)
-}
 
 
 /** P1#6 缩略图 url 源：canvasNodes 按 nodeId 查 url。 */
@@ -1599,7 +1490,7 @@ async function cancelActiveStream() {
   }
 
   ElMessage.info(apiOk ? '已停止当前任务，您可以发送新需求' : '已断开回复，后台可能仍在收尾')
-  if (apiOk) await refreshThreadCheckpoint()
+  if (apiOk) await threadApi.refreshThreadCheckpoint()
 }
 
 async function send() {
@@ -2193,7 +2084,7 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
       followUpTail.seedLastSeq(lastMainSeq.value)
       streamBreakError = null
     }
-    await refreshThreadCheckpoint()
+    await threadApi.refreshThreadCheckpoint()
     // canvas_action 已流内实时 emit（2026-10-01），无积压可 flush
     // 始终回拉：Runtime 已写 Session.canvasData；本地 save 不得用旧节点覆盖
     emit('turnComplete')
@@ -2649,7 +2540,7 @@ async function reconnectStream() {
     // `syncCancelledFromThreadState` 只可能同步「运行已停止」这一项（现状分支保留）；
     // 「已停止 / 已完成」的区分判据改为 runs/events 实时状态 + 消息 metadata 终态
     // （既有 P1#11 判据），终态判定待 H3 seq 游标窗重接 turnState（规格 §12）。
-    syncCancelledFromThreadState(null)
+    threadApi.syncCancelledFromThreadState(null)
 
     if (agent.isStreaming) {
       agent.finishStreaming()
@@ -3375,6 +3266,28 @@ const followLatest = ref(true)
 /** 脱离底部期间，下方有新内容进来 */
 const hasNewBelow = ref(false)
 
+// 第九刀（strangler-fig）：Thread 生命周期簇已迁入 useAgentThread。
+// agentThreadId / threads 仍由本组件持有所有权，仅注入 composable 消费。
+const threadApi = useAgentThread({
+  agentThreadId,
+  threads,
+  historyOpen,
+  taskProgress,
+  runCancelled,
+  threadRunState,
+  cancelledPresentation,
+  cancelledProgressText,
+  recoveredPhaseHint,
+  followLatest,
+  hasNewBelow,
+  clearComposer,
+  clearAgent: () => agent.clear(),
+  loadHistory,
+  fetchThreads,
+  scrollToBottom,
+  getSessionId: () => props.sessionId,
+})
+
 function isNearBottom(el: HTMLElement) {
   return el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX
 }
@@ -3521,7 +3434,7 @@ watch(
 
 defineExpose({
   /** IA v3.2：MobileTopBar 右上角 + / 🕘 —— 新对话（当前项目上下文）/ 对话历史面板 */
-  newAgentSession,
+  newAgentSession: threadApi.newAgentSession,
   openThreadHistory,
   closeThreadHistory,
   openPanel,
@@ -3589,10 +3502,10 @@ defineExpose({
               type="button"
               class="thread-history-item"
               :class="{ 'is-current': thread.id === agentThreadId }"
-              :disabled="isArchivedThread(thread)"
-              @click="selectThread(thread.id); closeThreadHistory()"
+              :disabled="threadApi.isArchivedThread(thread)"
+              @click="threadApi.selectThread(thread.id); closeThreadHistory()"
             >
-              <span class="block truncate text-xs font-medium">{{ thread.title }}{{ isArchivedThread(thread) ? '（已归档 · 即将合并到主对话）' : '' }}</span>
+              <span class="block truncate text-xs font-medium">{{ thread.title }}{{ threadApi.isArchivedThread(thread) ? '（已归档 · 即将合并到主对话）' : '' }}</span>
               <span class="block text-[10px] opacity-60">{{ formatSessionTime(thread.updatedAt) }}</span>
             </button>
             <p v-if="!threads.length" class="session-drawer__empty">暂无对话记录</p>

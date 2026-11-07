@@ -26,6 +26,8 @@ import { describe, expect, it } from 'vitest'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const src = readFileSync(join(here, './AgentSideRail.vue'), 'utf8')
+// 第九刀：bootstrapThread 已迁入 useAgentThread，相关 fetch 契约改钉 composable。
+const threadSrc = readFileSync(join(here, './useAgentThread.ts'), 'utf8')
 
 function stripComments(s: string): string {
   return s
@@ -36,6 +38,7 @@ function stripComments(s: string): string {
 
 /** 剥注释后的源码（所有断言都基于它）。 */
 const code = stripComments(src)
+const threadCode = stripComments(threadSrc)
 
 /** 函数体截取：懒匹配到第一个行首 `}`（内部块均有缩进，不会提前截断）。 */
 function fnBlock(signature: string): string {
@@ -59,8 +62,8 @@ describe('AgentSideRail 对话历史 fetch 禁缓存契约（304 空体 ⇒ 历�
   })
 
   it('messageCountFor 已退役（H1-b/D3）：bootstrapThread 不得再全量下载消息只为计数（S6）', () => {
-    const block = fnBlock('async function bootstrapThread()')
-    expect(block, '必须能定位 bootstrapThread 函数体').toContain('resolveBootstrapThreadId')
+    const block = threadCode.match(/async function bootstrapThread\(\)[\s\S]*?\n\}/)?.[0] ?? ''
+    expect(block, '必须能定位 bootstrapThread 函数体（现已迁入 useAgentThread）').toContain('resolveBootstrapThreadId')
     expect(block, 'messageCountFor 必须彻底退役（计数随 threads 行带回）').not.toContain(
       'messageCountFor',
     )
