@@ -13,6 +13,8 @@
  * 为什么是静态契约：AgentSideRail.vue 是 3000+ 行 SFC，挂载需整套 store/fetch/auth 桩
  * （observerWiring.test.ts 既有结论）；分派分支形状恰好是本修复的全部内容。
  *
+ * 第十刀（2026-11-08）将 onEvent 分派器迁入 `useAgentObserver`，以下断言改读该文件。
+ *
  * ⚠️ 断言前一律 stripComments（同 observerWiring：注释里的函数名会被当代码命中，假绿）。
  */
 import { readFileSync } from 'node:fs'
@@ -21,7 +23,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const src = readFileSync(join(here, './AgentSideRail.vue'), 'utf8')
+const src = readFileSync(join(here, './useAgentObserver.ts'), 'utf8')
 
 function stripComments(s: string): string {
   return s

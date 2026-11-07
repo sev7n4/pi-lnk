@@ -7,6 +7,8 @@
  *
  * ⚠️ 断言前一律 `stripComments`：本仓把迁移说明写进注释，
  * 全文扫描会让注释里的函数名被当成代码命中（假绿）。
+ *
+ * 第十刀（2026-11-08）将跨标签页订阅接线迁入 `useAgentObserver`，以下断言改读该文件。
  */
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -14,7 +16,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const src = readFileSync(join(here, './AgentSideRail.vue'), 'utf8')
+const src = readFileSync(join(here, './useAgentObserver.ts'), 'utf8')
 
 function stripComments(s: string): string {
   return s
@@ -25,7 +27,7 @@ function stripComments(s: string): string {
 
 const code = stripComments(src)
 
-/** `function listenFollowUpTail()` 的函数体（到下一个顶层 `}` 前）。 */
+/** `function ${name}(` 的函数体（到下一个顶层 `}` 前）。 */
 function bodyOf(name: string): string {
   const i = code.indexOf(`function ${name}(`)
   expect(i, `必须能定位 ${name}`).toBeGreaterThan(-1)
