@@ -354,6 +354,49 @@ export function collectDigestSnapshot(canvas: DigestRawCanvas): DigestSnapshot {
 }
 
 /**
+ * §9.1 P3 可观测（2026-11-07）：识别「回合外画布态变更导致的总览陈旧」。
+ *
+ * 纯函数、零写入、零用户可见变更。三条同时成立才算 stale：
+ *   ① 节点当前有正据（D9：媒体 url / 文本 title|content），且在 D3 前 100 收录上限内；
+ *   ② 该节点不在上一版 digest HTML 的 `data-node-id` 集合中（renderTile 已转义，故对比时同样转义）；
+ *   ③ 本轮 canvasActions 没有触碰该节点 —— 本轮新建/更新属正常翻新，不是陈旧。
+ * 首次渲染无上一版 HTML ⇒ 无可对比基线，返回空。
+ *
+ * 用途：把「是否该实施事件驱动去抖」从主观判断变成可量化证据——生产出现
+ * `digest_stale` warn 且确认由 url 回填引起，即满足 §9.1 准入判据。
+ * 本函数**不改变触发架构**：maybeRender 仍只在 finalizeTurn 被调用。
+ */
+export function findDigestStaleIds(input: {
+  canvas: DigestRawCanvas
+  canvasActions: readonly CanvasAction[]
+}): string[] {
+  const digestNode = input.canvas.nodes.find((n) => n.data?.digest === true)
+  const previousHtml = typeof digestNode?.data?.content === 'string' ? digestNode.data.content : ''
+  if (!previousHtml) return []
+
+  // 上一版收录集合：直接反查渲染器写进 tile 的 data-node-id，零新增持久化字段。
+  const previouslyIncluded = new Set<string>()
+  for (const match of previousHtml.matchAll(/data-node-id="([^"]+)"/g)) {
+    if (match[1]) previouslyIncluded.add(match[1])
+  }
+
+  const touched = new Set<string>()
+  for (const action of input.canvasActions) {
+    const payload = action.payload as unknown as { id?: unknown } | undefined
+    if (typeof payload?.id === 'string' && payload.id) touched.add(payload.id)
+  }
+
+  const collected = collectDigestSnapshot(input.canvas)
+    .nodes.filter(hasEvidence)
+    .slice(0, DIGEST_NODE_CAP)
+
+  return collected
+    .filter((n) => !previouslyIncluded.has(escapeHtml(n.id)) && !touched.has(n.id))
+    .map((n) => n.id)
+    .sort()
+}
+
+/**
  * P1b：下一版版本号（双源自愈）。
  *
  * 2026-11-07 生产事故：客户端回拉/PATCH 循环把陈旧的 `digestVersion` 回灌，
@@ -493,6 +536,22 @@ export class CanvasDigestService {
       // P1b：版本取自「元数据 + 上一版 HTML Header」双源 max+1，存量脏状态可自愈。
       const digestVersion = resolveNextDigestVersion(canvas)
       snapshot.digestVersion = digestVersion
+
+      // §9.1 P3 可观测：仅 warn，不改触发架构 / 不改 HTML / 不写画布 / 不影响返回值。
+      // fail-soft 与 S7 同源：探针自身异常不得阻断总览渲染。
+      try {
+        const staleIds = findDigestStaleIds({ canvas, canvasActions: input.canvasActions })
+        if (staleIds.length > 0) {
+          this.logger.warn(
+            `digest_stale session=${input.sessionId} ver=${digestVersion} missing=${staleIds.length} ids=${staleIds.slice(0, 10).join(',')} — 画布已有正据节点未进入上一版总览（回合外画布态变更，§9.1 P3 准入证据）`,
+          )
+        }
+      } catch (err) {
+        this.logger.warn(
+          `digest_stale_probe_failed session=${input.sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+        )
+      }
+
       const html = renderDigestHtml(snapshot, { publicBaseUrl: resolvePublicBaseUrl() })
       if (!html) return null // 无可收录节点（D9 全过滤）
 

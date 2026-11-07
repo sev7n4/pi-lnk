@@ -10,6 +10,7 @@
 分支约定：feature 分支 + PR + squash merge。
 
 **修订记录**：
+- v1.5（2026-11-07，**P3 登记补齐 + `digest_stale` 可观测，零触发架构变更**）：v1.4 修订记录末尾提到「事件驱动去抖（原方案 C）继续列为后续 P3」，但 §9 分期表**只有 P0/P1/P2，没有 P3 行** ⇒ 规格内漂移，本版补齐。① 把 PR #759 描述中的三项（事件驱动去抖 / 异步生成回填 url 晚于回合收尾漏收录 / 异步 URL 回填漏收录）**归约**为「1 个现象 + 1 个候选修法 + 1 个重复描述」，见 §9.1。② 补**准入判据**：2026-11-07 生产核查未发现可复现样本（未收录 5 项全为 `failed`/`pending_confirm` 且 `url` 空，按 D9 属正确排除）⇒ **不实施去抖**，只登记 + 落地低成本 `digest_stale` 可观测（§9.1，零画布写入）。③ 明确若未来启动实现，不得破坏 v1.3/v1.4 的「`finalizeTurn` 唯一触发源」契约。
 - v1.4（2026-11-07，生产实证 + P0/P1/P2 完善）：① **detached 触发条件更正**——生产 `STREAM_MAIN_FROM_PIRUNTIME=on` 下 `chat/conversation` 只回 JSON ack，run 由 `startConversationRun` 后台 drain generator 到底，事件另走 `GET /runs/events` ⇒ **客户端断连与服务端 generator 生命周期已解耦**，断 POST（含 TCP RST）对收束无影响，实测 `metadata.truncated=null` 全走 owner 主流。detached 的真实触发条件是**后台 drain 异常 / generator 提前回收（流耗尽）**，不是用户断连；§4.1/图 1/D6 中「detached 断连」均按此口径读作「detached 后台收束异常」，结构收敛（唯一触发源 + 三路径共用）的防漏挂收益不变。② **P1b 版本号落地**：客户端回拉/PATCH 循环把陈旧 `digestVersion` 回灌 ⇒ Header 恒停「第 5 版」、元数据卡 4（生产 nginx 实证同一会话 573 次客户端 PATCH）；修法 = `digest`/`digestVersion`/`source` 列入双端「服务端专属字段禁写」名单 + 版本号改「元数据与上一版 HTML Header 双源 max+1」自愈。③ **P2 Footer**：未收录项按 `generating / failed / draft` 分桶，不再一律写「生成中」；Footer 标注「系统自动生成 · 当前画布快照」与用户自建总结区分。④ **P1a 交付条**：总览不再进每轮 `turnDeliveryItems`，改会话级单一入口，仅最后一轮渲染（零产物回合不虚报、历史回合不注入）。⑤ **P0 产物落地**：跨轮 `set_node_text` id 纠偏窗口（见 `2026-10-16-canvas-write-tool-chain-design.md` v1.1）+ 回合终态空 draft 文本节点 warn 守卫。异步生成回填 url 晚于回合收尾导致的漏收录仍按 D9 接受，**事件驱动去抖（原方案 C）继续列为后续 P3，不在本包实施**。
 - v1（2026-11-05）：用户真机体验 html-craft 富版图鉴后提议「每轮固定输出」；评审裁决系统管道形态，P0-P2 分期定稿。
 - v1.3（2026-11-07，收束点归位）：① 的「owner 流 + drain 两处挂载」裁决**漏掉 detached 断连路径**，而 §5.1 图 1 / D6 明定三条收束路径共用 finalizeTurn ⇒ 断连轮 `turnSettled` 置 true 后 owner 块被跳过，总览停在上一版。修复为 **触发下沉进 `finalizeTurn` 内部（唯一触发源）**，返回值 `CanvasAction[]` 交 owner 流 yield 上屏；detached / out-of-turn drain 无流可 yield，只落库，由前端刷新恢复。② `finalizeTurn` 的 duplicate runId early return 不触发 digest（图 1「成功后挂载」）。③ 触发必须在画布实体/画布态写完之后，保证快照最新。
@@ -185,6 +186,24 @@ P1 追加：模板真缩略图的加载失败降级打磨（类型图标 fallbac
 | **P0** | 管道 + 完整视觉模板（§6.0 定稿：真缩略图/分区/双主题/D7-D10 全量）+ trusted CSP + flag on + 交付条接入 | 本规格即排期 |
 | **P1** | 缩略图失败降级打磨、digest 节点只读分支、空间序稳定性 | P0 上线复测通过 |
 | **P2（登记不做）** | 富版图鉴（html-craft S9 已覆盖，用户主动触发）、轻 LLM 润色、agent 读工具过滤 digest 节点、tile 定位回画布（宿主 postMessage 协议）、**F5 多 digest 节点治理（见 §10）** | 凭使用证据（含 `digest_open` 率） |
+| **P3（登记不实施，v1.5 补登）** | 回合外画布态变更导致的总览陈旧（§9.1）；候选修法 = 事件驱动去抖（原方案 C） | **先有可复现生产样本 + `digest_stale` 可观测证据**，见 §9.1 准入判据 |
+
+### 9.1 P3：回合外画布态变更与总览陈旧（v1.5 登记，不实施）
+
+**根因归约**。PR #759 描述里的三项不是三个独立缺陷：
+
+- 「异步生成回填 `url` 晚于回合收尾漏收录」与「异步 URL 回填漏收录」是**同一现象**的两种表述；
+- 「事件驱动去抖（原方案 C）」是**候选修法**，不是问题。
+
+统一现象：`maybeRender` 只由 `finalizeTurn` 在 `canvasActions.length > 0` 时触发，且 `maybeRender` 自身还有 `if (!input.canvasActions.length) return null`（D1 纯聊天跳过）双重闸门。因此**回合外**的画布态写入——异步生成回调 / `SessionsService.patchCanvas` 客户端 PATCH / `generation-reaper` 超时状态回收——都不触发重渲染。节点从「无正据」变为「有正据」（`url` 回填）后，若此后没有带画布动作的回合，就永远不进总览。
+
+**当前准入证据（2026-11-07 生产核查，测试会话 `cmw56hqit00nck801povzca3e`）**：23 节点、`digestVersion=7`，未收录 5 项全部是 `image` 且 `status` 为 `failed`(4) / `pending_confirm`(1)、`url` 全空 ⇒ 按 **D9「有正据才动」属正确排除，不是缺陷**。另经代码核对，`agent-canvas-tools.service.ts` 的 `runImageGeneration` 是**回合内同步** `await pollGeneration` → `finishActions` → `allActions` → `canvasActions` 路径，该路径不漏。⇒ **目前没有「`url` 已回填但仍未收录」的可复现样本**。
+
+**准入判据（硬，沿用 §9「凭使用证据」）**：必须先取得一条真实样本——节点 `data.url` 非空、有正据、却不在当前 digest HTML 的收录集合中，且该次回填之后没有任何带画布动作的回合。在此之前任何去抖实现都写不出**行为级 RED→PASS** 回归（无事故形态可复现），按 D9 与 §9 不予实施。
+
+**已落地的低成本先行项（v1.5，不改触发架构）**：`digest_stale` 可观测。导出纯函数 `findDigestStaleIds({ canvas, canvasActions })`——反查上一版 digest HTML 中渲染器写下的 `data-node-id`（`renderTile` 既有形态，**零新增持久化字段**）得到上一版收录集合；把三条同时成立的节点列为 stale：① 当前有正据（D9）且在 D3 前 100 上限内；② 不在上一版收录集合（id 经 `escapeHtml` 对齐，D7）；③ 本轮 `canvasActions` 未触碰该 id。`maybeRender` 在渲染前据此打一条 `digest_stale` warn，探针自带 fail-soft try/catch（S7 同源）。**零画布写入、不改 HTML、不改返回值、不动 `finalizeTurn` 契约**。第 ③ 条是关键：本轮正常新建/更新的节点不算陈旧，否则每一轮都会误报刷屏。生产出现 `digest_stale` 且确认由 `url` 回填引起，即满足上述准入判据，可据此决定是否启动去抖实现。
+
+**若未来启动去抖实现，硬约束**：① 不得把触发挪出 `finalizeTurn`、不得推翻 v1.3/v1.4「三路径共用唯一触发源」，应采用**独立旁路调度**而非改造主链；② 必须防递归——digest 自身 `upsertDigestNode` 也是画布态写入，会再次命中变更事件；③ 必须防版本号刷屏——只在「收录集合/内容指纹实际变化」时翻新 `digestVersion`，否则每次客户端 PATCH（生产实证同会话 573 次）都会自增；④ 独立 flag、fail-soft、detached 路径不得产生 unhandled rejection；⑤ 需同时修订 §5.1 图 1 与 D1 判据，并补变异验证。
 
 ## 10. 风险
 

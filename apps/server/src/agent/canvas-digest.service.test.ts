@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import { Logger } from '@nestjs/common'
 import { renderDigestHtml, type DigestSnapshot } from './canvas-digest.service'
 
 /**
@@ -176,6 +177,8 @@ import {
   CanvasDigestService,
   buildDigestUpsertActions,
   collectDigestSnapshot,
+  escapeHtml,
+  findDigestStaleIds,
   resolveNextDigestVersion,
 } from './canvas-digest.service'
 import { applyCanvasActions } from '@lnkpi/agent'
@@ -450,5 +453,157 @@ describe('P1b 落库链路：buildDigestUpsertActions → applier.apply', () => 
     expect(node?.data?.status).toBe('completed')
     expect(node?.data?.digest).toBe(true)
     expect(after.nodes).toHaveLength(2)
+  })
+})
+
+// ── §9.1 P3 可观测（2026-11-07）：只判定、零写入、不改触发架构 ───────────────
+describe('§9.1 P3 findDigestStaleIds（回合外画布态变更的量化准入证据）', () => {
+  const digest = (content: string) => ({
+    id: 'digest-canvas',
+    type: 'text',
+    position: { x: 0, y: 9999 },
+    data: { digest: true, digestVersion: 6, content },
+  })
+  const img = (id: string, url?: string, status?: string) => ({
+    id,
+    type: 'image',
+    position: { x: 0, y: 0 },
+    data: { title: id, ...(url ? { url } : {}), ...(status ? { status } : {}) },
+  })
+  const prevHtml = (ids: string[]) =>
+    ids.map((id) => `<div class="tile" data-node-id="${id}"></div>`).join('')
+  const action = (id: string) =>
+    ({ type: 'update_node', payload: { id, data: {} } }) as never
+
+  it('首版无上一版 HTML ⇒ 无可对比基线，零 stale', () => {
+    expect(
+      findDigestStaleIds({
+        canvas: canvasOf([img('a', '/a.png'), img('b', '/b.png')]),
+        canvasActions: [action('a')],
+      }),
+    ).toEqual([])
+  })
+
+  it('事故形态：上一版只收 a，回合外 b 的 url 回填且本轮未碰 b ⇒ 报 b', () => {
+    const canvas = canvasOf([img('a', '/a.png'), img('b', '/b.png'), digest(prevHtml(['a']))])
+    expect(findDigestStaleIds({ canvas, canvasActions: [action('a')] })).toEqual(['b'])
+  })
+
+  it('正常形态：本轮新建/更新 b ⇒ 不算陈旧（防每轮误报刷屏）', () => {
+    const canvas = canvasOf([img('a', '/a.png'), img('b', '/b.png'), digest(prevHtml(['a']))])
+    expect(findDigestStaleIds({ canvas, canvasActions: [action('a'), action('b')] })).toEqual([])
+  })
+
+  it('上一版已收录不重复报；D9 无 url 的 draft/failed 不算有正据', () => {
+    const canvas = canvasOf([
+      img('a', '/a.png'),
+      img('b'),
+      img('c', undefined, 'failed'),
+      digest(prevHtml(['a'])),
+    ])
+    expect(findDigestStaleIds({ canvas, canvasActions: [action('a')] })).toEqual([])
+  })
+
+  it('D3 封顶：第 101 个有正据节点不因渲染上限被误报为 stale', () => {
+    const nodes = Array.from({ length: 101 }, (_, i) =>
+      img('n' + String(i).padStart(3, '0'), '/x.png'),
+    )
+    const canvas = canvasOf([...nodes, digest(prevHtml(nodes.slice(0, 100).map((n) => n.id)))])
+    expect(findDigestStaleIds({ canvas, canvasActions: [action('n000')] })).toEqual([])
+  })
+
+  it('D7 转义对齐：上一版 HTML 写的是 escapeHtml(id)，同形态不算 stale', () => {
+    const weird = 'img-"><script>x</script>'
+    const canvas = canvasOf([img(weird, '/x.png'), digest(prevHtml([escapeHtml(weird)]))])
+    expect(findDigestStaleIds({ canvas, canvasActions: [action('a')] })).toEqual([])
+  })
+
+  it('结果按 id 排序，保证日志确定性', () => {
+    const canvas = canvasOf([
+      img('z', '/z.png'),
+      img('b', '/b.png'),
+      img('a', '/a.png'),
+      digest('<span class="ver">第 6 版</span>'),
+    ])
+    expect(findDigestStaleIds({ canvas, canvasActions: [] })).toEqual(['a', 'b', 'z'])
+  })
+})
+
+describe('§9.1 P3 maybeRender 集成：stale 只 warn、不改 HTML、不阻断 upsert', () => {
+  const img = (id: string, url: string) => ({
+    id,
+    type: 'image',
+    position: { x: 0, y: 0 },
+    data: { title: id, url },
+  })
+  const digest = {
+    id: 'digest-canvas',
+    type: 'text',
+    position: { x: 0, y: 9999 },
+    data: {
+      digest: true,
+      digestVersion: 6,
+      content: '<div class="tile" data-node-id="a"></div>',
+    },
+  }
+  const action = (id: string) =>
+    ({ type: 'update_node', payload: { id, data: {} } }) as never
+
+  it('检出 stale ⇒ warn 含 digest_stale；本版 HTML 收录 b；upsert 正常返回', async () => {
+    process.env.CANVAS_DIGEST = 'on'
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+    const prisma = {
+      session: {
+        findUnique: vi.fn().mockResolvedValue({
+          canvasData: JSON.stringify(canvasOf([img('a', '/a.png'), img('b', '/b.png'), digest])),
+        }),
+      },
+    }
+    const tools = {
+      upsertDigestNode: vi.fn().mockResolvedValue({ nodeId: 'digest-canvas', actions: [] }),
+    }
+    try {
+      const service = new CanvasDigestService(prisma as never, tools as never)
+      const result = await service.maybeRender({
+        sessionId: 's1',
+        userId: 'u1',
+        canvasActions: [action('a')],
+      })
+      expect(result).toEqual({ nodeId: 'digest-canvas', actions: [] })
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('digest_stale'))
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('b'))
+      const call = tools.upsertDigestNode.mock.calls[0]?.[0] as { html: string; digestVersion: number }
+      expect(call.html).toContain('data-node-id="b"')
+      expect(call.digestVersion).toBe(7)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('无 stale（本轮动作覆盖新增节点）⇒ 零 digest_stale warn，不刷屏', async () => {
+    process.env.CANVAS_DIGEST = 'on'
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+    const prisma = {
+      session: {
+        findUnique: vi.fn().mockResolvedValue({
+          canvasData: JSON.stringify(canvasOf([img('a', '/a.png'), img('b', '/b.png'), digest])),
+        }),
+      },
+    }
+    const tools = {
+      upsertDigestNode: vi.fn().mockResolvedValue({ nodeId: 'digest-canvas', actions: [] }),
+    }
+    try {
+      const service = new CanvasDigestService(prisma as never, tools as never)
+      await service.maybeRender({
+        sessionId: 's1',
+        userId: 'u1',
+        canvasActions: [action('a'), action('b')],
+      })
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes('digest_stale'))).toHaveLength(0)
+      expect(tools.upsertDigestNode).toHaveBeenCalledTimes(1)
+    } finally {
+      warn.mockRestore()
+    }
   })
 })
