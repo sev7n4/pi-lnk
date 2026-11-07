@@ -195,6 +195,28 @@ export function resolveMessageOutputs(opts: {
   return parseLinkedOutputsFromToolCalls(opts.canvasActions)
 }
 
+
+export interface CanvasOutputsForMessageOpts {
+  isLiveTurn: boolean
+  taskItems?: Array<Pick<AgentTaskItem, 'nodeId' | 'title' | 'status' | 'kind'>>
+}
+
+export function canvasOutputsForMessage(
+  msg: {
+    linkedOutputs?: LinkedCanvasOutput[]
+    canvasActions?: CanvasAction[]
+    executionTrace?: { steps?: ExecutionStep[] }
+  },
+  opts: CanvasOutputsForMessageOpts,
+): LinkedCanvasOutput[] {
+  return resolveMessageOutputs({
+    linkedOutputs: msg.linkedOutputs,
+    canvasActions: msg.canvasActions,
+    traceSteps: msg.executionTrace?.steps,
+    taskItems: opts.isLiveTurn ? opts.taskItems : undefined,
+    isLiveTurn: opts.isLiveTurn,
+  })
+}
 export function locatableNodeIds(outputs: LinkedCanvasOutput[]): string[] {
   return outputs.filter((o) => o.status === 'done' || o.status === 'failed').map((o) => o.nodeId)
 }

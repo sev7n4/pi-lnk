@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { ExecutionStep } from './executionTraceReducer'
 import {
   buildCanvasOutputs,
+  canvasOutputsForMessage,
   parseLinkedOutputsFromToolCalls,
   resolveMessageOutputs,
   shouldCollapseOutputs,
@@ -171,5 +172,55 @@ describe('resolveMessageOutputs', () => {
       ],
     })
     expect(out[0]?.nodeId).toBe('n3')
+  })
+})
+
+describe('canvasOutputsForMessage', () => {
+  it('live turn uses taskItems + traceSteps through the live branch', () => {
+    const msg = {
+      linkedOutputs: undefined,
+      canvasActions: undefined,
+      executionTrace: { steps: [] as ExecutionStep[] },
+    }
+    const out = canvasOutputsForMessage(msg, {
+      isLiveTurn: true,
+      taskItems: [{ nodeId: 't1', title: '进行中任务', status: 'running' }],
+    })
+    expect(out).toHaveLength(1)
+    expect(out[0].nodeId).toBe('t1')
+  })
+
+  it('non-live turn drops taskItems and prefers linkedOutputs', () => {
+    const msg = {
+      linkedOutputs: [{ nodeId: 'n1', title: '主图', nodeType: 'image', status: 'done' as const }],
+      canvasActions: undefined,
+      executionTrace: { steps: [] as ExecutionStep[] },
+    }
+    const out = canvasOutputsForMessage(msg, {
+      isLiveTurn: false,
+      taskItems: [{ nodeId: 't1', title: '进行中任务', status: 'running' }],
+    })
+    // taskItems 必须被闸门丢弃；历史消息走 linkedOutputs 口径
+    expect(out).toEqual([{ nodeId: 'n1', title: '主图', nodeType: 'image', status: 'done' }])
+  })
+
+  it('non-live turn with traceSteps falls back to trace derivation', () => {
+    const msg = {
+      linkedOutputs: undefined,
+      canvasActions: undefined,
+      executionTrace: {
+        steps: [
+          {
+            id: 's1',
+            kind: 'canvas',
+            label: '添加图片节点「x」',
+            status: 'done',
+            meta: { nodeId: 'n2' },
+          },
+        ] as ExecutionStep[],
+      },
+    }
+    const out = canvasOutputsForMessage(msg, { isLiveTurn: false, taskItems: [] })
+    expect(out[0]?.nodeId).toBe('n2')
   })
 })
