@@ -5,7 +5,13 @@ export { HTML_NODE_CSP, HTML_NODE_SANDBOX_ATTRS } from './htmlNodePreviewContrac
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { HTML_NODE_CSP, HTML_NODE_SANDBOX_ATTRS, buildTrustedNodeCsp } from './htmlNodePreviewContract'
+import {
+  HTML_NODE_CSP,
+  HTML_NODE_SANDBOX_ATTRS,
+  buildTrustedNodeCsp,
+  collectTrustedMediaOrigins,
+  TRUSTED_HEADER_SAFE_AREA_CSS,
+} from './htmlNodePreviewContract'
 
 /**
  * HTML 文本节点沙箱预览面（规格 §5.4 组件契约；§4.3 沙箱判据）。
@@ -34,9 +40,11 @@ const draft = ref('')
 
 const degraded = computed(() => props.content.trim() === '')
 
-/** §5.2 分流：trusted ⇒ 受信级 CSP（img/media-src 放行本站媒体 origin）；其余逐字符既有常量。 */
+/** §5.2 分流：trusted ⇒ 受信级 CSP（本站 origin + 本文档实际引用的第三方媒体域）；其余逐字符既有常量。 */
 const activeCsp = computed(() =>
-  props.trusted ? buildTrustedNodeCsp(window.location.origin) : HTML_NODE_CSP,
+  props.trusted
+    ? buildTrustedNodeCsp(window.location.origin, collectTrustedMediaOrigins(props.content))
+    : HTML_NODE_CSP,
 )
 /**
  * srcdoc 组装（§5.4，DOCTYPE 感知）：meta CSP 若前置于 DOCTYPE，文档首 token 非
@@ -44,13 +52,24 @@ const activeCsp = computed(() =>
  * 有 DOCTYPE 时插于其声明行之后（<html> 之前），无则前置——两种路径均保证
  * DOCTYPE 是文档第一个 token 且 meta 先于任何可执行内容生效。
  */
-function buildSrcdoc(content: string, csp: string): string {
+function buildSrcdoc(content: string, csp: string, extraStyle = ''): string {
   const cspMeta = `<meta http-equiv="Content-Security-Policy" content="${csp}">`
+  // 受信级专属样式（移动端 viewer 右上 X 安全区）；随 CSP meta 同位插入，
+  // 保证 CSP 仍先于任何可执行内容生效，且非受信内容零注入。
+  const head = `${cspMeta}${extraStyle ? `<style>${extraStyle}</style>` : ''}`
   const m = /^\s*<!doctype\s+html[^>]*>/i.exec(content)
-  if (!m) return `${cspMeta}${content}`
-  return `${content.slice(0, m[0].length)}\n${cspMeta}${content.slice(m[0].length)}`
+  if (!m) return `${head}${content}`
+  return `${content.slice(0, m[0].length)}\n${head}${content.slice(m[0].length)}`
 }
-const srcdoc = computed(() => (degraded.value ? '' : buildSrcdoc(props.content, activeCsp.value)))
+const srcdoc = computed(() =>
+  degraded.value
+    ? ''
+    : buildSrcdoc(
+        props.content,
+        activeCsp.value,
+        props.trusted ? TRUSTED_HEADER_SAFE_AREA_CSS : '',
+      ),
+)
 
 function openSource() {
   draft.value = props.content
