@@ -106,7 +106,7 @@ describe('mobile create-entry convergence wiring (PR2)', () => {
     // 有效性配对：资产库入口确实还在画布页（防「撤入口」变成「没人能打开资产库」）
     const rail = read('../components/agent/AgentSideRail.vue')
     expect(rail, 'composer 附件卡「资产库」瓦片必须在位').toContain('资产库')
-    expect(rail, '瓦片点击仍直开资产库选择器').toContain('@click="pickAssetLibrary"')
+    expect(rail, '瓦片点击仍直开资产库选择器（composer 壳）').toContain('@click="composer.pickAssetLibrary"')
     // 死代码链一并退役：壳层不再有 onDiscoverGotoCanvas / nextTick 编排
     expect(stripComments(shell), '壳层不得残留 onDiscoverGotoCanvas').not.toContain(
       'onDiscoverGotoCanvas',
