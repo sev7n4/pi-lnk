@@ -43,6 +43,13 @@ import {
   recoveredQueueText,
 } from '@/components/agent/cancelAgentRun'
 import {
+  postCancelQueued,
+  postCancelRun,
+  postConversation,
+  postPersistEntryId,
+  postSteerFollowup,
+} from '@/agent/command/agentCommandClient'
+import {
   applyTaskEvent,
   applyPollRecordToTask,
   emptyTaskProgress,
@@ -2134,12 +2141,7 @@ async function cancelActiveStream() {
       agent.finishStreaming()
     },
     postCancel: (body) =>
-      fetch(apiUrl('/api/agent/runs/cancel'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...authHeaders() },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(3000),
-      }).then((r) => {
+      postCancelRun(body).then((r) => {
         if (!r.ok) throw new Error(`cancel failed: ${r.status}`)
         return r.json()
       }),
@@ -2229,26 +2231,20 @@ async function deliverQueued(intent: QueueIntent, slot?: QueuedSlot): Promise<bo
   if (!target || target.text.trim() === '' || target.state !== 'pending') return false
   target.state = 'pending'
   target.hint = ''
-  const endpoint = intent === 'steer' ? '/api/agent/runs/steer' : '/api/agent/runs/followup'
   try {
-    const res = await fetch(apiUrl(endpoint), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({
-        sessionId: props.sessionId,
-        threadId: agentThreadId.value,
-        text: target.text,
-        // ⭐ 2026-10-20 P1-1：带上挂起时冻结的参考素材与画布选中态。
-        // 此前插话只发 text ⇒ 「指着一张图插话」时 agent 收不到图、收不到「这个」指谁。
-        // ⚠️ 缺省即不传（不是传空数组）：服务端据此区分「本条没有参考」与「老前端不会带」。
-        ...(target.attachments?.length ? { attachments: target.attachments } : {}),
-        ...(target.refOrder?.length ? { refOrder: target.refOrder } : {}),
-        ...(target.mentionedKeys?.length ? { mentionedKeys: target.mentionedKeys } : {}),
-        ...(target.selectionNodeIds?.length ? { selectedNodeIds: target.selectionNodeIds } : {}),
-        // ⭐ P1-2：composer 模型随消息冻结（Nest 据此做 vision 门控组装直通图片）。
-        ...(target.model?.trim() ? { model: target.model } : {}),
-      }),
-      signal: AbortSignal.timeout(5000),
+    const res = await postSteerFollowup(intent, {
+      sessionId: props.sessionId,
+      threadId: agentThreadId.value,
+      text: target.text,
+      // ⭐ 2026-10-20 P1-1：带上挂起时冻结的参考素材与画布选中态。
+      // 此前插话只发 text ⇒ 「指着一张图插话」时 agent 收不到图、收不到「这个」指谁。
+      // ⚠️ 缺省即不传（不是传空数组）：服务端据此区分「本条没有参考」与「老前端不会带」。
+      ...(target.attachments?.length ? { attachments: target.attachments } : {}),
+      ...(target.refOrder?.length ? { refOrder: target.refOrder } : {}),
+      ...(target.mentionedKeys?.length ? { mentionedKeys: target.mentionedKeys } : {}),
+      ...(target.selectionNodeIds?.length ? { selectedNodeIds: target.selectionNodeIds } : {}),
+      // ⭐ P1-2：composer 模型随消息冻结（Nest 据此做 vision 门控组装直通图片）。
+      ...(target.model?.trim() ? { model: target.model } : {}),
     })
     const body: unknown = await res.json().catch(() => null)
     const verdict = parseQueueDelivery({ ok: res.ok, status: res.status, body })
@@ -2302,12 +2298,7 @@ async function persistUserEntryId(entryId: string): Promise<void> {
   const threadId = agentThreadId.value
   if (!entryId || !threadId) return
   try {
-    await fetch(apiUrl('/api/agent/chat/user/entry-id'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ sessionId: props.sessionId, threadId, entryId }),
-      signal: AbortSignal.timeout(5000),
-    })
+    await postPersistEntryId({ sessionId: props.sessionId, threadId, entryId })
   } catch {
     // fail-soft：见上方注释。服务端 entryId 唯一索引保证重试/多页签都不会写出重复行。
   }
@@ -2338,15 +2329,10 @@ async function withdrawQueued(slot?: QueuedSlot): Promise<boolean> {
     return false
   }
   try {
-    const res = await fetch(apiUrl('/api/agent/runs/queue/cancel'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({
-        sessionId: props.sessionId,
-        threadId: agentThreadId.value,
-        entryId: target.entryId,
-      }),
-      signal: AbortSignal.timeout(5000),
+    const res = await postCancelQueued({
+      sessionId: props.sessionId,
+      threadId: agentThreadId.value,
+      entryId: target.entryId,
     })
     const body: unknown = await res.json().catch(() => null)
     if (!parseQueueDelivery({ ok: res.ok, status: res.status, body }).delivered) {
@@ -2735,21 +2721,13 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
   let ackMode = false
 
   try {
-    const token = localStorage.getItem('token')
     // 连接级错误（无 HTTP 状态）静默自动重试 1 次：移动端网络抖动多在秒级内恢复，
     // 用户无感即可续上（2026-10-21 决策）。AbortError 与业务级错误不重试。
     let res: Response | null = null
     for (let attempt = 0; attempt < CONVERSATION_FETCH_MAX_ATTEMPTS; attempt++) {
       try {
-        res = await fetch(apiUrl('/api/agent/chat/conversation'), {
-          method: 'POST',
-          signal: streamAbortController.signal,
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-            'Idempotency-Key': idempotencyKey,
-          },
-          body: JSON.stringify({
+        res = await postConversation(
+          {
             sessionId: props.sessionId,
             message,
             threadId: agentThreadId.value,
@@ -2768,8 +2746,9 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
             mentionedKeys,
             // ③ 重跑：后端线程截断切点（缺省 = 普通发送，不 fork）
             branchFromEntryId: branchFromEntryId || undefined,
-          }),
-        })
+          },
+          { signal: streamAbortController.signal, idempotencyKey },
+        )
         break
       } catch (fetchErr) {
         if ((fetchErr as Error)?.name === 'AbortError') throw fetchErr

@@ -12,57 +12,42 @@ import { dirname, join } from 'node:path'
  * 这里用**源码级断言**而非挂载组件跑一次真实发送：`AgentSideRail` 未 expose 发送方法，
  * 驱动发送需 stub fetch + 十余个 props，成本远高于这条不变量本身。
  * 同款做法在本仓已有先例（`scripts/verify-claims.ts` 即源码级判据）。
+ *
+ * ⚠️ Phase 2 起，会话 payload 已上收进 `agentCommandClient.postConversation`，
+ * `AgentSideRail` 侧只把 payload 对象作为实参传入（不再内联 `body: JSON.stringify`）。
+ * 故此处提取「`postConversation(` 的实参对象」来锁形状；端点命中由
+ * `agentCommandClient.test.ts` 锁（postConversation → /api/agent/chat/conversation）。
  */
 const railPath = join(dirname(fileURLToPath(import.meta.url)), 'AgentSideRail.vue')
 
-/** 逐个取出所有 `body: JSON.stringify(` 的对象字面量（按花括号配对，避免固定窗口取错位置）。 */
-function allJsonBodies(src: string): string[] {
-  const marker = 'body: JSON.stringify('
-  const out: string[] = []
-  let from = 0
-  for (;;) {
-    const start = src.indexOf(marker, from)
-    if (start < 0) return out
-    const open = src.indexOf('{', start)
-    let depth = 0
-    let end = -1
-    for (let i = open; i < src.length; i++) {
-      if (src[i] === '{') depth++
-      else if (src[i] === '}') {
-        depth--
-        if (depth === 0) {
-          end = i
-          break
-        }
+/** 花括号配平提取「postConversation(」后的实参对象字面量。 */
+function postConversationArg(src: string): string {
+  const marker = 'postConversation('
+  const start = src.indexOf(marker)
+  if (start < 0) throw new Error('未找到 postConversation 调用')
+  const open = src.indexOf('{', start)
+  let depth = 0
+  let end = -1
+  for (let i = open; i < src.length; i++) {
+    if (src[i] === '{') depth++
+    else if (src[i] === '}') {
+      depth--
+      if (depth === 0) {
+        end = i
+        break
       }
     }
-    if (end === -1) throw new Error('对象字面量未闭合')
-    out.push(src.slice(open, end + 1))
-    from = start + marker.length
   }
+  if (end === -1) throw new Error('postConversation 实参对象未闭合')
+  return src.slice(open, end + 1)
 }
 
 describe('SEL-REF · AgentSideRail 上行 payload 形状', () => {
   const src = readFileSync(railPath, 'utf8')
+  const sessionBody = postConversationArg(src)
 
-  /**
-   * ⭐ 按**内容特征**定位会话请求体，不再用 `nthJsonBody(src, 2)` 这种序号索引。
-   *
-   * 序号索引是**隐式契约**：任何人在前面新增一处 `body: JSON.stringify(`（例如 2026-10-20
-   * 加的撤回请求）都会把后面所有序号顶走 ⇒ 本文件3 个用例如期假红，而被测代码其实没问题。
-   * 特征定位（同时含 `sessionId` 与 `message`）对新增不敏感，且顺带自我验证。
-   */
-  const bodies = allJsonBodies(src)
-  const sessionBody = bodies.find((b) => b.includes('sessionId') && b.includes('message'))
-
-  it('自检：能按特征取到唯一的会话请求体（序号索引已废弃）', () => {
-    expect(
-      sessionBody,
-      `未找到含 sessionId + message 的请求体；现有 ${bodies.length} 处：\n` +
-        bodies.map((b, i) => `  [${i}] ${b.slice(0, 70)}`).join('\n'),
-    ).toBeTruthy()
-    // 唯一性：若多处命中说明特征不够锐利，需要收紧判据
-    expect(bodies.filter((b) => b.includes('sessionId') && b.includes('message'))).toHaveLength(1)
+  it('自检：会话 payload 作为 postConversation 实参存在', () => {
+    expect(sessionBody, '未找到 postConversation 的 payload 实参对象').toBeTruthy()
   })
 
   it('payload 含 selectedNodeIds', () => {

@@ -43,11 +43,11 @@ describe('插话撤回接线（P0）', () => {
   it('withdrawQueued 真的打服务端撤回端点，不是只清前端', () => {
     const body = requireFnBody('async function withdrawQueued(')
 
-    // 有效性配对：确实调了服务端端点。⚠️ 必须匹配 `await fetch(apiUrl(...` 的**完整调用形态**，
-    // 不能只 contains 端点串 —— 否则把调用藏进 `if (false)` 后面也照样通过（变异实测过）。
-    expect(body).toMatch(
-      /await fetch\(\s*apiUrl\(\s*['"]\/api\/agent\/runs\/queue\/cancel['"]\s*\)/,
-    )
+    // 有效性配对：确实委托给专用撤回方法。⚠️ Phase 2 起端点已上收进
+    // `agentCommandClient.postCancelQueued`，此处锁「withdrawQueued 真的调用它」
+    // （完整调用形态 `postCancelQueued({`，不能只 contains 端点串 —— 否则藏进 `if (false)` 也通过，
+    // 变异实测过）。端点命中由 agentCommandClient.test.ts 锁（postCancelQueued → /api/agent/runs/queue/cancel）。
+    expect(body).toMatch(/postCancelQueued\(\s*\{/)
     expect(body).toContain('entryId')
 
     // 撤回失败必须**保留气泡**（服务端那条还在，假装撤回是更糟的谎报）
