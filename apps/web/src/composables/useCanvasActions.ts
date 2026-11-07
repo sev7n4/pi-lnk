@@ -1,6 +1,9 @@
-import type { CanvasAction, CanvasData } from '@lnkpi/shared'
-import { isTerminalRegen } from '@lnkpi/shared'
+import type { CanvasAction, CanvasData, NodeType } from '@lnkpi/shared'
+import { applyCanvasActions, mergeNodeData } from '@lnkpi/shared'
 import { dedupeNodesById } from '@/pages/canvas/canvasNodeMerge'
+
+/** 重新导出共享 SSOT 的 mergeNodeData（历史 web 测试直接从此模块导入）。 */
+export { mergeNodeData }
 
 export interface FlowNode {
   id: string
@@ -17,155 +20,47 @@ export interface FlowEdge {
   style?: Record<string, unknown>
 }
 
-let nodeCounter = 0
-
 /**
- * 节点状态降级守卫（2026-10-01）：阻塞 propose 模式下，propose_generation 的
- * tool result（内含 update_node{status:'pending_confirm'}）在等待结束后才随
- * tool_execution_end 下发——此时节点可能已被用户确认进入 generating/completed。
- * stale 的 pending_confirm 一旦覆盖，节点整个剩余回合回退成「待确认」，用户再点
- * 「生成」会误触 cancelGeneration 取消在途生成。规则：本地已处于在途/终态时，
- * 丢弃 stale 的 pending_confirm，其余字段照常合并。
+ * 把 agent 下发的画布动作落地到 VueFlow 的 Flow 结构。
+ *
+ * Phase 5 收敛：委托 `@lnkpi/shared` 的 `applyCanvasActions`（唯一 SSOT），仅在此做
+ * Flow ⇄ CanvasData 的投影适配——既存节点/边沿用原对象（保留 selected / dragging /
+ * animated / style 等 VueFlow 运行时字段），新建边补 `animated:true`（VueFlow 渲染需要）。
+ * 侧车（groups / compositionRunGroup）不走实时通道，故此处只透出 {nodes, edges, viewport}。
  */
-const STALE_BLOCKED_STATUSES = new Set(['generating', 'completed', 'error', 'failed'])
-
-export function mergeNodeData(
-  existingData: Record<string, unknown> | undefined,
-  incomingData: Record<string, unknown> | undefined,
-): Record<string, unknown> {
-  // 吸收态守卫（规格 2026-11-04-generation-terminal-projection §5.2，与
-  // packages/agent applyCanvasActions 同一纯函数）：终态节点被无新 recordId 的
-  // 在途态写回 ⇒ 整体丢弃 incoming（陈旧快照回灌/SSE 重放在此结构性阻断）。
-  // 这是 2026-11-04「取消后 toast 刷屏」事故的写入侧根治点。
-  if (
-    isTerminalRegen({
-      currentStatus: existingData?.status,
-      currentRecordId: existingData?.generationRecordId,
-      incomingStatus: incomingData?.status,
-      incomingRecordId: incomingData?.generationRecordId,
-    })
-  ) {
-    console.warn(
-      `terminal_regen_rejected record=${String(existingData?.generationRecordId ?? 'unknown')}`,
-    )
-    return { ...(existingData ?? {}) }
-  }
-  const merged = { ...existingData, ...incomingData }
-  const existingStatus = String(existingData?.status ?? '')
-  if (
-    String(incomingData?.status ?? '') === 'pending_confirm'
-    && STALE_BLOCKED_STATUSES.has(existingStatus)
-  ) {
-    if (existingData && 'status' in existingData) merged.status = existingStatus
-    else delete merged.status
-  }
-  return merged
-}
-
 export function applyActionsToFlow(
   nodes: FlowNode[],
   edges: FlowEdge[],
   actions: CanvasAction[],
 ): { nodes: FlowNode[]; edges: FlowEdge[]; viewport?: { x: number; y: number; zoom: number } } {
-  const newNodes = [...nodes]
-  const newEdges = [...edges]
-  let viewport: { x: number; y: number; zoom: number } | undefined
-
-  for (const action of actions) {
-    switch (action.type) {
-      case 'add_node': {
-        const p = action.payload
-        const parentNode = p.parentShotId
-          ? newNodes.find((n) => n.id === p.parentShotId)
-          : null
-        const pos = parentNode
-          ? { x: parentNode.position.x + 320, y: parentNode.position.y + 20 }
-          : p.position ?? { x: 200, y: 200 }
-
-        const nodeId = p.id ?? `node-${++nodeCounter}`
-        // 2026-10-01 修：add_node 必须幂等。画布 SSOT 在前端，SSE 重放把同一条
-        // action 再投一次就会 push 出第二条同 id 节点，下一次 saveCanvas 整份
-        // 覆盖回 DB 后重复被固化（生产 30/253 画布命中）。
-        const existingIndex = newNodes.findIndex((n) => n.id === nodeId)
-        if (existingIndex >= 0) {
-          const existing = newNodes[existingIndex]!
-          existing.position = pos
-          existing.data = mergeNodeData(existing.data, p.data)
-          if (p.nodeType) existing.type = p.nodeType
-        } else {
-          newNodes.push({
-            id: nodeId,
-            // 2026-10-17 prompt 节点下线：兜底默认值 'prompt' → 'text'
-            // （仅对导入 workflow 包缺 nodeType 的脏数据生效；新建路径均显式带类型）。
-            type: p.nodeType ?? 'text',
-            position: pos,
-            data: p.data ?? {},
-          })
-        }
-
-        if (parentNode) {
-          const edgeId = `e-${parentNode.id}-${nodeId}`
-          if (!newEdges.some((e) => e.id === edgeId)) {
-            newEdges.push({
-              id: edgeId,
-              source: parentNode.id,
-              target: nodeId,
-              animated: true,
-            })
-          }
-        }
-        break
-      }
-      case 'update_node': {
-        const node = newNodes.find((n) => n.id === action.payload.id)
-        if (node) {
-          if (action.payload.position) node.position = action.payload.position
-          if (action.payload.data) node.data = mergeNodeData(node.data, action.payload.data)
-        }
-        break
-      }
-      case 'remove_node': {
-        const id = action.payload.id!
-        const idx = newNodes.findIndex((n) => n.id === id)
-        if (idx > -1) newNodes.splice(idx, 1)
-        for (let i = newEdges.length - 1; i >= 0; i--) {
-          if (newEdges[i].source === id || newEdges[i].target === id) {
-            newEdges.splice(i, 1)
-          }
-        }
-        break
-      }
-      case 'add_edge':
-        newEdges.push({
-          id: action.payload.id ?? `e-${action.payload.source}-${action.payload.target}`,
-          source: action.payload.source!,
-          target: action.payload.target!,
-          animated: true,
-        })
-        break
-      // 2026-09-29 补：此前 remove_edge / set_viewport 落入无 case 分支被静默丢弃，
-      // 与 packages/agent 的 applyCanvasActions 同源缺陷（那侧已同步补分支）。
-      case 'remove_edge': {
-        const edgeId = action.payload.id
-        if (!edgeId) break
-        const idx = newEdges.findIndex((e) => e.id === edgeId)
-        if (idx > -1) newEdges.splice(idx, 1)
-        break
-      }
-      case 'set_viewport':
-        if (action.payload.viewport) viewport = action.payload.viewport
-        break
-      // P1-C C2a：侧车 op 不经实时 apply 通道——agent 不下发侧车 op（分组走
-      // groupNodes 等显式命令），web 端侧车由 saveCanvas 的 diff→PATCH 落库。
-      // 显式 case 防静默丢弃重演（2026-09-29 remove_edge/set_viewport 同源缺陷）；
-      // 未来若 agent 需实时下发侧车，须先扩展本函数返回形状。
-      case 'set_groups':
-      case 'set_composition_run_group':
-        break
-    }
+  // 投影为 CanvasData（丢弃 VueFlow 运行时字段，SSOT 只关心 {id,type,position,data}）。
+  const canvasData: CanvasData = {
+    nodes: nodes.map((n) => ({ id: n.id, type: (n.type ?? 'text') as NodeType, position: n.position, data: n.data })),
+    edges: edges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
   }
+  const next = applyCanvasActions(canvasData, actions)
 
-  return { nodes: newNodes, edges: newEdges, viewport }
+  // 回投为 Flow：既存对象就地更新（保留额外字段），新对象按 Flow 形状创建。
+  const nodeById = new Map(nodes.map((n) => [n.id, n]))
+  const edgeById = new Map(edges.map((e) => [e.id, e]))
+  const outNodes: FlowNode[] = next.nodes.map((n) => {
+    const orig = nodeById.get(n.id)
+    if (orig) {
+      orig.type = n.type
+      orig.position = n.position
+      orig.data = n.data
+      return orig
+    }
+    return { id: n.id, type: n.type, position: n.position, data: n.data }
+  })
+  const outEdges: FlowEdge[] = next.edges.map((e) => {
+    const orig = edgeById.get(e.id)
+    if (orig) return orig
+    // 新边补 animated:true（与历史 web 行为一致，VueFlow 实时渲染需要）。
+    return { id: e.id, source: e.source, target: e.target, animated: true }
+  })
+
+  return { nodes: outNodes, edges: outEdges, viewport: next.viewport }
 }
 
 /**
@@ -232,7 +127,7 @@ export function flowToCanvasData(
   if (extras?.groups && extras.groups.length > 0) {
     data.groups = extras.groups
   }
-  // SP-C 视口：只在显式传入时写入键本身（不写 viewport: undefined ⇒ N1）
+  // SP-C 视口：只在显式传入时写入键本身（不写 viewport: undefined ⇒ N1）。
   if (extras?.viewport) {
     data.viewport = extras.viewport
   }
