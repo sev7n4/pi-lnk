@@ -18,6 +18,8 @@ import { describe, expect, it } from 'vitest'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const src = readFileSync(join(here, './AgentSideRail.vue'), 'utf8')
+// 第九刀：selectThread / bootstrapThread 已迁入 useAgentThread，fork key 接线契约改钉 composable。
+const threadSrc = readFileSync(join(here, './useAgentThread.ts'), 'utf8')
 
 function stripComments(s: string): string {
   return s
@@ -28,12 +30,13 @@ function stripComments(s: string): string {
 
 /** 剥注释后的源码（所有断言都基于它）。 */
 const code = stripComments(src)
+const threadCode = stripComments(threadSrc)
 
 /** `case 'thread_forked'` 分支块（到下一个 `case '` 为止）。 */
 const forkedBlock = code.match(/case 'thread_forked':\s*\{[\s\S]*?break/)?.[0] ?? ''
 
-/** `selectThread` 函数体（到下一个顶层函数声明为止）。 */
-const selectThreadBlock = code.match(/async function selectThread\([\s\S]*?\n\}/)?.[0] ?? ''
+/** `selectThread` 函数体（到下一个顶层函数声明为止，现已迁入 useAgentThread）。 */
+const selectThreadBlock = threadCode.match(/async function selectThread\([\s\S]*?\n\}/)?.[0] ?? ''
 
 describe('AgentSideRail 重跑分支线程（fork key）接线', () => {
   it('① thread_forked 到达时必须持久化分支线程（否则刷新丢重跑结果）', () => {
@@ -46,12 +49,12 @@ describe('AgentSideRail 重跑分支线程（fork key）接线', () => {
     expect(
       selectThreadBlock,
       '切换到共享线程（= sessionId）后必须 clearForkedThreadId，否则 resolveBootstrapThreadId 会把本端弹回重跑分支',
-    ).toContain('clearForkedThreadId(props.sessionId)')
+    ).toContain('clearForkedThreadId(getSessionId())')
   })
 
   it('③ bootstrap 必须经 resolveBootstrapThreadId 收敛（不得绕过 fork key 恢复逻辑直取缓存）', () => {
-    expect(code, 'bootstrapThread 必须走 resolveBootstrapThreadId').toContain(
-      'agentThreadId.value = await resolveBootstrapThreadId(props.sessionId',
+    expect(threadCode, 'bootstrapThread 必须走 resolveBootstrapThreadId').toContain(
+      'agentThreadId.value = await resolveBootstrapThreadId(getSessionId()',
     )
   })
 })
