@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Logger } from '@nestjs/common'
 import { renderDigestHtml, type DigestSnapshot } from './canvas-digest.service'
 
@@ -605,5 +605,136 @@ describe('§9.1 P3 maybeRender 集成：stale 只 warn、不改 HTML、不阻断
     } finally {
       warn.mockRestore()
     }
+  })
+})
+
+/**
+ * §9.1 P3（v1.6）行为级回归：回合外 url 回填后的总览自愈。
+ *
+ * 事故形态来自真机会话 cmw64jxx3008sp901h3vkvd7r：18:43:03 主回合渲染 v2，
+ * 18:43:45 out-of-turn 简报轮回填「黑暗城堡」的 url 且 completed，之后无回合
+ * ⇒ digestVersion 永久停在 2、只收录 2/4 张图。
+ * 判据必须是「旁路真的补渲染并收录该节点」，而不是只检查函数存在。
+ */
+describe('§9.1 P3 v1.6 maybeRepairOutOfTurn', () => {
+  const previousHtml = renderDigestHtml(
+    {
+      digestVersion: 2,
+      updatedAt: new Date('2026-11-07T10:00:00Z'),
+      nodes: [{ id: 'img1', nodeType: 'image', title: '图1', url: '/a.png' }],
+    },
+    OPTS,
+  ) as string
+
+  const canvasWith = (img2Url: string | undefined, digestHtml: string = previousHtml) =>
+    canvasOf([
+      { id: 'img1', type: 'image', position: { x: 0, y: 0 }, data: { title: '图1', url: '/a.png' } },
+      {
+        id: 'img2',
+        type: 'image',
+        position: { x: 400, y: 0 },
+        data: { title: '黑暗城堡', status: img2Url ? 'completed' : 'generating', url: img2Url },
+      },
+      {
+        id: 'digest-canvas',
+        type: 'text',
+        position: { x: 0, y: 400 },
+        data: {
+          digest: true,
+          digestVersion: 2,
+          content: digestHtml,
+          format: 'html',
+          source: 'system-digest',
+        },
+      },
+    ])
+
+  const makeService = (canvas: ReturnType<typeof canvasWith>) => {
+    const prisma = {
+      session: {
+        findUnique: vi.fn().mockResolvedValue({ canvasData: JSON.stringify(canvas) }),
+      },
+    }
+    const tools = {
+      upsertDigestNode: vi
+        .fn()
+        .mockResolvedValue({ nodeId: 'digest-canvas', actions: [] }),
+    }
+    const service = new CanvasDigestService(prisma, tools)
+    return { service, prisma, tools }
+  }
+
+  const saved = { main: process.env.CANVAS_DIGEST, repair: process.env.CANVAS_DIGEST_OUT_OF_TURN_REPAIR }
+  beforeEach(() => {
+    vi.clearAllMocks()
+    process.env.CANVAS_DIGEST = 'on'
+    delete process.env.CANVAS_DIGEST_OUT_OF_TURN_REPAIR
+  })
+  afterEach(() => {
+    if (saved.main === undefined) delete process.env.CANVAS_DIGEST
+    else process.env.CANVAS_DIGEST = saved.main
+    if (saved.repair === undefined) delete process.env.CANVAS_DIGEST_OUT_OF_TURN_REPAIR
+    else process.env.CANVAS_DIGEST_OUT_OF_TURN_REPAIR = saved.repair
+  })
+
+  it('回填后无主回合 ⇒ 旁路补渲染，收录新节点且 digestVersion +1', async () => {
+    const { service, tools } = makeService(canvasWith('https://out.example/castle.png'))
+    const result = await service.maybeRepairOutOfTurn({ sessionId: 's1', userId: 'u1' })
+    expect(result).toEqual({ nodeId: 'digest-canvas', actions: [] })
+    expect(tools.upsertDigestNode).toHaveBeenCalledTimes(1)
+    const call = tools.upsertDigestNode.mock.calls[0]?.[0] as { html: string; digestVersion: number }
+    expect(call.html).toContain('data-node-id="img2"')
+    expect(call.html).toContain('黑暗城堡')
+    expect(call.digestVersion).toBe(3)
+    expect(call.html).toContain('第 3 版')
+  })
+
+  it('stale 为空（新节点仍无 url）⇒ 零写入、零版本号自增（防刷屏）', async () => {
+    const { service, tools } = makeService(canvasWith(undefined))
+    const result = await service.maybeRepairOutOfTurn({ sessionId: 's1', userId: 'u1' })
+    expect(result).toBeNull()
+    expect(tools.upsertDigestNode).not.toHaveBeenCalled()
+  })
+
+  it('上一版已收录该节点 ⇒ 幂等，再次收束不重复翻新', async () => {
+    const alreadyCollected = `${previousHtml}<div data-node-id="img2"></div>`
+    const { service, tools } = makeService(
+      canvasWith('https://out.example/castle.png', alreadyCollected),
+    )
+    const result = await service.maybeRepairOutOfTurn({ sessionId: 's1', userId: 'u1' })
+    expect(result).toBeNull()
+    expect(tools.upsertDigestNode).not.toHaveBeenCalled()
+  })
+
+  it('独立 flag off ⇒ 零调用（可单独关停旁路）', async () => {
+    process.env.CANVAS_DIGEST_OUT_OF_TURN_REPAIR = 'off'
+    const { service, prisma, tools } = makeService(canvasWith('https://out.example/castle.png'))
+    const result = await service.maybeRepairOutOfTurn({ sessionId: 's1', userId: 'u1' })
+    expect(result).toBeNull()
+    expect(prisma.session.findUnique).not.toHaveBeenCalled()
+    expect(tools.upsertDigestNode).not.toHaveBeenCalled()
+  })
+
+  it('主 flag off ⇒ 零调用（S6）', async () => {
+    delete process.env.CANVAS_DIGEST
+    const { service, tools } = makeService(canvasWith('https://out.example/castle.png'))
+    expect(await service.maybeRepairOutOfTurn({ sessionId: 's1', userId: 'u1' })).toBeNull()
+    expect(tools.upsertDigestNode).not.toHaveBeenCalled()
+  })
+
+  it('S7 fail-soft：读画布抛错 ⇒ resolve null 不冒泡', async () => {
+    const { service, prisma, tools } = makeService(canvasWith('https://out.example/castle.png'))
+    prisma.session.findUnique.mockRejectedValue(new Error('db busy'))
+    expect(await service.maybeRepairOutOfTurn({ sessionId: 's1', userId: 'u1' })).toBeNull()
+    expect(tools.upsertDigestNode).not.toHaveBeenCalled()
+  })
+
+  it('首次无上一版 HTML ⇒ 不越权代主链创建首个总览', async () => {
+    const first = canvasOf([
+      { id: 'img1', type: 'image', data: { title: '图1', url: '/a.png' } },
+    ])
+    const { service, tools } = makeService(first)
+    expect(await service.maybeRepairOutOfTurn({ sessionId: 's1', userId: 'u1' })).toBeNull()
+    expect(tools.upsertDigestNode).not.toHaveBeenCalled()
   })
 })

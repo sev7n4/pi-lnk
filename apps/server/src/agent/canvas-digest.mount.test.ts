@@ -108,7 +108,14 @@ function makeService(digest: unknown): AgentService {
     {} as ConstructorParameters<typeof AgentService>[2],
   )
   // 生产走 Nest DI 注入；单测直接落字段，避免为 13 个 @Optional 依赖造替身。
-  Object.assign(service, { canvasDigest: digest })
+  // v1.6：默认带 maybeRepairOutOfTurn 替身——否则旁路调用会以 TypeError 被
+  // fail-soft 吞掉，行为测试照绿却根本没测到挂载（伪变异）。
+  Object.assign(service, {
+    canvasDigest: {
+      maybeRepairOutOfTurn: vi.fn().mockResolvedValue(null),
+      ...(digest as Record<string, unknown>),
+    },
+  })
   return service
 }
 
@@ -290,5 +297,35 @@ describe('Canvas Digest 收束契约', () => {
 
     expect(maybeRender).not.toHaveBeenCalled()
     expect(result).toEqual([])
+  })
+
+  it('v1.6 旁路挂载：persistOutOfTurnTurn 内有 maybeRepairOutOfTurn，且主链 maybeRender 仍唯一', () => {
+    const sf = parse(SERVICE_FILE)
+    const drainBody = methodBody(sf, 'persistOutOfTurnTurn')
+    expect(drainBody, '回合外收束必须挂旁路补渲染').toContain('.maybeRepairOutOfTurn(')
+    expect(countMaybeRenderCalls(sf), '旁路不得改造主链唯一触发源').toBe(1)
+    expect(methodBody(sf, 'finalizeTurn')).toContain('.maybeRender(')
+  })
+
+  it('行为：回合外收束落库后调用旁路；旁路抛错 fail-soft 不冒泡', async () => {
+    const repair = vi.fn().mockResolvedValue(null)
+    const service = makeService({
+      isEnabled: () => true,
+      maybeRender: vi.fn().mockResolvedValue(null),
+      maybeRepairOutOfTurn: repair,
+    })
+    await (service as unknown as DrainRunner).persistOutOfTurnTurn('s1', 't1', 'u1', snapshot())
+    expect(repair).toHaveBeenCalledTimes(1)
+    expect(repair).toHaveBeenCalledWith({ sessionId: 's1', userId: 'u1' })
+
+    const boom = vi.fn().mockRejectedValue(new Error('repair failed'))
+    await expect(
+      (makeService({
+        isEnabled: () => true,
+        maybeRender: vi.fn().mockResolvedValue(null),
+        maybeRepairOutOfTurn: boom,
+      }) as unknown as DrainRunner).persistOutOfTurnTurn('s2', 't2', 'u2', snapshot()),
+    ).resolves.toBeUndefined()
+    expect(boom).toHaveBeenCalledTimes(1)
   })
 })
