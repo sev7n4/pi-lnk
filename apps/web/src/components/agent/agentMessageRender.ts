@@ -15,6 +15,7 @@ import { isSystemEventText } from '@/components/agent/systemEventRender'
 import { hasSchemeDraftSections, splitAssistantDraftMessage } from '@/components/agent/presentation/schemeDraftProse'
 import type { AgentPresentationEnvelope } from '@/components/agent/presentation/types'
 import { hasActionableWait, hasBubbleContent, hasBubbleText } from '@/components/agent/bubbleVisibility'
+import { turnSummaryLine } from '@/components/agent/executionTraceReducer'
 
 /** 宿主回注的系统事件消息（spec §6.4，PR3）：前缀判据唯一实现在 systemEventRender.ts。 */
 export function isUserSystemEvent(msg: AgentStreamMessage): boolean {
@@ -164,4 +165,36 @@ export function shouldRenderSchemeDraftProse(msg: AgentStreamMessage): boolean {
 export function canReuseTurn(msg: AgentStreamMessage): boolean {
   if (msg.role !== 'user') return false
   return Boolean(msg.content?.trim()) || (msg.attachments?.length ?? 0) > 0
+}
+
+
+/**
+ * 历史消息 presentation 派生（纯函数，与组件状态无关）。
+ * Phase 3 第三刀：从 AgentSideRail.vue 抽到本模块，与消息渲染判据同库。
+ */
+
+/** 历史 assistant 消息的 presentation 是否进入 Host stepper 布局；svg_card 走独立挂载（AgentSvgCard），不进 stepper（spec §4.6）。 */
+export function historyPresentation(msg: AgentStreamMessage): AgentPresentationEnvelope | null {
+  if (msg.role !== 'assistant' || msg.streaming || !msg.presentation) return null
+  // svg_card 走独立挂载（紧邻本函数调用点的 AgentSvgCard），不进 Host 的 stepper 布局：
+  // 落库重放路径不恢复 stepper，进了只会渲染一条空进度条。spec §4.6。
+  if (msg.presentation.kind === 'svg_card') return null
+  return msg.presentation
+}
+
+export function historyMacroSelectedIds(presentation: AgentPresentationEnvelope): string[] {
+  const schemes = presentation.body?.schemes ?? []
+  const recommended = schemes.filter((s) => s.recommended).map((s) => String(s.id))
+  if (recommended.length) return recommended
+  const maxSelect = presentation.body?.max_select ?? 2
+  return schemes.slice(0, maxSelect).map((s) => String(s.id))
+}
+
+/**
+ * P0（agent-turn-timeline-design §5 P0-4）：回合摘要行（节点/张数/耗时/tokens）。
+ * 仅在本回合**已结束**（非 streaming）且确有 trace 时给出，供模板在产物之后渲染。
+ */
+export function bubbleSummaryLine(msg: AgentStreamMessage): string | null {
+  if (msg.role !== 'assistant' || msg.streaming || !msg.executionTrace) return null
+  return turnSummaryLine(msg.executionTrace)
 }
