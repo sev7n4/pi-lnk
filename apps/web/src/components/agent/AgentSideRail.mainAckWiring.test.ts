@@ -10,11 +10,15 @@ import { describe, expect, it } from 'vitest'
  * （通道分派）在 Node 里锁死；本文件锁「SFC 真的把它们接上了」——接线断掉
  * （重构改名 / 误删分支）时这些断言红，而不是静默回退成「永远走 off 路径」。
  *
+ * 第十刀（2026-11-08）将 onEvent 路由 / finishOwnTurnViaObserver / 订阅工厂导入迁入
+ * useAgentObserver：本文件 SFC 侧锁定 send 路径编排，composable 侧锁定接线。
+ *
  * 变异验证口径（对齐本仓守卫纪律）：删除任一被断言的接线片段 ⇒ 对应断言必须红。
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SFC = readFileSync(join(HERE, 'AgentSideRail.vue'), 'utf8')
+const OBS = readFileSync(join(HERE, 'useAgentObserver.ts'), 'utf8')
 const TAIL = readFileSync(join(HERE, 'follow-up-tail.ts'), 'utf8')
 
 /** 提取 ack 分支源码区间（Content-Type 分派 → POST 体流 reader 之前）。 */
@@ -40,11 +44,11 @@ describe('ack 化主流接线契约（P1 Task 5/6 静态守卫）', () => {
     expect(branch).toContain('persistActiveThreadId(props.sessionId, ack.threadId)')
     expect(branch).toContain('persistForkedThreadId(props.sessionId, ack.threadId)')
     // 绝对游标覆盖（setLastSeq 而非 seedLastSeq —— 后者仅空播种，冻结残值会重放上一轮尾包）
-    expect(branch).toContain('followUpTail.setLastSeq(ack.sinceSeq ?? null)')
+    expect(branch).toContain('observer.followUpTail.setLastSeq(ack.sinceSeq ?? null)')
     expect(branch).not.toContain('followUpTail.seedLastSeq')
     // 本端回合经订阅通道消费 + 重挂连接
-    expect(branch).toContain('ownTurnViaObserver.value = true')
-    expect(branch).toContain('void listenFollowUpTail()')
+    expect(branch).toContain('observer.ownTurnViaObserver.value = true')
+    expect(branch).toContain('void observer.listenFollowUpTail()')
     // ack 模式无 POST 流：staleness 监测必须停（否则 30s 后误报「生成服务不可达」）
     expect(branch).toContain('agentStream.stop()')
   })
@@ -54,15 +58,15 @@ describe('ack 化主流接线契约（P1 Task 5/6 静态守卫）', () => {
   })
 
   it('onEvent 模式路由：本端回合走 handleEvent 全量语义，终态交 finishOwnTurnViaObserver', () => {
-    expect(SFC).toContain("import { createFollowUpTailListener, isTurnTerminal } from './follow-up-tail'")
-    expect(SFC).toContain('if (ownTurnViaObserver.value) {')
-    expect(SFC).toContain('handleEvent(payload)')
-    expect(SFC).toContain('if (isTurnTerminal(payload.type)) finishOwnTurnViaObserver()')
+    expect(OBS).toContain("import { createFollowUpTailListener, isTurnTerminal } from './follow-up-tail'")
+    expect(OBS).toContain('if (ownTurnViaObserver.value) {')
+    expect(OBS).toContain('handleEvent(payload)')
+    expect(OBS).toContain('if (isTurnTerminal(payload.type)) finishOwnTurnViaObserver()')
   })
 
   it('finishOwnTurnViaObserver 存在且幂等（ownTurnViaObserver 闸）+ 权威历史收口', () => {
-    expect(SFC).toContain('function finishOwnTurnViaObserver(): void {')
-    const fn = SFC.slice(SFC.indexOf('function finishOwnTurnViaObserver'), SFC.indexOf('function finishOwnTurnViaObserver') + 1600)
+    expect(OBS).toContain('function finishOwnTurnViaObserver(): void {')
+    const fn = OBS.slice(OBS.indexOf('function finishOwnTurnViaObserver'), OBS.indexOf('function finishOwnTurnViaObserver') + 1600)
     expect(fn).toContain('if (!ownTurnViaObserver.value) return')
     expect(fn).toContain('agent.finishStreaming()')
     expect(fn).toContain('reconcileLatestAssistant()')

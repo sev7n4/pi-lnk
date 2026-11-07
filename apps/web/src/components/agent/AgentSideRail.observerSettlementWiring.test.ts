@@ -11,6 +11,8 @@
  * fetch / auth 桩（`sharedSubscriptionWiring.test.ts` 同款结论）；本契约要锁的恰是
  * 「终态后到达的计费帧必须被旁观分支分发」这一接线层事实。
  *
+ * 第十刀（2026-11-08）将 onEvent 分派器迁入 `useAgentObserver`，以下断言改读该文件。
+ *
  * ⚠️ 断言前一律 `stripComments`：注释里的类型名/方法名不得被当成代码命中（假绿）。
  * ⚠️ 定位用 `ownTurnViaObserver.value` 分支**之后**的切片（旁观分支本体），
  *    防止 own-turn 分支（handleEvent 内已有同款分发）掩护旁观分支的缺失。
@@ -21,7 +23,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const src = readFileSync(join(here, './AgentSideRail.vue'), 'utf8')
+const src = readFileSync(join(here, './useAgentObserver.ts'), 'utf8')
 
 function stripComments(s: string): string {
   return s
