@@ -19,7 +19,7 @@ import AgentTaskProgressCard from '@/components/agent/AgentTaskProgressCard.vue'
 import AgentCanvasOutputs from '@/components/agent/AgentCanvasOutputs.vue'
 import AgentExecutionTrace from '@/components/agent/AgentExecutionTrace.vue'
 import AgentTurnTimeline from '@/components/agent/AgentTurnTimeline.vue'
-import { resolveMessageOutputs, locatableNodeIds } from '@/components/agent/agentCanvasOutputs'
+import { locatableNodeIds, canvasOutputsForMessage as deriveCanvasOutputs } from '@/components/agent/agentCanvasOutputs'
 import { canvasDigestEntry, digestEntryForTurn } from '@/components/agent/deliverySummary'
 // 双色品牌徽标（黑盘 + 白锚 + 外环）：2026-10-26 用户裁定「composer 定位锚用双色徽标」，
 // 与画布落点标记 CanvasRefTargetIcon 同源同资产 ⇒「锚」在全产品统一成一支。
@@ -760,12 +760,9 @@ function isLiveTurnMessage(msg: AgentStreamMessage): boolean {
  */
 
 function canvasOutputsForMessage(msg: AgentStreamMessage) {
-  return resolveMessageOutputs({
-    linkedOutputs: msg.linkedOutputs,
-    canvasActions: msg.canvasActions,
-    traceSteps: msg.executionTrace?.steps,
-    taskItems: isLiveTurnMessage(msg) ? taskProgress.value.items : undefined,
+  return deriveCanvasOutputs(msg, {
     isLiveTurn: isLiveTurnMessage(msg),
+    taskItems: taskProgress.value.items,
   })
 }
 
