@@ -10,7 +10,8 @@
 分支约定：feature 分支 + PR + squash merge。
 
 **修订记录**：
-- v1.6（2026-11-07，**P3 准入达成并实施补渲染 + 全盘文档同步**）：① 用户真机实测会话 `cmw64jxx3008sp901h3vkvd7r` 提供了 §9.1 要求的**可复现生产样本**（`黑暗城堡` 节点 `url` 非空、`status=completed`，却不在 `digestVersion=2` 的收录集合，且回填后无任何带画布动作的回合）⇒ v1.5「无可复现样本 ⇒ 不实施」的前提失效，P3 转为**批准实施**（实现契约见 §9.1，落地 PR 后回填状态）。② 实现裁决 = **方案 C：out-of-turn 收束后的独立旁路补渲染**，复用 `findDigestStaleIds` 作准入闸门，**不是**原方案 C 的事件驱动去抖（去抖会引入新事件总线、破坏 #756 唯一触发源、被 573 次客户端 PATCH 刷版本号）。③ 同步 §5.2 受信级 CSP 契约：生产媒体 URL 来自第三方绝对域，旧「img 仅本站媒体域」导致 P0 真缩略图从未生效（同会话修复见 web PR）；改为按**本文档实际引用**的 http/https origin 动态放行，仍 fail-closed。④ 补齐 v1.4 只写进修订记录、正文未同步的 P1a/P2 判据（D5 / G2 / S2·S5 / §6.0 Footer）、删除 v1.2 已推翻的 D2 controller emit 注、更正 §4.1「flag 默认 on」与代码 `=== 'on'` 的偏差、回填 §11 配图自检结果。**功能代码变更见对应 PR，本版是规格真源收口。**
+- v1.7（2026-11-07，**P3 实施回填：从「批准实施」到「已实施」**）：① §9 分期表 P3 状态由「批准实施」改为「已实施上线」，登记实现 PR `#767`（squash merge `abc68ef487`）；② §9.1 标题与正文补记实现落点（`CanvasDigestService.maybeRepairOutOfTurn` + `persistOutOfTurnTurn` 落库后旁路挂载）与硬约束逐条遵循方式；③ 登记生产验收证据：部署后以**生产编译产物 + 真实 DB 快照**做零写入契约复现，判据为 stale 命中 `黑暗城堡`、补渲染收录该节点且 `digestVersion` 2→3、Header「第 3 版」、二次调用零写入（幂等）、独立 flag / 主 flag / 首次无上一版三类零写入边界；④ 同批上线的 web PR `#765`（受信 CSP 放行实际引用域 + 移动端 Header 安全区）与规格 PR `#766` 一并归位。**本版只回填状态与证据，不改实现契约。**
+- v1.6（2026-11-07，**P3 准入达成并实施补渲染 + 全盘文档同步**）：① 用户真机实测会话 `cmw64jxx3008sp901h3vkvd7r` 提供了 §9.1 要求的**可复现生产样本**（`黑暗城堡` 节点 `url` 非空、`status=completed`，却不在 `digestVersion=2` 的收录集合，且回填后无任何带画布动作的回合）⇒ v1.5「无可复现样本 ⇒ 不实施」的前提失效，P3 转为**批准实施**（实现契约见 §9.1，已由 #767 落地，状态回填见 v1.7）。② 实现裁决 = **方案 C：out-of-turn 收束后的独立旁路补渲染**，复用 `findDigestStaleIds` 作准入闸门，**不是**原方案 C 的事件驱动去抖（去抖会引入新事件总线、破坏 #756 唯一触发源、被 573 次客户端 PATCH 刷版本号）。③ 同步 §5.2 受信级 CSP 契约：生产媒体 URL 来自第三方绝对域，旧「img 仅本站媒体域」导致 P0 真缩略图从未生效（同会话修复见 web PR）；改为按**本文档实际引用**的 http/https origin 动态放行，仍 fail-closed。④ 补齐 v1.4 只写进修订记录、正文未同步的 P1a/P2 判据（D5 / G2 / S2·S5 / §6.0 Footer）、删除 v1.2 已推翻的 D2 controller emit 注、更正 §4.1「flag 默认 on」与代码 `=== 'on'` 的偏差、回填 §11 配图自检结果。**功能代码变更见对应 PR，本版是规格真源收口。**
 - v1.5（2026-11-07，**P3 登记补齐 + `digest_stale` 可观测，零触发架构变更**）：v1.4 修订记录末尾提到「事件驱动去抖（原方案 C）继续列为后续 P3」，但 §9 分期表**只有 P0/P1/P2，没有 P3 行** ⇒ 规格内漂移，本版补齐。① 把 PR #759 描述中的三项（事件驱动去抖 / 异步生成回填 url 晚于回合收尾漏收录 / 异步 URL 回填漏收录）**归约**为「1 个现象 + 1 个候选修法 + 1 个重复描述」，见 §9.1。② 补**准入判据**：2026-11-07 生产核查未发现可复现样本（未收录 5 项全为 `failed`/`pending_confirm` 且 `url` 空，按 D9 属正确排除）⇒ **不实施去抖**，只登记 + 落地低成本 `digest_stale` 可观测（§9.1，零画布写入）。③ 明确若未来启动实现，不得破坏 v1.3/v1.4 的「`finalizeTurn` 唯一触发源」契约。
 - v1.4（2026-11-07，生产实证 + P0/P1/P2 完善）：① **detached 触发条件更正**——生产 `STREAM_MAIN_FROM_PIRUNTIME=on` 下 `chat/conversation` 只回 JSON ack，run 由 `startConversationRun` 后台 drain generator 到底，事件另走 `GET /runs/events` ⇒ **客户端断连与服务端 generator 生命周期已解耦**，断 POST（含 TCP RST）对收束无影响，实测 `metadata.truncated=null` 全走 owner 主流。detached 的真实触发条件是**后台 drain 异常 / generator 提前回收（流耗尽）**，不是用户断连；§4.1/图 1/D6 中「detached 断连」均按此口径读作「detached 后台收束异常」，结构收敛（唯一触发源 + 三路径共用）的防漏挂收益不变。② **P1b 版本号落地**：客户端回拉/PATCH 循环把陈旧 `digestVersion` 回灌 ⇒ Header 恒停「第 5 版」、元数据卡 4（生产 nginx 实证同一会话 573 次客户端 PATCH）；修法 = `digest`/`digestVersion`/`source` 列入双端「服务端专属字段禁写」名单 + 版本号改「元数据与上一版 HTML Header 双源 max+1」自愈。③ **P2 Footer**：未收录项按 `generating / failed / draft` 分桶，不再一律写「生成中」；Footer 标注「系统自动生成 · 当前画布快照」与用户自建总结区分。④ **P1a 交付条**：总览不再进每轮 `turnDeliveryItems`，改会话级单一入口，仅最后一轮渲染（零产物回合不虚报、历史回合不注入）。⑤ **P0 产物落地**：跨轮 `set_node_text` id 纠偏窗口（见 `2026-10-16-canvas-write-tool-chain-design.md` v1.1）+ 回合终态空 draft 文本节点 warn 守卫。异步生成回填 url 晚于回合收尾导致的漏收录仍按 D9 接受，**事件驱动去抖（原方案 C）继续列为后续 P3，不在本包实施**。
 - v1（2026-11-05）：用户真机体验 html-craft 富版图鉴后提议「每轮固定输出」；评审裁决系统管道形态，P0-P2 分期定稿。
@@ -190,9 +191,9 @@ P1 追加：模板真缩略图的加载失败降级打磨（类型图标 fallbac
 | **P0** | 管道 + 完整视觉模板（§6.0 定稿：真缩略图/分区/双主题/D7-D10 全量）+ trusted CSP + flag on + 交付条接入 | 本规格即排期 |
 | **P1** | 缩略图失败降级打磨、digest 节点只读分支、空间序稳定性 | P0 上线复测通过 |
 | **P2（登记不做）** | 富版图鉴（html-craft S9 已覆盖，用户主动触发）、轻 LLM 润色、agent 读工具过滤 digest 节点、tile 定位回画布（宿主 postMessage 协议）、**F5 多 digest 节点治理（见 §10）** | 凭使用证据（含 `digest_open` 率） |
-| **P3（v1.6 准入达成，批准实施）** | 回合外 `url` 回填导致的总览陈旧（§9.1）；实现 = out-of-turn 收束后的**独立旁路补渲染**（方案 C，非事件驱动去抖） | 2026-11-07 真机样本 `cmw64jxx3008sp901h3vkvd7r` 已满足硬准入，见 §9.1 |
+| **P3（v1.7 已实施上线）** | 回合外 `url` 回填导致的总览陈旧（§9.1）；实现 = out-of-turn 收束后的**独立旁路补渲染**（方案 C，非事件驱动去抖） | 2026-11-07 真机样本 `cmw64jxx3008sp901h3vkvd7r` 满足硬准入；实现 PR `#767` 已合并上线（`abc68ef487`），生产验收见 §9.1 |
 
-### 9.1 P3：回合外画布态变更与总览陈旧（v1.6 准入达成，裁决旁路补渲染）
+### 9.1 P3：回合外画布态变更与总览陈旧（v1.7 已实施，裁决旁路补渲染并生产验收）
 
 **根因归约**。PR #759 描述里的三项不是三个独立缺陷：
 
@@ -214,7 +215,7 @@ P1 追加：模板真缩略图的加载失败降级打磨（类型图标 fallbac
 
 ⇒ `黑暗城堡` 满足全部三条：`data.url` 非空有正据 / 不在当前 digest HTML 的 `data-node-id` 集合中 / 回填后无带画布动作的回合。**这是 §9.1 要求的可复现生产样本，v1.5「不予实施」的前提被证伪。** 同会话另证实 `digest_stale` 探针有效（18:43:03 正确报出森林的回合外回填），但它只能在「下一次渲染」时报告，救不了已停更的总览。
 
-**准入判据（硬，沿用 §9「凭使用证据」）**：必须先取得一条真实样本——节点 `data.url` 非空、有正据、却不在当前 digest HTML 的收录集合中，且该次回填之后没有任何带画布动作的回合。⚠️ **该判据已于 2026-11-07 被上表真机样本满足** ⇒ 行为级 RED→PASS 回归可写，v1.5「不予实施」的前提失效，v1.6 启动实现。
+**准入判据（硬，沿用 §9「凭使用证据」）**：必须先取得一条真实样本——节点 `data.url` 非空、有正据、却不在当前 digest HTML 的收录集合中，且该次回填之后没有任何带画布动作的回合。⚠️ **该判据已于 2026-11-07 被上表真机样本满足** ⇒ 行为级 RED→PASS 回归可写，v1.5「不予实施」的前提失效，v1.6 启动实现、#767 完成实施并生产验收。
 
 **v1.5 已落地的低成本先行项（不改触发架构）**：`digest_stale` 可观测。导出纯函数 `findDigestStaleIds({ canvas, canvasActions })`——反查上一版 digest HTML 中渲染器写下的 `data-node-id`（`renderTile` 既有形态，**零新增持久化字段**）得到上一版收录集合；把三条同时成立的节点列为 stale：① 当前有正据（D9）且在 D3 前 100 上限内；② 不在上一版收录集合（id 经 `escapeHtml` 对齐，D7）；③ 本轮 `canvasActions` 未触碰该 id。`maybeRender` 在渲染前据此打一条 `digest_stale` warn，探针自带 fail-soft try/catch（S7 同源）。**零画布写入、不改 HTML、不改返回值、不动 `finalizeTurn` 契约**。第 ③ 条是关键：本轮正常新建/更新的节点不算陈旧，否则每一轮都会误报刷屏。生产出现 `digest_stale` 且确认由 `url` 回填引起，即满足上述准入判据，可据此决定是否启动去抖实现。
 
@@ -225,6 +226,13 @@ P1 追加：模板真缩略图的加载失败降级打磨（类型图标 fallbac
 3. 独立 flag `CANVAS_DIGEST_OUT_OF_TURN_REPAIR`（缺省 on）、fail-soft catch、`void` 链不产生 unhandled rejection。
 
 **硬约束（v1.5 列出，v1.6 逐条遵循）**：① 不改 `finalizeTurn` 唯一触发源——旁路只在 out-of-turn 落库后显式调用，主链三路径共用点不动；② 天然防递归——旁路不监听画布写入事件，digest 自身 `upsertDigestNode` 不会再次触发旁路；③ 防刷屏——闸门是 stale 集合非空，且入口只在 out-of-turn 收束调用一次，**客户端 PATCH（生产实证同会话 573 次）不经过此路径**；④ 独立 flag + fail-soft + detached 安全；⑤ 本节与上表即 §5.1 图 1 / D1 的同步修订（主链 D1 判据不变，旁路单列），实现须补行为级 RED→PASS 与变异验证。本节是**实现契约**：代码 PR 落地并生产验收后，把 §9 表格状态回填为「已实施」并登记 PR 号。
+
+**v1.7 实施与验收回填**（实现 PR #767，squash merge `abc68ef487`）：
+- 落点：`CanvasDigestService` 抽出 `readCanvas` / `renderFromCanvas` 供主链与旁路共用；新增 `maybeRepairOutOfTurn({ sessionId, userId })`，仅在 `persistOutOfTurnTurn` 落库后显式调用一次。
+- 逐条遵循上方五条硬约束：① `finalizeTurn` 内 `maybeRender` 仍是唯一触发源（AST 计数 = 1，旁路不改造主链）；② 不监听画布写入事件，digest 自身 upsert 不递归；③ `findDigestStaleIds({ canvasActions: [] })` 为空即零写入、零版本号自增，客户端 PATCH 不经过此路径；④ 独立 flag `CANVAS_DIGEST_OUT_OF_TURN_REPAIR`（缺省 on）+ 主 flag + fail-soft catch；⑤ 与主链共用同一渲染/版本双源自愈/upsert 口径。
+- 测试：server 定向 `canvas-digest.service.test.ts` + `canvas-digest.mount.test.ts` 共 53 passed；7 项行为级变异 RED→PASS（去掉旁路挂载 / stale 闸门失效 / 独立 flag 失效 / 主 flag 失效 / 改挂主链破坏唯一触发源 / 首次越权创建首个总览 / fail-soft 冒泡），还原后 53 passed 不变；`tsc --noEmit` 通过；CI 三项全绿。
+- 生产验收：`.env` 中 `CANVAS_DIGEST=on`、独立 flag 缺省 on；部署后以**生产编译产物 + 真实 DB 快照**做零写入契约复现（`ALL_PASS`）——stale 恰为 `黑暗城堡` 一項、补渲染收录该节点、`digestVersion` 2→3、Header「第 3 版」、二次调用零写入（幂等）、独立 flag / 主 flag / 首次无上一版 HTML 三类零写入边界；并核对镜像 tag、dist 内旁路挂载、主链唯一触发源、`/api/health`。⚠️ 真实 out-of-turn 事件流需 pi-runtime 生成任务，不由验收脚本伪造；端到端链路仍以用户真机新一轮生成复测为准（同 A-6）。
+- **边界（v1.7 登记）**：旁路入口只在「out-of-turn 收束」这一事件发生后才调用，**不对已停更的存量会话做回溯补渲染**。因此像 `cmw64jxx3008sp901h3vkvd7r` 这类事故样本，在修复上线后若不再发起新的生成回合，其 `digestVersion` 仍停在 2；下一次带画布动作的回合或下一次 out-of-turn 收束会自然收敛到最新态。若需一次性修复存量会话，须显式触发一次补渲染（运维动作），不纳入自动链路——避免引入定时扫描/事件总线，破坏 #756「`finalizeTurn` 唯一触发源」与防刷屏约束。
 
 ## 10. 风险
 
@@ -245,4 +253,4 @@ P1 追加：模板真缩略图的加载失败降级打磨（类型图标 fallbac
 
 实施分支提交前跑：`pnpm verify-spec-figures --file docs/superpowers/specs/2026-11-05-canvas-digest-design.md`。
 
-**回填**：v1.4 / v1.5 / v1.6 三次提交均已执行，`0 errors / 0 warnings`（图 1 回合末管道、图 2 CSP 判据树均为内嵌 Mermaid，编号与 §0 索引一致）。
+**回填**：v1.4 / v1.5 / v1.6 / v1.7 四次提交均已执行，`0 errors / 0 warnings`（图 1 回合末管道、图 2 CSP 判据树均为内嵌 Mermaid，编号与 §0 索引一致）。
