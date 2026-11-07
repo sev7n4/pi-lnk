@@ -6,9 +6,10 @@
  * 不发明新方言。本模块只做「客户端可提交什么」的收敛：
  *
  * - **服务端字段禁写**：`update_node.data` 中 status / generationRecordId /
- *   generationStartedAt / errorMessage / proposalEpoch 五键直接剥除并 console.warn
- *   （patch 语义下客户端根本不该提交它们——总纲 §2 不变量 3 的落地形态；
- *    proposalEpoch 属 B6，撤回重提纪元只能由 Nest Phase 2b 推进）。
+ *   generationStartedAt / errorMessage / proposalEpoch / digest / digestVersion /
+ *   source 直接剥除并 console.warn（patch 语义下客户端根本不该提交它们——总纲
+ *   §2 不变量 3 的落地形态；proposalEpoch 属 B6，撤回重提纪元只能由 Nest Phase 2b
+ *   推进；digest* / source 属 Canvas Digest 系统管道，且 source 是受信级 CSP 判据）。
  * - **未知 op 类型**：剥除并 warn（防 op 方言从客户端侧渗入）。
  * - `remove_node` 对 generating/pending_confirm 节点的 409 拒绝不在本纯函数
  *   （需要 prev canvas 状态），在 SessionsService.patchCanvas。
@@ -17,13 +18,22 @@
  */
 import type { CanvasAction } from '@lnkpi/shared'
 
-/** 客户端不得写、只能由服务端链路推进的节点数据键。 */
+/**
+ * 客户端不得写、只能由服务端链路推进的节点数据键。
+ *
+ * P1b（2026-11-07）：新增 digest / digestVersion / source——画布总览由系统管道
+ * 独占写入，客户端回拉后的 PATCH 循环不得把陈旧版本号/信任标记回灌（生产实证）。
+ * 与 apps/web/src/utils/canvasDiff.ts 同名常量必须逐字一致（双端 ratchet）。
+ */
 export const CLIENT_FORBIDDEN_NODE_DATA_KEYS: ReadonlySet<string> = new Set([
   'status',
   'generationRecordId',
   'generationStartedAt',
   'errorMessage',
   'proposalEpoch',
+  'digest',
+  'digestVersion',
+  'source',
 ])
 
 /** plain object 判定（侧车 op 载荷校验用；null/数组/标量均非）。 */

@@ -20,6 +20,7 @@ import AgentCanvasOutputs from '@/components/agent/AgentCanvasOutputs.vue'
 import AgentExecutionTrace from '@/components/agent/AgentExecutionTrace.vue'
 import AgentTurnTimeline from '@/components/agent/AgentTurnTimeline.vue'
 import { resolveMessageOutputs, locatableNodeIds } from '@/components/agent/agentCanvasOutputs'
+import { canvasDigestEntry, digestEntryForTurn } from '@/components/agent/deliverySummary'
 // 双色品牌徽标（黑盘 + 白锚 + 外环）：2026-10-26 用户裁定「composer 定位锚用双色徽标」，
 // 与画布落点标记 CanvasRefTargetIcon 同源同资产 ⇒「锚」在全产品统一成一支。
 import anchorBadge from '@/assets/icons/anchor-badge.png'
@@ -1052,6 +1053,20 @@ const forceChoiceKind = ref<ForceChoiceKind | null>(null)
  * 收据与任务进度卡并存是可接受的（模板上收据渲染在其后）。
  */
 const TURN_UNDO_DISABLED_TITLE = '需 runtime 批量移除工具，见 ADR'
+
+/**
+ * P1a（2026-11-07）：「画布总览」是当前画布态的会话级投影，不是某一轮的产物。
+ * 旧实现把它塞进每轮 turnDeliveryItems ⇒ 零产物回合虚报 1 个产物、历史回合被
+ * 注入当时还不存在的总览。现在只在最后一个 timeline 回合渲染独立入口。
+ */
+const sessionDigestEntry = computed(() => canvasDigestEntry(props.canvasNodes))
+const lastTimelineAssistantId = computed(() => {
+  for (let i = agent.messages.length - 1; i >= 0; i -= 1) {
+    const m = agent.messages[i]
+    if (m?.role === 'assistant' && m.timeline) return m.id
+  }
+  return null
+})
 
 const lastTurnReceipt = computed(() => {
   if (agent.isStreaming) return null
@@ -4669,6 +4684,7 @@ defineExpose({
                   :streaming="Boolean(msg.streaming)"
                   :resolve-node-url="resolveCanvasNodeUrl"
                   :canvas-nodes="canvasNodes"
+                  :digest-entry="digestEntryForTurn(sessionDigestEntry, msg.id === lastTimelineAssistantId)"
                   @retry-node="emit('generateNode', $event)"
                   @focus-node="onFocusNode($event)"
                   @confirm-proposal="onInlineConfirmProposal($event)"

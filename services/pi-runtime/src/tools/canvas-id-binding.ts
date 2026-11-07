@@ -24,9 +24,39 @@ import type { LnkpiToolContext } from "./types.js";
 import { readRecord, readStringField } from "../hook-contract.js";
 import { canvasIdBindingEnabled } from "../runtime-config.js";
 
-/** 重写目标工具（spec P1b 范围锁定；set_node_text 等不扩——YAGNI，spec §2.2）。 */
+/** 重写目标工具（spec P1b 同批范围；set_node_text 走下方独立的跨轮窗口）。 */
 const BINDING_TARGETS = new Set(["set_node_generation_params", "propose_generation"]);
 const UPSERT_TOOL = "upsert_media_node";
+
+/**
+ * 跨轮文本写入纠偏窗口（2026-11-07 生产事故取证，见 docs/superpowers/specs/
+ * 2026-10-16-canvas-write-tool-chain-design.md §2.2 v1.1 修订）。
+ *
+ * 事故形态：`upsert_media_node(target_type=text)` 与 `set_node_text(content)` **不在
+ * 同一条 assistant 消息**（生产 executionEvents messageIndex 6 → 7），故同批窗口
+ * 已被 before_request 关掉，模型从画布摘要里抄了旧节点 id 把 6563 字节 HTML 写进
+ * 上一轮节点，新建节点留 `draft` + 空内容，回复却声称「已完成」。
+ *
+ * ⇒ 另开一个「一次请求」粘滞窗口，**仅对新建文本节点 + 带 content 的 set_node_text**：
+ * - 开窗条件从 upsert 返回的 actions 判定（新 add_node 的 manifestKey =
+ *   'upsert_media_text'）⇒ 媒体节点 upsert 不开窗，不误伤合法挂参；
+ * - TTL=1：允许多跨一次模型请求（覆盖事故形态），再下一次 before_request 即关窗，
+ *   不重蹈 spec「按 runId 作用域 ⇒ 后续合法提名旧节点被误重写」的覆辙；
+ * - 一次成功 rewrite 后立刻删窗，不多轮连续纠偏；
+ * - prompt-only 调用永不介入（既有测试「如同批 set_node_text 永不介入」语义保留）。
+ */
+const CONTENT_TOOL = "set_node_text";
+const STICKY_TTL = 1;
+interface ContentBindingWindow {
+	created: string[];
+	ttl: number;
+}
+const contentWindows = new Map<string, ContentBindingWindow>();
+
+/** A3 留痕须覆盖两条绑定路径（同批 set/propose + 跨轮 set_node_text）。 */
+function isBindingTarget(toolName: string): boolean {
+	return BINDING_TARGETS.has(toolName) || toolName === CONTENT_TOOL;
+}
 
 /**
  * 同批窗口：runId → 本窗口内成功 upsert 返回的 nodeId 列表（length>1 = 无法消歧）。
@@ -36,9 +66,10 @@ const UPSERT_TOOL = "upsert_media_node";
  */
 const windows = new Map<string, string[]>();
 
-/** 测试隔离：清空全部窗口。 */
+/** 测试隔离：清空全部窗口（含跨轮文本写入窗口）。 */
 export function resetIdBindingForTest(): void {
 	windows.clear();
+	contentWindows.clear();
 }
 
 /**
@@ -86,11 +117,44 @@ export function recordUpsertedNode(runId: string, content: unknown): void {
 	const list = windows.get(runId) ?? [];
 	list.push(nodeId.value);
 	windows.set(runId, list);
+
+	// 跨轮文本写入窗口：只认「本批新建了文本节点」的 upsert 结果。
+	// 形态出处 = Nest upsert-media-node 返回的 data.actions（add_node.payload.data）。
+	const rawActions = (data.value as Record<string, unknown>).actions;
+	const isTextCreate =
+		Array.isArray(rawActions) &&
+		rawActions.some((a) => {
+			if (!a || typeof a !== "object") return false;
+			const rec = a as Record<string, unknown>;
+			if (rec.type !== "add_node") return false;
+			const payload = rec.payload;
+			if (!payload || typeof payload !== "object") return false;
+			const nodeData = (payload as Record<string, unknown>).data;
+			if (!nodeData || typeof nodeData !== "object") return false;
+			return (nodeData as Record<string, unknown>).manifestKey === "upsert_media_text";
+		});
+	if (isTextCreate) {
+		const cw = contentWindows.get(runId) ?? { created: [], ttl: STICKY_TTL };
+		cw.created.push(nodeId.value);
+		cw.ttl = STICKY_TTL;
+		contentWindows.set(runId, cw);
+	}
 }
 
-/** before_request 关窗（上一条 assistant 消息批次已完整落定）。 */
+/**
+ * before_request 关窗：同批窗口立即关闭（spec P1b 原语义不变）；
+ * 跨轮文本窗口按 TTL 递减——首次请求保留（覆盖「upsert 之后的下一条消息」），
+ * 第二次才真正删除（合法提名旧节点不再被误重写）。
+ */
 export function closeBindingWindow(runId: string): void {
 	windows.delete(runId);
+	const cw = contentWindows.get(runId);
+	if (!cw) return;
+	if (cw.ttl > 0) {
+		cw.ttl -= 1;
+		return;
+	}
+	contentWindows.delete(runId);
 }
 
 export type BindingDecision =
@@ -106,6 +170,32 @@ export type BindingDecision =
  * - args.node_id ≠ 记录 id → rewrite（携带正确 id，由 register 层构造替换 args）。
  */
 export function decideBinding(toolName: string, args: unknown, runId: string): BindingDecision {
+	// 跨轮文本写入纠偏：仅「带 content 的 set_node_text」+ 本 run 刚新建文本节点。
+	// prompt-only / 无窗口 / 非文本 upsert 一律放行，既有语义零变化。
+	if (toolName === CONTENT_TOOL) {
+		const rec = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
+		if (typeof rec.content !== "string" || rec.content.length === 0) {
+			return { kind: "passthrough" };
+		}
+		const cw = contentWindows.get(runId);
+		if (!cw || cw.created.length === 0) return { kind: "passthrough" };
+		if (cw.created.length > 1) {
+			return {
+				kind: "block",
+				reason: `本条消息创建了多个文本节点（${cw.created.join(", ")}），无法确定 ${toolName} 的目标。请明确指名要操作的 node_id（需要多个节点时逐条消息操作），不要让我猜测。`,
+			};
+		}
+		const created = cw.created[0];
+		const current = readStringField(args, "node_id", "before_tool.args");
+		if (!current.ok) {
+			return {
+				kind: "block",
+				reason: `本条消息刚创建了文本节点 ${created}，${toolName} 必须对该 node_id 写入内容（当前 args 缺 node_id）。`,
+			};
+		}
+		if (current.value === created) return { kind: "passthrough" };
+		return { kind: "rewrite", nodeId: created };
+	}
 	if (!BINDING_TARGETS.has(toolName)) return { kind: "passthrough" };
 	const list = windows.get(runId);
 	if (!list || list.length === 0) return { kind: "passthrough" };
@@ -140,7 +230,7 @@ export function registerCanvasIdBindingHooks(harness: AgentHarness<LnkpiToolCont
 		}
 		// A3 改写留痕：目标工具结算时把改写事实追加进模型可见 content（一次性，取后即删）。
 		const rw = rewrites.get(event.toolCallId);
-		if (rw && BINDING_TARGETS.has(event.toolName)) {
+		if (rw && isBindingTarget(event.toolName)) {
 			rewrites.delete(event.toolCallId);
 			const trace = `📎 节点定位已由平台自动纠偏：你传入的 node_id「${rw.original}」并非本批新建节点，实际已作用于「${rw.corrected}」。后续引用该节点请一律使用「${rw.corrected}」，不要对它重复提议。`;
 			return { content: [...event.content, { type: "text", text: trace }] };
@@ -150,6 +240,8 @@ export function registerCanvasIdBindingHooks(harness: AgentHarness<LnkpiToolCont
 	harness.hooks.on("before_tool", async (event) => {
 		const d = decideBinding(event.toolName, event.args, event.runId);
 		if (d.kind === "rewrite") {
+			// 跨轮窗口一次性：纠偏成功后立即关窗，不对后续 content 写入连续改写。
+			if (event.toolName === CONTENT_TOOL) contentWindows.delete(event.runId);
 			// event.args 是 Record<string, JsonValue>；仅替换 node_id，其余字段原样保留
 			// （applyBeforeToolDecision 会按工具 schema 重校验整个替换参，非法即 fail-closed）。
 			// 终审 I1 观测：重写是模型不可见的静默纠偏，留灰度回滚判定的唯一痕迹（fail-soft，不影响返回值）。

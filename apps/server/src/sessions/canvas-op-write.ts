@@ -17,7 +17,7 @@
  *    `onStaged:'skip'`（后台对账类写者退让，返回 skipped_staged 留痕）
  *    / `onStaged:'conflict'`（用户交互类写者由调用方映射 409，与 persist 家族同语义）。
  *
- * 与白名单的关系：`sanitizeClientOps` 只约束**客户端** PATCH（服务端字段五键禁写）；
+ * 与白名单的关系：`sanitizeClientOps` 只约束**客户端** PATCH（服务端专属字段禁写）；
  * 服务端写者（storageTier / compositionRunGroup 等）本来就是这些服务端字段的合法
  * owner——合规定义是 op 语义 + 事务 + staged 守卫，不是客户端白名单。
  */

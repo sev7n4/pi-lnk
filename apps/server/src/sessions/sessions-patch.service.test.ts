@@ -17,6 +17,8 @@ import { ConflictException, ForbiddenException, NotFoundException } from '@nestj
 import { PrismaService } from '../prisma/prisma.service'
 import { SessionsService } from './sessions.service'
 import { sanitizeClientOps, CLIENT_FORBIDDEN_NODE_DATA_KEYS } from './sessions-canvas-patch'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
 function canvas(nodes: unknown[]) {
   return JSON.stringify({ nodes, edges: [] })
@@ -48,6 +50,40 @@ describe('sanitizeClientOps（C1a 纯函数）', () => {
     for (const key of CLIENT_FORBIDDEN_NODE_DATA_KEYS) expect(key in data).toBe(false)
     expect(data.title).toBe('保留')
     warn.mockRestore()
+  })
+
+  it('P1b：digest / digestVersion / source 被剥除（客户端不得回灌系统总览元数据）', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { sanitized, strippedKeys } = sanitizeClientOps([
+      {
+        type: 'update_node',
+        payload: {
+          id: 'digest-canvas',
+          data: { digestVersion: 4, digest: true, source: 'system-digest', title: '保留' },
+        },
+      },
+    ])
+    expect(strippedKeys).toBe(3)
+    const data = (sanitized[0] as { payload: { data: Record<string, unknown> } }).payload.data
+    expect(data).toEqual({ title: '保留' })
+    for (const key of ['digest', 'digestVersion', 'source']) {
+      expect(CLIENT_FORBIDDEN_NODE_DATA_KEYS.has(key)).toBe(true)
+      expect(key in data).toBe(false)
+    }
+    warn.mockRestore()
+  })
+
+  it('双端 ratchet：web canvasDiff 与服务端禁写键名单逐字一致（防单侧放宽）', () => {
+    const webSrc = readFileSync(
+      fileURLToPath(new URL('../../../web/src/utils/canvasDiff.ts', import.meta.url)),
+      'utf8',
+    )
+    const block = webSrc.match(
+      /CLIENT_FORBIDDEN_NODE_DATA_KEYS[^=]*=\s*new Set\(\[([\s\S]*?)\]\)/,
+    )
+    expect(block, 'web 侧常量未找到').not.toBeNull()
+    const webKeys = [...(block?.[1] ?? '').matchAll(/'([^']+)'/g)].map((m) => m[1]).sort()
+    expect(webKeys).toEqual([...CLIENT_FORBIDDEN_NODE_DATA_KEYS].sort())
   })
 
   it('非 whitelisted op 类型整体剥除；set_viewport 放行；脏输入安全', () => {

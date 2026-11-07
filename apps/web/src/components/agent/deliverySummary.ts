@@ -28,8 +28,11 @@ export interface DeliveryItem {
  *  `canvasNodes`（2026-11-05 真机修复 Q2）：提供数组时过滤 nodeId 已不在画布的项
  *  （remove_node 不回写事件投影 ⇒ part 仍 done，必须按画布现况裁清单）；
  *  null/undefined = 未接线/未知态，不过滤（预览页保守显示）。
- *  D5 扩展：canvasNodes 中 `data.digest === true` 节点 ⇒ 清单末尾固定追加一枚
- *  「画布总览」tile（回合末系统产物，时序在全部 artifact 之后）；已删则随之消失（S4）。 */
+ *  P1a（2026-11-07）：**总览不再进本轮清单**。旧实现按当前全局画布给每一轮
+ *  固定追加 digest tile ⇒ 零产物回合显示「有 1 个产物」、历史回合被注入当时还不存在
+ *  的总览、撤销清单存在误删风险。现由 `canvasDigestEntry` 单独派生会话级入口，
+ *  调用方只对最后一轮渲染（见 `digestEntryForTurn`）。
+ */
 export function turnDeliveryItems(
   parts: readonly TimelinePart[],
   canvasNodes?: readonly { id: string; data?: Record<string, unknown> | null }[] | null,
@@ -52,11 +55,27 @@ export function turnDeliveryItems(
     const format = resolveTextNodeFormat(node?.data?.format)
     return format === 'html' ? { ...it, format } : it
   }).filter((it) => alive.has(it.nodeId))
-  const digestNode = canvasNodes.find((n) => n.data?.digest === true)
-  if (digestNode) {
-    filtered.push({ nodeId: digestNode.id, nodeType: 'text', title: '画布总览', digest: true, format: 'html' })
-  }
   return filtered
+}
+
+/** 系统「画布总览」节点（当前画布态投影）的会话级入口；节点已删则 null（S4）。 */
+export function canvasDigestEntry(
+  canvasNodes?: readonly { id: string; data?: Record<string, unknown> | null }[] | null,
+): DeliveryItem | null {
+  const digestNode = canvasNodes?.find((n) => n.data?.digest === true)
+  if (!digestNode) return null
+  return { nodeId: digestNode.id, nodeType: 'text', title: '画布总览', digest: true, format: 'html' }
+}
+
+/**
+ * 历史回合不得注入总览（它当时还不存在，且总览始终指向**当前**画布态）。
+ * 只有最后一轮才拿到会话级入口；纯函数便于行为级断言。
+ */
+export function digestEntryForTurn(
+  entry: DeliveryItem | null | undefined,
+  isLatestTurn: boolean,
+): DeliveryItem | null {
+  return isLatestTurn ? (entry ?? null) : null
 }
 
 /** 回合态判定（D-b）：存在 running artifact ⇒ 回合进行中，幽灵行不渲染。 */

@@ -10,6 +10,7 @@
 分支约定：feature 分支 + PR + squash merge。
 
 **修订记录**：
+- v1.4（2026-11-07，生产实证 + P0/P1/P2 完善）：① **detached 触发条件更正**——生产 `STREAM_MAIN_FROM_PIRUNTIME=on` 下 `chat/conversation` 只回 JSON ack，run 由 `startConversationRun` 后台 drain generator 到底，事件另走 `GET /runs/events` ⇒ **客户端断连与服务端 generator 生命周期已解耦**，断 POST（含 TCP RST）对收束无影响，实测 `metadata.truncated=null` 全走 owner 主流。detached 的真实触发条件是**后台 drain 异常 / generator 提前回收（流耗尽）**，不是用户断连；§4.1/图 1/D6 中「detached 断连」均按此口径读作「detached 后台收束异常」，结构收敛（唯一触发源 + 三路径共用）的防漏挂收益不变。② **P1b 版本号落地**：客户端回拉/PATCH 循环把陈旧 `digestVersion` 回灌 ⇒ Header 恒停「第 5 版」、元数据卡 4（生产 nginx 实证同一会话 573 次客户端 PATCH）；修法 = `digest`/`digestVersion`/`source` 列入双端「服务端专属字段禁写」名单 + 版本号改「元数据与上一版 HTML Header 双源 max+1」自愈。③ **P2 Footer**：未收录项按 `generating / failed / draft` 分桶，不再一律写「生成中」；Footer 标注「系统自动生成 · 当前画布快照」与用户自建总结区分。④ **P1a 交付条**：总览不再进每轮 `turnDeliveryItems`，改会话级单一入口，仅最后一轮渲染（零产物回合不虚报、历史回合不注入）。⑤ **P0 产物落地**：跨轮 `set_node_text` id 纠偏窗口（见 `2026-10-16-canvas-write-tool-chain-design.md` v1.1）+ 回合终态空 draft 文本节点 warn 守卫。异步生成回填 url 晚于回合收尾导致的漏收录仍按 D9 接受，**事件驱动去抖（原方案 C）继续列为后续 P3，不在本包实施**。
 - v1（2026-11-05）：用户真机体验 html-craft 富版图鉴后提议「每轮固定输出」；评审裁决系统管道形态，P0-P2 分期定稿。
 - v1.3（2026-11-07，收束点归位）：① 的「owner 流 + drain 两处挂载」裁决**漏掉 detached 断连路径**，而 §5.1 图 1 / D6 明定三条收束路径共用 finalizeTurn ⇒ 断连轮 `turnSettled` 置 true 后 owner 块被跳过，总览停在上一版。修复为 **触发下沉进 `finalizeTurn` 内部（唯一触发源）**，返回值 `CanvasAction[]` 交 owner 流 yield 上屏；detached / out-of-turn drain 无流可 yield，只落库，由前端刷新恢复。② `finalizeTurn` 的 duplicate runId early return 不触发 digest（图 1「成功后挂载」）。③ 触发必须在画布实体/画布态写完之后，保证快照最新。
 - v1.2（2026-11-05，实施回写，① 已被 v1.3 修正）：① D2 注「复用 controller 层 canvas_action 广播」系误设（取证无 controller emit 点）⇒ 定稿 owner 流 finalizeTurn 后 yield（不进 executionEvents 零噪音），drain 路径只落库；② §5.2 受信级 CSP 以 `buildTrustedNodeCsp(origin)` 函数形态落地（srcdoc opaque origin 下 'self' 不可用，静态常量无法携带 origin），且新增 media-src 段（video tile 用 `<video>` 首帧而非 img）；③ D4 时长字段实证为 `data.mediaInfo.output.durationSec`（秒），非 durationMs；④ D9 文本收录判据收窄为 title/content 任一存在（与「未命名文档」兜底互斥成死判据的修正）。
@@ -53,7 +54,7 @@
 ### 4.1 做（P0）
 
 - Nest `canvas-digest` 模块：变更集提取 → 画布态快照 → 模板渲染（纯函数）→ 系统写入。
-- `finalizeTurn` 成功后挂载（**三条收束路径共用**：owner 同步 / detached 断连 / out-of-turn drain；触发源唯一，见 v1.3），flag `CANVAS_DIGEST`（env `=== 'on'`，同 `TEXT_TOKEN_BILLING` 模式；**定稿默认 on**——digest 由数据派生无破坏面）。
+- `finalizeTurn` 成功后挂载（**三条收束路径共用**：owner 同步 / detached 后台收束异常 / out-of-turn drain；触发源唯一，见 v1.3 与 v1.4 口径更正），flag `CANVAS_DIGEST`（env `=== 'on'`，同 `TEXT_TOKEN_BILLING` 模式；**定稿默认 on**——digest 由数据派生无破坏面）。
 - **trusted CSP 分级**（v1.1 自审前移）：`htmlNodePreviewContract.ts` 新增 `HTML_NODE_CSP_TRUSTED` + `HtmlNodePreview` 按 `data.source==='system-digest'` 分流——**真缩略图是 P0 交付物**（用户核心诉求「图文并茂一览可见」，类型图标版不达标）。
 - web 交付条接入（digest tile）+ DevTimelinePreview 样例 + `digest_open` 埋点（复用 delivery metrics 通道，E2-b 同款准入判据）。
 
@@ -82,7 +83,7 @@ flowchart TD
   I --> J["E2-a 交付条出现总览 tile 一跳 viewer"]
 ```
 
-*图 1 · Canvas Digest 回合末管道：finalizeTurn 是既有回合收束的唯一点（**owner 同步 / detached 断连 / out-of-turn drain 三处调用共用**），变更集 canvasActions 现成累积，零额外扫描；渲染失败 fail-soft（warn 日志，不影响回合落库）。*
+*图 1 · Canvas Digest 回合末管道：finalizeTurn 是既有回合收束的唯一点（**owner 同步 / detached 后台收束异常 / out-of-turn drain 三处调用共用**），变更集 canvasActions 现成累积，零额外扫描；渲染失败 fail-soft（warn 日志，不影响回合落库）。*
 
 *v1.3 实施注：触发点唯一地落在 `finalizeTurn` 内部、且位于画布实体/画布态写入之后；`finalizeTurn` 返回 `CanvasAction[]`，owner 流只负责把 actions 转成 `canvas_action` SSE 帧（不进 executionEvents，刷新重放不重复）。detached（fire-and-forget `void` 链）与 out-of-turn drain 无流可 yield ⇒ 只落库，前端经 `Session.canvasData` 刷新恢复；detached 的 digest 异常自带 catch，不产生 unhandled rejection。duplicate runId 的 early return 不走此管道。*
 

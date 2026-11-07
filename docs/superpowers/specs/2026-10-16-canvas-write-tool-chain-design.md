@@ -7,6 +7,8 @@
 > 相关：[propose-node-binding-engineering-design.md](../../../agent/propose-node-binding-engineering-design.md)（事故取证 + 工程分析，本规格技术来源）、[2026-09-14-codex-style-tool-plan-harness-design.md](./2026-09-14-codex-style-tool-plan-harness-design.md)（工具编排 harness 参考）  
 > **修订声明（v3 自审修订）：** 经对 pi-agent-core 0.85.1（npm dist）与 `vendor/earendil-works/pi` 源码逐层核实，两次修正——① 根因仍是缺编排层护栏，但护栏可**全部用 pi 上游原生原语实现（零新工具、零重试）**：`executionMode:"sequential"`（串行前置）+ `after_tool` 捕获 upsert 返回 id（runId 作用域）+ `before_tool` args 重写（harness 层 `applyBeforeToolDecision` 源码实证：支持 args 整体替换并按工具 schema 重校验后执行）⇒ **Phase 1 即正确性主修复**。② `delegate_task`/`pi-fabric`/`fabric_exec` 未在本仓库 vendored 副本中核实存在（仅上游 `subagent` 例子，其 `chain` 为跨进程 agent 委派、靠 `{previous}` 文本传递，形态不符），D6 已更正为分两级核实表述；Phase 2 chain 工具降为**暂缓**的人机工效优化（多操作单调用），与事故修复解耦。底层原子工具契约不变；不新增复合工具。
 
+> **修订 v1.1（2026-11-07，跨轮文本写入纠偏）**：生产会话 `cmw56hqit00nck801povzca3e` 取证显示，`upsert_media_node(target_type=text)` 与 `set_node_text(content)` **不在同一条 assistant 消息**（`executionEvents` messageIndex 6 → 7），同批窗口已被 `before_request` 关闭；模型从画布摘要抄了旧节点 id，把 6563 字节 HTML 写进上一轮节点，新建节点留 `draft` + 空正文，回复却声称「已完成」。⇒ 新增**一次请求粘滞窗口**（`canvas-id-binding.ts` 的 `contentWindows`）：仅当 upsert 返回的 `actions` 含 `add_node` 且 `manifestKey='upsert_media_text'`，且 `set_node_text` 带 `content` 时生效；TTL=1（只多跨一次模型请求，第二次 `before_request` 关窗）、一次 rewrite 后即删窗、prompt-only 与媒体节点一律不介入。**这不推翻 H5 / P1-D 的「窗口外放行」裁决**：粘滞窗口是三重收窄条件下的单请求例外，不是 runId 作用域；set/propose 的同批语义逐字不变。Nest 侧 `turn-text-node-guard.ts` 补终态观测（新建文本节点仍 draft/空正文 ⇒ warn），让「谎报完成」复发时日志立刻可见，不改用户可见文案、不阻断落库。
+
 ---
 
 ## 0. 决策摘要
@@ -137,6 +139,7 @@ Phase 1 主修复（原生三原语，与 Phase 2 并存、先落地，正确性
   - **重写（主路径）**：`before_tool` 钩子对 `set_node_generation_params` / `propose_generation`：若同批窗口内已有 upsert 记录且 `args.node_id` ≠ 该 id → 返回 `{ args: { ...event.args, node_id: <记录 id> } }`；harness 按工具 schema **重校验**替换参后以正确 id 执行（源码 `applyBeforeToolDecision` 实证）。模型侧无感知、零重试轮。
   - **兜底（fail-closed）**：`args.node_id` 缺失/不可解析、或重写后 schema 校验失败 → 返回 actionable error，指名正确 id。**边界：同批窗口内含 >1 个 `upsert_media_node`（多节点创建）无法消歧 → 一律 fail-closed block + actionable error（列出各候选 id），不做猜测性重写。**
   - **放行**：同批窗口关闭（无 pending upsert）→ set/propose 指向任意已存在节点放行（合法「用户点名旧节点」场景，沿用 Nest 存在性校验）。
+  - **v1.1 例外（2026-11-07，仅文本产物写入）**：新建**文本**节点后的下一条消息里，带 `content` 的 `set_node_text` 若指向旧节点，由一次性粘滞窗口重写到新建节点（详见头部修订 v1.1）。窗口 TTL=1、rewrite 一次即关、prompt-only 与媒体节点不介入；set/propose 裁决与本条互不影响。
   - 该规则为**结构性、确定性**，不依赖「节点存在」单条件（旧机器人节点存在+有 prompt 仍会被纠正，因非本 run upsert 返回 id）。**依赖 P1a 串行**：只有 upsert 先执行并 finalize（after_tool 已跑），后续 set/propose 的 before_tool 才能读到记录 id。
 - **P1c `guideSceneId` 文案引导 + skill 修正**：Nest `unknown guideSceneId` 补「调用 `list_generation_scenes` 取合法 id；角色设计类若无匹配场景，省略 `guide_scene_id`」；同步修正 `skills/drama-character-design/SKILL.md`。
 

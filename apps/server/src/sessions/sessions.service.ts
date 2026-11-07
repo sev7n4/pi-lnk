@@ -120,7 +120,7 @@ export class SessionsService {
    * `PATCH /sessions/:id/canvas`——ops 级画布写，替代整份 PUT 的主通道。
    *
    * - 载荷 `{ ops: CanvasAction[] }`，复用 `@lnkpi/agent` 的 5 类 op（不发明方言）。
-   * - 白名单：`sanitizeClientOps` 剥除服务端字段五键 + 非 whitelisted op；
+   * - 白名单：`sanitizeClientOps` 剥除服务端专属字段（含 digest* / source）+ 非 whitelisted op；
    *   `remove_node` 对 generating/pending_confirm 节点 ⇒ 409（取消走既有 cancel 通道）。
    * - 落库与 agent persist 同构：`$transaction` 内读当前 canvas → applier.apply →
    *   合并写回；stagedActions 未清空 ⇒ 409（与 persist 同一句话，stage 期间禁止并行写）。

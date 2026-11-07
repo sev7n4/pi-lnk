@@ -10,6 +10,7 @@ import {
 import { ModuleRef } from '@nestjs/core'
 import type { AgentStreamEvent } from '@lnkpi/agent'
 import { CANVAS_ACTION_APPLIER, defaultCanvasActionApplier } from './canvas-action-applier'
+import { findUnfilledDraftTextNodes } from './turn-text-node-guard'
 import {
   describeTurnInterruption,
   type AgentMessageMetadata,
@@ -4245,6 +4246,12 @@ export class AgentService implements OnModuleInit {
         }
       }
 
+      // ── 终态一致性守卫（2026-11-07 事故「产物没落地却回复已完成」）──
+      // 只产出 warn 观测：不改用户可见文案、不阻断落库、不依赖模型自律。
+      // 真实修复在 pi-runtime 的跨轮 id 绑定；这里保证复发时日志立刻可见。
+      // 必须在画布态写完之后读 ⇒ 看到的是本回合最终态。
+      await this.warnUnfilledDraftTextNodes(sessionId, canvasActions)
+
       // ── Canvas Digest：唯一触发源（spec 2026-11-05-canvas-digest-design §5.1 图 1）──
       // finalizeTurn 是既有回合收束的唯一点，三条调用路径在此共用同一管道：
       //   owner 同步 (:3874) / detached 断连 (:3538, void fire-and-forget) /
@@ -4268,6 +4275,38 @@ export class AgentService implements OnModuleInit {
       }
     }
     return digestActions
+  }
+
+  /**
+   * 终态一致性守卫（纯判据在 turn-text-node-guard.ts）：
+   * 本轮新建的文本节点若收束后仍为 draft + 空正文 ⇒ warn。
+   * fail-soft：读库/解析异常一律吞掉，绝不影响回合收束（单测可无 prisma）。
+   */
+  private async warnUnfilledDraftTextNodes(
+    sessionId: string,
+    canvasActions: CanvasAction[],
+  ): Promise<void> {
+    try {
+      // 可选链：单测可无 prisma（守卫纯观测，缺依赖时静默跳过，不制造 warn 噪声）。
+      const session = await this.prisma?.session?.findUnique?.({
+        where: { id: sessionId },
+        select: { canvasData: true },
+      })
+      if (!session?.canvasData) return
+      const unfilled = findUnfilledDraftTextNodes(
+        JSON.parse(session.canvasData) as CanvasData,
+        canvasActions,
+      )
+      if (unfilled.length > 0) {
+        this.piLogger?.warn?.(
+          `turn_text_nodes_unfilled session=${sessionId} nodes=${unfilled.join(',')} — 本轮新建文本节点仍为 draft 且无正文，assistant 不应声称已完成`,
+        )
+      }
+    } catch (err) {
+      this.piLogger?.warn?.(
+        `turn_text_nodes_guard_failed session=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
   }
 
   private async persistCanvasEntities(sessionId: string, actions: CanvasAction[]) {

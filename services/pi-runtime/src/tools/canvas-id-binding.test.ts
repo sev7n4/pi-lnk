@@ -51,7 +51,7 @@ describe("canvas-id-binding: 同批窗口捕获与裁决（spec P1b）", () => {
 		assert.ok(d.kind === "block" && d.reason.includes("image-a") && d.reason.includes("image-b"));
 	});
 
-	it("非 set/propose 工具（如同批 set_node_text）→ 永不介入（spec P1b 范围锁定）", () => {
+	it("prompt-only set_node_text（无 content）→ 永不介入（跨轮窗口只管 content 写入）", () => {
 		resetIdBindingForTest();
 		recordUpsertedNode("r1", upsertContent("image-new"));
 		assert.deepEqual(decideBinding("set_node_text", { node_id: "image-old" }, "r1"), {
@@ -310,5 +310,155 @@ describe("canvas-id-binding: A3 改写留痕（rewrite 必须模型可见）", (
 			content: [{ type: "text", text: "{}" }],
 		} as never);
 		assert.equal(out, undefined);
+	});
+});
+
+// ── 2026-11-07 跨轮文本写入纠偏（生产事故 cmw56hqit00nck801povzca3e）─────────
+describe("canvas-id-binding: 跨轮 set_node_text 纠偏（新建文本节点内容错绑根治）", () => {
+	/** 模拟 Nest upsert-media-node(target_type=text) 的真实返回形态（含 add_node actions）。 */
+	function textUpsertContent(nodeId: string) {
+		return [
+			{
+				type: "text",
+				text: JSON.stringify({
+					ok: true,
+					data: {
+						nodeId,
+						actions: [
+							{
+								type: "add_node",
+								payload: {
+									id: nodeId,
+									nodeType: "text",
+									data: { manifestKey: "upsert_media_text", status: "draft" },
+								},
+							},
+						],
+					},
+				}),
+			},
+		];
+	}
+
+	function mediaUpsertContent(nodeId: string) {
+		return [
+			{
+				type: "text",
+				text: JSON.stringify({
+					ok: true,
+					data: {
+						nodeId,
+						actions: [
+							{
+								type: "add_node",
+								payload: {
+									id: nodeId,
+									nodeType: "image",
+									data: { manifestKey: "upsert_media_image", status: "draft" },
+								},
+							},
+						],
+					},
+				}),
+			},
+		];
+	}
+
+	it("事故形态：upsert 后跨一次请求，set_node_text(content, 旧id) → rewrite 到新建节点", () => {
+		resetIdBindingForTest();
+		recordUpsertedNode("tx1", textUpsertContent("text-1794018409058-4"));
+		// 生产 executionEvents messageIndex 6 → 7：中间的 before_request 只消耗 TTL，不关窗
+		closeBindingWindow("tx1");
+		assert.deepEqual(
+			decideBinding(
+				"set_node_text",
+				{ node_id: "text-1794017787677-3", content: "<!DOCTYPE html>…", format: "html" },
+				"tx1",
+			),
+			{ kind: "rewrite", nodeId: "text-1794018409058-4" },
+		);
+	});
+
+	it("再跨一次请求即关窗：合法提名旧节点不再被误重写（spec「不按 runId 作用域」裁决）", () => {
+		resetIdBindingForTest();
+		recordUpsertedNode("tx2", textUpsertContent("text-new"));
+		closeBindingWindow("tx2");
+		closeBindingWindow("tx2");
+		assert.deepEqual(decideBinding("set_node_text", { node_id: "text-old", content: "c" }, "tx2"), {
+			kind: "passthrough",
+		});
+	});
+
+	it("prompt-only 不介入；媒体节点 upsert 不开窗（不误伤合法挂参）", () => {
+		resetIdBindingForTest();
+		recordUpsertedNode("tx3", textUpsertContent("text-new"));
+		assert.deepEqual(decideBinding("set_node_text", { node_id: "text-old", prompt: "标题" }, "tx3"), {
+			kind: "passthrough",
+		});
+		resetIdBindingForTest();
+		recordUpsertedNode("tx3", mediaUpsertContent("image-new"));
+		assert.deepEqual(decideBinding("set_node_text", { node_id: "text-old", content: "c" }, "tx3"), {
+			kind: "passthrough",
+		});
+	});
+
+	it("node_id 已等于新建节点 → passthrough；多个新建文本节点 → fail-closed block", () => {
+		resetIdBindingForTest();
+		recordUpsertedNode("tx4", textUpsertContent("text-new"));
+		assert.deepEqual(decideBinding("set_node_text", { node_id: "text-new", content: "c" }, "tx4"), {
+			kind: "passthrough",
+		});
+		recordUpsertedNode("tx4", textUpsertContent("text-new2"));
+		const d = decideBinding("set_node_text", { node_id: "text-old", content: "c" }, "tx4");
+		assert.equal(d.kind, "block");
+		assert.ok(d.kind === "block" && d.reason.includes("text-new") && d.reason.includes("text-new2"));
+	});
+
+	it("端到端钩子：开窗 → before_request → 重写 {args}，结算追加 A3 留痕，且只纠偏一次", async () => {
+		resetIdBindingForTest();
+		resetIdBindingRewritesForTest();
+		const handlers = new Map<string, (event: never) => Promise<unknown>>();
+		const harness = {
+			hooks: { on: (name: string, fn: never) => handlers.set(name, fn as never) },
+		} as unknown as AgentHarness<LnkpiToolContext>;
+		registerCanvasIdBindingHooks(harness);
+		const afterTool = handlers.get("after_tool")!;
+		const beforeTool = handlers.get("before_tool")!;
+		const beforeRequest = handlers.get("before_request")!;
+
+		await afterTool({
+			runId: "tx5",
+			toolName: "upsert_media_node",
+			isError: false,
+			content: textUpsertContent("text-5"),
+		} as never);
+		await beforeRequest({ runId: "tx5" } as never);
+		const rewritten = (await beforeTool({
+			runId: "tx5",
+			toolCallId: "call5",
+			toolName: "set_node_text",
+			args: { node_id: "text-old", content: "<html/>" },
+		} as never)) as { args?: Record<string, unknown> };
+		assert.deepEqual(rewritten, { args: { node_id: "text-5", content: "<html/>" } });
+
+		// A3 留痕：模型可见「节点定位已由平台自动纠偏」
+		const settled = (await afterTool({
+			runId: "tx5",
+			toolCallId: "call5",
+			toolName: "set_node_text",
+			isError: false,
+			content: [{ type: "text", text: "{}" }],
+		} as never)) as { content: { type: string; text: string }[] };
+		assert.ok(settled?.content?.some((c) => c.text.includes("text-5") && c.text.includes("text-old")));
+
+		// 窗口一次性：同 run 后续 content 写入不再纠偏
+		assert.equal(
+			await beforeTool({
+				runId: "tx5",
+				toolName: "set_node_text",
+				args: { node_id: "text-old", content: "again" },
+			} as never),
+			undefined,
+		);
 	});
 });
