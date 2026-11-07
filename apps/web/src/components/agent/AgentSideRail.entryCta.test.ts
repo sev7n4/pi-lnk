@@ -36,7 +36,7 @@ describe('A1 传图引导位', () => {
       tpl.lastIndexOf('<button', ctaIdx),
       tpl.indexOf('</button>', ctaIdx),
     )
-    expect(ctaBlock).toContain('pickImage')
+    expect(ctaBlock).toContain('composer.pickImage')
     expect(ctaBlock).not.toContain('fillFromUtterance')
   })
 })

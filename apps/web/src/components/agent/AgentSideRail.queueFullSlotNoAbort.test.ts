@@ -115,10 +115,33 @@ interface RailInternals {
 function railInternals(w: { vm: object }): RailInternals {
   // ⛔ 经 `unknown` 中转：目标形状与组件公共实例类型不重叠，直接 as 会被 vue-tsc 判为
   // 「转换可能出错」。web 的 tsconfig 覆盖 src 下全部 .ts ⇒ 测试文件会被类型检查。
-  const vm = w.vm as unknown as { $?: { setupState?: RailInternals } }
+  const vm = w.vm as unknown as {
+    $?: {
+      setupState?: RailInternals & {
+        // Phase 3 第七刀：setComposerInput 从顶层退到 useAgentComposer 的 composer 壳。
+        composer?: { setComposerInput: (text: string) => void }
+      }
+    }
+  }
   const st = vm.$?.setupState
   if (!st) throw new Error('取不到组件内部 setupState（script setup 绑定未暴露）')
-  return st
+  // setComposerInput 已迁入 useAgentComposer 的 composer 壳（Phase 3 第七刀，行为不变）。
+  // 其余内部绑定仍在顶层、且必须是 live 读取：setupState 代理会解包 ref，
+  // 故 queuedSlots / input 走 getter，避免快照成调用时刻的空数组（见下方失败教训）。
+  const setComposerInput = st.composer?.setComposerInput ?? st.setComposerInput
+  if (typeof setComposerInput !== 'function') {
+    throw new Error('取不到 setComposerInput（composer 壳未暴露）')
+  }
+  return {
+    get queuedSlots() {
+      return st.queuedSlots
+    },
+    get input() {
+      return st.input
+    },
+    send: st.send,
+    setComposerInput,
+  }
 }
 
 describe('插话槽位排满时不得中止 turn（2026-10-21 hotfix）', () => {

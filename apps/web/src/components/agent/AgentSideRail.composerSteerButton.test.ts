@@ -18,6 +18,9 @@ import { requireFnBody } from './sfcSource'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const sfc = readFileSync(join(here, 'AgentSideRail.vue'), 'utf8')
+// 第七刀（strangler-fig）：composer 簇（含 composerDraftText）已迁入 useAgentComposer，
+// 故草稿判定的契约改在该 composable 源码里校验（与 waitSettle 读 useAgentPropose 同理）。
+const composerSrc = readFileSync(join(here, './useAgentComposer.ts'), 'utf8')
 
 /**
  * 提取唯一的 <DockGenerateButton ... /> 自闭合标签块。
@@ -53,7 +56,7 @@ describe('composer 按钮态随草稿切换（流式中可插话）', () => {
     )
 
     // 草稿判定必须是「有文本」：只有附件时不该切按钮（附件走不了 steer 文本通道）
-    expect(sfc).toMatch(
+    expect(composerSrc).toMatch(
       /const composerDraftText = computed\(\(\) => Boolean\(input\.value\.trim\(\)\)\)/,
     )
   })
