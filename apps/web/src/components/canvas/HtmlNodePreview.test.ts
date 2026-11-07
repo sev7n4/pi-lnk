@@ -4,7 +4,11 @@ import HtmlNodePreview, {
   HTML_NODE_CSP,
   HTML_NODE_SANDBOX_ATTRS,
 } from './HtmlNodePreview.vue'
-import { buildTrustedNodeCsp } from './htmlNodePreviewContract'
+import {
+  buildTrustedNodeCsp,
+  collectTrustedMediaOrigins,
+  TRUSTED_HEADER_SAFE_AREA_CSS,
+} from './htmlNodePreviewContract'
 
 const SAMPLE = '<!DOCTYPE html><html><body><h1>hi</h1><script>1+1</script></body></html>'
 
@@ -91,5 +95,70 @@ describe('trusted CSP 分级（spec 2026-11-05-canvas-digest-design §5.2）', (
     const doc = w.find('iframe').attributes('srcdoc') ?? ''
     expect(doc).toContain(`img-src data: blob: ${window.location.origin}`)
     expect(doc).toContain('media-src')
+  })
+})
+
+/**
+ * 2026-11-07 真机事故回归：生产画布总览的两张缩略图全是破图占位。
+ * 图片 URL 本身 HTTP 200，但生成服务返回的是第三方绝对域，旧受信 CSP
+ * 只放行 window.location.origin ⇒ srcdoc 内 img 被拦 → onerror 降级。
+ * 判据必须是「组件 srcdoc 的 CSP 真的放行了该域」，而不是只测纯函数。
+ */
+describe('trusted CSP 放行第三方媒体域 + 移动端 Header 安全区（2026-11-07）', () => {
+  const OUT = 'https://platform-outputs.agnes-ai.space'
+  const CDN = 'https://cdn.example.com'
+  const DIGEST = `<!DOCTYPE html><html><body>
+    <img src="${OUT}/images/a.png" loading="lazy">
+    <img src="${OUT}/images/b.png" loading="lazy">
+    <video src="${CDN}/v.mp4"></video>
+    <img src="/relative.png">
+    <img src="data:image/png;base64,iVBORw0KGgo=">
+    <img src="javascript:alert(1)">
+    <div data-ref="${OUT}/not-a-media.png"></div>
+  </body></html>`
+
+  it('collectTrustedMediaOrigins：只收媒体标签的 http/https 绝对 URL origin，去重排序', () => {
+    expect(collectTrustedMediaOrigins(DIGEST)).toEqual([CDN, OUT])
+    expect(collectTrustedMediaOrigins('<img src="https://%">')).toEqual([])
+    expect(collectTrustedMediaOrigins('<img src="/relative.png">')).toEqual([])
+  })
+
+  it('buildTrustedNodeCsp(extra) 精确放行且脏值无法注入新指令', () => {
+    const origin = window.location.origin
+    const csp = buildTrustedNodeCsp(origin, [
+      OUT,
+      OUT,
+      'https://bad.example; script-src *',
+      'javascript:alert(1)',
+    ])
+    const expanded = `img-src data: blob: ${origin} ${OUT}; media-src data: blob: ${origin} ${OUT};`
+    expect(csp).toContain(expanded)
+    expect(csp).not.toContain('bad.example')
+    expect(csp).not.toContain('script-src *')
+    expect(csp).not.toContain('javascript:')
+    expect(csp.replace(expanded, 'img-src data: blob:;')).toBe(HTML_NODE_CSP)
+  })
+
+  it('trusted + 第三方缩略图 ⇒ srcdoc CSP 放行引用域，且注入 Header 安全区', () => {
+    const w = mount(HtmlNodePreview, { props: { content: DIGEST, trusted: true } })
+    const doc = w.find('iframe').attributes('srcdoc') ?? ''
+    expect(doc).toContain(`img-src data: blob: ${window.location.origin} ${CDN} ${OUT};`)
+    expect(doc).toContain(`media-src data: blob: ${window.location.origin} ${CDN} ${OUT};`)
+    expect(doc).toContain(TRUSTED_HEADER_SAFE_AREA_CSS)
+    // CSP/style 仍先于任何内容生效，且 DOCTYPE 保持首 token（防 quirks）
+    expect(doc.trimStart().indexOf('<!DOCTYPE')).toBe(0)
+    expect(doc.indexOf('<style>')).toBeLessThan(doc.indexOf('<img'))
+  })
+
+  it('fail-closed：非 trusted 即便内容含第三方图，也不放行、不注入安全区', () => {
+    const w = mount(HtmlNodePreview, { props: { content: DIGEST } })
+    const doc = w.find('iframe').attributes('srcdoc') ?? ''
+    // 内容本身当然含这些 URL；判据必须落在 **CSP 指令** 上，否则是伪断言。
+    const csp = /<meta http-equiv="Content-Security-Policy" content="([^"]+)">/.exec(doc)?.[1] ?? ''
+    expect(csp).toBe(HTML_NODE_CSP)
+    expect(csp).not.toContain(OUT)
+    expect(csp).not.toContain(CDN)
+    expect(csp).not.toContain('media-src')
+    expect(doc).not.toContain('padding-right: 60px')
   })
 })
