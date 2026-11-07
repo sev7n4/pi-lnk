@@ -78,9 +78,9 @@ describe('mobile bare bar structure (P1-5)', () => {
     expect(tpl).not.toContain('v-else class="agent-composer__input-wrap"')
     expect(tpl).not.toMatch(/v-if[^>]*class="agent-composer__input-wrap"/)
     // 有效性：引用芯片行确实在模板里（否则上面的配对是空集假绿）
-    expect(tpl).toContain('v-if="pendingAttachmentItems.length"')
+    expect(tpl).toContain('v-if="composer.pendingAttachmentItems.length"')
     // 顺序：AgentRefStrip（芯片行）在前，输入行紧随其后（同贸 agent-composer 容器内）
-    expect(tpl.indexOf('v-if="pendingAttachmentItems.length"')).toBeLessThan(
+    expect(tpl.indexOf('v-if="composer.pendingAttachmentItems.length"')).toBeLessThan(
       tpl.indexOf('<div class="agent-composer__input-wrap">'),
     )
   })

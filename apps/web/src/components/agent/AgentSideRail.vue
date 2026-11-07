@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { computed, ref, reactive, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import { useRouter } from 'vue-router'
 import { useAgentStore } from '@/stores/agent'
@@ -83,6 +83,7 @@ import AgentNodeGraph from '@/components/agent/presentation/AgentNodeGraph.vue'
 import AgentProseBlock from '@/components/agent/presentation/AgentProseBlock.vue'
 import type { AgentPresentationEnvelope, NodeGraphBodyPayload } from '@/components/agent/presentation/types'
 import { useAgentPropose } from '@/components/agent/useAgentPropose'
+import { useAgentComposer } from '@/components/agent/useAgentComposer'
 import { isRunCancelledState } from '@/components/agent/agentInterruptGate'
 import {
   buildIdempotencyKey,
@@ -106,7 +107,7 @@ import { useNetworkNotice } from '@/composables/useNetworkNotice'
 import DockGenerateButton from '@/components/canvas/dock-studio/shared/DockGenerateButton.vue'
 import { useSidebarAttachments, assignRefKeysFor, type FocusNodeLike, type CanvasRefAddResult } from '@/composables/useSidebarAttachments'
 import { parseRefMentions } from '@/composables/useRefMentions'
-import MentionInput, { type MentionOption } from '@/components/canvas/MentionInput.vue'
+import MentionInput from '@/components/canvas/MentionInput.vue'
 import { copyTextToClipboard } from '@/utils/copyToClipboard'
 import { createFollowUpTailListener, isTurnTerminal } from './follow-up-tail'
 import { isConversationAckResponse, parseConversationAck } from './main-turn-ack'
@@ -424,6 +425,20 @@ useClickOutside(attachMenuRef, () => {
   attachMenuOpen.value = false
 })
 
+const composer = reactive(useAgentComposer({
+  input,
+  sidebar,
+  composerRef,
+  fileInputRef,
+  cameraInputRef,
+  isUploading,
+  isDragOver,
+  assetPickerOpen,
+  attachMenuOpen,
+  readOnly: () => props.readOnly,
+  makeAttachmentItems,
+}))
+
 /**
  * SEL-REF：给回执 chip 用的节点摘要。
  * 标题取法沿用仓内既有约定（`executionStepLabels.ts:43` / `agentCanvasOutputs.ts:167`）：
@@ -463,7 +478,7 @@ function reattachFromHistory(attachment: SidebarAttachment) {
   sidebar.addFromPayload({ ...attachment, id: randomId() })
   const keys = sidebar.assignRefKeys()
   const idx = sidebar.pendingAttachments.value.length - 1
-  if (keys[idx]) insertRefMention(keys[idx])
+  if (keys[idx]) composer.insertRefMention(keys[idx])
   nextTick(() => composerRef.value?.focus())
 }
 
@@ -696,9 +711,6 @@ const showHistoryReattachCoachmark = computed(
 // 移动端/桌面共享）；reattach 提示行与 attachment 提示行已删除（与 coachmark 重复，
 // 控件自解释），pick-tip 已随 Task 6 移除。
 
-const pendingAttachmentItems = computed(() =>
-  makeAttachmentItems(sidebar.pendingAttachments.value, sidebar.assignRefKeys()),
-)
 
 /** 输入框左上角 🎯 圆心重合时的文字起始内边距（半径 + 小间距） */
 const COMPOSER_PICK_INSET = 18
@@ -708,19 +720,6 @@ const COMPOSER_PICK_INSET = 18
  * readOnly 隐藏。激活高亮由 is-active 承担。 */
 const canvasRefEntryVisible = computed(() => !props.readOnly)
 
-const mentionOptions = computed((): MentionOption[] =>
-  pendingAttachmentItems.value.map(({ refKey, attachment }) => ({
-    id: attachment.id,
-    label: refKey,
-    type: attachment.mediaType,
-  })),
-)
-
-function insertRefMention(refKey: string) {
-  const token = `@${refKey} `
-  composerRef.value?.insertText(input.value ? ` ${token}` : token)
-  nextTick(() => composerRef.value?.focus())
-}
 
 /** Runtime LangGraph thread；与画布 sessionId 解耦，新建对话时重置 */
 const agentThreadId = ref(createAgentThreadId(props.sessionId))
@@ -1017,59 +1016,6 @@ function answersPost(
 
 
 
-const canSubmitComposer = computed(() =>
-  Boolean(input.value.trim() || sidebar.pendingAttachments.value.length),
-)
-
-// 流式中是否存在可插话的草稿文本：决定底部按钮临时切回发送态（而非停止态）。
-const composerDraftText = computed(() => Boolean(input.value.trim()))
-
-function addAssetReference(attachment: SidebarAttachment) {
-  if (props.readOnly) return
-  sidebar.addFromPayload(attachment)
-}
-
-function addAttachment(attachment: SidebarAttachment) {
-  if (props.readOnly) return
-  sidebar.addFromPayload({ ...attachment, id: randomId() })
-}
-
-function setComposerInput(text: string) {
-  input.value = text
-  nextTick(() => composerRef.value?.focus())
-}
-
-function toggleAttachMenu() {
-  if (props.readOnly || isUploading.value) return
-  attachMenuOpen.value = !attachMenuOpen.value
-}
-
-/** 「＋」附件卡（2026-10-18 照竞品重构：三瓦片 拍照/图片/添加文件 + 行 专家/技能/连接器）。
- *  单一 file input 复用：图片走 accept=image/*，文件走不限类型；拍照走带 capture 的独立 input。 */
-function pickImage() {
-  attachMenuOpen.value = false
-  if (props.readOnly || isUploading.value || !fileInputRef.value) return
-  fileInputRef.value.accept = 'image/*'
-  fileInputRef.value.click()
-}
-
-function pickFile() {
-  attachMenuOpen.value = false
-  if (props.readOnly || isUploading.value || !fileInputRef.value) return
-  fileInputRef.value.accept = ''
-  fileInputRef.value.click()
-}
-
-function pickCamera() {
-  attachMenuOpen.value = false
-  if (props.readOnly || isUploading.value) return
-  cameraInputRef.value?.click()
-}
-
-function pickAssetLibrary() {
-  attachMenuOpen.value = false
-  assetPickerOpen.value = true
-}
 
 /** ◎ P1-2.3：pick 开关（原 onCanvasRefPickToggle 改名），全文件唯一调用点是角落按钮 composer-canvas-ref-btn */
 function toggleCanvasRefPick() {
@@ -1086,40 +1032,6 @@ function onInputDockPointerDown(event: PointerEvent) {
   pickMode.deactivate()
 }
 
-async function addFiles(files: FileList | File[]) {
-  if (props.readOnly || !files.length) return
-
-  isUploading.value = true
-  try {
-    for (const file of Array.from(files)) {
-      await sidebar.addFromFile(file)
-    }
-  } catch (error) {
-    ElMessage.error(error instanceof Error ? error.message : '上传参考素材失败')
-  } finally {
-    isUploading.value = false
-  }
-}
-
-function onFileChange(event: Event) {
-  const target = event.target as HTMLInputElement
-  void addFiles(target.files ?? []).finally(() => {
-    target.value = ''
-  })
-}
-
-function onDragOver() {
-  if (!props.readOnly) isDragOver.value = true
-}
-
-function onDragLeave() {
-  isDragOver.value = false
-}
-
-function onDrop(event: DragEvent) {
-  isDragOver.value = false
-  void addFiles(event.dataTransfer?.files ?? [])
-}
 
 /** 面板是否展开（收缩态只保留右下角 logo FAB） */
 const open = ref(false)
@@ -1627,7 +1539,7 @@ function onComposerFocusOut(e: FocusEvent) {
  * idle：条内仅 ＋ + 「点按输入」提示（P1-5.3）；stacked/queued 见 mobileBarLayout.ts。
  * 伸展态（点按后）在 barShape 上仍属 idle 形态（无芯片、非生成），但渲染输入行。 */
 const mobileBarShape = computed(() =>
-  barShape({ hasRefs: pendingAttachmentItems.value.length > 0, isStreaming: agent.isStreaming }),
+  barShape({ hasRefs: composer.pendingAttachmentItems.length > 0, isStreaming: agent.isStreaming }),
 )
 const mobileBarIdle = computed(
   () =>
@@ -1772,7 +1684,7 @@ async function send() {
     await cancelActiveStream()
     return
   }
-  if (!canSubmitComposer.value) return
+  if (!composer.canSubmitComposer) return
   if (!auth.isLoggedIn) {
     auth.openLogin()
     return
@@ -2119,7 +2031,7 @@ const currentCanvasPhase = computed<CanvasPhase>(() => {
 const currentUtterancePhase = computed<UtterancePhase>(() =>
   pickUtteranceContext({
     phase: currentCanvasPhase.value,
-    hasAttachments: pendingAttachmentItems.value.length > 0,
+    hasAttachments: composer.pendingAttachmentItems.length > 0,
   }),
 )
 
@@ -3882,8 +3794,8 @@ defineExpose({
   closeThreadHistory,
   openPanel,
   closePanel,
-  setComposerInput,
-  addAttachment,
+  setComposerInput: composer.setComposerInput,
+  addAttachment: composer.addAttachment,
   reconcileFromNodes,
   /** L1：画布/dock 点生成时显式确认 propose 等待（answered），不再靠 SSOT 时序推断 */
   confirmProposeWait: propose.confirmProposeWait,
@@ -4111,7 +4023,7 @@ defineExpose({
                   type="button"
                   class="agent-example-chip agent-example-chip--cta rounded-lg border border-dashed px-3 py-1.5 text-left text-[12px] leading-snug"
                   data-testid="agent-attachment-cta"
-                  @click="pickImage"
+                  @click="composer.pickImage"
                 >
                   传一张图再说话
                 </button>
@@ -4694,9 +4606,9 @@ defineExpose({
                 'is-drop-target': isDragOver,
               }"
               data-testid="agent-input-dock"
-              @dragover.prevent="onDragOver"
-              @dragleave.prevent="onDragLeave"
-              @drop.prevent="onDrop"
+              @dragover.prevent="composer.onDragOver"
+              @dragleave.prevent="composer.onDragLeave"
+              @drop.prevent="composer.onDrop"
               @pointerdown="onInputDockPointerDown"
               @focusin="onComposerFocusIn"
               @focusout="onComposerFocusOut"
@@ -4841,12 +4753,12 @@ defineExpose({
                      条级手势排除子控件命中（pointerdown/up closest 排除 + 子控件 @click.stop） -->
               <div class="agent-composer">
                 <AgentRefStrip
-                  v-if="pendingAttachmentItems.length"
+                  v-if="composer.pendingAttachmentItems.length"
                   class="agent-composer__refs"
-                  :items="pendingAttachmentItems"
+                  :items="composer.pendingAttachmentItems"
                   :removable="true"
                   @remove="sidebar.remove"
-                  @mention="insertRefMention"
+                  @mention="composer.insertRefMention"
                   @reorder="sidebar.reorder"
                 />
                 <!-- 2026-10-21 修回归：此处**必须无条件渲染**（不得写 v-else）。
@@ -4866,7 +4778,7 @@ defineExpose({
                   ref="composerRef"
                   v-model="input"
                   class="agent-composer__mention w-full"
-                  :mentions="mentionOptions"
+                  :mentions="composer.mentionOptions"
                   :placeholder="pickMode.active.value
                     ? '在画布上点选要引用的节点 · 再点 ◎ 取消'
                     : agent.isStreaming
@@ -4910,7 +4822,7 @@ defineExpose({
                 class="sr-only"
                 multiple
                 :disabled="readOnly || isUploading"
-                @change="onFileChange"
+                @change="composer.onFileChange"
               >
               <input
                 ref="cameraInputRef"
@@ -4919,7 +4831,7 @@ defineExpose({
                 accept="image/*"
                 capture="environment"
                 :disabled="readOnly || isUploading"
-                @change="onFileChange"
+                @change="composer.onFileChange"
               >
 
               <div class="agent-dock-actions">
@@ -4935,7 +4847,7 @@ defineExpose({
                       :class="{ 'is-open': attachMenuOpen }"
                       :disabled="readOnly || isUploading"
                       :title="readOnly ? '只读画布不能添加参考素材' : '添加引用素材'"
-                      @click.stop="toggleAttachMenu"
+                      @click.stop="composer.toggleAttachMenu"
                     >
                       <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75">
                         <path stroke-linecap="round" d="M12 5v14M5 12h14" />
@@ -4963,7 +4875,7 @@ defineExpose({
                           type="button"
                           class="attach-tile flex flex-col items-center gap-1.5 rounded-xl py-3"
                           :disabled="readOnly || isUploading"
-                          @click="pickCamera"
+                          @click="composer.pickCamera"
                         >
                           <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.6">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M8.5 6.5 10 4.5h4l1.5 2H19a1.5 1.5 0 0 1 1.5 1.5v9A1.5 1.5 0 0 1 19 18.5H5A1.5 1.5 0 0 1 3.5 17V8A1.5 1.5 0 0 1 5 6.5h3.5Z" />
@@ -4975,7 +4887,7 @@ defineExpose({
                           type="button"
                           class="attach-tile flex flex-col items-center gap-1.5 rounded-xl py-3"
                           :disabled="readOnly || isUploading"
-                          @click="pickImage"
+                          @click="composer.pickImage"
                         >
                           <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.6">
                             <rect x="3.5" y="5" width="17" height="14" rx="2" />
@@ -4988,7 +4900,7 @@ defineExpose({
                           type="button"
                           class="attach-tile flex flex-col items-center gap-1.5 rounded-xl py-3"
                           :disabled="readOnly || isUploading"
-                          @click="pickFile"
+                          @click="composer.pickFile"
                         >
                           <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.6">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M20 11.5 12.6 19a4.6 4.6 0 0 1-6.5-6.5l7.6-7.6a3.07 3.07 0 0 1 4.34 4.34l-7.6 7.6a1.54 1.54 0 0 1-2.17-2.17l7.02-7.02" />
@@ -4999,7 +4911,7 @@ defineExpose({
                           type="button"
                           class="attach-tile flex flex-col items-center gap-1.5 rounded-xl py-3"
                           :disabled="readOnly || isUploading"
-                          @click="pickAssetLibrary"
+                          @click="composer.pickAssetLibrary"
                         >
                           <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.6">
                             <rect x="3" y="5" width="18" height="14" rx="2" />
@@ -5162,9 +5074,9 @@ defineExpose({
                   <!-- P2-2.1：麦克风改 press-and-hold——press 开始、release 转写填入（不自动提交）、上滑取消 -->
                   <DockGenerateButton
                     glyph="send"
-                    :generating="agent.isStreaming && !composerDraftText"
-                    :disabled="isUploading || (!agent.isStreaming && !canSubmitComposer)"
-                    :title="agent.isStreaming ? (composerDraftText ? '发送插话' : '停止生成') : 'Enter 发送 · Shift+Enter 换行'"
+                    :generating="agent.isStreaming && !composer.composerDraftText"
+                    :disabled="isUploading || (!agent.isStreaming && !composer.canSubmitComposer)"
+                    :title="agent.isStreaming ? (composer.composerDraftText ? '发送插话' : '停止生成') : 'Enter 发送 · Shift+Enter 换行'"
                     @generate="send"
                   />
                 </div>
@@ -5180,7 +5092,7 @@ defineExpose({
         :kind="forceChoiceKind"
         @action="onForceChoiceAction"
       />
-      <AgentAssetPicker v-model:open="assetPickerOpen" @pick="addAssetReference" />
+      <AgentAssetPicker v-model:open="assetPickerOpen" @pick="composer.addAssetReference" />
       <ConversationShareSheet
         v-model="shareOpen"
         :turns="shareTurns"
