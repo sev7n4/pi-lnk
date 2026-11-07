@@ -1,16 +1,19 @@
 /**
- * Canvas Digest 挂载契约（2026-11-06 线上事故回归守卫）。
+ * Canvas Digest 收束契约（2026-11-07 结构性修复守卫）。
  *
- * 事故形态：`57cf1488b`（真实流量三连修）用落后基线的 agent.service.ts 覆盖，
- * 把 PR #739 的四块挂载整块冲掉；DI 仍注册、工具仍实现 upsertDigestNode、前端仍
- * 渲染 digest 磁贴，**唯独零调用点** ⇒ 线上任何会话都不生成「画布总览」，
- * 而既有 2529 个测试全绿（服务自身的单测只测 maybeRender，不测「谁调用它」）。
+ * 两次事故形态：
+ *  - `57cf1488b` 用落后基线整文件覆盖，把 #739 的四块挂载全冲掉 ⇒ 线上零调用点、
+ *    任何会话都不生成「画布总览」，而既有 2529 个测试全绿（服务单测只测
+ *    maybeRender，不测「谁调用它」）。#753 以原样重放修复。
+ *  - #739 的规格 v1.2 实施回写只写了「owner 流 + drain」，漏掉 detached 断连，
+ *    而规格 §5.1 图 1 明定 finalizeTurn 是三条收束路径共用的唯一点 ⇒ 断连轮
+ *    总览停在上一版。本包把触发下沉进 finalizeTurn，杜绝「某条路径漏挂」。
  *
  * ⇒ 本测试两侧同时钉住，缺一不可：
- *   - 静态接线（AST，不认注释/字符串）：import / 构造注入 / 两处 maybeRender /
- *     owner 流 yield / module provide —— 拦「整文件 stale 覆盖」这一事故形态；
- *   - 行为可达：真实调用 out-of-turn 收束路径，断言 maybeRender 被触发、
- *     flag off 不触发、抛错 fail-soft 不冒泡 —— 拦「只剩注释和符号」的假接线。
+ *   - 静态接线（AST，不认注释/字符串）：import / 构造注入 / 触发源唯一且位于
+ *     finalizeTurn / 3 个调用点 / 返回 actions / owner 流 yield 转发 / module provide；
+ *   - 行为可达：真实调用收束路径，断言 maybeRender 被触发并返回 actions、
+ *     flag off 零调用、抛错 fail-soft 不冒泡、duplicate early return 不触发。
  */
 import 'reflect-metadata'
 import { readFileSync, readdirSync } from 'node:fs'
@@ -40,6 +43,37 @@ function walk(node: ts.Node, visit: (n: ts.Node) => void): void {
   node.forEachChild((child) => walk(child, visit))
 }
 
+/** 取指定方法体源码（AST，不受注释/字符串干扰）。 */
+function methodBody(sf: ts.SourceFile, name: string): string {
+  let body = ''
+  walk(sf, (node) => {
+    if (
+      ts.isMethodDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === name &&
+      node.body
+    ) {
+      body = node.body.getText(sf)
+    }
+  })
+  return body
+}
+
+/** AST 计数：真正的 `.maybeRender(` 调用，注释里的同名文字不算。 */
+function countMaybeRenderCalls(sf: ts.SourceFile): number {
+  let n = 0
+  walk(sf, (node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === 'maybeRender'
+    ) {
+      n += 1
+    }
+  })
+  return n
+}
+
 /** 纯文本兜底：确认「全目录只有一份生产 agent.service.ts」的假设没被打破。 */
 function productionServiceFiles(): string[] {
   return readdirSync(HERE).filter(
@@ -54,6 +88,17 @@ type DrainRunner = {
     userId: string | undefined,
     snapshot: OutOfTurnRunSnapshot,
   ): Promise<void>
+}
+
+type FinalizeRunner = {
+  finalizeTurn(
+    sessionId: string,
+    threadId: string,
+    userId: string | undefined,
+    assistantText: string,
+    canvasActions: CanvasAction[],
+    opts: Record<string, unknown>,
+  ): Promise<CanvasAction[]>
 }
 
 function makeService(digest: unknown): AgentService {
@@ -73,13 +118,21 @@ function snapshot(): OutOfTurnRunSnapshot {
   return { runId: '', assistantText: '', canvasActions: [action] }
 }
 
-describe('Canvas Digest 挂载契约', () => {
-  it('agent.service.ts：import / 构造注入 / drain+owner 两处调用 / owner 流 yield 全在位', () => {
+const OPTS = {
+  rewriteCanvasData: false,
+  metadata: { outOfTurn: true },
+  runId: '',
+  sawTerminalEvent: true,
+  runStarted: true,
+}
+
+describe('Canvas Digest 收束契约', () => {
+  it('触发源唯一且落在 finalizeTurn 内；三条路径共用；owner 流只做 yield 转发', () => {
     const sf = parse(SERVICE_FILE)
     let hasImport = false
     let hasInjection = false
-    let ownerYieldBlock = false
-    let maybeRenderCalls = 0
+    let finalizeTurnCalls = 0
+    let ownerYieldForward = false
 
     walk(sf, (node) => {
       if (
@@ -109,30 +162,33 @@ describe('Canvas Digest 挂载契约', () => {
       if (
         ts.isCallExpression(node) &&
         ts.isPropertyAccessExpression(node.expression) &&
-        node.expression.name.text === 'maybeRender'
+        node.expression.name.text === 'finalizeTurn'
       ) {
-        maybeRenderCalls += 1
+        finalizeTurnCalls += 1
       }
-      if (ts.isIfStatement(node)) {
-        const cond = node.expression.getText(sf)
-        const body = node.thenStatement.getText(sf)
+      if (ts.isForOfStatement(node)) {
+        const body = node.getText(sf)
         if (
-          cond.includes('canvasDigest?.isEnabled()') &&
-          cond.includes('canvasActions.length > 0') &&
-          body.includes('maybeRender') &&
-          body.includes('yield')
+          body.includes('digestActions') &&
+          body.includes('yield') &&
+          body.includes('canvas_action')
         ) {
-          ownerYieldBlock = true
+          ownerYieldForward = true
         }
       }
     })
 
-    // owner 流专门判据排在总数前面：删 owner 挂载时要给出「缺 yield 块」的精确信号，
-    // 而不是被「两处调用」的计数断言抢先失败。
+    const finalizeBody = methodBody(sf, 'finalizeTurn')
+    const drainBody = methodBody(sf, 'persistOutOfTurnTurn')
+
     expect(hasImport, '缺 import { CanvasDigestService }').toBe(true)
     expect(hasInjection, '缺构造函数 @Inject(CanvasDigestService)').toBe(true)
-    expect(ownerYieldBlock, 'owner 流缺 maybeRender + yield canvas_action 的挂载块').toBe(true)
-    expect(maybeRenderCalls, 'drain + owner 两处 maybeRender 调用应同时存在').toBe(2)
+    expect(finalizeTurnCalls, 'owner / detached / drain 三条路径必须都经 finalizeTurn').toBe(3)
+    expect(finalizeBody, '唯一触发源必须落在 finalizeTurn 内').toContain('.maybeRender(')
+    expect(drainBody, 'drain 不得再自行外挂 maybeRender').not.toContain('maybeRender')
+    expect(countMaybeRenderCalls(sf), '全文件只允许一处 maybeRender（防再次分散）').toBe(1)
+    expect(finalizeBody, 'finalizeTurn 必须把 actions 返回给 owner 流').toContain('return digestActions')
+    expect(ownerYieldForward, 'owner 流缺 digestActions → yield canvas_action 转发').toBe(true)
   })
 
   it('agent.module.ts 仍 provide CanvasDigestService', () => {
@@ -150,12 +206,16 @@ describe('Canvas Digest 挂载契约', () => {
     expect(provided).toBe(true)
   })
 
-  it('扫全 agent 目录：每份生产 agent.service*.ts 都带两处 maybeRender（防第二份旧文件顶替）', () => {
+  it('扫全 agent 目录：每份生产 agent.service*.ts 都只有唯一触发源（防第二份旧文件顶替）', () => {
     const files = productionServiceFiles()
     expect(files.length, '至少要找到一份生产 agent.service.ts').toBeGreaterThan(0)
     for (const file of files) {
-      const src = readFileSync(join(HERE, file), 'utf8')
-      expect(src.match(/\.maybeRender\(/g)?.length ?? 0, `${file} 的挂载被冲掉了`).toBe(2)
+      const path = join(HERE, file)
+      const sf = parse(path)
+      expect(countMaybeRenderCalls(sf), `${file} 的收束挂载被冲掉或被分散了`).toBe(1)
+      expect(methodBody(sf, 'finalizeTurn'), `${file} 的触发源不在 finalizeTurn 内`).toContain(
+        '.maybeRender(',
+      )
     }
   })
 
@@ -185,5 +245,50 @@ describe('Canvas Digest 挂载契约', () => {
         .persistOutOfTurnTurn('s1', 't1', 'u1', snapshot()),
     ).resolves.toBeUndefined()
     expect(boom).toHaveBeenCalledTimes(1)
+  })
+
+  it('行为：finalizeTurn 返回 digest actions，供 owner 流转成 SSE 帧', async () => {
+    const digestAction: CanvasAction = {
+      type: 'add_node',
+      payload: { id: 'digest-canvas', nodeType: 'text', data: {} },
+    }
+    const maybeRender = vi.fn().mockResolvedValue({
+      nodeId: 'digest-canvas',
+      actions: [digestAction],
+    })
+    const service = makeService({ isEnabled: () => true, maybeRender })
+
+    const result = await (service as unknown as FinalizeRunner).finalizeTurn(
+      's1',
+      't1',
+      'u1',
+      '',
+      [{ type: 'update_node', payload: { id: 'n1', data: {} } } as CanvasAction],
+      OPTS,
+    )
+
+    expect(maybeRender).toHaveBeenCalledTimes(1)
+    expect(result).toEqual([digestAction])
+  })
+
+  it('行为：duplicate runId 的 early return 不触发 digest（规格「finalizeTurn 成功后」）', async () => {
+    const maybeRender = vi.fn().mockResolvedValue({ nodeId: 'digest-canvas', actions: [] })
+    const service = makeService({ isEnabled: () => true, maybeRender })
+    Object.assign(service, {
+      piLogger: { warn: () => {}, log: () => {} },
+      findTurnByRunId: async () => ({ id: 'already-persisted' }),
+    })
+
+    const result = await (service as unknown as FinalizeRunner).finalizeTurn(
+      's1',
+      't1',
+      'u1',
+      '',
+      [{ type: 'update_node', payload: { id: 'n1', data: {} } } as CanvasAction],
+      { ...OPTS, runId: 'duplicate-run' },
+    )
+
+    expect(maybeRender).not.toHaveBeenCalled()
+    expect(result).toEqual([])
   })
 })

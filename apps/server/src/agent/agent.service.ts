@@ -605,17 +605,8 @@ export class AgentService implements OnModuleInit {
       this.piLogger?.log?.(
         `out_of_turn_turn_persisted key=${threadKey} runId=${snapshot.runId} len=${snapshot.assistantText.length}`,
       )
-      // Canvas Digest（drain 路径无流可 yield ⇒ 只落库，实时同步随下一轮/刷新）。
-      if (this.canvasDigest?.isEnabled() && snapshot.canvasActions.length > 0) {
-        await this.canvasDigest
-          .maybeRender({ sessionId, userId, canvasActions: snapshot.canvasActions })
-          .catch((err: unknown) => {
-            this.piLogger?.warn?.(
-              `canvas_digest failed (drain, session=${sessionId}): ${err instanceof Error ? err.message : String(err)}`,
-            )
-            return null
-          })
-      }
+      // Canvas Digest 已在 finalizeTurn 内部（唯一收束点）触发；drain 无流可 yield
+      // ⇒ 只落库，实时同步随下一轮/刷新（规格 v1.2 定稿）。
     } catch (err) {
       this.piLogger?.warn?.(
         `out_of_turn_turn persist failed (key=${threadKey}, runId=${snapshot.runId}): ${
@@ -3871,7 +3862,7 @@ export class AgentService implements OnModuleInit {
           `persist_ordinal_gap key=${sessionKey} runId=${turnRunId ?? 'unknown'} gapFrom=${firstSeq ?? 'unknown'} — 本流从半路接入，账本标 partial（不冒充全量）`,
         )
       }
-      await this.finalizeTurn(sessionId, effectiveThreadId, userId, assistantText, canvasActions, {
+      const digestActions = await this.finalizeTurn(sessionId, effectiveThreadId, userId, assistantText, canvasActions, {
         // Nest internal tools already wrote Session.canvasData; skip re-apply to avoid duplicate add_node
         rewriteCanvasData: false,
         // 退役对齐：老 LangGraph 路径（streamFromRuntime）同样传 deriveLinkedOutputs，
@@ -3900,23 +3891,13 @@ export class AgentService implements OnModuleInit {
       // ⇒ 不能拖慢 run 收尾。自愈的状态下一轮被动态块注入（晚一轮，可接受）。
       void this.reconcileHistoryAfterTurn(client, sessionKey, effectiveThreadId)
 
-      // ── Canvas Digest（spec 2026-11-05-canvas-digest-design，图 1）──
-      // flag on 且本回合有画布动作 ⇒ 回合末产出/翻新「画布总览」节点。
-      // actions **只 yield 不 pushTraceEvent**：实时端即时应用（复用 canvas_action
-      // 通道），executionEvents 零噪音（刷新重放不重复）；刷新端经 persist 落库的
-      // canvasData 恢复。fail-soft S7：digest 失败只 warn，不影响回合收束。
-      if (this.canvasDigest?.isEnabled() && canvasActions.length > 0) {
-        const digestResult = await this.canvasDigest
-          .maybeRender({ sessionId, userId, canvasActions })
-          .catch((err: unknown) => {
-            this.piLogger?.warn?.(
-              `canvas_digest failed (session=${sessionId}): ${err instanceof Error ? err.message : String(err)}`,
-            )
-            return null
-          })
-        for (const action of digestResult?.actions ?? []) {
-          yield { type: 'canvas_action', data: action } as AgentStreamEvent
-        }
+      // ── Canvas Digest 实时上屏（规格 v1.2 定稿）──
+      // 触发已统一下沉到 finalizeTurn（三条收束路径共用的唯一收束点），这里只做
+      // 「把落库产生的 actions 转成 SSE 帧」这一件事：只 yield 不 pushTraceEvent，
+      // executionEvents 零噪音（刷新重放不重复）；detached 断连与 out-of-turn drain
+      // 无流可 yield，落库的 canvasData 由前端刷新恢复。
+      for (const action of digestActions) {
+        yield { type: 'canvas_action', data: action } as AgentStreamEvent
       }
     } else {
       // shadow：事件已全程转发给前端（进度可见），到此为止——同一次 run 只记一本账。
@@ -4162,7 +4143,7 @@ export class AgentService implements OnModuleInit {
        */
       runStarted?: boolean
     },
-  ) {
+  ): Promise<CanvasAction[]> {
     // ── TURN-IDENTITY PR2：先到先得的唯一性 ──
     // 上游 409 判定（PR1）已挡掉绝大多数重复写者，但**挡不住全部**：断线重连补发、
     // generation-recovery 的 drain、以及任何未来的第三个写者都可能带着同一个
@@ -4171,7 +4152,7 @@ export class AgentService implements OnModuleInit {
       this.piLogger.warn(
         `duplicate_turn_persist blocked (thread=${threadId}, runId=${opts.runId}) — 已有 owner 记账，本条 no-op`,
       )
-      return
+      return []
     }
     // D2（Task 2）：落库判据**不得依赖「本流是否见到了 agent_end」**。
     //
@@ -4235,7 +4216,7 @@ export class AgentService implements OnModuleInit {
           this.piLogger.warn(
             `duplicate_turn_persist blocked by unique index (thread=${threadId}, runId=${opts.runId}) — 本条 no-op`,
           )
-          return
+          return []
         }
         throw err
       }
@@ -4245,6 +4226,8 @@ export class AgentService implements OnModuleInit {
       })
     }
 
+    // 返回值 = 本回合系统管道产生的画布动作，供 owner 流转成 SSE 帧实时上屏。
+    let digestActions: CanvasAction[] = []
     if (canvasActions.length > 0 && userId) {
       await this.persistCanvasEntities(sessionId, canvasActions)
 
@@ -4261,7 +4244,30 @@ export class AgentService implements OnModuleInit {
           })
         }
       }
+
+      // ── Canvas Digest：唯一触发源（spec 2026-11-05-canvas-digest-design §5.1 图 1）──
+      // finalizeTurn 是既有回合收束的唯一点，三条调用路径在此共用同一管道：
+      //   owner 同步 (:3874) / detached 断连 (:3538, void fire-and-forget) /
+      //   out-of-turn drain (:595)。⇒ 不再在调用点各处挂 maybeRender，避免
+      //   「整文件 stale 覆盖冲掉挂载」与「某条路径漏挂」两类复发。
+      // 位置约束：必须在画布实体/画布态写完之后 ⇒ maybeRender 读到最新态；
+      // 且只有「无 early return、无抛错」的成功收束才会走到这里（规格图 1）。
+      // S7 fail-soft：digest 异常只 warn 并返回空数组，不影响回合收束；
+      // detached 的 void 链因此不会 unhandled rejection。
+      const digest = this.canvasDigest
+      if (digest?.isEnabled()) {
+        const digestResult = await digest
+          .maybeRender({ sessionId, userId, canvasActions })
+          .catch((err: unknown) => {
+            this.piLogger?.warn?.(
+              `canvas_digest failed (session=${sessionId}): ${err instanceof Error ? err.message : String(err)}`,
+            )
+            return null
+          })
+        digestActions = digestResult?.actions ?? []
+      }
     }
+    return digestActions
   }
 
   private async persistCanvasEntities(sessionId: string, actions: CanvasAction[]) {

@@ -11,7 +11,8 @@
 
 **修订记录**：
 - v1（2026-11-05）：用户真机体验 html-craft 富版图鉴后提议「每轮固定输出」；评审裁决系统管道形态，P0-P2 分期定稿。
-- v1.2（2026-11-05，实施回写）：① D2 注「复用 controller 层 canvas_action 广播」系误设（取证无 controller emit 点）⇒ 定稿 owner 流 finalizeTurn 后 yield（不进 executionEvents 零噪音），drain 路径只落库；② §5.2 受信级 CSP 以 `buildTrustedNodeCsp(origin)` 函数形态落地（srcdoc opaque origin 下 'self' 不可用，静态常量无法携带 origin），且新增 media-src 段（video tile 用 `<video>` 首帧而非 img）；③ D4 时长字段实证为 `data.mediaInfo.output.durationSec`（秒），非 durationMs；④ D9 文本收录判据收窄为 title/content 任一存在（与「未命名文档」兜底互斥成死判据的修正）。
+- v1.3（2026-11-07，收束点归位）：① 的「owner 流 + drain 两处挂载」裁决**漏掉 detached 断连路径**，而 §5.1 图 1 / D6 明定三条收束路径共用 finalizeTurn ⇒ 断连轮 `turnSettled` 置 true 后 owner 块被跳过，总览停在上一版。修复为 **触发下沉进 `finalizeTurn` 内部（唯一触发源）**，返回值 `CanvasAction[]` 交 owner 流 yield 上屏；detached / out-of-turn drain 无流可 yield，只落库，由前端刷新恢复。② `finalizeTurn` 的 duplicate runId early return 不触发 digest（图 1「成功后挂载」）。③ 触发必须在画布实体/画布态写完之后，保证快照最新。
+- v1.2（2026-11-05，实施回写，① 已被 v1.3 修正）：① D2 注「复用 controller 层 canvas_action 广播」系误设（取证无 controller emit 点）⇒ 定稿 owner 流 finalizeTurn 后 yield（不进 executionEvents 零噪音），drain 路径只落库；② §5.2 受信级 CSP 以 `buildTrustedNodeCsp(origin)` 函数形态落地（srcdoc opaque origin 下 'self' 不可用，静态常量无法携带 origin），且新增 media-src 段（video tile 用 `<video>` 首帧而非 img）；③ D4 时长字段实证为 `data.mediaInfo.output.durationSec`（秒），非 durationMs；④ D9 文本收录判据收窄为 title/content 任一存在（与「未命名文档」兜底互斥成死判据的修正）。
 - v1.1（2026-11-05，自审核）：发现 2 个 P0 级硬伤（XSS 转义缺失 D7、相对 URL 在 srcdoc 必裂 D8）+ 交付质量补强（trusted CSP 前移进 P0、模板信息架构 §6.0 定稿、有正据才动 D9、双主题策略、「轮次号」改版本+时间）。
 
 ## 0. 配图索引
@@ -52,7 +53,7 @@
 ### 4.1 做（P0）
 
 - Nest `canvas-digest` 模块：变更集提取 → 画布态快照 → 模板渲染（纯函数）→ 系统写入。
-- `finalizeTurn` 成功后挂载（两处调用点共用收束路径），flag `CANVAS_DIGEST`（env `=== 'on'`，同 `TEXT_TOKEN_BILLING` 模式；**定稿默认 on**——digest 由数据派生无破坏面）。
+- `finalizeTurn` 成功后挂载（**三条收束路径共用**：owner 同步 / detached 断连 / out-of-turn drain；触发源唯一，见 v1.3），flag `CANVAS_DIGEST`（env `=== 'on'`，同 `TEXT_TOKEN_BILLING` 模式；**定稿默认 on**——digest 由数据派生无破坏面）。
 - **trusted CSP 分级**（v1.1 自审前移）：`htmlNodePreviewContract.ts` 新增 `HTML_NODE_CSP_TRUSTED` + `HtmlNodePreview` 按 `data.source==='system-digest'` 分流——**真缩略图是 P0 交付物**（用户核心诉求「图文并茂一览可见」，类型图标版不达标）。
 - web 交付条接入（digest tile）+ DevTimelinePreview 样例 + `digest_open` 埋点（复用 delivery metrics 通道，E2-b 同款准入判据）。
 
@@ -67,7 +68,7 @@
 
 ```mermaid
 flowchart TD
-  A["finalizeTurn 成功 两处调用点共用"] --> B{"flag CANVAS_DIGEST on ?"}
+  A["finalizeTurn 成功 三条收束路径共用唯一触发源"] --> B{"flag CANVAS_DIGEST on ?"}
   B -->|否| Z["零行为"]
   B -->|是| C{"本回合 canvasActions 非空 ?"}
   C -->|否| Z
@@ -81,7 +82,9 @@ flowchart TD
   I --> J["E2-a 交付条出现总览 tile 一跳 viewer"]
 ```
 
-*图 1 · Canvas Digest 回合末管道：finalizeTurn 是既有回合收束的唯一点（detached :2325 / 同步 :2611 两处调用），变更集 canvasActions 现成累积，零额外扫描；渲染失败 fail-soft（warn 日志，不影响回合落库）。*
+*图 1 · Canvas Digest 回合末管道：finalizeTurn 是既有回合收束的唯一点（**owner 同步 / detached 断连 / out-of-turn drain 三处调用共用**），变更集 canvasActions 现成累积，零额外扫描；渲染失败 fail-soft（warn 日志，不影响回合落库）。*
+
+*v1.3 实施注：触发点唯一地落在 `finalizeTurn` 内部、且位于画布实体/画布态写入之后；`finalizeTurn` 返回 `CanvasAction[]`，owner 流只负责把 actions 转成 `canvas_action` SSE 帧（不进 executionEvents，刷新重放不重复）。detached（fire-and-forget `void` 链）与 out-of-turn drain 无流可 yield ⇒ 只落库，前端经 `Session.canvasData` 刷新恢复；detached 的 digest 异常自带 catch，不产生 unhandled rejection。duplicate runId 的 early return 不走此管道。*
 
 ### 5.2 CSP 分级（图 2，v1.1 前移进 P0）
 
