@@ -72,7 +72,7 @@ flowchart LR
 | `vue-tsc -b` 类型门禁 | 逐刀 EXIT=0 | 满足 |
 | 源级 ratchet + 变异测试 | 逐刀有 ratchet；零行为变更靠逐字 diff 证伪 | 满足 |
 | 部署 | **每次 push master 自动部署**，#776 后 `Deploy web to CVM` success，CVM `/opt/lnkpi/web/dist/index.html` 时间 `2026-11-08 09:42:01 +0800` 对齐合并 | 已发生，但此前被误记为「部署暂缓」 |
-| 生产业务链路验收 | workflow 只验「nginx 返回 html + `/api` 代理」；`/api/health` 200；**无会话页 / SSE / 画布 / 分享的行为级取证** | **未满足** |
+| 生产业务链路验收 | workflow 只验「nginx 返回 html + `/api` 代理」；`/api/health` 200；结项时**无会话页 / SSE / 画布 / 分享的行为级取证** | 结项时**未满足**；2026-11-08 已由 `docs/ops/2026-11-08-phase3-prod-smoke.md` 补齐五层行为取证，十一刀生产行为回归未发现；另列既有缺陷 F1（`follow-up-tail.ts` 未处理 `AbortError`）未闭环，按 `delivery.md` 纪律不宣告 ALL_PASS |
 
 **纠偏 1 —— 「部署暂缓」从未发生。** `deploy.yml` 由 `push master` 自动触发，paths 白名单含 `apps/web/**`。前 11 刀每次合并都已上生产。后续任何规格不得再写「部署暂缓」；纯文档 PR 因 paths 白名单不含 `docs/**` 才不触发部署。
 
@@ -97,7 +97,7 @@ flowchart LR
 
 | 风险 | 现状 | 承接方 |
 | --- | --- | --- |
-| 11 刀已上线但无行为级生产验收 | 纯搬运重构的字符串全不变，bundle 指纹无法区分抽前抽后；唯一有效验收是行为冒烟 | Phase 4 P0（会话页不白屏、SSE 异步受理须轮询到 owner 流 finalize、画布、分享） |
+| 11 刀已上线但无行为级生产验收 | 纯搬运重构的字符串全不变，bundle 指纹无法区分抽前抽后；唯一有效验收是行为冒烟 | Phase 4 P0（会话页不白屏、SSE 异步受理须轮询到 owner 流 finalize、画布、分享）—— **已执行，结果见 `docs/ops/2026-11-08-phase3-prod-smoke.md`** |
 | 本地工作树大面积漂移 | 已同步 1 个陈旧测试文件，`apps/web` 余 3 个漂移与本模块无关 | Phase 4 P0 / P4 门禁化 |
 | `defineExpose` 零源级覆盖 | 11 项对外契约无 ratchet | Phase 4 P4 |
 | 注入依赖数 / 回环数无门禁 | 只有人工统计，不可失败 | Phase 4 P4（接进已有 required check，不新建 job） |
