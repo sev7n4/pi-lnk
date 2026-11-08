@@ -45,6 +45,7 @@ import {
 } from "./compaction-check.js";
 import {
 	buildRetentionInstructions,
+	mergeConfirmedPreferences,
 	type RetentionState,
 } from "./compaction-retention.js";
 import type { Metrics, PromptInfo } from "./metrics.js";
@@ -627,6 +628,18 @@ interface SessionEntry {
 	 * 子 run 的 todo_write 绝不落到主会话共享键上（fork 隔离，spec §3.6）。
 	 */
 	storeScopeKey: string;
+	/**
+	 * P2：steer/followUp 入队时间戳（entryId → enqueue ms）。
+	 *
+	 * 用于 `drainQueued` 新鲜度判定：入队超 `config.queueFreshnessMs` 仍滞留队列的指令，
+	 * 到 drain 时上下文早已漂移 ⇒ 按过期丢弃而非静默注入。消费/撤回即清理，避免无限增长。
+	 */
+	queuedEnqueueAt: Map<string, number>;
+	/**
+	 * P2：本会话内被新鲜度门禁丢弃的过期 steer/followUp 留痕（observability，不落盘）。
+	 * 运维排障可据此答「用户那条旧指令为什么没被执行」——它确实被显式丢弃了。
+	 */
+	staleDropped: Array<{ entryId: string; text: string; enqueuedAt: number; droppedAt: number }>;
 }
 
 const BUFFER_LIMIT = 500;
@@ -1332,6 +1345,8 @@ export class SessionManager {
 			// toolContext.sessionId 直接覆写主会话的 C1 清单，fork 隔离被击穿。
 			// canvasSessionId 本身保留：画布读工具（get_canvas_summary 等）仍靠它查 Nest。
 			storeScopeKey: opts.subagentTools ? key : (opts.canvasSessionId ?? key),
+		queuedEnqueueAt: new Map(),
+		staleDropped: [],
 			turn: normalizeTurnContext({
 				attachments: opts.attachments,
 				mentionedKeys: opts.mentionedKeys,
@@ -1499,7 +1514,13 @@ export class SessionManager {
 					const customInstructions =
 						this.config.compactionRetention === false
 							? undefined
-							: `${COMPACTION_RETENTION_INSTRUCTIONS}\n\n${buildRetentionInstructions(entry.turn.retention)}`;
+							: `${COMPACTION_RETENTION_INSTRUCTIONS}\n\n${buildRetentionInstructions({
+							...entry.turn.retention,
+							confirmedPreferences: mergeConfirmedPreferences(
+								entry.turn.retention?.confirmedPreferences,
+								this.pendingRegistry?.getConfirmedPreferences(entry.canvasSessionId ?? entry.id),
+							),
+						})}`;
 					const result = await compact(
 						annotated as never,
 						entry.models,
@@ -2674,6 +2695,7 @@ export class SessionManager {
 		const res = await lane.steer(payload, directImages, this.context);
 		if (!res.ok) throw new QueueRejectedError(entry.id, `steer: ${describeQueueError(res.error)}`);
 		if (opts?.turnContext) this.setTurnContext(threadKey, opts.turnContext);
+		entry.queuedEnqueueAt.set(res.value.entryId, Date.now());
 		entry.lastActivityAt = Date.now();
 		// idle 时入队 vendor 不会自己跑（没有 terminal drain），这里当场兜底开一轮。
 		// run 在跑时不排空：该轮自己的 checkpoint/finish 边界会消费，抢 accept 只会撞 busy。
@@ -2745,6 +2767,7 @@ export class SessionManager {
 		const res = await lane.followUp(payload, directImages, this.context);
 		if (!res.ok) throw new QueueRejectedError(entry.id, `followUp: ${describeQueueError(res.error)}`);
 		if (opts?.turnContext) this.setTurnContext(threadKey, opts.turnContext);
+		entry.queuedEnqueueAt.set(res.value.entryId, Date.now());
 		entry.lastActivityAt = Date.now();
 		if (!entry.prompting) void this.drainQueued(entry, lane);
 		return { queued: true, entryId: res.value.entryId };
@@ -2773,26 +2796,58 @@ export class SessionManager {
 		if (entry.compacting) return;
 		const items = await this.queuedTriggerItems(lane);
 		if (items.length === 0) return; // 没有可排空的尾随指令，保留积压等下一次时机。
+
+		// 兜底清理：消费/撤回后 lane 已无此 entryId 的残留 key，避免 queuedEnqueueAt 无限增长。
+		const liveIds = new Set(items.map((i) => i.entryId));
+		for (const k of entry.queuedEnqueueAt.keys()) {
+			if (!liveIds.has(k)) entry.queuedEnqueueAt.delete(k);
+		}
+
+		// P2：新鲜度门禁——steer/followUp 入队超 queueFreshnessMs 仍滞留队列，说明 run 卡了很久
+		// （典型 ask_user 超时堆叠）、上下文早已漂移；到 drain 时**绝不静默注入**，改为取消移除 +
+		// 记录，让用户重新发指令（治理「23min 前发的 execute 被静默消费」）。
+		const now = Date.now();
+		const freshMs = this.config.queueFreshnessMs ?? 600_000;
+		const fresh: Array<{ entryId: string; kind: string; text: string }> = [];
+		for (const it of items) {
+			const enq = entry.queuedEnqueueAt.get(it.entryId);
+			if (enq !== undefined && now - enq > freshMs) {
+				try {
+					await lane.cancelQueued(it.entryId, this.context);
+				} catch {
+					/* 已被消费则忽略 */
+				}
+				entry.queuedEnqueueAt.delete(it.entryId);
+				entry.staleDropped.push({ entryId: it.entryId, text: it.text, enqueuedAt: enq, droppedAt: now });
+				const kind = it.kind === "steer" ? "steer" : it.kind === "followUp" ? "followUp" : "queued";
+				this.metrics?.observeQueueOp("drain", kind, "stale_dropped");
+			} else {
+				fresh.push(it);
+			}
+		}
+		if (fresh.length === 0) return; // 全部过期丢弃：无需开轮，积压已清。
+
 		entry.draining = true;
 		try {
 			// 撤回已入队项，避免「prompt 文案 + inbox 捕获」双发同一句。
-			for (const it of items) {
+			for (const it of fresh) {
 				try {
 					await lane.cancelQueued(it.entryId, this.context);
 				} catch {
 					/* 已被消费则忽略 */
 				}
 			}
-			const text = items.map((i) => i.text).join("\n");
+			const text = fresh.map((i) => i.text).join("\n");
 			const res = await lane.prompt(text, undefined, this.context);
 			if (res.ok) {
 				entry.queued.clear();
+				for (const it of fresh) entry.queuedEnqueueAt.delete(it.entryId);
 				return;
 			}
 			// 仍忙（压缩在途 / 别的 operation）：把文案补回队列，等下一次时机。
 			const msg = describeQueueError(res.error);
 			if (/busy|already has an active operation/i.test(msg)) {
-				for (const it of items) {
+				for (const it of fresh) {
 					try {
 						if (it.kind === "steer") await lane.steer(it.text, undefined, this.context);
 						else await lane.followUp(it.text, undefined, this.context);
@@ -2958,7 +3013,13 @@ export class SessionManager {
 				this.config.compactionRetention === false
 					? undefined
 					: {
-							customInstructions: `${COMPACTION_RETENTION_INSTRUCTIONS}\n\n${buildRetentionInstructions(entry.turn.retention)}`,
+							customInstructions: `${COMPACTION_RETENTION_INSTRUCTIONS}\n\n${buildRetentionInstructions({
+							...entry.turn.retention,
+							confirmedPreferences: mergeConfirmedPreferences(
+								entry.turn.retention?.confirmedPreferences,
+								this.pendingRegistry?.getConfirmedPreferences(entry.canvasSessionId ?? entry.id),
+							),
+						})}`,
 						};
 			const res = await lane.compact(retention, context);
 			if (res.ok) return undefined; // ok 由事件计，不得在此重复计数

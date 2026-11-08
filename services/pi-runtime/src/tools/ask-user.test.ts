@@ -14,6 +14,22 @@ function lastText(result: { content: Array<{ type: string; text?: string }> }): 
 	return block.text;
 }
 
+describe("ask_user 工具描述：单回合只调一次 / 不串行重发（P1-c，2026-11-08 根因修复）", () => {
+	it("描述明确约束：同一回合只允许调用一次 ask_user，禁止连续多次逐张发卡", () => {
+		const [tool] = createAskUserTools(new PendingToolRegistry());
+		const desc = (tool as unknown as { description: string }).description;
+		assert.ok(desc.includes("同一回合只允许调用一次 ask_user"), "必须约束单回合只调一次");
+		assert.ok(desc.includes("禁止在同一回合内连续多次调用 ask_user"), "必须禁止串行重发");
+		assert.ok(desc.includes("合并进这一张卡片"), "必须指引合并到同一张卡片");
+	});
+	it("描述明确约束：已在「用户已确认的偏好」里的维度不得再问", () => {
+		const [tool] = createAskUserTools(new PendingToolRegistry());
+		const desc = (tool as unknown as { description: string }).description;
+		assert.ok(desc.includes("用户已确认的偏好"), "必须引用 confirmedPreferences 去重维度");
+		assert.ok(desc.includes("不得再问"), "必须约束已确认维度不再问");
+	});
+});
+
 describe("ask_user 阻塞分支（B-1/B-5）", () => {
 	it("开关缺省开 + registry 注入 → 等待 answer 后同 promise 返回答案", async () => {
 		const reg = new PendingToolRegistry();

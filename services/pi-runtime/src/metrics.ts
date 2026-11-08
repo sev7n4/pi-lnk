@@ -314,11 +314,13 @@ export class Metrics {
 	 *   这个值高说明「放弃」按钮点得太晚，是 UX 问题而非故障）
 	 * - `cancel`  + not_found       = entryId 不存在（lane 被回收 / 进程重启）
 	 * - `abort`   + recovered       = abort 把队列内容吐回给上层（否则用户消息静默消失）
+	 * - `drain`   + stale_dropped   = P2 新鲜度门禁：入队超 `queueFreshnessMs` 仍滞留队列的
+	 *    steer/followUp 被判定过期、取消且不再注入（杜绝 23min 陈旧指令被静默消费）
 	 */
 	observeQueueOp(
 		op: "enqueue" | "drain" | "cancel" | "abort",
 		kind: "steer" | "followUp" | "queued",
-		outcome: "ok" | "rejected" | "busy" | "empty" | "cancelled" | "already_consumed" | "not_found" | "recovered",
+		outcome: "ok" | "rejected" | "busy" | "empty" | "cancelled" | "already_consumed" | "not_found" | "recovered" | "stale_dropped",
 	): void {
 		const key = `${op}|${kind}|${outcome}`;
 		this.queueOps.set(key, (this.queueOps.get(key) ?? 0) + 1);

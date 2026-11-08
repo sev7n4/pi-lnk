@@ -84,8 +84,12 @@ env:
   # B-1 阻塞式确认工具（ask_user / propose_generation）的等待上限。
   #   代码缺省 300000（5min，2026-10-01 由 30min 下调：30min 在 UI 上就是「生成回复中」
   #   无限转圈，用户判定卡死）。超时不是失败——工具以带 status 的正常值交还，模型自主续行。
+  #   2026-11-08 根因修复（P1-a）：生产实证单 run 内串行堆叠 4 张确认卡、各等满超时 =
+  #   20min 死挂（假活跃 0 积分）。降到 120000（2min）封顶最坏 4×2min=8min；用户在 2min
+  #   内点选足够，超时则按默认自主续行（非失败）。⚠️ 仍需配合 P1-c（单回合只调一次 ask_user）
+  #   与 P1-b（confirmedPreferences 跨轮不去重）才能根治，配置只是兜底上限。
   #   ⚠️ 数字型 env 一律 --set-string，禁用 --set（科学计数法事故）。
-  ASK_USER_TIMEOUT_MS: "300000"
+  ASK_USER_TIMEOUT_MS: "120000"
   # 阻塞开关缺省即 true（代码默认），显式声明只为部署面可见可调；off = 退回非阻塞 v1 行为。
   ASK_USER_BLOCKING: "true"
 

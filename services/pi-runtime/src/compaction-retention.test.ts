@@ -2,6 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
 	buildRetentionInstructions,
+	mergeConfirmedPreferences,
 	RETENTION_INSTRUCTIONS_VERSION,
 } from "./compaction-retention.js";
 
@@ -78,5 +79,33 @@ describe("buildRetentionInstructions（压缩保留段文本生成）", () => {
 		});
 		assert.ok(!text.includes("偏好39"));
 		assert.match(text, /还有 \d+ 条/);
+	});
+});
+
+describe("mergeConfirmedPreferences（P1-b：Nest 逐轮给的 + pi-runtime 本地累积 合并去重保序）", () => {
+	it("双方为空 → 空数组（与 undefined 等价，保留段退化为通用兜底，无回归）", () => {
+		assert.deepEqual(mergeConfirmedPreferences(undefined, undefined), []);
+		assert.deepEqual(mergeConfirmedPreferences([], []), []);
+	});
+
+	it("只 pi-runtime 累积有值时，仅保留累积项", () => {
+		assert.deepEqual(mergeConfirmedPreferences(undefined, ["画风: 水彩"]), ["画风: 水彩"]);
+		assert.deepEqual(mergeConfirmedPreferences([], ["画风: 水彩", "集数: 12集"]), ["画风: 水彩", "集数: 12集"]);
+	});
+
+	it("Nest 与本地的去重保序：本地重复 Nest 项不再堆叠，插入序保持", () => {
+		assert.deepEqual(
+			mergeConfirmedPreferences(["画风: 水彩"], ["画风: 水彩", "集数: 12集"]),
+			["画风: 水彩", "集数: 12集"],
+		);
+	});
+
+	it("同维度改答案：Nest 给旧值、本地给新值 → 单条且为新值（按 Set 去重后顺序以首次出现为准）", () => {
+		// 实际渲染中本地累积是权威源，Nest 多为空；这里验证「重复串不堆叠」而非「值被覆盖」，
+		// 真正的「答案覆盖」由 PendingToolRegistry 按 id 覆盖保证（见 pending-registry 测试）。
+		assert.deepEqual(mergeConfirmedPreferences(["画风: 油画"], ["画风: 水彩"]), [
+			"画风: 油画",
+			"画风: 水彩",
+		]);
 	});
 });
