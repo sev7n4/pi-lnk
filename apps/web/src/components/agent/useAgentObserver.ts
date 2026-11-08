@@ -166,9 +166,13 @@ function finishOwnTurnViaObserver(): void {
   mainTurnSuspended.value = false
   // 与 off 模式 finally 同口径：挂起回合不是「无文本回复」，补句只对普通空回合
   const last = agent.messages[agent.messages.length - 1]
+  // ⭐ P0（fix/observer-refusal-exempt）：发言被拒（turnRefusal≠null，如 steer 并入在跑
+  // run）时，正确的「已并入进行中任务」callout 已承载反馈，此处绝不再补误导的「无文本回复」。
+  // 否则用户会同时看到两条互相矛盾的文案（产品/架构诊断结论：前端反馈机制建成却未被兜底路径消费）。
   if (
     !runCancelled.value &&
     !wasSuspended &&
+    !agent.turnRefusal &&
     last?.role === 'assistant' &&
     !last.content.trim()
   ) {

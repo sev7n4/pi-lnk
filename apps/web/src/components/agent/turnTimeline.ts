@@ -705,8 +705,13 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
             })
           }
         }
+        // ⭐ P3（fix/observer-refusal-exempt）：resolved 必须按 callId 精确翻匹配的 question
+        // part，与上方 proposal 的 680 行三态条件保持一致。否则多张 ask_user 卡（如生产
+        // cmw7kmv3x01q4r401i7ir33b4 出现 4 张）会被一律翻成第一张，其余卡停留 pending_answer
+        // 误显。callId 缺失（legacy）回落首张以兼容。
         const q = timeline.parts.find(
-          (p): p is Extract<TimelinePart, { kind: 'question' }> => p.kind === 'question',
+          (p): p is Extract<TimelinePart, { kind: 'question' }> =>
+            p.kind === 'question' && (!d.callId || !p.callId || p.callId === d.callId),
         )
         if (q) q.status = 'answered'
         const notice = timeline.parts.find(

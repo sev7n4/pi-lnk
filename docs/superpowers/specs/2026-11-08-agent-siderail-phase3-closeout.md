@@ -98,7 +98,7 @@ flowchart LR
 | 风险 | 现状 | 承接方 |
 | --- | --- | --- |
 | 11 刀已上线但无行为级生产验收 | 纯搬运重构的字符串全不变，bundle 指纹无法区分抽前抽后；唯一有效验收是行为冒烟 | Phase 4 P0（会话页不白屏、SSE 异步受理须轮询到 owner 流 finalize、画布、分享）—— **已执行，结果见 `docs/ops/2026-11-08-phase3-prod-smoke.md`** |
-| 本地工作树大面积漂移 | 已同步 1 个陈旧测试文件，`apps/web` 余 3 个漂移与本模块无关 | Phase 4 P0 / P4 门禁化 |
+| 本地工作树大面积漂移 | 已同步 1 个陈旧测试文件，`apps/web` 余 3 个漂移与本模块无关；**2026-11-08 追加**：`apps/web` 为符号链接指向 `/tmp` 非 git 副本，已验证但未提交的 P0+P3 修复已由插队刀以 true master blob 为基固化（见 `docs/superpowers/specs/2026-11-08-agent-observer-refusal-exempt-design.md` §3.2 / §11） | Phase 4 P0 / P4 门禁化 |
 | `defineExpose` 零源级覆盖 | 11 项对外契约无 ratchet | Phase 4 P4 —— **已由 2026-11-08 P4 门禁化独立刀承接到一处类别化全覆盖 ratchet**（`docs/superpowers/specs/2026-11-08-agent-siderail-p4-gates-design.md`） |
 | 注入依赖数 / 回环数无门禁 | 只有人工统计，不可失败 | Phase 4 P4（接进已有 required check，不新建 job）—— **已承接**；机器精算基线见下方修订说明 |
 | 陈旧 ratchet（`waitSettle`）曾产生恒红假象 | 已对齐 master；同类问题可能再发 | Phase 4 P4 —— **已由 ratchet 健康度自检承接** |

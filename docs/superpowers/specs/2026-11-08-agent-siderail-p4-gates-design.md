@@ -217,6 +217,7 @@ G2 覆盖不到的 4 个注入点（`useAgentStream` / `useAgentDock` / `useUtte
 
 ## 12. 后续包 / 路线图（本包外的东西也登记）
 
+- ⭐ **插队刀（2026-11-08，优先级高于 #4）**：P0+P3 产品修复固化 —— 两处空回合兜底豁免 `agent.turnRefusal`、`waiting_user` resolved 按 `callId` 精确翻 question part。起因是生产会话 `cmw7kmv3x01q4r401i7ir33b4` 的 PM/架构诊断，且已验证改动仍落在 `/tmp` 非 git 副本、随时可能丢失；规格与计划见 `docs/superpowers/specs/2026-11-08-agent-observer-refusal-exempt-design.md`。**#4 顺延到本刀合并后，不取消、仍不挂 required check。**
 - **#4 CDP 五层冒烟脚本化**：把 `/tmp/p0_probe.py` / `p0_cdp.mjs` / `p0_open_rail.mjs` / `p0_send.mjs` 参数化落库为 ops runbook；生产地址、容器名、端口、JWT 来源全部走环境变量；不挂 required check。
 - **原子 staging 发布**：发布目录 staged 构建 + 原子切换（#2 已显式排除）。
 - **上传字节数写入 step summary**：#2 的后续观测项。

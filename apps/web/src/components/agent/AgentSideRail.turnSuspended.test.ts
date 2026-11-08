@@ -78,6 +78,15 @@ describe('AgentSideRail turn_suspended 挂起契约（挂起 ≠ 断链）', () 
     )
   })
 
+  it('finally 的「本轮无文本回复」兜底必须豁免发言被拒（P0：turnRefusal≠null 时不补误导文案）', () => {
+    // 诊断结论：前端「已并入进行中任务」callout（agent.turnRefusal）已承载 steer 并入反馈，
+    // 此处若仍补「本轮无文本回复」会与正确 callout 自相矛盾。守卫须落在文案之前。
+    const anchor = sfcCode.indexOf('（本轮无文本回复')
+    expect(anchor, '必须能定位空回合兜底文案').toBeGreaterThan(-1)
+    const window = sfcCode.slice(Math.max(0, anchor - 600), anchor)
+    expect(window, '空回合兜底必须带 !agent.turnRefusal 门禁').toContain('!agent.turnRefusal')
+  })
+
   it('applyTextDelta 旁听采纳：挂起回合的续跑文本必须采纳原 assistant 消息（禁止影子气泡）', () => {
     const block = fnBlock(obsCode, 'function applyTextDelta(text: string)')
     expect(block, '必须能定位 applyTextDelta').toContain('observerTurnActive.value = true')
