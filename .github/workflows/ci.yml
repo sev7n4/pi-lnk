@@ -54,6 +54,9 @@ jobs:
       - name: Verify markdown links (no broken relative links)
         run: pnpm verify-links
 
+      - name: Verify web dist upload contract
+        run: pnpm verify-web-upload
+
       - name: Spec figures summary
         if: always()
         run: |

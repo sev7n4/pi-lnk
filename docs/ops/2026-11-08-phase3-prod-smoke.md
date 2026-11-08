@@ -124,7 +124,7 @@ Uncaught (in promise) AbortError: signal is aborted without reason
 
 ## 4. 其它排除项与残留风险
 
-- **部署链**：`Deploy to Tencent Cloud` run `42442096327` 因 `Upload web dist and nginx config` 的 runner→CVM scp 挂死被取消；生产 dist 完好（首页/入口 JS/health 全 200）。不为零行为变更刀做高风险手动兜底；新 dist 并入下一行为变更窗口。此 stall 为持久故障，建议单独立项修 workflow（retry / rsync / 改走本机兜底纪律）。
+- **部署链**：`Deploy to Tencent Cloud` run `42442096327` 因 `Upload web dist and nginx config` 的 runner→CVM scp 在 8.07 分钟时被人工取消；生产 dist 完好（首页/入口 JS/health 全 200）。不为零行为变更刀做高风险手动兜底；新 dist 并入下一行为变更窗口。**结论修订（后续取证，不改写当时判断）**：run `42453812598` 证明同一上传步骤在 15.05 分钟后成功、远端 tgz 字节单调增长 ⇒ 不是持久挂死，而是 16–19 MB 全量载荷在 18–87 KB/s 链路上过慢，且 65.3% 是从不变化的登录动画 mp4；取消属过早但只是运维规避。治理见 `docs/superpowers/specs/2026-11-08-web-dist-incremental-upload-design.md`（差量同步 + 清单校验 + 一键回退），撤销「retry / 改走本机兜底」方向。
 - **本地工作树漂移**：`apps/web` 仍有 3 个 canvas 文件漂移（既有、非本轮引入）；server/docs 侧 721 个漂移未处理。本次全部生产结论均以 `gh api` master 与生产实测为准，未采信本地 controller。
 - **验收覆盖边界**：本次验证的是生产 #776（11 刀）。P1 本刀 #777 未上线，其零行为变更由提交期的「逐字 diff + 4 类门禁 + 5 条变异」证明，非本轮生产取证范围。
 - **未覆盖**：真机移动端、多端并发一致性、长会话 pixelRatio/导出长图、付费任务确认门。这些不是 Phase 3 重构的接线范围。
@@ -146,4 +146,4 @@ Uncaught (in promise) AbortError: signal is aborted without reason
 
 1. **Phase 3 十一刀的生产行为回归：未发现**。会话页（含收起/展开两态）、消息气泡操作簇、composer 发送、SSE 异步受理与常驻 owner 流、Thread/Queue/Observer 接线、画布、分享静态页，五层行为判据全部通过。
 2. **结项规格的 P0 缺口由本记录补齐**，当时保留 F1 为未闭环项、按项目纪律不写 `ALL_PASS`；该历史结论保持原貌。F1 后由 2026-11-08 F1 独立刀修复（见 §3「修复落地」），状态演进以修复规格与实施计划为准，不追溯改写本次验收结论。
-3. **下一优先级（F1 已开刀）**：F1 修复（行为级 RED→PASS 独立刀，**进行中**） > 部署链 scp stall 治理 > P4 门禁化（把 CDP 冒烟与注入依赖/回环数做成可失败门禁）。冻结边界不变：`sendMessage` / `handleEvent` / `canvas_command` / `defineExpose` 11 项契约。
+3. **下一优先级（本轮收尾时的排序）**：F1 修复（行为级 RED→PASS 独立刀，**已完成并生产闭环**，见 §3） > 部署链治理（**已开刀 #2**，定量根因与方案见 `docs/superpowers/specs/2026-11-08-web-dist-incremental-upload-design.md`） > P4 门禁化（把 CDP 冒烟与注入依赖/回环数做成可失败门禁）。冻结边界不变：`sendMessage` / `handleEvent` / `canvas_command` / `defineExpose` 11 项契约。

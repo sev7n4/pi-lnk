@@ -185,7 +185,7 @@ flowchart TD
 
 ## 12. 后续包 / 路线图（本包外的东西也登记）
 
-1. **部署链治理**：runner→CVM scp 持久挂死已两次复发，需单独立项（retry / rsync / 固化的 TRUE MASTER 兜底纪律）。
+1. **部署链治理**：已由独立刀 #2 承接，见 `docs/superpowers/specs/2026-11-08-web-dist-incremental-upload-design.md` 与其实施计划。**本条原写「scp 持久挂死 / retry 方向」已被定量证据修订并撤销**：run `42453812598` 的上传步骤 15.05 分钟后成功，远端 tgz 字节单调增长，属「固定大载荷 × 慢且抖动链路」而非挂死；治理方向改为「按内容差量同步 + 上传后 sha256 清单校验 + 一键回退」，retry / rerun 不减载荷故不采用。TRUE MASTER 兜底纪律保持不变。
 2. **P4 门禁化**：把 P0 的 CDP 五层冒烟做成可重复脚本；补 `defineExpose` 11 项源级覆盖；把「注入依赖数 / 回环数 / 本地工作树 = master」做成可失败 CI 检查。
 3. **P1 剩余刀**：B（撤销按钮占位，需产品裁决）、C（`pull()` 缺 `if (!res.ok)`，属行为变更，须先补行为级契约）。
 4. **P2 状态所有权收敛**：`taskProgress` / `scrollToBottom` / `agentThreadId` 单一写者契约（先补写者唯一性测试与变异验证，再改实现）。
