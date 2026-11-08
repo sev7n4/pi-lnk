@@ -57,6 +57,9 @@ jobs:
       - name: Verify web dist upload contract
         run: pnpm verify-web-upload
 
+      - name: Verify agent rail contract gates
+        run: pnpm verify-agent-rail-gates
+
       - name: Spec figures summary
         if: always()
         run: |

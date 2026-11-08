@@ -207,7 +207,7 @@ flowchart TD
 
 1. **原子发布**：staging 目录 + 校验后 `mv` 切换，消除 R4 的半成品窗口；属发布语义变更，须另立规格并配行为级 RED。
 2. **上传进度可观测**：把 `rsync --out-format` 的传输字节数写进 `$GITHUB_STEP_SUMMARY`，形成每次部署的载荷趋势；本刀只把日志留给 harness 断言。
-3. **P4 门禁化**：CDP 五层冒烟固化、`defineExpose` 11 项源级覆盖、注入依赖数 / 回环数可失败门禁。
+3. **P4 门禁化**：**已开刀 #3**（`docs/superpowers/specs/2026-11-08-agent-siderail-p4-gates-design.md`），范围为 `defineExpose` 11 项源级覆盖 + 注入依赖/回环代理指标的可失败棘轮门禁，接进已有 `spec-figures` job。原列「CDP 五层冒烟固化」经准入三问复核后**拆到 #4 ops runbook**，不进 CI required check。
 4. **P1 剩余刀 / P2 状态所有权收敛**：沿用 Phase 3 结项规格 §12 排序，不因本刀调整。
 5. **F1 之后的新缺陷**：`launch()` 在 `onReady()` 之前抛错会让 `start()` 永久等待，仍未立项。
 
