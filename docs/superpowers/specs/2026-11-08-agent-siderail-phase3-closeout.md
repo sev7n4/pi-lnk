@@ -99,11 +99,13 @@ flowchart LR
 | --- | --- | --- |
 | 11 刀已上线但无行为级生产验收 | 纯搬运重构的字符串全不变，bundle 指纹无法区分抽前抽后；唯一有效验收是行为冒烟 | Phase 4 P0（会话页不白屏、SSE 异步受理须轮询到 owner 流 finalize、画布、分享）—— **已执行，结果见 `docs/ops/2026-11-08-phase3-prod-smoke.md`** |
 | 本地工作树大面积漂移 | 已同步 1 个陈旧测试文件，`apps/web` 余 3 个漂移与本模块无关 | Phase 4 P0 / P4 门禁化 |
-| `defineExpose` 零源级覆盖 | 11 项对外契约无 ratchet | Phase 4 P4 |
-| 注入依赖数 / 回环数无门禁 | 只有人工统计，不可失败 | Phase 4 P4（接进已有 required check，不新建 job） |
-| 陈旧 ratchet（`waitSettle`）曾产生恒红假象 | 已对齐 master；同类问题可能再发 | Phase 4 P4 |
+| `defineExpose` 零源级覆盖 | 11 项对外契约无 ratchet | Phase 4 P4 —— **已由 2026-11-08 P4 门禁化独立刀承接到一处类别化全覆盖 ratchet**（`docs/superpowers/specs/2026-11-08-agent-siderail-p4-gates-design.md`） |
+| 注入依赖数 / 回环数无门禁 | 只有人工统计，不可失败 | Phase 4 P4（接进已有 required check，不新建 job）—— **已承接**；机器精算基线见下方修订说明 |
+| 陈旧 ratchet（`waitSettle`）曾产生恒红假象 | 已对齐 master；同类问题可能再发 | Phase 4 P4 —— **已由 ratchet 健康度自检承接** |
 
 **交接给后继规格的基线值**：注入依赖约 55、回环 5、SFC 5700 行 / script 2941 行、7 个注入 composable。后继规格的第一刀应**不增加**注入依赖总数，并以「减少 1 个」为首次兑现。
+
+**基线值修订说明（2026-11-08 P4 门禁化，只追加、不改写上行原文）**：上行的 7 / 55 / 5 均为人工估算，P4 准入复核后机器精算为 **10 个 `useXxx({` 注入点 / 81 个顶层键 / 17 个回调型键**，其中 6 个 composable 声明了 `*Deps` 接口合计 64 属性；「回环 5」的原文语义无法静态精确计算，P4 显式降级为回调型键这一可算代理指标。P1 第一刀已兑现「减少 1 个」（`AgentThreadDeps` 17 → 16）。完整证据与门禁取值见 `docs/superpowers/specs/2026-11-08-agent-siderail-p4-gates-design.md` §3.2 / §8。
 
 ## 6. 与既有规格的关系
 

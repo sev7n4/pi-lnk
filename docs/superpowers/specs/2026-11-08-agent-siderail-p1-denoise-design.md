@@ -226,7 +226,7 @@ flowchart TD
 | **P1-C（候选，需产品裁决）** | `TURN_UNDO_DISABLED_TITLE` 恒 disabled 按钮是否退役 | 产品确认「少一个按钮」可接受 + 视觉验收 |
 | **P2** | `taskProgress` / `scrollToBottom` / `agentThreadId` 单一写者契约 | 先补写者唯一性契约测试并变异验证，再改实现 |
 | **P3 冻结** | `sendMessage` / `handleEvent` / `defineExpose` 11 项 | 除非有明确行为变更需求且先有行为级契约 |
-| **P4** | `defineExpose` 源级覆盖；把「本地工作树 = master」「注入依赖数 ≤ N」「回环数 ≤ M」做成**可失败**门禁，接进已有 required check job（不新建 job） | 本刀的类别化 ratchet 可作为范式 |
+| **P4** | `defineExpose` 源级覆盖；把「本地工作树 = master」「注入依赖数 ≤ N」「回环数 ≤ M」做成**可失败**门禁，接进已有 required check job（不新建 job） | 本刀的类别化 ratchet 可作为范式。**已由 2026-11-08 P4 独立刀承接并显式结案两项**：①「本地工作树 = master」不做 CI 门禁（checkout 恒绿＝伪门禁），真实治理手段是推前 `gh api` 全树 blob 核对；②「回环数 ≤ M」降级为可算的回调型注入键代理指标，原文「5 条回环」不可静态精算。CDP 五层冒烟脚本化不属 P4 原始定义，拆到 #4 ops runbook。见 `docs/superpowers/specs/2026-11-08-agent-siderail-p4-gates-design.md` §3.3 |
 
 ## 13. 配图规范自检
 
