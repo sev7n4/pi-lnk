@@ -40,7 +40,6 @@ interface ThreadCancelState {
 export interface AgentThreadDeps {
   agentThreadId: Ref<string>
   threads: Ref<AgentThreadRow[]>
-  historyOpen: Ref<boolean>
   taskProgress: Ref<AgentTaskProgressState>
   runCancelled: Ref<boolean>
   threadRunState: Ref<{ phase?: string | null; runCancelled?: boolean | null } | null>
@@ -70,7 +69,6 @@ export function useAgentThread(deps: AgentThreadDeps): AgentThreadApi {
   const {
     agentThreadId,
     threads,
-    historyOpen,
     taskProgress,
     runCancelled,
     threadRunState,
@@ -101,11 +99,9 @@ export function useAgentThread(deps: AgentThreadDeps): AgentThreadApi {
     // 历史面板可能列出旧的随机 thread，切到它们会让本端与该画布其它设备发散，
     // 故直接忽略（关闭面板、不切换）。
     if (threadId !== getSessionId()) {
-      historyOpen.value = false
       return
     }
     if (threadId === agentThreadId.value) {
-      historyOpen.value = false
       return
     }
     clearComposer()
@@ -115,7 +111,6 @@ export function useAgentThread(deps: AgentThreadDeps): AgentThreadApi {
     // 必须同步清 fork key，否则下次刷新 resolveBootstrapThreadId 会把本端弹回分支
     // ——「返回主对话」活不过一次刷新（Phase 1 评审发现 F1）。
     clearForkedThreadId(getSessionId())
-    historyOpen.value = false
     taskProgress.value = emptyTaskProgress()
     runCancelled.value = false
     threadRunState.value = null
