@@ -198,6 +198,8 @@ flowchart TD
 
 自动部署 success 且日志含 `UPLOAD_MODE=incremental` / `MANIFEST_OK` / `WEB_DIST_UPLOAD_OK`；web 首页与 `/api/health` 200；自签 HS256 JWT 注入 `localStorage.token`，独立 headless Chrome CDP 复验：页面加载、点 `button.agent-fab` 展开侧栏、真实前端短回合 ack `{"code":0,"data":{"accepted":true,…}}`、owner 流 finalize、`Runtime.exceptionThrown` 与 console error 均为 0。**不宣称**复现 steer 场景，除非当次能稳定构造 409 窗口并观察到 callout 且不出现「本轮无文本回复」。
 
+**实测（2026-11-08，证据见 `docs/ops/2026-11-08-observer-refusal-exempt-prod-verify.md`）**：部署 run `42483342773` success，三标记齐全、163 文件 `sha256sum -c` exit 0；生产 bundle 出现 `!o.turnRefusal` / `!u.turnRefusal` 两个否定守卫（部署前 0 个）⇒ 部署源为 true master，非落后 worktree。CDP 首轮因 Chrome 落在 756px 移动端断点且残留 2 个同 URL tab 串台，得到 L0 10/10、L2 8/9、L3 12/13（两处 FAIL 均为 PC 专属的 `asideWidth > 100` 判据，非产品回归，原始结果如实保留）；用 `Browser.setWindowBounds` 改到 1440×900 并清理 tab 后，L0 10/10、L2 **9/9**（`asideWidth=500`、`is-docked-open`）、L3 **13/13**（`railWidth=500`、turn 76→78），两轮均零 `Runtime.exceptionThrown` / 零 console error。**steer 场景未构造，故不宣称 P0 行为在生产复现**；本刀 P0 的行为保证由两处 `stripComments` 加固的源级契约 + 本地 17/17 + M7 变异承接。取证暴露的「视口断点 / 多 tab 串台 / `Emulation.setDeviceMetricsOverride` 为 session-scoped」三条坑登记为 #4 runbook 的前置自检准入项。
+
 ### 验收标准
 
 L1 全绿 + L2 全绿 + CI 三必需（Verify spec figures / Build monorepo / Build API Docker image）全 pass + 合并树 11 个文件 blob sha 逐一全等 + L3 无新增异常 ⇒ 本刀闭环。任一**应红**变异（M1–M5、M7）不 RED、或伪变异对照 M6 意外转红，即判「伪变异或伪门禁」，先修判据再继续。
