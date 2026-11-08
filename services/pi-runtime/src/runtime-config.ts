@@ -131,6 +131,16 @@ export interface RuntimeConfig {
 	 * 缺省 120（「不误伤正常复杂 run」约束下的偏紧值，上线后按 metrics 分布再收紧）。
 	 */
 	turnBudget?: number | "off";
+	/**
+	 * P2：steer/followUp 队列新鲜度阈值（ms）。
+	 *
+	 * 用户插话（steer/followUp）入队后若长时间未被消费（典型：run 卡在 ask_user 超时、
+	 * 上下文已漂移），到 drain 时不应再静默注入——它针对的上下文早已不是用户发指令时的上下文。
+	 * 入队超过本阈值仍滞留队列 ⇒ drain 时按过期丢弃（cancel + 指标 `stale_dropped`），
+	 * 而非注入。缺省 600_000（10min）：正常 run 极少超过此值；超过说明上下文确实已漂移。
+	 * ⚠️ helm 部署必须 --set-string（科学计数法事故，同 ASK_USER_TIMEOUT_MS）。
+	 */
+	queueFreshnessMs?: number;
 }
 
 export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = {
@@ -146,6 +156,7 @@ export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = {
 	followUpMode: DEFAULT_QUEUE_MODE,
 	stallWatchdog: true,
 	stallWatchdogMs: 900_000,
+	queueFreshnessMs: 600_000,
 };
 
 /** 正整数解析：非法（非数字 / 0 / 负数 / 空）一律回退，小数截断。
@@ -220,6 +231,7 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
 		stallWatchdog: parseBool(env.PI_RUNTIME_STALL_WATCHDOG, true),
 		stallWatchdogMs: parsePositiveInt(env.PI_RUNTIME_STALL_WATCHDOG_MS, d.stallWatchdogMs ?? 900_000),
 		turnBudget: turnBudget(env.PI_RUNTIME_TURN_BUDGET),
+		queueFreshnessMs: parsePositiveInt(env.PI_RUNTIME_QUEUE_FRESHNESS_MS, d.queueFreshnessMs ?? 600_000),
 	};
 }
 

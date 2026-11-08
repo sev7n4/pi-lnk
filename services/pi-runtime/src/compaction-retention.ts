@@ -112,3 +112,20 @@ export function buildRetentionInstructions(state: RetentionState = {}): string {
 
 	return parts.join("\n");
 }
+
+/**
+ * P1-b：合并「Nest 逐轮经 `turn.retention` 给的 confirmedPreferences」与
+ * 「pi-runtime 本地按会话累积的已确认偏好」（`PendingToolRegistry.getConfirmedPreferences`）。
+ *
+ * 为什么需要：retention 通道权威在 Nest（每轮重算），但「用户刚才答了哪几题」只有 pi-runtime 知道，
+ * 因此 Nest 给的通常是空、pi-runtime 本地累积才是真源。两者合并后保留段才会真正出现「别重问」清单。
+ * 去重保序（用 Set 保插入序）——同一维度二次作答（答案变了）按 id 覆盖后仍是单条，不堆叠重复串。
+ * 空输入返回 `[]`：`buildRetentionInstructions` 对空数组与 undefined 等价（退化为通用兜底），无回归。
+ */
+export function mergeConfirmedPreferences(
+	base: string[] | undefined,
+	accumulated: string[] | undefined,
+): string[] {
+	const merged = [...(base ?? []), ...(accumulated ?? [])];
+	return merged.length ? [...new Set(merged)] : [];
+}

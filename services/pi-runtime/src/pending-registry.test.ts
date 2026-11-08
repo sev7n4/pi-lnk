@@ -186,3 +186,79 @@ describe("PendingToolRegistry 等待生命周期回调", () => {
 		assert.deepEqual(await p, { status: "answered", answers: { a: ["1"] } });
 	});
 });
+
+/**
+ * P1-b（跨压缩「别重问」根治）：registry 是**唯一同时持有题目定义与用户答案**的环节，
+ * 在此累积「已确认偏好」，供压缩保留段渲染。判定标准：
+ * - answered 且题目含有效答案 ⇒ onSettled 透传 confirmed + getConfirmedPreferences 渲染可读 label；
+ * - 超时/中止 ⇒ 不累积；
+ * - 同 id 二次作答覆盖（不堆叠）、不同 id 累积；
+ * - 同卡内未作答题目不计入；
+ * - abortAll 清掉本会话累积。
+ */
+describe("PendingToolRegistry P1-b 已确认偏好累积", () => {
+	const qs = [
+		{
+			id: "style",
+			question: "画风",
+			options: [
+				{ label: "水彩", value: "watercolor" },
+				{ label: "油画", value: "oil" },
+			],
+		},
+		{ id: "episodes", question: "集数", options: [{ label: "12集", value: "12" }] },
+	];
+
+	it("answered 时 onSettled 透传 confirmed 且渲染可读 label（value→label）", async () => {
+		const settled: unknown[] = [];
+		const reg = new PendingToolRegistry({ onSettled: (i) => settled.push(i) });
+		const p = reg.waitForUser("s1", "c1", "ask_user", 60_000, undefined, qs);
+		reg.answer("s1", "c1", { style: ["watercolor"], episodes: ["12"] });
+		await p;
+		assert.equal(settled.length, 1);
+		assert.deepEqual((settled[0] as { confirmed?: unknown }).confirmed, [
+			{ id: "style", question: "画风", options: qs[0].options, selected: ["watercolor"] },
+			{ id: "episodes", question: "集数", options: qs[1].options, selected: ["12"] },
+		]);
+		assert.deepEqual(reg.getConfirmedPreferences("s1"), ["画风: 水彩", "集数: 12集"]);
+	});
+
+	it("超时/中止不累积 confirmed（保留段退化为通用兜底，与改动前一致）", async () => {
+		const settled: unknown[] = [];
+		const reg = new PendingToolRegistry({ onSettled: (i) => settled.push(i) });
+		const p = reg.waitForUser("s2", "c2", "ask_user", 5, undefined, qs);
+		await p;
+		assert.equal((settled[0] as { status: string }).status, "timeout");
+		assert.equal((settled[0] as { confirmed?: unknown }).confirmed, undefined);
+		assert.deepEqual(reg.getConfirmedPreferences("s2"), []);
+	});
+
+	it("同 id 二次作答覆盖（不堆叠重复串），不同 id 累积", async () => {
+		const reg = new PendingToolRegistry();
+		const p1 = reg.waitForUser("s9", "c1", "ask_user", 60_000, undefined, [qs[0]]);
+		reg.answer("s9", "c1", { style: ["watercolor"] });
+		await p1;
+		const p2 = reg.waitForUser("s9", "c2", "ask_user", 60_000, undefined, [qs[0]]);
+		reg.answer("s9", "c2", { style: ["oil"] }); // 改主意
+		await p2;
+		assert.deepEqual(reg.getConfirmedPreferences("s9"), ["画风: 油画"]);
+	});
+
+	it("同卡内未作答题目不计入 confirmed", async () => {
+		const reg = new PendingToolRegistry();
+		const p = reg.waitForUser("s5", "c1", "ask_user", 60_000, undefined, qs);
+		reg.answer("s5", "c1", { style: ["watercolor"] }); // episodes 未答
+		await p;
+		assert.deepEqual(reg.getConfirmedPreferences("s5"), ["画风: 水彩"]);
+	});
+
+	it("abortAll 清掉本会话已确认偏好累积", async () => {
+		const reg = new PendingToolRegistry();
+		const p = reg.waitForUser("s7", "c1", "ask_user", 60_000, undefined, [qs[0]]);
+		reg.answer("s7", "c1", { style: ["watercolor"] });
+		await p;
+		assert.deepEqual(reg.getConfirmedPreferences("s7"), ["画风: 水彩"]);
+		reg.abortAll("s7");
+		assert.deepEqual(reg.getConfirmedPreferences("s7"), []);
+	});
+});

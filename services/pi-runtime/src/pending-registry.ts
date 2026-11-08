@@ -23,6 +23,28 @@ export interface PendingInfo {
 }
 
 /**
+ * P1-b（跨压缩「别重问」根治）：用户已作答的单个题目维度。
+ *
+ * 为什么在 registry 累积而非 Nest：registry 是**唯一同时持有「题目定义 + 用户答案」的环节**
+ * （ask_user 把 questions 交给它、/answers 把 answers 交给它），且按画布会话 id 建键。
+ * 累积后供压缩保留段渲染「用户已确认的偏好 → 下一轮直接遵守，不要重复追问」。
+ * options 一并带上是为把答案 value（如 "watercolor"）映射回可读 label（如 "水彩"）。
+ */
+export interface ConfirmedQuestion {
+	id: string;
+	question: string;
+	options?: Array<{ label: string; value: string }>;
+	selected: string[];
+}
+
+/** waitForUser 透传的题目定义（与 ConfirmedQuestion 同形，去 options 之外的标签信息）。 */
+type PendingQuestion = {
+	id: string;
+	question: string;
+	options?: Array<{ label: string; value: string }>;
+};
+
+/**
  * P1-A（规格 2026-11-01 §4.3）：settle 后的**墓碑**——判别「竞态回放」与「真丢失」。
  *
  * 为什么必须有它：entry settle 后即从 Map 删除，而并发双 /answers 的第二发会在
@@ -48,6 +70,8 @@ interface PendingEntry {
 	settled: boolean;
 	/** A1（2026-11-02 propose 单飞护栏）：waitForUser 的 meta 留底，供按 nodeId 查询在途提议。 */
 	meta?: Record<string, unknown>;
+	/** P1-b：ask_user 透传的题目定义，answered 时用于推导「哪些维度被确认」并映射可读 label。 */
+	questions?: PendingQuestion[];
 }
 
 /**
@@ -76,6 +100,8 @@ export interface PendingHooks {
 		callId: string;
 		toolName: string;
 		status: PendingResolution["status"];
+		/** P1-b：仅 answered 且题目含有效答案时非空——已被用户确认的维度（用于累积「别重问」）。 */
+		confirmed?: ConfirmedQuestion[];
 	}) => void;
 }
 
@@ -83,6 +109,13 @@ export class PendingToolRegistry {
 	private readonly entries = new Map<string, Map<string, PendingEntry>>();
 	/** P1-A：settle 墓碑（§4.3），键结构与 entries 同构。 */
 	private readonly tombstones = new Map<string, Map<string, PendingTombstone>>();
+
+	/**
+	 * P1-b：已确认偏好累积（按画布会话 id → 题目 id → 偏好），供压缩保留段渲染「别重问」。
+	 * 用 Map<string, ConfirmedQuestion> 而非数组：同一维度被二次作答时按 id 覆盖（不是无限追加重复串）。
+	 * 进程内内存态——重启即清空，但保留段文本已被写进压缩摘要，跨重启仍由摘要承载。
+	 */
+	private readonly confirmed = new Map<string, Map<string, ConfirmedQuestion>>();
 
 	/** 落墓碑 + 惰性清理过期项（无后台 timer，访问时顺手清）。 */
 	private recordTombstone(sessionId: string, callId: string, status: PendingResolution["status"]): void {
@@ -120,6 +153,7 @@ export class PendingToolRegistry {
 		toolName: string,
 		timeoutMs: number,
 		meta?: Record<string, unknown>,
+		questions?: PendingQuestion[],
 	): Promise<PendingResolution> {
 		const byCall = this.entries.get(sessionId);
 		if (byCall?.has(callId)) {
@@ -129,6 +163,7 @@ export class PendingToolRegistry {
 			const entry: PendingEntry = {
 				toolName,
 				meta,
+				questions,
 				resolve: (r) => {
 					if (entry.settled) return;
 					entry.settled = true;
@@ -137,9 +172,28 @@ export class PendingToolRegistry {
 					// 必须能答出 prior，防并发第二发被误判为「真丢失」而双注入）。
 					this.recordTombstone(sessionId, callId, r.status);
 					this.entries.get(sessionId)?.delete(callId);
+					// P1-b：answered 且题目含有效答案时，把已确认维度累积进 confirmed（供压缩保留段「别重问」）。
+					let confirmed: ConfirmedQuestion[] | undefined;
+					if (r.status === "answered" && entry.questions && r.answers) {
+						const acc = this.confirmed.get(sessionId) ?? new Map<string, ConfirmedQuestion>();
+						for (const q of entry.questions) {
+							const sel = r.answers[q.id];
+							if (Array.isArray(sel) && sel.length > 0) {
+								const cq: ConfirmedQuestion = {
+									id: q.id,
+									question: q.question,
+									options: q.options,
+									selected: sel,
+								};
+								acc.set(q.id, cq);
+								(confirmed ??= []).push(cq);
+							}
+						}
+						if (acc.size) this.confirmed.set(sessionId, acc);
+					}
 					// 广播必须在 resolve **之前**：等待方（工具 execute）紧接着会继续跑
 					// 并可能立刻发下一批事件，晚一步前端就会多闪一帧「等待你确认」。
-					this.hooks.onSettled?.({ sessionId, callId, toolName, status: r.status });
+					this.hooks.onSettled?.({ sessionId, callId, toolName, status: r.status, confirmed });
 					resolve(r);
 				},
 			timer: undefined as never,
@@ -232,6 +286,8 @@ export class PendingToolRegistry {
 		const n = byCall.size;
 		for (const entry of [...byCall.values()]) entry.resolve({ status: "aborted" });
 		this.entries.delete(sessionId);
+		// P1-b：会话中止一并清掉本会话已确认偏好累积，避免跨会话 id 复用泄漏旧偏好。
+		this.confirmed.delete(sessionId);
 		return n;
 	}
 
@@ -258,5 +314,22 @@ export class PendingToolRegistry {
 		const first = this.entries.get(sessionId)?.entries().next();
 		if (!first || first.done) return null;
 		return { callId: first.value[0], toolName: first.value[1].toolName };
+	}
+
+	/**
+	 * P1-b：取某画布会话已确认偏好的人类可读串（压缩保留段用）。
+	 * value→label 映射让摘要呈现「画风: 水彩」而非「画风: watercolor」；无 options 时回退 value。
+	 * 返回空数组表示尚未累积任何偏好（保留段退化为通用兜底，与改动前一致）。
+	 */
+	getConfirmedPreferences(sessionId: string): string[] {
+		const byId = this.confirmed.get(sessionId);
+		if (!byId || byId.size === 0) return [];
+		return [...byId.values()].map((c) => {
+			const labels = (c.selected ?? []).map((v) => {
+				const opt = c.options?.find((o) => o.value === v);
+				return opt?.label ?? v;
+			});
+			return `${c.question}: ${labels.join("/")}`;
+		});
 	}
 }

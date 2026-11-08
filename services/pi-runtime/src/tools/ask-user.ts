@@ -80,7 +80,7 @@ export function createAskUserTools(
 		// 阻塞语义（B-1）：等待用户作答同 turn 续行，有界（超时自动降级为自主决策）
 		// ⚠️ 2026-10-03：description 必须带「何时用」与「不得怎样」，否则弱模型把「问用户」
 		// 当成写正文（生产实证：agnes-2.5-flash 全程 0 次调用，改用纯文本列选项）。
-		description: "向用户展示可点击选项卡（含「其他」自由输入）并在本回合内等待作答（有界，超时自动降级）。何时必用：继续干活前必须确认的关键信息缺失、或需要用户在有限候选里择一。禁止把候选写成普通正文让用户手打回复。多题卡片：用户答完全部题目才提交。有推荐时把推荐选项放首位并在 label 标注「（推荐）」，description 说明推荐理由。不得问可合理默认的细节（尺寸/张数/分辨率按场景默认并在回复中声明）。",
+		description: "向用户展示可点击选项卡（含「其他」自由输入）并在本回合内等待作答（有界，超时自动降级）。何时必用：继续干活前必须确认的关键信息缺失、或需要用户在有限候选里择一。禁止把候选写成普通正文让用户手打回复。多题卡片：用户答完全部题目才提交。同一回合只允许调用一次 ask_user——把本回合所有待确认题目合并进这一张卡片；禁止在同一回合内连续多次调用 ask_user 逐张发卡（那会让用户面对一堆串行阻塞卡、每张各自等超时）。已在「用户已确认的偏好」里告知的维度不得再问。有推荐时把推荐选项放首位并在 label 标注「（推荐）」，description 说明推荐理由。不得问可合理默认的细节（尺寸/张数/分辨率按场景默认并在回复中声明）。",
 		parameters: Type.Object({
 			questions: Type.Array(Type.Object({
 				id: Type.String({ description: "stable question id, e.g. scene" }),
@@ -123,9 +123,15 @@ export function createAskUserTools(
 			// registry 键 = tc.sessionId（画布会话 id）；超时兜底由 registry timer 驱动（resolve 不 reject，B-4）
 			// meta 随 waiting_user 事件下发：题面让前端状态行能显示「等待你作答：…」，而不是一句
 			// 无信息量的「等待你确认」（propose_generation 同样走 meta 带 nodeId，两类卡能力对齐）
-			const resolution = await registry.waitForUser(tc.sessionId, id, "ask_user", timeoutMs, {
-				questionTitle: p.questions.map((q) => q.question).join(" / "),
-			});
+			// questions 透传给 registry：用户作答后由 registry 累积「已确认偏好」供压缩保留段「别重问」（P1-b）
+			const resolution = await registry.waitForUser(
+				tc.sessionId,
+				id,
+				"ask_user",
+				timeoutMs,
+				{ questionTitle: p.questions.map((q) => q.question).join(" / ") },
+				p.questions,
+			);
 			if (resolution.status === "aborted") {
 				return {
 					content: [{ type: "text", text: JSON.stringify({ ok: false, aborted: true, message: "用户已中止本轮对话。" }) }],
