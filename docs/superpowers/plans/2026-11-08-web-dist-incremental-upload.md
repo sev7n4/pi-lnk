@@ -111,7 +111,7 @@ spec-figures: off —— 理由：实施计划按 writing-plans 模板组织，�
 ### Task 7: 生产真实发布复验与证据回写
 
 - [ ] 等自动部署 run 完成，记录 `Upload web dist and nginx config` 步骤耗时（门槛 ≤ 8 min）与日志中的 `MANIFEST_OK files=<n>`。
-- [ ] 手工 `workflow_dispatch` 一次 `deploy_web_only=true` 做对照，记录同样两项。
+- [ ] （**可选，本次未执行**）手工 `workflow_dispatch` 一次 `deploy_web_only=true` 做耗时方差对照。两条触发分支共用同一脚本与 env，不新增代码路径覆盖，且会与同组 `Build API on CVM` 排队并再动一次生产 nginx；决策与实测见 `docs/ops/2026-11-08-web-dist-upload-prod-verify.md` §5。
 - [ ] `ssh deploy-cvm` 在 `/opt/lnkpi/web/dist` 内 `find . -type f -print0 | sort -z | xargs -0 sha256sum` 自洽性检查；`curl` 断言 `http://119.29.173.89:8888/`、`/api/health`、`index.html` 引用的 chunk 全 200。
 - [ ] 用 P0 的 Chrome CDP 脚本做一次只读页面加载冒烟（可选，链路未变则不强求）。
 - [ ] 结果写入 `docs/ops/2026-11-08-web-dist-upload-prod-verify.md` 并提独立文档 PR；`.workbuddy/memory/2026-11-08.md` 追加日志，`.workbuddy/memory/MEMORY.md` 更新 scp 结论。
