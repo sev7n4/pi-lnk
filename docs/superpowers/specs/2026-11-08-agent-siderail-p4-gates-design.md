@@ -195,10 +195,13 @@ G2 覆盖不到的 4 个注入点（`useAgentStream` / `useAgentDock` / `useUtte
   - M6 从 `ci.yml` 摘掉门禁步骤 → `G5_ci_spec_figures_step` RED；
   - M7 **伪变异对照**：在 `defineExpose` 块注释里写入两个契约键名 → verifier **11/11 PASS**、vitest exit=0，证明注释剥离有效、判据不假绿。
   - 每条变异前断言源文件确实变化；恢复后逐文件裸 blob sha 与固定版全等、verifier 11/11 复绿。
-- **本地门禁**：定向/全 agent 组 vitest、`vue-tsc -b`、`pnpm -r build`、`verify-spec-figures` 全量与逐篇、`verify-links`、`verify-claims`、新 verifier。
-- **CI 三必需**：Verify spec figures / Build monorepo / Build API Docker image 全 pass；新步骤在 `Verify spec figures` job 内 success。
-- **合并后**：`gh api` 逐路径核对 10 个文件 blob sha 全等；删分支；`http://119.29.173.89:8888/` 与 `/api/health` 均 200；`apps/web/**` 无产品代码改动 ⇒ 不要求新的生产行为冒烟。
-- **部署触发的显式决策**：`deploy.yml` 的 `push.paths` 白名单含 `package.json`（第 19 行），本刀新增 CI script 会**自动触发一次生产发布**（web + Build API on CVM）。选择保留这一惯例、不绕过触发、不改 `deploy.yml`：① `package.json` 进白名单是有意设计，依赖或构建脚本变化必须能触发发布；② 为省一次部署去改 paths 属超范围行为变更；③ 该次发布是 #2 增量上传链路的第二次真实运行，可顺带确认耗时稳定。合并后等待该 run 结论 success 并核对健康 200，**但其结论不作为本刀门禁验收判据**（本刀零产品代码改动，构建产物与当前生产字节级相同）。
+- **本地门禁（实测）**：全 agent 组 **121 files / 1059 tests**、定向 ratchet 4/4、`vue-tsc -b` 0、`pnpm -r build` 0、`verify-spec-figures` 全量 199 篇 0 error + 5 篇逐篇 0/0、`verify-links` 0、`verify-claims` 7/7、新 verifier 11/11、上刀 `verify-web-upload` 13/13。
+- **CI 三必需（实测）**：run `42470440899` —— Verify spec figures **pass 31s**、Build monorepo **pass 6m39s**、Build API Docker image **pass 3m23s**，另 prompt-registry 门禁 pass；新步骤 `Verify agent rail contract gates` 在 `ubuntu-latest` + python3 下 **success**，排除「本地绿 / CI 红」。
+- **合并后（实测）**：PR #783 squash `b1190a2a`，`gh api` 逐路径核对 10 个文件 blob sha **全等**、分支已删、合并瞬间 web/api 200；`apps/web/**` 无产品代码改动 ⇒ 不要求新的生产行为冒烟。完整证据见 `docs/ops/2026-11-08-p4-gates-prod-verify.md`。
+- **部署触发的显式决策（已验证）**：`deploy.yml` 的 `push.paths` 白名单含 `package.json`（第 19 行），本刀新增 CI script **确实自动触发了生产发布**。选择保留这一惯例、不绕过触发、不改 `deploy.yml`：① `package.json` 进白名单是有意设计，依赖或构建脚本变化必须能触发发布；② 为省一次部署去改 paths 属超范围行为变更；③ 该次发布是 #2 增量上传链路的第二次真实运行，可顺带确认耗时稳定。
+  - Deploy run `42471240576` **整体 success**：`Deploy web to CVM` 2.68 min（**Upload 1.07 min**，#2 首次 2.63 min、旧全量 tar 15.05 min）、`Build API on CVM` 13.77 min；日志三标记 `UPLOAD_MODE=incremental` → `MANIFEST_OK files=163` → `WEB_DIST_UPLOAD_OK`；远端 163 文件 / `sha256sum -c` exit 0 / OG 200。
+  - 首次健康探查曾见 `api=502`，同期 API job 仍在重建容器；连续三次间隔 20s 复查 **web/api 全 200**，整条 run success ⇒ 判为部署窗口，不宣告故障、不 rerun。后续验收脚本应在 API job 完成后再取健康快照。
+  - 该部署结论**不作为本刀门禁验收判据**（零产品代码改动，构建产物与当前生产相同）。
 
 ## 11. 风险
 
