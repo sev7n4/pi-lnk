@@ -1897,9 +1897,12 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
     const last = agent.messages[agent.messages.length - 1]
     // turn_suspended：挂起回合（等待用户在画布确认）不是「无文本回复」——
     // 补这句会挂在等待卡下方制造噪音（等待解除后模型自会续写总结）。
+    // ⭐ P0（fix/observer-refusal-exempt）：发言被拒（turnRefusal≠null，如 steer 并入在跑
+    // run）时，正确的「已并入进行中任务」callout 已承载反馈，此处绝不再补误导的「无文本回复」。
     if (
       !runCancelled.value &&
       !mainTurnSuspended.value &&
+      !agent.turnRefusal &&
       last?.role === 'assistant' &&
       !last.content.trim()
     ) {

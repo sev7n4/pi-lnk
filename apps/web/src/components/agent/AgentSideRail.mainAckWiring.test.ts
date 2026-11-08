@@ -21,6 +21,16 @@ const SFC = readFileSync(join(HERE, 'AgentSideRail.vue'), 'utf8')
 const OBS = readFileSync(join(HERE, 'useAgentObserver.ts'), 'utf8')
 const TAIL = readFileSync(join(HERE, 'follow-up-tail.ts'), 'utf8')
 
+/** 源级契约断言一律读剥离注释后的代码（同 observerRefusalExempt / turnSuspended 纪律）：
+ *  注释里出现 `!agent.turnRefusal` 字面量会让「只查字符串存在」的守卫假绿。 */
+function stripComments(s: string): string {
+  return s
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/\/\/[^\n]*/g, '')
+}
+const OBS_CODE = stripComments(OBS)
+
 /** 提取 ack 分支源码区间（Content-Type 分派 → POST 体流 reader 之前）。 */
 function ackBranch(): string {
   const start = SFC.indexOf('isConversationAckResponse(res)')
@@ -70,6 +80,19 @@ describe('ack 化主流接线契约（P1 Task 5/6 静态守卫）', () => {
     expect(fn).toContain('if (!ownTurnViaObserver.value) return')
     expect(fn).toContain('agent.finishStreaming()')
     expect(fn).toContain('reconcileLatestAssistant()')
+  })
+
+  it('finishOwnTurnViaObserver 空回合兜底必须豁免发言被拒（P0：turnRefusal≠null 时不补误导文案）', () => {
+    // 诊断结论：前端「已并入进行中任务」callout（agent.turnRefusal）已承载 steer 并入反馈，
+    // 此处空回合兜底若仍补「本轮无文本回复」会与正确 callout 自相矛盾。守卫须落在 appendText 之前。
+    const fn = OBS_CODE.slice(
+      OBS_CODE.indexOf('function finishOwnTurnViaObserver'),
+      OBS_CODE.indexOf('function finishOwnTurnViaObserver') + 1600,
+    )
+    const guardIdx = fn.indexOf('!agent.turnRefusal')
+    const appendIdx = fn.indexOf('（本轮无文本回复')
+    expect(guardIdx, 'finishOwnTurnViaObserver 的空回合兜底必须带 !agent.turnRefusal 门禁').toBeGreaterThan(-1)
+    expect(appendIdx, '函数内必须保留「本轮无文本回复」文案（仅加门禁，不改文案）').toBeGreaterThan(guardIdx)
   })
 
   it('finally 守卫：ack 模式跳过 POST 流收尾（误跑会把刚起的回合 finishStreaming 掉）', () => {
