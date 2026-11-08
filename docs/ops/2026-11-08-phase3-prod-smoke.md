@@ -115,6 +115,13 @@ Uncaught (in promise) AbortError: signal is aborted without reason
 
 规格与实施计划：`docs/superpowers/specs/2026-11-08-follow-up-tail-abort-rejection-design.md`、`docs/superpowers/plans/2026-11-08-follow-up-tail-abort-rejection.md`。
 
+**生产复验（2026-11-08 14:30 +0800，PR #779 合并后）**：
+
+- `Deploy to Tencent Cloud` run `42453812598` **success**（16m52s，上传慢但未挂死）；CVM `/opt/lnkpi/web/dist/index.html` 与 `CanvasPage-B8laxs4J.js` 已更新，`web=200` / `api=200`。
+- 重新自签短期 JWT，headless Chrome CDP 注入 `localStorage.token` 打开真实会话页：A 组页面加载 **10/10 ALL_PASS**、B 组展开侧栏 **9/9 ALL_PASS**。
+- **连续两轮真实前端短回合各 13/13 ALL_PASS**（ack `{"code":0,"data":{"accepted":true,...}}`、owner 流 6,049 B、轮询到 assistant finalize、DOM turn 68→70→72）：`=== PAGE ERROR DETAILS === []`、`consoleErrors: []` ⇒ **F1 的 `Runtime.exceptionThrown` 在生产归零**。
+- ⇒ F1 闭环。§6 结论第 2 条的「不宣告 ALL_PASS」是**当时**的历史结论，保持原貌；本次复验是后续独立取证，不追溯改写。
+
 ## 4. 其它排除项与残留风险
 
 - **部署链**：`Deploy to Tencent Cloud` run `42442096327` 因 `Upload web dist and nginx config` 的 runner→CVM scp 挂死被取消；生产 dist 完好（首页/入口 JS/health 全 200）。不为零行为变更刀做高风险手动兜底；新 dist 并入下一行为变更窗口。此 stall 为持久故障，建议单独立项修 workflow（retry / rsync / 改走本机兜底纪律）。
