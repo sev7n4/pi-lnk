@@ -943,12 +943,7 @@ const showProductVisualEmptyState = computed(
 )
 
 /* ---- 对话 thread 列表 ---- */
-const historyOpen = ref(false)
-const historyRef = ref<HTMLElement | null>(null)
 const threads = ref<AgentThreadRow[]>([])
-useClickOutside(historyRef, () => {
-  historyOpen.value = false
-})
 
 async function fetchThreads(): Promise<AgentThreadRow[] | null> {
   try {
@@ -2752,7 +2747,6 @@ const hasNewBelow = ref(false)
 const threadApi = useAgentThread({
   agentThreadId,
   threads,
-  historyOpen,
   taskProgress,
   runCancelled,
   threadRunState,
