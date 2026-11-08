@@ -24,7 +24,8 @@
     "verify-thread-unify": "npx tsx apps/server/verify-thread-unify.ts",
     "prompt:lint": "npx tsx scripts/prompt-lint.ts",
     "memory:check": "npx tsx scripts/check-memory-size.ts",
-    "verify:details": "npx tsx scripts/verify-tool-details-contract.ts"
+    "verify:details": "npx tsx scripts/verify-tool-details-contract.ts",
+    "verify-web-upload": "python3 scripts/verify-web-upload.py"
   },
   "devDependencies": {
     "tsx": "^4.7.0",

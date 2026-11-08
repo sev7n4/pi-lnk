@@ -495,15 +495,15 @@ jobs:
           chmod 600 ~/.ssh/config
 
       - name: Upload web dist and nginx config
+        env:
+          # 一键回退：在仓库 variables 里设 LNKPI_WEB_UPLOAD_LEGACY=1 即恢复全量 tar + scp。
+          LNKPI_WEB_UPLOAD_LEGACY: ${{ vars.LNKPI_WEB_UPLOAD_LEGACY || '0' }}
         run: |
           set -euo pipefail
-          DEPLOY_DIR="${{ env.DEPLOY_DIR }}"
-          tar -czf /tmp/lnkpi-web-dist.tgz -C apps/web/dist .
-          scp /tmp/lnkpi-web-dist.tgz deploy/nginx.conf deploy/deploy-web.sh deploy/static/share-og-default.png deploy-cvm:/tmp/
-          # ⚠️ 分享默认 OG 卡必须随 web 部署落到主机 SHARE_DIR（nginx 直出，绕过 Nest）。
-          # 缺失则所有分享卡的 OG 预览图 404（#723 生产复测发现：deploy 从不播种该静态资源）。
-          # 仅在 web 部署路径播种——SHARE_DIR 在主机磁盘（bind 挂载），一次播种即持久。
-          ssh deploy-cvm "bash -lc 'mkdir -p ${DEPLOY_DIR}/web/dist ${DEPLOY_DIR}/deploy ${DEPLOY_DIR}/share && rm -rf ${DEPLOY_DIR}/web/dist/assets && tar -xzf /tmp/lnkpi-web-dist.tgz -C ${DEPLOY_DIR}/web/dist && cp /tmp/nginx.conf ${DEPLOY_DIR}/deploy/nginx.conf && cp /tmp/deploy-web.sh ${DEPLOY_DIR}/deploy/deploy-web.sh && chmod +x ${DEPLOY_DIR}/deploy/deploy-web.sh && cp -f /tmp/share-og-default.png ${DEPLOY_DIR}/share/share-og-default.png && chmod 644 ${DEPLOY_DIR}/share/share-og-default.png && rm -f /tmp/lnkpi-web-dist.tgz /tmp/nginx.conf /tmp/deploy-web.sh /tmp/share-og-default.png'"
+          # 差量同步 + 上传后 sha256 清单校验；契约见 scripts/verify-web-upload.py。
+          # ⚠️ #723 分享默认 OG 卡播种由脚本内 upload_sidecars 承接：仍落到主机 SHARE_DIR，
+          # nginx 直出绕过 Nest；缺失会让所有分享卡 OG 预览图 404。语义不变。
+          bash deploy/upload-web-dist.sh
 
       - name: Configure nginx on CVM
         run: |
