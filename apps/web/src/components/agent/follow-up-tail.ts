@@ -272,7 +272,8 @@ export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTail
     const ready = new Promise<void>((resolve) => {
       mark = resolve
     })
-    void run(mark)
+    // 常驻循环在 abort 前不结束；它若意外 reject，不能变成未处理 rejection（F1）。
+    void run(mark).catch(() => {})
     await ready
   }
 
@@ -463,7 +464,9 @@ export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTail
             const r = reader
             reader = null
             try {
-              void r.cancel?.()
+              // cancel 对已 errored 的流会以 AbortError reject；同步抛错由外层 try 接住，
+              // 异步 reject 必须在这里吞掉，否则浏览器抛 Uncaught (in promise)（F1）。
+              void Promise.resolve(r.cancel?.()).catch(() => {})
             } catch {
               /* 释放失败不影响主流程 */
             }

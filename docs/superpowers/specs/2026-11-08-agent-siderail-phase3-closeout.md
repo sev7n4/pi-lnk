@@ -72,7 +72,7 @@ flowchart LR
 | `vue-tsc -b` 类型门禁 | 逐刀 EXIT=0 | 满足 |
 | 源级 ratchet + 变异测试 | 逐刀有 ratchet；零行为变更靠逐字 diff 证伪 | 满足 |
 | 部署 | **每次 push master 自动部署**，#776 后 `Deploy web to CVM` success，CVM `/opt/lnkpi/web/dist/index.html` 时间 `2026-11-08 09:42:01 +0800` 对齐合并 | 已发生，但此前被误记为「部署暂缓」 |
-| 生产业务链路验收 | workflow 只验「nginx 返回 html + `/api` 代理」；`/api/health` 200；结项时**无会话页 / SSE / 画布 / 分享的行为级取证** | 结项时**未满足**；2026-11-08 已由 `docs/ops/2026-11-08-phase3-prod-smoke.md` 补齐五层行为取证，十一刀生产行为回归未发现；另列既有缺陷 F1（`follow-up-tail.ts` 未处理 `AbortError`）未闭环，按 `delivery.md` 纪律不宣告 ALL_PASS |
+| 生产业务链路验收 | workflow 只验「nginx 返回 html + `/api` 代理」；`/api/health` 200；结项时**无会话页 / SSE / 画布 / 分享的行为级取证** | 结项时**未满足**；2026-11-08 已由 `docs/ops/2026-11-08-phase3-prod-smoke.md` 补齐五层行为取证，十一刀生产行为回归未发现；另列既有缺陷 F1（`follow-up-tail.ts` 未处理 `AbortError`）未闭环，按 `delivery.md` 纪律不宣告 ALL_PASS；F1 后由 2026-11-08 F1 独立刀修复（见 `docs/superpowers/specs/2026-11-08-follow-up-tail-abort-rejection-design.md`），此为状态演进、不追溯改写当时的验收结论 |
 
 **纠偏 1 —— 「部署暂缓」从未发生。** `deploy.yml` 由 `push master` 自动触发，paths 白名单含 `apps/web/**`。前 11 刀每次合并都已上生产。后续任何规格不得再写「部署暂缓」；纯文档 PR 因 paths 白名单不含 `docs/**` 才不触发部署。
 

@@ -91,7 +91,7 @@
 - `/share/<id>`（不带 `.html`）404 是 nginx `location /share/ { alias …; try_files $uri =404; }` 的预期行为；静态托管页必须带 `.html`。
 - 本机直接 curl 该 224 KB 页面偶发 `502 / 59 B`（沙箱代理截断大响应，伴随 `curl (23)`），CVM 本机直连 200 为权威证据。
 
-## 3. 未闭环项 F1：`AbortError` 未处理 Promise rejection
+## 3. 既有缺陷 F1：`AbortError` 未处理 Promise rejection（已由 F1 独立刀承接）
 
 **现象**：两轮真实回合期间分别捕获 1 / 2 个 `Runtime.exceptionThrown`：
 
@@ -107,10 +107,13 @@ Uncaught (in promise) AbortError: signal is aborted without reason
 
 **与本次重构的关系：非回归**。PR #775（第十刀）只改了 8 个文件（`AgentSideRail.vue`、`useAgentObserver.ts`、6 个 ratchet 测试），**未包含 `follow-up-tail.ts`**；第十刀已用「master blob 原簇文本 + 依赖替换 → 忽略缩进逐行 diff」硬证伪零行为变更。因此该缺陷在 SFC 时代即存在，只是本次行为级冒烟第一次把它记录成可复现证据。
 
-**建议修复（独立刀，本轮不动）**：
-1. `follow-up-tail.ts:466` → `void Promise.resolve(r.cancel?.()).catch(() => {})`；`TailReaderLike.cancel` 收紧为 `() => Promise<unknown>`。
-2. `follow-up-tail.ts:275` → `void run(mark).catch(() => {})` 兜底。
-3. 先写行为级契约测试：CDP 复现「发新回合 → abort 上一轮常驻订阅 → 断言 `Runtime.exceptionThrown` 计数为 0」，做 RED→PASS 变异验证后再改实现。
+**修复落地（2026-11-08 F1 独立刀，本记录不追溯改写当时的验收结论）**：
+
+1. `follow-up-tail.ts` 内层 `finally` → `void Promise.resolve(r.cancel?.()).catch(() => {})`；外层同步 `try/catch` 保留以接住同步抛错。**原建议把 `TailReaderLike.cancel` 收紧为 `() => Promise<unknown>` 已撤下**：现有测试桩返回 `void`，收紧会连带改测试且 TS 依旧不强制 `.catch`，收益为零。
+2. `launch()` → `void run(mark).catch(() => {})`。**不新增 `mark()` 调用**：`run()` 在首响应前抛错时 `launch()` 等不到 ready 属既有语义，本刀不顺带改变，登记为后续包。
+3. 原建议 ③ 的「生产 CDP 复现」改为两层可重复判据：CI 内跑确定性 Node 行为级契约（`unhandledRejection` 事件，RED→PASS + 5 条变异），本地跑一次浏览器级 CDP 复核（`unhandledrejection` / `Runtime.exceptionThrown` 前后计数）；生产真实回合复验在部署成功后执行，不作为合并闸门。
+
+规格与实施计划：`docs/superpowers/specs/2026-11-08-follow-up-tail-abort-rejection-design.md`、`docs/superpowers/plans/2026-11-08-follow-up-tail-abort-rejection.md`。
 
 ## 4. 其它排除项与残留风险
 
@@ -135,5 +138,5 @@ Uncaught (in promise) AbortError: signal is aborted without reason
 ## 6. 结论
 
 1. **Phase 3 十一刀的生产行为回归：未发现**。会话页（含收起/展开两态）、消息气泡操作簇、composer 发送、SSE 异步受理与常驻 owner 流、Thread/Queue/Observer 接线、画布、分享静态页，五层行为判据全部通过。
-2. **结项规格的 P0 缺口由本记录补齐**，但保留 F1 为未闭环项；按项目纪律不写 `ALL_PASS`。
-3. **下一优先级**：F1 修复（行为级 RED→PASS 独立刀） > 部署链 scp stall 治理 > P4 门禁化（把 CDP 冒烟与注入依赖/回环数做成可失败门禁）。冻结边界不变：`sendMessage` / `handleEvent` / `canvas_command` / `defineExpose` 11 项契约。
+2. **结项规格的 P0 缺口由本记录补齐**，当时保留 F1 为未闭环项、按项目纪律不写 `ALL_PASS`；该历史结论保持原貌。F1 后由 2026-11-08 F1 独立刀修复（见 §3「修复落地」），状态演进以修复规格与实施计划为准，不追溯改写本次验收结论。
+3. **下一优先级（F1 已开刀）**：F1 修复（行为级 RED→PASS 独立刀，**进行中**） > 部署链 scp stall 治理 > P4 门禁化（把 CDP 冒烟与注入依赖/回环数做成可失败门禁）。冻结边界不变：`sendMessage` / `handleEvent` / `canvas_command` / `defineExpose` 11 项契约。
