@@ -169,6 +169,8 @@ flowchart TD
 
 **生产复验（合并后）**：`deploy.yml` 由 `push master` 自动触发且 paths 含 `apps/web/**`。部署成功则复跑 P0 的 CDP 真实回合脚本，断言 `Runtime.exceptionThrown` 计数为 0；若 runner→CVM scp 再次挂死，按 §11 登记，不手动兜底、不 rerun。
 
+> **复验结果（2026-11-08，PR #779 / merge `f84985f9`）**：`Deploy to Tencent Cloud` run `42453812598` success（16m52s），生产 dist 已更新。CDP 页面加载 10/10、展开侧栏 9/9，**连续两轮真实回合各 13/13 ALL_PASS**，`PAGE ERROR DETAILS = []`、`consoleErrors = []` ⇒ F1 生产闭环。证据归档于 `docs/ops/2026-11-08-phase3-prod-smoke.md` §3。
+
 **CI 三必需**：`Verify spec figures` / `Build monorepo`（含全量 vitest）/ `Build API Docker image` 全 pass 才 squash。
 
 ## 11. 风险
