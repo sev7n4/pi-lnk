@@ -187,7 +187,7 @@ flowchart TD
 - **推前核对（必做，实测有效）**：逐路径比对 master blob 后发现本地 `package.json` / `deploy.yml` 落后，已从 master blob 落盘恢复并重放改动（详见 §11 R8）。
 - **本地门禁**：`vue-tsc -b`、`pnpm -r build`、`pnpm verify-spec-figures`（全量 + 本文逐篇）、`pnpm verify-links`、`pnpm verify-claims`、全量 vitest（本刀不改产品代码，回归用）。
 - **CI 三必需**：`Verify spec figures` / `Build monorepo` / `Build API Docker image` 全 pass；其中 `Verify spec figures` 已包含新增契约步骤。
-- **生产验收（合并后）**：`deploy.yml` paths 含 `.github/workflows/deploy.yml` 与 `package.json` ⇒ 合并会自动触发部署；若 `environment: production` 挂审批，按既有闸门纪律处理，不绕过。随后再手工 `workflow_dispatch` 一次 `deploy_web_only=true` 做对照，断言：上传步骤 ≤ 8 min、日志出现清单校验成功标记、远端 `find … sha256sum` 自洽、`http://119.29.173.89:8888/` 与 `/api/health` 均 200、`index.html` 引用的 chunk 200。
+- **生产验收（合并后，已实测）**：`deploy.yml` paths 含 `.github/workflows/deploy.yml` 与 `package.json` ⇒ 合并自动触发部署；若 `environment: production` 挂审批，按既有闸门纪律处理，不绕过。主判据为这一次真实 push 自动部署：上传步骤 ≤ 8 min、日志出现 `UPLOAD_MODE=incremental` / `MANIFEST_OK` / `WEB_DIST_UPLOAD_OK`、远端清单 `sha256sum -c` 自洽、`http://119.29.173.89:8888/` 与 `/api/health` 均 200、#723 OG 卡 200、交付物集合不变。**`deploy_web_only` 手工二次对照降为可选**（两条触发分支共用同一脚本与 env，不新增代码路径覆盖，且会与同组 `Build API on CVM` 排队并再动一次生产 nginx）；理由与实测数据见 `docs/ops/2026-11-08-web-dist-upload-prod-verify.md` §5。
 - **不达标处理**：先 revert 单个 squash commit 恢复旧链路，再取证复盘；不手动 scp 兜底、不 rerun 慢链路。
 
 ## 11. 风险
