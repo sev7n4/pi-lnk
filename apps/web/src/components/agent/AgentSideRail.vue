@@ -232,6 +232,8 @@ const emit = defineEmits<{
 const pickMode = useCanvasRefPickMode()
 const pickModeActive = pickMode.active
 const { isMobileLayout } = useAgentMobileLayout()
+/** PC dock 语义派生：模板 7 处否定读取的单一真源（路线 ③ 第一批）。 */
+const isDesktopDock = computed(() => !isMobileLayout.value)
 
 /* dock/panel 定位、桌面浮窗拖拽/调宽、移动端裸条高度发布 —— 已抽到 useAgentDock（见下方调用） */
 
@@ -1212,7 +1214,13 @@ watch(input, (v) => {
   if (isMobileLayout.value && v.trim()) composerExpanded.value = true
 })
 
-function onComposerFocusIn() {
+function onComposerFocusIn(e?: FocusEvent) {
+  // 2026-11-09 真机修复 #1：仅可编辑元素（textarea）获焦才进入输入态——
+  // 点 ＋ / ◎ 等条内按钮会顺带让按钮获焦，若据此展开 composer 属误触（且会与附件卡弹出抢交互）。
+  const t = e?.target as HTMLElement | null
+  const tag = t?.tagName?.toLowerCase()
+  const editable = tag === 'textarea' || tag === 'input' || t?.isContentEditable
+  if (!editable) return
   composerFocused.value = true
   if (isMobileLayout.value) composerExpanded.value = true
 }
@@ -2947,7 +2955,7 @@ defineExpose({
     class="agent-side-rail shrink-0 overflow-visible"
     :class="{
       'is-resizing': resizing,
-      'is-docked-open': open && !floating && !isMobileLayout,
+      'is-docked-open': open && !floating && isDesktopDock,
     }"
     :style="{ width: asidePanelWidth }"
   >
@@ -3018,7 +3026,7 @@ defineExpose({
               'is-keyboard-open': isKeyboardOpen,
             },
           ]"
-          :style="floating && !isMobileLayout ? {
+          :style="floating && isDesktopDock ? {
             left: `${floatPos.x}px`,
             top: `${floatPos.y}px`,
             width: `${floatWidth}px`,
@@ -3026,7 +3034,7 @@ defineExpose({
         >
           <!-- 左边缘拖拉调宽 -->
           <div
-            v-if="!isMobileLayout"
+            v-if="isDesktopDock"
             class="agent-resize-handle"
             title="拖拉调整宽度"
             @mousedown="startResize"
@@ -3040,7 +3048,7 @@ defineExpose({
                收起 / 浮窗为桌面专属按钮移动端隐藏；startDrag 移动端本身 no-op） -->
           <div
             class="agent-panel-header flex items-center justify-between px-3 py-2"
-            :class="floating && !isMobileLayout ? 'cursor-move' : ''"
+            :class="floating && isDesktopDock ? 'cursor-move' : ''"
             @mousedown="startDrag"
           >
             <div class="flex min-w-0 items-center gap-2">
@@ -3049,7 +3057,7 @@ defineExpose({
                    桌面端维持纯 logo。 -->
               <NeoAgentLogo size="xs" active />
               <!-- 移动端「传送门」（2026-10-15 移动端重构）：头像即品牌 logo，不再重复「lnk·π agent」文字 -->
-              <p v-if="!isMobileLayout" class="agent-subtitle truncate text-[11px]">lnk·π agent</p>
+              <p v-if="isDesktopDock" class="agent-subtitle truncate text-[11px]">lnk·π agent</p>
             </div>
             <div class="flex items-center gap-0.5">
               <!-- 规格 §6.8 / ADR-0015：桌面侧栏头部不再放「新对话 / 历史」入口
@@ -3058,7 +3066,7 @@ defineExpose({
 
               <!-- 浮动窗口切换：面板脱离/停靠侧栏 -->
               <button
-                v-if="!isMobileLayout"
+                v-if="isDesktopDock"
                 type="button"
                 class="agent-head-btn"
                 :class="floating ? 'is-active' : ''"
@@ -3080,7 +3088,7 @@ defineExpose({
               </button>
 
               <!-- 收起：回到右下角 logo（桌面专属；移动端裸条常驻无「收起」形态） -->
-              <button v-if="!isMobileLayout" type="button" class="agent-head-btn" title="收起助手" @click="closePanel">
+              <button v-if="isDesktopDock" type="button" class="agent-head-btn" title="收起助手" @click="closePanel">
                 <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M6 6l12 12M18 6 6 18" />
                 </svg>
@@ -4420,6 +4428,15 @@ defineExpose({
   padding-bottom: 0;
 }
 
+/* 2026-11-09 真机修复 #3：画布拾取窗态（◎ 定位锚进入 is-canvas-view）下 composer 被遮挡。
+ * 根因：CanvasRefPickOverlay 是 position:absolute;z-45，所在画布区不建堆叠上下文，
+ * 故 z-45 落在根上下文、盖在面板（z-30）之上 ⇒ composer 被遮。面板移动端为 composer 大小
+ * （非全屏、height:auto），仅贴底，把它在画布视图提到 z-45 之上(50)即可让 composer 浮于
+ * 拾取遮罩之上；不与顶栏(40)/页签(80)/项目抽屉(95)冲突（面板只在底部、composer 大小）。 */
+.agent-panel-mobile-dock.is-canvas-view.agent-panel-shell {
+  z-index: 50;
+}
+
 /* （2026-10-27 三页顶栏重构）is-conversation-view 历史 popover 向下恢复规则已随
    header 历史 popover 退役（ADR-0015 单对话）删除 */
 
@@ -5501,6 +5518,7 @@ defineExpose({
     right: 12px;
     bottom: 0;
     width: auto;
+    z-index: 90; /* 2026-11-09 真机修复 #1：高于页签 z-80，附件卡作为底部抽屉完整盖住页签 */
     border-radius: 16px 16px 0 0;
     padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
   }
@@ -5517,7 +5535,7 @@ defineExpose({
   display: block;
   position: fixed;
   inset: 0;
-  z-index: 25;
+  z-index: 85; /* 2026-11-09 真机修复 #1：高于页签 z-80，遮罩随附件卡成为模态底部抽屉 */
   background: transparent;
 }
 
