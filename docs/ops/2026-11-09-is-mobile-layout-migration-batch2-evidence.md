@@ -91,3 +91,37 @@ VERDICT ALL_PASS
 - 行为级测试覆盖三处锚点对应的 PC / 移动 DOM 形态，不是像素 diff；A-6 真机复测仍是独立窗口待办。
 - 本刀零改动母规格、`ci.yml` 挂载行、`package.json`、`deploy.yml`、`presentation/**`、`packages/shared/**`、`pc-visual-baseline.json`。
 - `deploy.yml` 的 `push.paths` 含 `apps/web/**` ⇒ 合并会触发一次 web-only 生产发布；发布 success、bundle 五证与合并树核对结果按前例（第一批 PR #801）另开只追加回填 PR 登记，本节不预先宣告通过。
+
+## 8. PR #806 合并 / CI / 生产发布 / 合并树核对（执行时状态回填）
+
+> 本节为执行时状态回填，按「历史时点结论不追溯改写，只做只追加」原则；§1–§7 原样保留。
+
+### 8.1 CI 三必需 + 合并
+
+- PR **#806** head `3d502c361d696ae35eb47eb060c6407287614d6c`、base master `e743c469becb…`（推送前核对 master 未前移，`MASTER_MOVED_SAFE True`）。
+- **首次 CI `42642649374` 失败**：`Build monorepo` success、`Verify spec figures` success、`Build API Docker image` **failure**。失败日志根因：`pnpm install --frozen-lockfile --filter '!@lnkpi/web' --registry=https://registry.npmmirror.com` 报 `ERR_PNPM_FETCH_500`（镜像源 `@aws-sdk/*` / `tsx` 等返回 HTTP 500，日志明言 `Lockfile is up to date, resolution step is skipped`，**零锁文件漂移**）。本刀 8 文件改动零触碰 `pnpm-lock.yaml` / 任何 `package.json`，判定为**纯环境瞬时故障，非代码缺陷**。
+- 处置：调用 `rerun-failed-jobs` 重跑同一 run，镜像 500 恢复后 **run `42642649374` 结论变 `success`**，三必需 `Build monorepo` / `Verify spec figures` / `Build API Docker image` 全 success，check-runs 三项全绿。
+- squash 合并 → master **`3ca8c8d9394b0421bc5511b30fa5aa2937d67134`**（blobs 4935）。
+- 合并树核对：`REAL_PARENTS=['e743c469becb…']` `PARENT_OK True`、`DIFF_COUNT 8`、`EXACTLY_OUR_8 True`、`ALL_LOCAL_MATCH True`、`NO_OTHER True`、`MASTER_EQ_PRHEAD True`（远端合并树 == PR head 树，7 目标文件 + 1 文档逐字节一致）、`ALL_PARALLEL_KEPT True`（CI 期间 master 未前移）。8 路径：`AgentSideRail.vue`(`8a8b8a81`)、`verify-is-mobile-layout-scope.py`(`2fe018e0`)、`AgentSideRail.mobileDockDerived.test.ts`(`d60c6538`)、batch1-evidence(`7dd3a4f6`)、batch2-evidence(`86b957bf`)、batch2-runbook(`bb6a1601`)、batch2-plan(`a1abca87`)、batch2-design(`38d55c14`)。
+
+### 8.2 生产发布复测（web-only）
+
+- 部署 run **`42651326785` 结论 `success`**（head 即 merge sha `3ca8c8d9`）；仅 `Deploy web to CVM` 触发、`Build API on CVM` skipped（本刀未动 `apps/server` / `packages`，符合 web-only 预期）。
+- 生产 SSH 直连：`/api/health` **200** 返回 `{"ok":true,"service":"lnkpi-api",…}`；web `/` **200**；`/opt/lnkpi/web/dist/index.html` mtime `2026-11-10 00:07:47 +0800`（部署即刻生效）。
+- CanvasPage chunk：`CanvasPage-D71wCzDt.js`（第一批）→ **`CanvasPage-CtzzYFv4.js`**（hash 已换，证明新构建已下发）。
+- 派生结构在产：`{isMobileLayout:l}=dr(),u=R(()=>!l.value)` —— 即 `isDesktopDock = computed(() => !isMobileLayout.value)` 的压缩形态。
+- 三桌面锚点字符串各 **1**：`agent-resize-handle` / `agent-subtitle` / `收起助手`；C2 `:mobile-enter-newline="!isDesktopDock"` 编译为 prop 名对 `"mobile-enter-newline":!u.value`（保留为可读判据）。
+- ⚠️ **bundle 五证判读 caveat（必须诚实登记）**：`u` 是 esbuild 复用的通用单字母名，`u.value` 在全 chunk 出现 **323** 次，并非仅 `isDesktopDock`；故 `!u.value` 命中数（7）不能直接 1:1 对应源码 3 处 `!isDesktopDock`。可靠判据是 **chunk hash 已换 + 三桌面锚点字符串各 1 + C2 的 `"mobile-enter-newline":!u.value` 字面量对 + 派生结构 `u=R(()=>!l.value)` + health 200**，且合并树已确认源码 blob `8a8b8a81` 入 master、门禁 `EFFECTIVE_HITS 12 == MAX_ALLOWED 12`。
+
+### 8.3 合并后 true master 精算（已取证，非推测）
+
+- 从 master `3ca8c8d9` 取回 `AgentSideRail.vue`(`8a8b8a81`/278931 B) 与 `verify-is-mobile-layout-scope.py`(`2fe018e0`) 精算：`EFFECTIVE_HITS 12`、`MAX_ALLOWED 12`。
+- 12 点构成（剥注释后）：A 来源 L234、派生定义 L236、A 暴露 `getIsMobileLayout` L469、D 脚本逻辑 10（L737/839/859/1005/1013/1217/1228/1236/1259 + 余 1）。
+- 模板区 `!isMobileLayout` **0**；`isDesktopDock` 总消费 **13**（1 定义 + 9 模板正用 + 3 模板否定 `!isDesktopDock`）。C 类 3 处已全部转 `!isDesktopDock`，由单一派生真源驱动。
+
+### 8.4 诚实边界（重申，执行后）
+
+- 本刀**已闭环**：C 类 3 处收敛 + 上限 15→12 + 行为级 4/4 + 6/6 变异 + 41/41 回归 + CI 三必需 + 合并树 8 路径核对 + web-only 生产发布 success + 生产 bundle 五证（含 mangle caveat）+ 三条棘轮。
+- **不宣称** 15 点全搬（剩 12：A 1 + 派生 1 + D 10）、**不宣称**布局分支移出 Shell、**不宣称**新增 required check、**不宣称**像素 / 真机视觉复测（非 CDP 五层冒烟、非 A-6）。
+- 母规格 Phase 4「删 PC 冗余渲染」功能仍 ⏳ 未闭环；后续 D 类 10 处逐处降上限（12→11→…→2），每批独立 PR + 行为级 + 变异 + 生产复测。
+- 并行 open PR #805（SP-E 阶段 1 服务端，文件面与本刀零相交）、#802（SP-E 决策门，纯文档）、#625（老规格）仍 open，维持独立窗口。
