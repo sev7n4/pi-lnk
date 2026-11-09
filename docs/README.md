@@ -95,6 +95,14 @@
 | [`superpowers/plans/2026-10-28-canvas-edge-remedy-loop.md`](./superpowers/plans/2026-10-28-canvas-edge-remedy-loop.md) | **SP-F 实施计划**——3 task TDD 步骤 | 活资产 —— 实现依据 |
 
 
+
+## SP-E 画布并发写决策门（2026-11-09）
+
+| 文件 | 内容 | 性质 |
+|---|---|---|
+| [`superpowers/specs/2026-11-09-sp-e-canvas-cas-decision-gate-design.md`](./superpowers/specs/2026-11-09-sp-e-canvas-cas-decision-gate-design.md) | **SP-E CAS 决策门（v2.1，13 章）**——基于 true master `2b6693c5` 与生产 9088 次 PATCH 取证，重估 PR #625 必要性；9 条证伪 / 10 条遗漏 / 三阶段决策门 / 14 天数据门阈值 / 409 升级硬约束 H1–H10 / 准入三问 | 活资产 —— 决策依据 |
+| [`superpowers/plans/2026-11-09-sp-e-phase1-observability.md`](./superpowers/plans/2026-11-09-sp-e-phase1-observability.md) | **SP-E 阶段 1 实施计划**——8 个 task（clientId / 计数器 / applier 幂等 / PATCH 埋点 / header / health 端点 / web 注入 / 生产验收），逐 task TDD 步骤 + 5 条 Review Focus + 变异测试 + 发布回滚 | 活资产 —— 实现依据（未执行） |
+
 ## 保留的目录
 
 | 目录 | 内容 | 性质 |

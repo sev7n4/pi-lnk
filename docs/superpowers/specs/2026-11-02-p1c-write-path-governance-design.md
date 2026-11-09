@@ -126,3 +126,15 @@ C0（S）→ C1（XL，分 C1a 服务端 + C1b 前端两 PR）→ C2（S，收�
 | 白名单误伤客户端合法写字段 | §7-3 渐进收窄策略（先禁 5 键 + unknown-key 打点） |
 | stagedActions 与 PATCH 并发 409 | 复用 persist 同款 409 语义，前端对账重试一次 |
 | 双端同时 remove+update 同节点 | remove op 对不存在节点幂等（applier 现状），后写胜 |
+
+## 9. 执行时状态回填：SP-E CAS 必要性重估（2026-11-09，只追加）
+
+> 本节为只追加状态回填，**不改写** §7-4 的历史裁决与 §8 的风险表。历史时点结论一律以其取证时点为准。
+
+- **触发**：§7-4 第 4 条要求「C1 先行、CAS 后叠……CAS 作为独立增强在 C1 落地后重新评审其必要性（冲突面已缩小，CAS 的边际价值需重估）」。该重估于 2026-11-09 执行，此前从未发生：PR #625 的 v2 规格只把收益主体从「PUT 整份覆盖」换成「PATCH op 流」，11-06 评审意见同样基于 11-02 基线（PR `updated_at` 仍为 `2026-11-06T16:32:26Z`、head 仍为 `bdc2bd9713e36d9d01f998f2ded24b4cb48d9326`）。
+- **执行时事实基线**：true master `2b6693c579ff2931a84d1954e93fecf5617db91`；本节取证时点 v2 规格基线 `d407ad98` 已前进 **121 提交 / 300 文件**；生产容器 `lnkpi-api:b1190a2a`（服务端写路径治理代码已在生产 bundle 命中 `canvas_put_rejected` 与 `transactGovernedCanvasOps`）。取证全程走 `gh api` Git Data REST 裸 blob，不信任本地 ref。
+- **重估结论（代码事实）**：C1 / C2② / P1b / Phase 5 已全部落地 ⇒ 整份 PUT 关闭、7 文件 12 写点全部事务化 + op 语义、服务端专属键由 5 键扩至 8 键、op 应用收敛为 `packages/shared/src/canvasActionApplier.ts` 单一 SSOT、前端只提交变化键。v2 的 9 条实施陈述被证伪；真实残损面只剩「过期基线 op 静默 no-op」与「同字段后写赢」两类。
+- **重估结论（生产证据）**：生产 nginx 11-02~11-09 共 **9088 次** `PATCH /api/sessions/:id/canvas` / 83 个 session / 相邻 ≤2s **3534 对**；状态 `200=9019`、`404=57`、`502=4`、`401=7`、`403=1`，**零冲突信号**。现有日志分辨率只有 `(IP, UA, 秒)`，无法区分同一 session 的两个客户端内存基线 ⇒ 收益论证缺少分母；而 3534 对近距写同时说明「任何写都 bump」会制造假 409 风暴。
+- **裁决**：对 PR #625 v2 原案判 `NO_GO_FOR_IMPLEMENTATION`；主线改走 **A 决策门** —— 阶段 0 决策门规格（本次）、阶段 1 零契约观测 + op 幂等加固（零 DB 列 / 零 migration / 零 409 / 零 UX 变化）、阶段 2 14 天数据门（`stale_conflict ≥ 30` 且 `≥ 3` session + `≥ 1` 起可复现用户丢失 + 预估 `409 率 < 0.5%`，三条同时满足才升级 409，否则 NO-GO 定案）。
+- **后继资产**：[`2026-11-09-sp-e-canvas-cas-decision-gate-design.md`](./2026-11-09-sp-e-canvas-cas-decision-gate-design.md)（13 章规格）、[`../plans/2026-11-09-sp-e-phase1-observability.md`](../plans/2026-11-09-sp-e-phase1-observability.md)（8 task 实施计划）。
+- **完成定义**：不宣告未闭环项 ALL_PASS；数据门不达标即关闭或改写 PR #625 为「观测结项 + 幂等加固」，并把结论继续只追加回填到本节。
