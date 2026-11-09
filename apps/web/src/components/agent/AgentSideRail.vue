@@ -2984,7 +2984,7 @@ defineExpose({
            与 PC 面板头部 popover 同源（threads/fetchThreads/selectThread），移动端头部被 CSS 隐藏故独立成面层。 -->
       <Teleport to="body">
         <div
-          v-if="isMobileLayout && mobileThreadHistoryOpen"
+          v-if="!isDesktopDock && mobileThreadHistoryOpen"
           class="thread-history-layer"
           @click.self="closeThreadHistory"
         >
@@ -3014,7 +3014,7 @@ defineExpose({
           ref="panelShellRef"
           class="agent-panel-shell flex min-h-0 h-full min-w-0 flex-col overflow-hidden"
           :class="[
-            isMobileLayout
+            !isDesktopDock
               ? mobileCanvasView
                 ? 'agent-panel-mobile-dock is-canvas-view'
                 : 'agent-panel-mobile-dock is-conversation-view'
@@ -3927,7 +3927,7 @@ defineExpose({
                       : inputPlaceholder"
                   :disabled="readOnly || isUploading"
                   :leading-inset="readOnly || isUploading || !canvasRefEntryVisible ? 0 : COMPOSER_PICK_INSET"
-                  :mobile-enter-newline="isMobileLayout"
+                  :mobile-enter-newline="!isDesktopDock"
                   :prediction-history="predictionHistory"
                   submit-on-enter
                   @submit="onComposerSubmit"

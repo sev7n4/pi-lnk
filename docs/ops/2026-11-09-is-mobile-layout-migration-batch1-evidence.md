@@ -148,3 +148,13 @@ dist/index.html mtime     2026-11-09 18:34:33 +0800（部署时刻）
 - 本刀**不宣称** 21 点全部搬迁（剩余 15 点：A 1 + 新派生 1 + C 3 + D 10）、**不宣称**布局分支移出 Shell、**不宣称**新增 required check、**不宣称**像素或真机视觉复测。
 - 生产复测是「部署成功 + 接口健康 + bundle 结构级」取证，**不是** CDP 五层冒烟，也不是 A-6 真机复测；两者仍是独立窗口。
 - 本节为执行时状态回填，按「历史时点结论不追溯改写，只做只追加状态回填」原则原样保留 §1–§7。PR #625 / A-6 维持独立窗口。
+
+## 9. 风险锚消解状态回填（2026-11-09 22:10，只追加）
+
+> 本节只追加登记 §8 留下风险锚的**当前状态**；§1–§8 为历史时点结论，按纪律原样保留，不追溯改写。
+
+- ✅ **并行 PR #800 已消解**：并行窗口重建 TRUE MASTER 源码 + rebase onto #799 ⇒ head `cb5beeb5` / CI `42606222774` 全绿 / squash `5ca09b1d`。两处新增 Teleport 写成 `:disabled="isDesktopDock"`（而非 `!isMobileLayout`），**主动复用第一批派生**；`useMobileKeyboardInset.ts` 单行压平与冻结契约缺失均已修复。随后 #803 / #804 键盘贴边迭代已发布。
+- ✅ **第一批成果零回退**：master 前移 3 提交到 `e743c469becb61e4186cbf9c1963a37f431a8048` 后，从 true master 重取证实测有效读取点 **15/15**、`MAX_ALLOWED = 15`、V3 方向判据在位、模板区 `!isMobileLayout` 0、`isDesktopDock` 消费点 7→9；master CI `42626712920` 的 `Verify agent rail contract gates` / `Verify isMobileLayout scope` / 两条删除域棘轮全 success。compare 只动 4 文件，第一批其余 6 路径零变化。
+- ⇒ §8 的「若该并行修复合入会撞 `MAX_ALLOWED = 15`」告警**未发生**：并行窗口按建议显式收敛了两处读取。该告警作为当时的有效风险识别保留，本节登记其后续结果。
+- ⭐ **后继方案差异**：本文件 §7 与第一批规格 §12 预告「第二批上限 15 → 13（新增 `isMobileDock` 派生）」；实际第 4 刀改用 `!isDesktopDock`（严格等价、不新增读取点），上限 **15 → 12**。差异理由与验收见 `docs/superpowers/specs/2026-11-09-is-mobile-layout-migration-batch2-design.md` §3。
+- 本节不宣告「21 点全搬」「母规格 Phase 4 功能闭环」「真机视觉复测」；PR #625 / A-6 仍为独立窗口。
