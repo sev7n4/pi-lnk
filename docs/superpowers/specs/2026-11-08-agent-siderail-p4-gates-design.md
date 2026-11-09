@@ -224,6 +224,7 @@ G2 覆盖不到的 4 个注入点（`useAgentStream` / `useAgentDock` / `useUtte
 - **上传字节数写入 step summary**：#2 的后续观测项。
 - **P2 状态写者收敛**：`scrollToBottom` 27 处调用 / `taskProgress` 14 处写入的共享可变状态治理，未启动；本刀只锁门禁不动所有权。
 - 冻结边界不变：`sendMessage` / `handleEvent` / `canvas_command` / `defineExpose` 11 项。
+- ⭐ **#4 状态（2026-11-09，只追加）**：CDP 五层冒烟参数化 ops runbook 已交付 —— `scripts/prod-cdp-smoke.mjs` 单一入口、`scripts/verify-prod-cdp-runbook.py` 七组静态判据、`docs/ops/2026-11-09-prod-cdp-smoke-runbook.md` env 与判据 SSOT。插队刀取证暴露的三条坑（756px 移动端断点 / session-scoped 视口修正 / 多 tab 串台）已落为可失败 PREFLIGHT，L3 写操作默认关闭。**仍不挂 required check**，本刀未改 `package.json` 与 workflows；拆分结论与三必需门禁不受影响。规格见 `docs/superpowers/specs/2026-11-09-prod-cdp-smoke-runbook-design.md`。
 
 ## 13. 配图规范自检
 
