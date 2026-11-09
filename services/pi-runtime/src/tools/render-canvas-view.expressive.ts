@@ -339,7 +339,7 @@ function cssColorClassMap(): Map<string, string> {
 export function svgOpen(height: number): string {
 	// D3-3 视觉语言：画布卡片底（浅灰），节点白底落其上才有对比（§4.2(3)）。
 	return (
-		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${height}" width="${W}" height="${height}" role="img">` +
+		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${height}" role="img">` +
 		`<rect x="0" y="0" width="${W}" height="${height}" fill="${CARD_BG}"/>`
 	);
 }

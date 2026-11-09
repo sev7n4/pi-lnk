@@ -72,3 +72,14 @@ const isDiscarded = computed(() => props.svg.trim() === '')
     </ul>
   </figure>
 </template>
+
+<style>
+  /* v-html 注入的 SVG 来自 agent 不可信输出；后端已不再写死根 width（只输出 viewBox）。
+     全局选择器兜底：让 SVG 按 viewBox 比例自适应卡片容器宽度，避免 720px 固定宽在窄
+     对话列/移动端横向溢出。scoped 不作用于动态注入子树，故用全局。 */
+  .agent-svg-card__canvas svg {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+</style>
