@@ -2,6 +2,7 @@ import { Controller, Get } from '@nestjs/common'
 import { deliveryMetrics } from '../agent/delivery-metrics'
 import { notifyMetrics } from '../studio/notify-metrics'
 import { isTerminalWriteTapEnabled } from '../prisma/prisma.module'
+import { canvasPatchMetrics } from '../sessions/canvas-patch-metrics'
 
 @Controller('health')
 export class HealthController {
@@ -26,6 +27,16 @@ export class HealthController {
       terminalWriteTapEnabled: isTerminalWriteTapEnabled(),
       metrics: notifyMetrics.snapshot(),
       deliveryCard: deliveryMetrics.snapshot(),
+      timestamp: new Date().toISOString(),
+    }
+  }
+
+  /** SP-E 阶段 1：进程内存 PATCH 样本，供 14 天数据门取数（重启清零，取数须记录容器启动时间）。 */
+  @Get('canvas-patch-metrics')
+  getCanvasPatchMetrics() {
+    return {
+      ok: true,
+      metrics: canvasPatchMetrics.snapshot(),
       timestamp: new Date().toISOString(),
     }
   }

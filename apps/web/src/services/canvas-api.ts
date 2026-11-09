@@ -1,4 +1,5 @@
 import { api } from './api'
+import { getCanvasClientId } from '@/utils/canvasClientId'
 import type { AxiosRequestConfig } from 'axios'
 import type { GenerationDiagnostic } from '@lnkpi/shared'
 
@@ -15,7 +16,9 @@ export const canvasApi = {
    * 载荷 ops 由 canvasDiff 产出（服务端白名单再收敛一次）；空 diff 由调用方拦下（零请求）。
    */
   patchCanvas: (id: string, ops: unknown[]) =>
-    api.patch<{ data: { applied: number } }>(`/sessions/${id}/canvas`, { ops }),
+    api.patch<{ data: { applied: number } }>(`/sessions/${id}/canvas`, { ops }, {
+      headers: { 'x-lnkpi-canvas-client': getCanvasClientId() },
+    }),
   /**
    * SP-D（ADR-0014）：手拉边落库走服务端统一校验通道（端点存在/禁自环/禁成环 fail-closed），
    * 与 agent connect_nodes 同一服务方法；硬非法 ⇒ 400，message 逐条点名 `source -> target (reason)`。
