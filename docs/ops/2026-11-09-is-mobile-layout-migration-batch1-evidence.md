@@ -100,3 +100,51 @@ VERDICT ALL_PASS
 - 行为级测试覆盖的是 7 处锚点对应的 DOM 存在性（PC / 移动两端），不是像素 diff；A-6 真机复测仍为独立窗口待办。
 - 本刀零改动母规格、`ci.yml` 挂载行、`package.json`、`deploy.yml`、`presentation/**`、`packages/shared/**`、`pc-visual-baseline.json`。
 - `deploy.yml` 的 `push.paths` 含 `apps/web/**` ⇒ 合并会触发一次 web-only 生产发布，复测结果在 §8 只追加登记。
+
+## 8. 执行时状态回填（2026-11-09，只追加）
+
+### 8.1 合并与树核对
+
+```text
+CI run 42599820110     Verify spec figures / Build monorepo / Build API Docker image = 3/3 success
+check-runs(head e53da64b)                                       3/3 success
+PR #799 squash MERGED  cb244af9fb43eb7944f30ad9ce75c522fa66798c
+REAL_PARENTS           ['83d59fb496e2aef65da9a121744c4eed7f22a8b4']  PARENT_OK True
+DIFF_COUNT 7           EXACTLY_OUR_7 True   NO_OTHER True
+MASTER_EQ_PRHEAD True  合并树 7 路径裸 blob sha 与 PR head 逐字节全等
+ALL_PARALLEL_KEPT True（CI 期间 master 未前移）
+```
+
+⭐ **`ALL_LOCAL_MATCH False` 的诊断与处置**：合并脚本按本地工作树复核时只有 `AgentSideRail.vue` 不等。逐路径比对确认 `MASTER_EQ_PRHEAD True`（**远端交付正确**），漂移只发生在本地：并行会话给该 SFC 加了「2026-11-09 真机修复 #1：附件卡 Teleport 到 body」，其中两处 `:disabled="!isMobileLayout"` 新增 2 个读取点，本地门禁实测 `Shell 读取点 17 超过上限 15`。按纪律**不推送这份本地脏改动、不 `reset --hard` 覆盖他人工作**，门禁以 CI checkout 的远端源码为准（runbook §7）。
+
+⚠️ **风险锚（留给后继刀）**：若该并行真机修复日后合入 master，两处新增读取会直接撞上 `MAX_ALLOWED = 15`。后继刀须二选一并显式声明：把它们一并收敛进 `isDesktopDock`，或在独立小刀里精算上调上限（上限只降不升是棘轮方向，上调必须给出充分理由 + 行为级测试 + 变异，不得静默放宽）。
+
+### 8.2 生产发布复测
+
+```text
+deploy run 42601656878  head_sha = cb244af9…  conclusion success（4m03s）
+  Detect changes            success
+  Deploy web to CVM         success
+  Build API on CVM          skipped   ← web-only 发布，符合预期
+  Recover CVM only          skipped
+health=200  {"ok":true,"service":"lnkpi-api",...}
+web=200
+dist/index.html mtime     2026-11-09 18:34:33 +0800（部署时刻）
+```
+
+**bundle 级下钻**（不把「字面量命中」当判据，下钻到懒加载 chunk 的 setup 段）：
+
+| 项 | 部署前 | 部署后 |
+| --- | --- | --- |
+| CanvasPage chunk | `CanvasPage-kaBa-bVq.js` | `CanvasPage-D71wCzDt.js`（旧文件已被差量同步替换） |
+| 三桌面锚点 | `agent-resize-handle` / `agent-subtitle` / `收起助手` 各 1 | 各 1（零丢失） |
+| setup 段 | `{isMobileLayout:l}=or(),u=bo(),…` | `{isMobileLayout:l}=ar(),u=R(()=>!l.value),…` |
+| resize-handle 条件 | `N(l)?U("",!0):(v(),y("div",{key:0,class:"agent-resize-handle"…` | `u.value?(v(),y("div",{key:0,class:"agent-resize-handle"…` |
+
+⭐ `u=R(()=>!l.value)` 即 `const isDesktopDock = computed(() => !isMobileLayout.value)` 的 minified 形态；渲染条件由「对布局 ref 取反」变为「直接读派生 ref」，7 处替换已 live。`isDesktopDock` 字面量在新 chunk 中为 **0** —— setup 局部 const 被压缩成 `u`，**这是压缩策略而非未部署**，故取证以「setup 派生结构 + 渲染条件 + 三锚点 + chunk hash 变化 + health」五证为准，不谎报字面量命中。纯否定 computed 在该 chunk 中共 2 处，另一处属其他组件，不作为本刀判据。
+
+### 8.3 诚实边界
+
+- 本刀**不宣称** 21 点全部搬迁（剩余 15 点：A 1 + 新派生 1 + C 3 + D 10）、**不宣称**布局分支移出 Shell、**不宣称**新增 required check、**不宣称**像素或真机视觉复测。
+- 生产复测是「部署成功 + 接口健康 + bundle 结构级」取证，**不是** CDP 五层冒烟，也不是 A-6 真机复测；两者仍是独立窗口。
+- 本节为执行时状态回填，按「历史时点结论不追溯改写，只做只追加状态回填」原则原样保留 §1–§7。PR #625 / A-6 维持独立窗口。
