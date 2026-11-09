@@ -277,3 +277,26 @@ flowchart LR
 §15.4 第 1 项「PC 自动化视觉回归套件」的规格、计划、采集脚本、V1–V7 静态判据、固定 fixture、golden baseline 与 runbook 已产出并通过本地验收，证据见 `docs/ops/2026-11-09-pc-visual-regression-evidence.md`。护栏通过本地 Vite 挂载**真实** `AgentPresentationHost.vue`，行为级变异已实证「少渲染一个真实组件 ⇒ `diff_count>0` 且 `exit 1`」，因此删除 `components/agent/presentation/` 下的组件会被确定性 diff 抓住。
 
 该套件**不挂 required check**（依赖本机 Chrome，不满足门禁准入三问），定位为删除刀 PR 的准入闸门；删除刀不得修改 `pc-visual-baseline.json`，也不得同时改 fixture / 采集脚本 / 判据。§15.4 的排序不变：第 2 项 Phase 2 口径澄清、第 3 项 22 处 `isMobileLayout` 收敛仍在后续；**本文 Phase 4「删 PC 冗余渲染」本身仍未实施**，不因护栏交付而标记为闭环。冻结边界不变。
+
+
+### 15.7 Phase 2 口径澄清决策（2026-11-09，只追加）
+
+**冲突来源**：§6.2 写「SFC 零网络调用」，§2 又写「不动 L0 拉流」。二者在 11-09 的 master 代码形态下不能同时字面成立。按「历史时点结论不追溯改写」纪律，本节只收敛解释权，不改写 §2 / §6.2 原文。
+
+**决策**：Phase 2 的验收口径收敛为 **「L1 指令零内联调用」** —— 指令侧的网络调用必须经 `apps/web/src/agent/command/agentCommandClient.ts`，SFC 内不得内联指令 POST；历史读取侧的 GET 拉取流按 §2 保留。
+
+**代码取证（master，2026-11-09）**：`AgentSideRail.vue` 共 5 处 `fetch(`，全部是历史读取 GET 或它们的通用封装，无一为指令 POST：
+
+| 行 | 端点 / 作用 | 语义 |
+| --- | --- | --- |
+| 797 | `fetch(apiUrl(url), { ...init, headers: ... })` | 通用请求封装，供下列读取调用复用 |
+| 950 | `/api/agent/chat/threads?sessionId=…` | 会话线程列表读取 |
+| 1087 | `/api/agent/chat/user/messages?…` | 历史消息首屏读取 |
+| 1170 | `/api/agent/chat/user/messages?…&before=…` | 历史消息向前翻页 |
+| 2060 | `/api/agent/chat/user/messages?…` | 影子回合回查拉取 |
+
+这 5 处均依赖 `cache: 'no-store'`：Nest 的 ETag 无 `Cache-Control` ⇒ 条件请求返回 304 空体 ⇒ `res.json()` 抛错并静默中断读取（2026-10-28 生产事故口径）。`agentCommandClient` 在 SFC 第 47 行被 import，L1 指令已走独立客户端。
+
+**排除项（显式登记，禁止一笔带过）**：本刀**不上收**上述 5 处读取。理由：它们紧邻 `sendMessage` / 历史加载的冻结边界，且携带 304 修复口径；在无行为级契约测试 + 变异验证的前提下搬动，收益低于风险。判据 D 的重开条件：只有当「SFC 零网络调用」的收益被重新论证成立，且先补齐行为级契约测试与变异验证，才允许单独开刀处理；不得夹带在文档刀或门禁刀里。
+
+**诚实边界**：「口径已澄清」≠「5 处 `fetch` 已上收」，也 ≠ 新增了 CI 守卫。本节不宣称任何产品代码改动；`Issue #755` 的 Phase 2 条目打勾仅代表口径决策已入库。§15.4 的排序不变：第 3 项 22 处 `isMobileLayout` 收敛仍在后续；本文 Phase 4「删 PC 冗余渲染」仍未实施。冻结边界不变。
