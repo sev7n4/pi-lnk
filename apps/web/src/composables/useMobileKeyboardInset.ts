@@ -47,6 +47,35 @@ function scheduleCompute() {
   })
 }
 
+// 2026-11-09 真机修复 #2：部分 Android / Edge 上 visualViewport 事件不触发（或严重延迟），
+// 导致 --mobile-kb-inset 算不出、面板 bottom 回落页签高度留白。补一层 document focusin/focusout：
+// 可编辑元素获焦即视为键盘将开，延迟一帧补算；失焦（离开可编辑）即视为键盘将收，再补算。
+let focusDelayId = 0
+
+function isEditableTarget(t: EventTarget | null): boolean {
+  const el = t as HTMLElement | null
+  if (!el || !el.tagName) return false
+  const tag = el.tagName.toLowerCase()
+  return tag === 'input' || tag === 'textarea' || el.isContentEditable
+}
+
+function scheduleComputeSoon() {
+  if (focusDelayId) clearTimeout(focusDelayId)
+  // 等键盘动画落定再算，避免取到中间态高度
+  focusDelayId = window.setTimeout(scheduleCompute, 280)
+}
+
+function focusInHandler(e: FocusEvent) {
+  if (isEditableTarget(e.target)) scheduleComputeSoon()
+}
+
+function focusOutHandler(e: FocusEvent) {
+  // 仅当焦点真的离开可编辑元素（而非在可编辑之间切换）才重算
+  if (isEditableTarget(e.target) && !isEditableTarget(e.relatedTarget)) {
+    scheduleComputeSoon()
+  }
+}
+
 export function useMobileKeyboardInset() {
   onMounted(() => {
     if (typeof window === 'undefined' || !window.visualViewport) return
@@ -57,6 +86,8 @@ export function useMobileKeyboardInset() {
       window.visualViewport.addEventListener('resize', vvHandler)
       window.visualViewport.addEventListener('scroll', vvHandler)
       window.addEventListener('resize', winHandler)
+      document.addEventListener('focusin', focusInHandler)
+      document.addEventListener('focusout', focusOutHandler)
       scheduleCompute()
     }
   })
@@ -68,6 +99,9 @@ export function useMobileKeyboardInset() {
       window.visualViewport.removeEventListener('resize', vvHandler)
       window.visualViewport.removeEventListener('scroll', vvHandler)
       window.removeEventListener('resize', winHandler)
+      document.removeEventListener('focusin', focusInHandler)
+      document.removeEventListener('focusout', focusOutHandler)
+      if (focusDelayId) clearTimeout(focusDelayId)
       vvHandler = null
       winHandler = null
       if (typeof document !== 'undefined') {
