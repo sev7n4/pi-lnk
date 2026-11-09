@@ -12,11 +12,15 @@ import { isTerminalRegen } from './canvasLifecycle'
  * 规范化行为（收敛时统一两端的历史差异）：
  * - add_node：父节点存在 ⇒ 子节点置于 父.x+320 / 父.y+20；否则取 payload.position 或
  *   {200,200} 兜底；缺 id 的 action 直接跳过（非确定性兜底 id 会破坏双端一致，故统一要求 id）。
- * - add_edge：缺 id 时按 `e-${source}-${target}` 生成（保留 web 历史行为，且对无 id 的
- *   重放幂等）；source/target 缺失则跳过（保留 agent 的空值防御）。
+ * - add_edge：缺 id 时按 `e-${source}-${target}` 生成（保留 web 历史行为）；push 前
+ *   按 id 查重，命中即跳过并经 `onSkipped('add_edge','duplicate_edge')` 留痕（带 id /
+ *   无 id 重放均幂等）；source/target 缺失则跳过（保留 agent 的空值防御）。
  * - update_node / add_node 的 data 合并经 `mergeNodeData`（双守卫吸收态）。
  * - remove_edge / set_viewport / set_groups / set_composition_run_group：与历史 agent 行为一致。
  */
+/** op 被跳过的原因（观测用，见 ApplyCanvasActionsOpts.onSkipped）。 */
+export type CanvasActionSkipReason = 'duplicate_edge' | 'node_not_found'
+
 export interface ApplyCanvasActionsOpts {
   /**
    * 吸收态守卫拒绝回调（规格 2026-11-04-generation-terminal-projection §5.2）：
@@ -24,6 +28,8 @@ export interface ApplyCanvasActionsOpts {
    * 新 generationRecordId 时，该 op 的 data 合并被整体丢弃，经此回调留痕。
    */
   onGuardReject?: (nodeId: string) => void
+  /** 观测专用：op 被跳过时留痕。不改变返回值，也不改变 op 的落地结果。 */
+  onSkipped?: (type: string, reason: CanvasActionSkipReason, id: string) => void
 }
 
 /** add_node 缺父且无 position 时的兜底根坐标（收敛值，原 web 侧 {200,200}）。 */
@@ -134,33 +140,39 @@ export function applyCanvasActions(
       }
       case 'update_node': {
         const node = result.nodes.find((n) => n.id === action.payload.id)
-        if (node) {
-          if (action.payload.position) node.position = action.payload.position
-          if (action.payload.data) {
-            // 吸收态守卫（2026-11-04）：终态节点被无新 recordId 的在途态 op 回写
-            // ⇒ 整体丢弃该 data 合并（陈旧快照回灌/迟到 op 在此被结构性阻断）。
-            if (
-              isTerminalRegen({
-                currentStatus: node.data?.status,
-                currentRecordId: node.data?.generationRecordId,
-                incomingStatus: action.payload.data.status,
-                incomingRecordId: action.payload.data.generationRecordId,
-              })
-            ) {
-              if (action.payload.id) opts?.onGuardReject?.(action.payload.id)
-            } else {
-              node.data = mergeNodeData(node.data, action.payload.data, IN_TRANSIT_ONLY)
-            }
+        if (!node) {
+          opts?.onSkipped?.('update_node', 'node_not_found', String(action.payload.id ?? ''))
+          break
+        }
+        if (action.payload.position) node.position = action.payload.position
+        if (action.payload.data) {
+          // 吸收态守卫（2026-11-04）：终态节点被无新 recordId 的在途态 op 回写
+          // ⇒ 整体丢弃该 data 合并（陈旧快照回灌/迟到 op 在此被结构性阻断）。
+          if (
+            isTerminalRegen({
+              currentStatus: node.data?.status,
+              currentRecordId: node.data?.generationRecordId,
+              incomingStatus: action.payload.data.status,
+              incomingRecordId: action.payload.data.generationRecordId,
+            })
+          ) {
+            if (action.payload.id) opts?.onGuardReject?.(action.payload.id)
+          } else {
+            node.data = mergeNodeData(node.data, action.payload.data, IN_TRANSIT_ONLY)
           }
         }
         break
       }
       case 'add_edge': {
         const { id, source, target } = action.payload
-        // 收敛：缺 id 时按 source-target 生成（保留 web 历史行为、重放幂等）；
-        // source/target 缺失则跳过（保留 agent 空值防御）。
+        // 收敛：缺 id 时按 source-target 生成（保留 web 历史行为）；push 前按 id 查重，
+        // 命中即跳过并经 onSkipped 留痕（带 id / 无 id 重放均幂等）；source/target 缺失则跳过。
         const edgeId = id ?? (source && target ? `e-${source}-${target}` : undefined)
         if (!edgeId || !source || !target) break
+        if (result.edges.some((e) => e.id === edgeId)) {
+          opts?.onSkipped?.('add_edge', 'duplicate_edge', edgeId)
+          break
+        }
         result.edges.push({ id: edgeId, source, target })
         break
       }

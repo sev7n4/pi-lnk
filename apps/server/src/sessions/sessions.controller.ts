@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Inject, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Headers, Inject, Param, Patch, Post, Put, Req, UseGuards } from '@nestjs/common'
 import { ArrayMaxSize, IsArray, IsOptional, IsString } from 'class-validator'
 import { AuthGuard } from '../auth/auth.guard'
 import { SessionsService } from './sessions.service'
@@ -18,8 +18,8 @@ class UpdateSessionDto {
   canvasData?: unknown
 }
 
-/** P1-C C1a（规格 §3.1）：PATCH /sessions/:id/canvas 载荷——ops 数组，服务端白名单收敛。 */
-class PatchCanvasDto {
+/** P1-C C1a：PATCH /sessions/:id/canvas 载荷。阶段 1 形状不变，clientId 走 header 不进 DTO。 */
+export class PatchCanvasDto {
   @IsArray()
   @ArrayMaxSize(200)
   ops!: unknown[]
@@ -80,8 +80,9 @@ export class SessionsController {
     @Param('id') id: string,
     @Req() req: { user: { sub: string } },
     @Body() dto: PatchCanvasDto,
+    @Headers('x-lnkpi-canvas-client') clientId?: string,
   ) {
-    const data = await this.sessionsService.patchCanvas(id, req.user.sub, dto.ops)
+    const data = await this.sessionsService.patchCanvas(id, req.user.sub, dto.ops, clientId ?? 'unknown')
     return { code: 0, message: 'ok', data }
   }
 

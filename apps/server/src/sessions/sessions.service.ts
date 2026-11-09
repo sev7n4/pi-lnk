@@ -6,6 +6,8 @@ import { applyCanvasActions } from '@lnkpi/agent'
 import { readCover } from '../canvas/canvas-cover'
 // P1-C C1a（§3.1）：PATCH ops 白名单收敛。
 import { sanitizeClientOps } from './sessions-canvas-patch'
+// SP-E 阶段 1：PATCH 主通道埋点（事务成功后记录，失败/异常不影响主流程）。
+import { canvasPatchMetrics, targetKeysOf } from './canvas-patch-metrics'
 
 function parseCanvas(raw: string | null | undefined): CanvasData {
   if (!raw) return { nodes: [], edges: [] }
@@ -126,7 +128,7 @@ export class SessionsService {
    *   合并写回；stagedActions 未清空 ⇒ 409（与 persist 同一句话，stage 期间禁止并行写）。
    * - 返回 `{ applied }`（applied = 白名单收敛后的 op 数）。
    */
-  async patchCanvas(id: string, userId: string, rawOps: unknown): Promise<{ applied: number }> {
+  async patchCanvas(id: string, userId: string, rawOps: unknown[], clientId = 'unknown'): Promise<{ applied: number }> {
     const session = await this.prisma.session.findUnique({ where: { id } })
     if (!session) throw new NotFoundException('会话不存在')
     if (session.userId !== userId) throw new ForbiddenException()
@@ -164,15 +166,31 @@ export class SessionsService {
         )
       }
       const current = parseCanvas(row.canvasData)
-      const updated = applyCanvasActions(current, sanitized)
+      const skips: Array<{ type: string }> = []
+      const updated = applyCanvasActions(current, sanitized, {
+        onSkipped: (type) => skips.push({ type }),
+      })
       const merged: CanvasData = { ...current, ...updated }
       await tx.session.update({
         where: { id },
         data: { canvasData: JSON.stringify(merged) },
       })
-      return sanitized.length
+      return { applied: sanitized.length, skips, keys: targetKeysOf(sanitized) }
     })
-    return { applied }
+
+    // I7/I8：只在事务成功后记；埋点任何异常都不影响主流程。
+    // I4：clientId 仅用于观测，缺失/异常一律降级 'unknown'。
+    try {
+      canvasPatchMetrics.record(
+        { sessionId: id, clientId: clientId || 'unknown', ts: Date.now(), targetKeys: applied.keys },
+        sanitized.length,
+        applied.applied,
+        applied.skips,
+      )
+    } catch (e) {
+      this.logger.warn(`canvas_patch_metrics_failed sessionId=${id} err=${String(e)}`)
+    }
+    return { applied: applied.applied }
   }
 
   async remove(id: string, userId: string) {

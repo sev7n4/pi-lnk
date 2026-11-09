@@ -129,6 +129,38 @@ describe('applyCanvasActions —— Phase 5 SSOT（web / agent 收敛后的唯�
   })
 })
 
+// Task 3（Phase 5 SSOT 幂等加固 + onSkipped 观测）：追加用例。
+// 断言逐字取自 task-3-brief.md Step 1；base() 以本文件既有的 data() 等价替代。
+describe('applyCanvasActions —— op 幂等 & onSkipped 留痕（Task 3 追加）', () => {
+  it('add_edge 重复 id ⇒ 只产生一条边 + onSkipped', () => {
+    const skips: string[] = []
+    const out = applyCanvasActions(data(), [
+      { type: 'add_edge', payload: { id: 'e1', source: 'a', target: 'b' } },
+      { type: 'add_edge', payload: { id: 'e1', source: 'a', target: 'b' } },
+    ], { onSkipped: (t, r) => skips.push(`${t}:${r}`) })
+    expect(out.edges).toHaveLength(1)
+    expect(skips).toEqual(['add_edge:duplicate_edge'])
+  })
+
+  it('update_node 打已删节点 ⇒ onSkipped(node_not_found)', () => {
+    const skips: string[] = []
+    const out = applyCanvasActions(data(), [
+      { type: 'update_node', payload: { id: 'gone', position: { x: 1, y: 2 } } },
+    ], { onSkipped: (t, r, id) => skips.push(`${t}:${r}:${id}`) })
+    expect(out.nodes).toHaveLength(0)
+    expect(skips).toEqual(['update_node:node_not_found:gone'])
+  })
+
+  it('R4：不传 onSkipped ⇒ 返回形状与既有行为不变（除重复边修正）', () => {
+    const out = applyCanvasActions(data(), [
+      { type: 'add_edge', payload: { id: 'e1', source: 'a', target: 'b' } },
+      { type: 'add_node', payload: { id: 'n1' } },
+    ])
+    expect(out.edges).toHaveLength(1)
+    expect(out.nodes).toHaveLength(1)
+  })
+})
+
 describe('mergeNodeData —— 双守卫吸收态（web / agent 共用同一纯函数）', () => {
   it('终态被无新 recordId 的 generating 写回 ⇒ 整体丢弃 incoming', () => {
     expect(

@@ -1,9 +1,10 @@
 import 'reflect-metadata'
 import { NotFoundException } from '@nestjs/common'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Test } from '@nestjs/testing'
 import { PrismaService } from '../prisma/prisma.service'
 import { SessionsService } from './sessions.service'
+import { canvasPatchMetrics } from './canvas-patch-metrics'
 
 function makeService() {
   const create = vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
@@ -228,5 +229,94 @@ describe('SessionsService.findAll —— 列表不带 canvasData，只回卡片�
     const { out } = await findAllWith([{ ...ROW, canvasData: null }])
     expect(out[0]!.coverUrl).toBeNull()
     expect(out[0]!.title).toBe('大闸蟹礼盒')
+  })
+})
+
+// ── patchCanvas 埋点观测（SP-E 阶段 1 / Task 4）───────────────────────────────
+// 复用本仓库既有的 PATCH 夹具形态（Test.createTestingModule + vi.fn：
+// prisma.$transaction 直接执行回调，tx.findUnique 返回 canvasData + stagedActions），
+// 与 sessions-patch.service.test.ts 同款；不新造 harness 机制。
+describe('SessionsService.patchCanvas —— 埋点观测（Task 4）', () => {
+  // update_node 目标 n1 必须存在于画布，否则 applier 的 node_not_found 会多计一次 skip。
+  const canvasWithN1 = JSON.stringify({
+    nodes: [{ id: 'n1', type: 'text', position: { x: 0, y: 0 }, data: {} }],
+    edges: [],
+  })
+  let service: SessionsService
+  let txFindUnique: ReturnType<typeof vi.fn>
+
+  beforeEach(async () => {
+    canvasPatchMetrics.reset()
+    const findUnique = vi.fn(async () => ({
+      id: 's1',
+      userId: 'u1',
+      title: 't',
+      canvasData: canvasWithN1,
+      createdAt: new Date('2026-09-29T00:00:00Z'),
+      updatedAt: new Date('2026-09-29T00:00:00Z'),
+    }))
+    txFindUnique = vi.fn(async () => ({ canvasData: canvasWithN1, stagedActions: null }))
+    const txUpdate = vi.fn(async () => ({ id: 's1' }))
+    const tx = { session: { findUnique: txFindUnique, update: txUpdate } }
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        SessionsService,
+        {
+          provide: PrismaService,
+          useValue: {
+            session: { findUnique },
+            $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(tx)),
+          },
+        },
+      ],
+    }).compile()
+    service = moduleRef.get(SessionsService)
+  })
+
+  it('成功 PATCH ⇒ 记录样本，skipped 精确', async () => {
+    const res = await service.patchCanvas(
+      's1',
+      'u1',
+      [
+        { type: 'update_node', payload: { id: 'n1', position: { x: 1, y: 2 } } },
+        { type: 'add_edge', payload: { id: 'e1', source: 'a', target: 'b' } },
+        { type: 'add_edge', payload: { id: 'e1', source: 'a', target: 'b' } },
+      ],
+      'c1',
+    )
+    expect(res).toEqual({ applied: 3 })
+    expect(canvasPatchMetrics.snapshot()).toMatchObject({
+      patches: 1,
+      ops: 3,
+      applied: 3,
+      skipped: 1,
+      skippedByType: { add_edge: 1 },
+      distinctClients: 1,
+    })
+  })
+
+  it('R3：stagedActions 409 ⇒ 不记样本', async () => {
+    txFindUnique.mockResolvedValue({
+      canvasData: canvasWithN1,
+      stagedActions: JSON.stringify([{ type: 'update_node', payload: {} }]),
+    })
+    await expect(
+      service.patchCanvas('s1', 'u1', [{ type: 'set_viewport', payload: { viewport: {} } }], 'c1'),
+    ).rejects.toThrow(/staged actions pending commit/)
+    expect(canvasPatchMetrics.snapshot().patches).toBe(0)
+  })
+
+  it('R2：埋点抛错 ⇒ PATCH 仍成功', async () => {
+    const spy = vi.spyOn(canvasPatchMetrics, 'record').mockImplementation(() => {
+      throw new Error('boom')
+    })
+    const res = await service.patchCanvas(
+      's1',
+      'u1',
+      [{ type: 'set_viewport', payload: { viewport: {} } }],
+      'c1',
+    )
+    expect(res).toEqual({ applied: 1 })
+    spy.mockRestore()
   })
 })
