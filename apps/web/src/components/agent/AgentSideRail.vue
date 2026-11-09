@@ -323,9 +323,12 @@ const isDragOver = ref(false)
 const assetPickerOpen = ref(false)
 const attachMenuOpen = ref(false)
 const attachMenuRef = ref<HTMLElement | null>(null)
+// 2026-11-09 真机修复 #1：附件卡经 Teleport 移到 body（见模板），ref 需单独持有，
+// 并纳入 click-outside 内部判定（见 useClickOutside 的 extraTargets）。
+const attachCardRef = ref<HTMLElement | null>(null)
 useClickOutside(attachMenuRef, () => {
   attachMenuOpen.value = false
-})
+}, [attachCardRef])
 
 const composer = reactive(useAgentComposer({
   input,
@@ -3994,19 +3997,26 @@ defineExpose({
                     <!-- 2026-10-19 真机修复：＋卡「点空白收不拢」——卡内 padding/间隙也是
                          attachMenuRef 后代，click-outside 判内不关。移动端加全屏透明遮罩
                          （z 低于卡 30、高于裸条其余部分），点遮罩必收，时灵时不灵根除。
-                         仅移动 dock 显示（桌面 floating 面板 overflow:hidden 会裁切固定遮罩）。 -->
-                    <div
-                      v-if="attachMenuOpen"
-                      class="attach-menu-backdrop"
-                      aria-hidden="true"
-                      @pointerdown.stop="attachMenuOpen = false"
-                      @click.stop
-                    />
-                    <div
-                      v-if="attachMenuOpen"
-                      class="neo-popover attach-card absolute bottom-full left-0 z-30 mb-1 w-[272px] rounded-2xl p-2"
-                      @click.stop
-                    >
+                         仅移动 dock 显示（桌面 floating 面板 overflow:hidden 会裁切固定遮罩）。
+                         2026-11-09 真机修复 #1：遮罩 + 卡 Teleport 到 body（仅移动端，
+                         桌面保持面板内裁切），脱离面板 z-30 堆叠上下文后 z-90/85 在根上下文
+                         高于页签 z-80，附件卡才作为底部抽屉完整弹出；attachCardRef 纳入 click-outside。 -->
+                    <Teleport to="body" :disabled="isDesktopDock">
+                      <div
+                        v-if="attachMenuOpen"
+                        class="attach-menu-backdrop"
+                        aria-hidden="true"
+                        @pointerdown.stop="attachMenuOpen = false"
+                        @click.stop
+                      />
+                    </Teleport>
+                    <Teleport to="body" :disabled="isDesktopDock">
+                      <div
+                        v-if="attachMenuOpen"
+                        ref="attachCardRef"
+                        class="neo-popover attach-card absolute bottom-full left-0 z-30 mb-1 w-[272px] rounded-2xl p-2"
+                        @click.stop
+                      >
                       <!-- 四瓦片（2026-10-18 照竞品卡片，用户裁决资产库升瓦片）：拍照 / 图片 / 添加文件 / 资产库 -->
                       <div class="mb-1.5 grid grid-cols-4 gap-1.5">
                         <button
@@ -4155,6 +4165,7 @@ defineExpose({
                       <!-- 2026-10-18 用户裁决：「思考档位」属于不同模型展开的二级功能，移出本卡
                            （非默认档仍有 params 行 B chip 常驻；标准档切档入口随模型二级功能后续接入） -->
                     </div>
+                    </Teleport>
                 </div>
 
                 <div class="agent-dock-params">
@@ -5510,9 +5521,11 @@ defineExpose({
 
 /* 附件卡移动端拉满裸条宽度 + 拉到底完全盖住 composer（2026-10-18 用户裁决）：
  * fixed 贴视口底（panel shell 无 transform，fixed 即视口系），圆角朝上、safe-area 内垫，
- * 自然高度即可整片盖住裸条。点击卡内 stopPropagation；条外点击走既有 click-outside 关闭。 */
+ * 自然高度即可整片盖住裸条。点击卡内 stopPropagation；条外点击走既有 click-outside 关闭。
+ * 2026-11-09 真机修复 #1：去掉 .agent-panel-mobile-dock 祖先限定——附件卡/遮罩已 Teleport 到 body
+ * （脱离面板 z-30 堆叠上下文），不再是其后代；移动端恒 teleport，直接按元素类命中即可。 */
 @media (max-width: 767px) {
-  .agent-panel-mobile-dock .attach-card {
+  .attach-card {
     position: fixed;
     left: 12px;
     right: 12px;
@@ -5525,18 +5538,22 @@ defineExpose({
 }
 
 /* ＋卡全屏透明遮罩（2026-10-19 真机修复「点空白收不拢」）：
- * 仅移动 dock 显示——桌面 floating 面板 overflow:hidden 会把 fixed 遮罩裁进面板。
- * z 25：低于卡（30）高于裸条其余控件；dock 整体 z-70 < 页签 z-80，页签不受遮罩影响。 */
+ * 桌面 floating 面板 overflow:hidden 会把 fixed 遮罩裁进面板，故桌面不显示（base display:none）；
+ * 移动端恒 Teleport 到 body，遮罩随之到根上下文，z-85 高于页签 z-80，成为模态底部抽屉。 */
 .attach-menu-backdrop {
   display: none;
 }
 
-.agent-panel-mobile-dock .attach-menu-backdrop {
-  display: block;
-  position: fixed;
-  inset: 0;
-  z-index: 85; /* 2026-11-09 真机修复 #1：高于页签 z-80，遮罩随附件卡成为模态底部抽屉 */
-  background: transparent;
+@media (max-width: 767px) {
+  /* 2026-11-09 真机修复 #1：遮罩去掉 .agent-panel-mobile-dock 祖先限定（已 Teleport 到 body），
+     直接按元素类命中即可；移动端恒 teleport，根上下文 z-85 高于页签 z-80。 */
+  .attach-menu-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 85; /* 2026-11-09 真机修复 #1：高于页签 z-80，遮罩随附件卡成为模态底部抽屉 */
+    background: transparent;
+  }
 }
 
 .agent-panel-mobile-dock .composer-bare-bar .agent-composer__input-wrap {
