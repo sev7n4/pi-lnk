@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <title>LNKPI PC visual regression fixture</title>
+  <style>
+    :root {
+      --neo-border: #e5e7eb;
+      --neo-panel: #ffffff;
+      --neo-surface: #f9fafb;
+      --neo-text: #111827;
+      --neo-muted: #6b7280;
+      --neo-accent: #07c160;
+      --neo-hover: #f3f4f6;
+    }
+    * { box-sizing: border-box; animation: none !important; transition: none !important; }
+    html, body { margin: 0; padding: 0; background: #f3f4f6; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--neo-text);
+    }
+    .pc-dock-shell {
+      width: 420px;
+      margin: 24px;
+      padding: 16px;
+      border: 1px solid var(--neo-border);
+      border-radius: 12px;
+      background: var(--neo-panel);
+    }
+    .pc-dock-shell__title { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+    .pc-dock-shell__badge { margin: 0 0 12px; font-size: 12px; color: var(--neo-muted); }
+    .pc-presentation-stack > * + * { margin-top: 16px; }
+    table { border-collapse: collapse; }
+    .hidden { display: none; }
+    .rounded-lg { border-radius: 8px; }
+    .border { border: 1px solid var(--neo-border); }
+    .px-2 { padding-left: 8px; padding-right: 8px; }
+    .py-1\.5 { padding-top: 6px; padding-bottom: 6px; }
+    .text-xs { font-size: 12px; }
+    .text-\[13px\] { font-size: 13px; }
+    .font-medium { font-weight: 500; }
+    .text-left { text-align: left; }
+    .w-full { width: 100%; }
+    .mb-2 { margin-bottom: 8px; }
+    .px-0\.5 { padding-left: 2px; padding-right: 2px; }
+    .space-y-1 > * + * { margin-top: 4px; }
+    .space-y-2 > * + * { margin-top: 8px; }
+    .whitespace-pre-wrap { white-space: pre-wrap; }
+    .overflow-hidden { overflow: hidden; }
+    .inline-flex { display: inline-flex; }
+    .items-center { align-items: center; }
+    .gap-1 { gap: 4px; }
+    .opacity-60 { opacity: .6; }
+    .mt-1 { margin-top: 4px; }
+  </style>
+</head>
+<body>
+  <!-- 护栏对象：真实 AgentPresentationHost.vue 组件链在此挂载，删改 presentation/ 会改变本页 DOM。 -->
+  <section class="pc-dock-shell" data-testid="pc-dock-shell">
+    <h1 class="pc-dock-shell__title" data-testid="pc-dock-title"></h1>
+    <p class="pc-dock-shell__badge" data-testid="pc-dock-badge"></p>
+    <div id="pc-visual-root" data-pc-visual-root></div>
+  </section>
+  <script type="module">
+    import { createApp, h } from 'vue'
+    import AgentPresentationHost from '../../apps/web/src/components/agent/presentation/AgentPresentationHost.vue'
+    import fixture from './pc-visual-fixture.json'
+
+    const title = document.querySelector('[data-testid="pc-dock-title"]')
+    const badge = document.querySelector('[data-testid="pc-dock-badge"]')
+    title.textContent = fixture.dock.title
+    badge.textContent = fixture.dock.badge
+
+    const App = {
+      render() {
+        return h('div', { class: 'pc-presentation-stack' },
+          fixture.presentation.map((p, i) =>
+            h(AgentPresentationHost, { key: i, presentation: p, disabled: false })))
+      },
+    }
+    createApp(App).mount('#pc-visual-root')
+    window.__PC_VISUAL_READY__ = true
+  </script>
+</body>
+</html>
