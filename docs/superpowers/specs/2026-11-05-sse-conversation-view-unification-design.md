@@ -270,3 +270,10 @@ flowchart LR
 ### 15.5 推送时基线前移（2026-11-09，只追加）
 
 本节写作时 true master 为 `d1cd3376`；实际推 PR 前已前移至 `7c4066e70dfa08fc0f84886021e566ab9a49a15d`（PR #789「SVG 卡片不再写死 720px 宽」，4 个改动文件与本刀唯一提交路径零重叠）。`gh api` 核对母规格路径在新旧 master 的 blob 完全一致（`MASTER_MOVED_SAFE`）⇒ 本刀改用新 HEAD 作 parent、`base_tree` 取新 master tree，不回退 #789 的任何改动。本节其余处出现的 `d1cd3376` 均为写作时点记录，按「不追溯改写历史结论」保留。
+
+
+### 15.6 PC 视觉回归护栏交付登记（2026-11-09，只追加）
+
+§15.4 第 1 项「PC 自动化视觉回归套件」的规格、计划、采集脚本、V1–V7 静态判据、固定 fixture、golden baseline 与 runbook 已产出并通过本地验收，证据见 `docs/ops/2026-11-09-pc-visual-regression-evidence.md`。护栏通过本地 Vite 挂载**真实** `AgentPresentationHost.vue`，行为级变异已实证「少渲染一个真实组件 ⇒ `diff_count>0` 且 `exit 1`」，因此删除 `components/agent/presentation/` 下的组件会被确定性 diff 抓住。
+
+该套件**不挂 required check**（依赖本机 Chrome，不满足门禁准入三问），定位为删除刀 PR 的准入闸门；删除刀不得修改 `pc-visual-baseline.json`，也不得同时改 fixture / 采集脚本 / 判据。§15.4 的排序不变：第 2 项 Phase 2 口径澄清、第 3 项 22 处 `isMobileLayout` 收敛仍在后续；**本文 Phase 4「删 PC 冗余渲染」本身仍未实施**，不因护栏交付而标记为闭环。冻结边界不变。

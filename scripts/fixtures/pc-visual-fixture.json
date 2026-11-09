@@ -1,0 +1,40 @@
+{
+  "schema": "lnkpi.pc-visual.fixture.v1",
+  "note": "固定 presentation 快照，不含 token / 生产地址 / 会话 id / 时间戳。由 scripts/fixtures/pc-visual-page.html 挂载到真实 AgentPresentationHost.vue。",
+  "dock": {
+    "title": "PC 会话页 · 视觉回归固定面板",
+    "badge": "PC-DOCK-FIXTURE"
+  },
+  "presentation": [
+    {
+      "kind": "prose_block",
+      "stepper": {
+        "current": "shot_plan",
+        "completed": ["image_qa", "scheme_draft", "macro_select", "ssot_persist"]
+      },
+      "context_recap": "已确认产品图与宏观风格，进入定构图清单。",
+      "title": "方案说明",
+      "body": {
+        "prose": "本轮给出三张构图：正面主图、45 度细节图、场景氛围图。所有构图沿用同一套暖色布光与浅景深。",
+        "callout": "固定 fixture 文本，用于结构断言。",
+        "callout_shot_limit": "最多保留 3 张构图。"
+      }
+    },
+    {
+      "kind": "shot_table",
+      "stepper": {
+        "current": "shot_plan",
+        "completed": ["image_qa", "scheme_draft", "macro_select", "ssot_persist"]
+      },
+      "context_recap": "构图清单已生成。",
+      "title": "构图清单",
+      "body": {
+        "shots": [
+          { "shot_id": "shot_front", "label": "正面主图", "type": "product", "summary": "居中构图，浅灰背景", "node_id": "node_front" },
+          { "shot_id": "shot_detail", "label": "45 度细节", "type": "detail", "summary": "突出材质纹理", "node_id": null },
+          { "shot_id": "shot_scene", "label": "场景氛围", "type": "scene", "summary": "暖色布光，浅景深", "node_id": "node_scene" }
+        ]
+      }
+    }
+  ]
+}
