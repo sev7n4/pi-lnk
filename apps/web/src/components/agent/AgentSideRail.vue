@@ -4322,6 +4322,9 @@ defineExpose({
   bottom: calc(env(safe-area-inset-bottom, 0px) + var(--lnk-tabbar-h, 0px));
   right: 12px;
   left: 12px;
+  /* 2026-11-09 三次修正：键盘开合时 bottom 在 composer 与键盘同帧升降后，用极短过渡做
+   * 收尾平滑（消除逐帧量化与「收起回落到页签静止位」的硬跳），不拖泥带水。 */
+  transition: bottom 0.1s ease;
   /* §13.5（2026-10-28 真机走查四轮）根因修复：面板是页面级表面——
      main(z-10 堆叠上下文) 之上、顶栏 chrome(40) 之下。
      历史：原裸 z:70 在顶栏还是 85 时成立（面板 70 < 顶栏 85）；
@@ -4440,7 +4443,10 @@ defineExpose({
  * 布局视口确定性收缩，resizes-content 模式下 bottom:0 即精确贴键盘上沿。规则同时覆盖对话态与
  * 画布窗态（两者都带 agent-panel-shell）。 */
 .agent-panel-mobile-dock.is-keyboard-open.agent-panel-shell {
-  bottom: var(--mobile-kb-inset, 0px);
+  /* 2026-11-09 三次修正：键盘贴边后留 8px 视觉空隙（用户复测反馈「贴太紧」）。
+   * 在 pan 模式（inset=键盘高）与 resizes-content 模式（inset=0、布局视口已收缩）下，
+   * bottom 都比较「键盘上沿 + 8px」，即 composer 与键盘之间恒留 8px 间隙。 */
+  bottom: calc(var(--mobile-kb-inset, 0px) + 8px);
   padding-bottom: 0;
 }
 
