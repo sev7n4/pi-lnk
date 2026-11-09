@@ -221,6 +221,7 @@ L1 全绿 + L2 全绿 + CI 三必需（Verify spec figures / Build monorepo / Bu
 - **原子 staging 发布**、**上传字节数写 step summary**、**P2 状态写者收敛**：#3 规格 §12 原条目，顺序不变。
 - **前端文案与注释整理**：统一两条 finally 的豁免集合表达、移除临时分支名留痕（低价值，不单独开刀）。
 - 冻结边界不变：`sendMessage` / `handleEvent` / `canvas_command` / `defineExpose` 11 项。
+- ⭐ **#4 状态（2026-11-09，只追加状态、不改写上行）**：顺延的 CDP 五层冒烟参数化 ops runbook 已交付，三条取证坑落为 PREFLIGHT 硬闸门，默认只读、不挂 required check。规格与 runbook 见 `docs/superpowers/specs/2026-11-09-prod-cdp-smoke-runbook-design.md`、`docs/ops/2026-11-09-prod-cdp-smoke-runbook.md`。
 
 ## 13. 配图规范自检
 
