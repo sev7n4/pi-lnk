@@ -63,6 +63,9 @@ jobs:
       - name: Verify isMobileLayout scope (Shell-only ratchet)
         run: python3 scripts/verify-is-mobile-layout-scope.py
 
+      - name: Verify phase4 delete scope (NO_DELETE_TARGET ratchet)
+        run: python3 scripts/verify-phase4-delete-scope.py
+
       - name: Spec figures summary
         if: always()
         run: |
