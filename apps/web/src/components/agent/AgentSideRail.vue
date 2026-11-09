@@ -4406,10 +4406,11 @@ defineExpose({
 .agent-panel-mobile-dock.is-conversation-view.agent-panel-shell {
   top: 0;
   right: 0;
-  /* 2026-11-09：bottom 取「页签高度」与「键盘高度」之大者——键盘弹起（overlay/pan 模式）
-   * 时 --mobile-kb-inset 由 useMobileKeyboardInset 实测写入，面板精确贴键盘上沿，
-   * 消除「bottom:0 锚视口底边被键盘盖住」造成的 ~60px 空白；键盘未弹时回落页签高度。 */
-  bottom: max(var(--lnk-tabbar-h, 0px), var(--mobile-kb-inset, 0px));
+  /* 2026-11-09 二次修正：键盘未弹时 bottom 让出底部页签（--lnk-tabbar-h）；键盘弹起时由
+   * .is-keyboard-open 规则改取 var(--mobile-kb-inset)。不再用 max(--lnk-tabbar-h, inset)——
+   * 旧写法在 composer 获焦导致可视视口 pan 时 inset≈0，bottom 回落页签高度，于 composer
+   * 与键盘间留出页签高度的空白（用户真机复现）。键盘开/关见下方 is-keyboard-open 规则。 */
+  bottom: var(--lnk-tabbar-h, 0px);
   left: 0;
   padding-top: calc(env(safe-area-inset-top, 0px) + var(--lnk-topbar-h, 44px));
   padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -4432,10 +4433,14 @@ defineExpose({
   padding-right: 12px;
 }
 
-/* 2026-11-09：键盘弹起（is-keyboard-open）时面板零安全区内缩——键盘已取代底部安全区，
- * 不再额外留 safe-area 造成「面板底边到键盘顶」的多余空白。面板 bottom 由上方
- * max(--lnk-tabbar-h, --mobile-kb-inset) 承担（键盘高度已计入），此处只清 padding。 */
-.agent-panel-mobile-dock.is-keyboard-open.is-conversation-view.agent-panel-shell {
+/* 2026-11-09 二次修正：键盘弹起（is-keyboard-open，由 focus 驱动）时面板 bottom 直接取
+ * 实测键盘侵入高度 var(--mobile-kb-inset)，并清掉底部安全区内缩——键盘已取代安全区，
+ * 不再额外留白。pan / resizes-content 下 inset 为 0（贴边由 pan 或布局收缩承担），
+ * resizes-visual 无 pan 下为真实键盘高；配合 index.html 的 interactive-widget=resizes-content，
+ * 布局视口确定性收缩，resizes-content 模式下 bottom:0 即精确贴键盘上沿。规则同时覆盖对话态与
+ * 画布窗态（两者都带 agent-panel-shell）。 */
+.agent-panel-mobile-dock.is-keyboard-open.agent-panel-shell {
+  bottom: var(--mobile-kb-inset, 0px);
   padding-bottom: 0;
 }
 
