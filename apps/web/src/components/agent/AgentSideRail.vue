@@ -2,6 +2,7 @@
 import { computed, ref, reactive, onMounted, nextTick, watch } from 'vue'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import { useMobileComposerFocus } from '@/composables/useMobileComposerFocus'
+import { useMobileKeyboardInset } from '@/composables/useMobileKeyboardInset'
 import { useRouter } from 'vue-router'
 import { useAgentStore } from '@/stores/agent'
 import { useDockNoticeStore } from '@/stores/dockNotice'
@@ -1203,6 +1204,7 @@ const composerExpanded = ref(false)
  * 2026-11-09：改为跨组件共享单例（useMobileComposerFocus）——MobileTabBar 需读取同一份
  * 状态以在聚焦态隐藏底部页签；本组件只写不另起本地 ref。 */
 const composerFocused = useMobileComposerFocus()
+const { isKeyboardOpen } = useMobileKeyboardInset()
 const composerDockRef = ref<HTMLElement | null>(null)
 
 // 输入框被程序填充（如待发消息取回）时自动进入伸展态
@@ -3013,6 +3015,7 @@ defineExpose({
               'has-studio-dock': studioDockOpen,
               'is-canvas-imm': mobileCanvasImm,
               'is-composer-focused': composerFocused,
+              'is-keyboard-open': isKeyboardOpen,
             },
           ]"
           :style="floating && !isMobileLayout ? {
@@ -4384,7 +4387,10 @@ defineExpose({
 .agent-panel-mobile-dock.is-conversation-view.agent-panel-shell {
   top: 0;
   right: 0;
-  bottom: var(--lnk-tabbar-h, 0px);
+  /* 2026-11-09：bottom 取「页签高度」与「键盘高度」之大者——键盘弹起（overlay/pan 模式）
+   * 时 --mobile-kb-inset 由 useMobileKeyboardInset 实测写入，面板精确贴键盘上沿，
+   * 消除「bottom:0 锚视口底边被键盘盖住」造成的 ~60px 空白；键盘未弹时回落页签高度。 */
+  bottom: max(var(--lnk-tabbar-h, 0px), var(--mobile-kb-inset, 0px));
   left: 0;
   padding-top: calc(env(safe-area-inset-top, 0px) + var(--lnk-topbar-h, 44px));
   padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -4407,12 +4413,10 @@ defineExpose({
   padding-right: 12px;
 }
 
-/* 2026-11-09：composer 聚焦（输入态）时面板贴底、零安全区内缩——键盘弹起后 composer 直接
- * 贴键盘顶，消除「面板 bottom(=tabbar-h) 与 padding-bottom(=safe-area) 双重计入 safe-area」
- * 造成的 ~2×safe-area 大块空白。此态页签已隐藏（MobileTabBar 同步把 --lnk-tabbar-h 回落 0），
- * 无需再为其与键盘之间留位。 */
-.agent-panel-mobile-dock.is-composer-focused.is-conversation-view.agent-panel-shell {
-  bottom: 0;
+/* 2026-11-09：键盘弹起（is-keyboard-open）时面板零安全区内缩——键盘已取代底部安全区，
+ * 不再额外留 safe-area 造成「面板底边到键盘顶」的多余空白。面板 bottom 由上方
+ * max(--lnk-tabbar-h, --mobile-kb-inset) 承担（键盘高度已计入），此处只清 padding。 */
+.agent-panel-mobile-dock.is-keyboard-open.is-conversation-view.agent-panel-shell {
   padding-bottom: 0;
 }
 
