@@ -261,7 +261,7 @@ export function buildTimelineSvg(rows: TimelineRow[], overlay?: Overlay): string
 	// 契约测试「未超预算时图上不得出现任何超预算标记」的 /warn/ 断言失去意义。
 	const sev = overlay?.kind === "severity";
 	const parts: string[] = [
-		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${h}" width="${W}" height="${h}" role="img">`,
+		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${h}" role="img">`,
 		`<style>.bar{fill:#dbe4ee}.over{stroke:#c0392b;stroke-width:2}.lbl{font:12px sans-serif;fill:#334}${
 			sev ? ".sev-error{fill:#fdecea}.sev-warn{fill:#fff6e5}" : ""
 		}</style>`,
@@ -301,7 +301,7 @@ export function buildTopologySvg(nodes: TopoNode[], edges: TopoEdge[]): string {
 	const h = 40 + nodes.length * 30;
 	const index = new Map(nodes.map((n, i) => [n.id, i]));
 	const parts = [
-		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${h}" width="${W}" height="${h}" role="img">`,
+		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${h}" role="img">`,
 		`<style>.n{fill:#eef2f7;stroke:#8aa}.t{font:12px sans-serif;fill:#334}.e{stroke:#8aa;stroke-width:1.5}</style>`,
 	];
 	edges.forEach((e) => {
@@ -326,7 +326,7 @@ export function buildTableSvg(rows: TableRow[], overlay?: Overlay): string {
 	const rowH = 26;
 	const h = 36 + rows.length * rowH;
 	const parts = [
-		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${h}" width="${W}" height="${h}" role="img">`,
+		`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${h}" role="img">`,
 		`<style>.t{font:12px sans-serif;fill:#334}.row0{fill:#fafbfc}.sev-error{fill:#fdecea}.sev-warn{fill:#fff6e5}</style>`,
 	];
 	rows.forEach((r, i) => {
