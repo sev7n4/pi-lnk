@@ -227,3 +227,46 @@ flowchart LR
 - ✓ 图号从 1 连续，§0 索引列出全部图号，每图有图注且在正文被引用（§1.5 引图 1、§5.2 引图 2）。
 - ✓ 无 PNG/JPG 附件（结构图全 Mermaid）。
 - ✓ 退出码 0。
+
+---
+
+## 15. 执行状态回填（2026-11-09，只追加）
+
+> 本节不改写第 1–14 节的任何历史结论与当时状态口径。所有数值以 `gh api` 读取的 true master `d1cd33768f0e688d060523af6e59ffb1ab81bf4f` 代码实测为准；本地工作树因并行会话的稀疏检出不可信。
+
+### 15.1 两套「Phase 4」编号辨析（防误读）
+
+| 编号体系 | 出处 | 实际含义 | 状态 |
+| --- | --- | --- | --- |
+| **本文 Phase 4** | §9 / §11 R3 / `Issue #755` P2 | 删 `components/agent/presentation/` 下 1100–1450 行 PC 冗余渲染 | ⏳ 未闭环（仅第一刀） |
+| **「Phase 4 路标 #1–#4」** | `docs/ops/2026-11-08-phase3-prod-smoke.md` §6 与 `docs/superpowers/specs/2026-11-08-agent-siderail-p1-denoise-design.md` §12 | Phase 3 结项后的**遗留风险收尾清单**：F1 修复（#779 / #780）、部署链治理（#781 / #782）、P4 契约门禁化（#783 / #784）、CDP 五层冒烟 ops runbook（#788） | ✅ 全部闭环（master `d1cd3376`） |
+
+两者**同名不同物**：路标 #1–#4 的收尾成果是运维与门禁侧，不能回填为「本文 Phase 4 已完成」。本文 Phase 4 的删除动作仍需 §10 的回退保护前置。
+
+### 15.2 Phase 0–5 真实落地映射（master `d1cd3376` 代码实证）
+
+| Phase | 本文验收口径 | 实际落地 | 判定 |
+| --- | --- | --- | --- |
+| 0–1 | §6.1 锚组件抬升 | #751（master `59eeab32`）：`NodeTileView.vue` / `NodeViewerView.vue` 已在 `components/agent/presentation/` | ✅ 达成 |
+| 2 | §6.2 `agentCommandClient` + SFC 零网络调用 | #757 新增 `apps/web/src/agent/command/agentCommandClient.ts` 并接入 SFC | ⚠️ **L1 指令侧达成**；SFC 仍 5 处 `fetch`，均为 threads / user/messages ×3 / `fetchWithAuth` 封装等历史读取侧。§6.2「不再持有任何网络调用」与 §2「不做：改动 SSE 拉流底层」存在口径冲突，属规格内部待澄清，**不判实现缺陷** |
+| 3 | §6.3 移动 chat 迁出 + 降级 `PCDockShell` + 删 29 处 `isMobileLayout` | #761–#776 十一刀 strangler-fig：7071 → **5698 行**、11 个 composable；结项规格 `2026-11-08-agent-siderail-phase3-closeout.md` §4 明确「停止按功能簇拆」 | 🔄 **路线换轨，非欠债**：文件仍名 `AgentSideRail.vue`、`PCDockShell` 不存在、`isMobileLayout` 29 → **22**。本文 §6.3 的验收口径已被后继规格替代，不应复活 |
+| 4 | §9 删 PC 冗余渲染约 1100–1450 行 | #777 删 PC history popover 死链（P1 去噪第一刀） | ⏳ 仅第一刀；§10 前置「PC 自动化视觉回归套件」在 master 树中不存在 |
+| 5 | §8 双 applier 收敛 | #758 收敛为 `packages/shared/src/canvasActionApplier.ts` 单一 SSOT，`executor.ts` 24 行薄委托，双端各有测试 | ✅ 结构性消除漂移，强于 `Issue #755` 原提的「CI 守卫」 |
+
+### 15.3 本文自身的状态漂移登记（不追溯改写）
+
+- 文首状态行「已复核待开工」是 2026-11-06 时点口径，**原样保留**；当前实际状态以本节为准：方向已被部分实施，Phase 3 已换轨收口，Phase 4 未闭环。
+- §12「后续路线图」未登记 Phase 2 / 3 / 5 的落地；§13 与 §13.1 的「7092 行 / 29 处 `isMobileLayout`」为 `59eeab32` 实测，当前为 **5698 行 / 22 处**。
+- §13.1 的「禁止写死固定 SHA、开工前用 `gh api` 取最新 master」红线由 #754 补入并保持有效；2026-11-06 的 17 提交回退事故是其反面实证。
+- `Issue #755` 创建时 body 被写成字面量 `@/tmp/issue_body.md`（20 字符），六项遗留清单只存在于本地临时文件，2026-11-09 已补回 issue 正文并追加状态回填。
+
+### 15.4 后续路线（按准入前置排序）
+
+1. **PC 自动化视觉回归套件**：本文 Phase 4 删除 1100–1450 行 PC 冗余渲染的**唯一硬前置**；无回退保护不得删。
+2. **Phase 2 口径澄清**：二选一 —— 把 §6.2 收敛为「L1 指令零内联调用」（与现状一致，推荐），或继续上收 5 处历史读取调用（触及 `sendMessage` / 历史加载附近的冻结边界，须先有行为级契约测试 + 变异验证）。
+3. **22 处 `isMobileLayout` 单向收敛**：按 §10「仅 Shell 读布局断点」补可失败 CI 守卫后逐处搬。
+4. 冻结边界不变：`sendMessage` / `handleEvent` / `canvas_command` / `defineExpose` 11 项；**不再按功能簇拆**（Phase 3 结项规格 §4）。
+
+### 15.5 推送时基线前移（2026-11-09，只追加）
+
+本节写作时 true master 为 `d1cd3376`；实际推 PR 前已前移至 `7c4066e70dfa08fc0f84886021e566ab9a49a15d`（PR #789「SVG 卡片不再写死 720px 宽」，4 个改动文件与本刀唯一提交路径零重叠）。`gh api` 核对母规格路径在新旧 master 的 blob 完全一致（`MASTER_MOVED_SAFE`）⇒ 本刀改用新 HEAD 作 parent、`base_tree` 取新 master tree，不回退 #789 的任何改动。本节其余处出现的 `d1cd3376` 均为写作时点记录，按「不追溯改写历史结论」保留。
