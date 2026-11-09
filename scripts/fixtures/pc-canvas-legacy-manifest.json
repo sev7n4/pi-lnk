@@ -1,0 +1,123 @@
+{
+  "schema": "lnkpi.pc-canvas-legacy-scope.v1",
+  "baseline_sha": "d7c8246b2f9acd7a5f7d6431aec3523da2b358ce",
+  "baseline_source": "gh api Git Data API true master tree; local parallel worktree NOT trusted",
+  "target_scope": "apps/web/src/components/canvas + mobile + agent/presentation anchors",
+  "delete_targets": [],
+  "verdict": "NO_DELETE_TARGET",
+  "merge_decision": {
+    "decision": "NO_MERGE",
+    "reasons": [
+      "CanvasReadonlyPage 与 ReplayPage 的 nodeTypes 固定 PC 形态，删除会破坏只读页与回放页",
+      "NodeTileView 1419 行是移动端锚，含 tap 长按 选择 提示词审核策略，PC 画布形态不同",
+      "母规格 L5 外壳各端自理是既定边界，强合并回退锚抬升成果且违反不按功能簇拆",
+      "NodeRenderer 的 isMobileLayout 分派是活跃分支，运行时同时服务两端无可下线半边"
+    ],
+    "adjudicated_at": "2026-11-09",
+    "source": "true master 源码引用图 + 母规格 §3 L5 外壳各端自理"
+  },
+  "append_only_prefix_bytes": 34217,
+  "append_only_prefix_sha256": "b55f26c2ecb6060010c2617af9dc97feb3171591fef245a53116d3d753e30e8b",
+  "protected": {
+    "list": [
+      "CanvasNodeImage.vue",
+      "CanvasNodeVideo.vue",
+      "CanvasNodeAudio.vue",
+      "CanvasNodeText.vue",
+      "NodeRenderer.vue",
+      "MobileNodeTile.vue",
+      "NodeTileView.vue"
+    ],
+    "reason": "四个 legacy 组件被只读页链与回放页链活跃引用；NodeRenderer 是唯一布局分派点；MobileNodeTile 与 NodeTileView 是移动端共享锚链"
+  },
+  "inventory": [
+    {
+      "name": "CanvasNodeImage.vue",
+      "kind": "vue",
+      "prod_refs": [
+        "components/canvas/NodeRenderer.vue",
+        "pages/CanvasReadonlyPage.vue",
+        "pages/ReplayPage.vue"
+      ],
+      "lines": 253
+    },
+    {
+      "name": "CanvasNodeVideo.vue",
+      "kind": "vue",
+      "prod_refs": [
+        "components/canvas/NodeRenderer.vue",
+        "pages/CanvasReadonlyPage.vue",
+        "pages/ReplayPage.vue"
+      ],
+      "lines": 311
+    },
+    {
+      "name": "CanvasNodeAudio.vue",
+      "kind": "vue",
+      "prod_refs": [
+        "components/canvas/NodeRenderer.vue",
+        "pages/CanvasReadonlyPage.vue"
+      ],
+      "lines": 280
+    },
+    {
+      "name": "CanvasNodeText.vue",
+      "kind": "vue",
+      "prod_refs": [
+        "components/canvas/NodeRenderer.vue",
+        "pages/CanvasReadonlyPage.vue",
+        "pages/ReplayPage.vue"
+      ],
+      "lines": 181
+    },
+    {
+      "name": "NodeRenderer.vue",
+      "kind": "vue",
+      "prod_refs": [
+        "pages/CanvasPage.vue"
+      ],
+      "lines": 126
+    },
+    {
+      "name": "MobileNodeTile.vue",
+      "kind": "vue",
+      "prod_refs": [
+        "components/canvas/NodeRenderer.vue"
+      ],
+      "lines": 279
+    },
+    {
+      "name": "NodeTileView.vue",
+      "kind": "vue",
+      "prod_refs": [
+        "components/mobile/MobileNodeTile.vue"
+      ],
+      "lines": 1419
+    },
+    {
+      "name": "CanvasPage.vue",
+      "kind": "page",
+      "prod_refs": [
+        "composables/useRoutePreload.ts",
+        "router/index.ts"
+      ],
+      "lines": 6807
+    },
+    {
+      "name": "CanvasReadonlyPage.vue",
+      "kind": "page",
+      "prod_refs": [
+        "router/index.ts"
+      ],
+      "lines": 123
+    },
+    {
+      "name": "ReplayPage.vue",
+      "kind": "page",
+      "prod_refs": [
+        "router/index.ts"
+      ],
+      "lines": 233
+    }
+  ]
+}

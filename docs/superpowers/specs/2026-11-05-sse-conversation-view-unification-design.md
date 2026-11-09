@@ -325,3 +325,23 @@ flowchart LR
 **（5）后继约束**：删除刀若重启，须先回答「`components/canvas/` 的 PC legacy 分支与移动端共享锚是否合并」，并补该侧行为级护栏；这是真实行为变更且 `deploy.yml` 的 `push.paths` 含 `apps/web/**` ⇒ 会触发生产发布，必须单独规格评审 + 生产复测，不得夹带在文档刀或门禁刀里。逐处搬 21 点读取与本删除域零相交（`presentation/` 内 `isMobileLayout` 命中 0），按 #793 runbook §6 四条准入另行推进。冻结边界不变，不按功能簇拆。
 
 **诚实边界**：本节不宣称任何产品代码改动、不宣称护栏被修改、不宣称 Phase 4 删除已完成、不宣称 §9 原文被修正。「口径已重界定」与「动作已执行」是两件事，按「历史时点结论不追溯改写，只做只追加状态回填」纪律分列。
+
+
+### 15.9 路线 ② 第二刀：PC 画布 legacy 合并裁决与删除动作终止（2026-11-09，只追加）
+
+**（1）本节性质**：只追加的状态回填，不改写 §1–§15.8 的任何历史结论；不追溯改写 §9 原文。真值基线 `d7c8246b2f9acd7a5f7d6431aec3523da2b358ce`（`gh api` 取的 true master）。
+
+**（2）回答 §15.8 留下的架构问题**：`components/canvas/` 的 PC legacy 分支与移动端共享锚**不合并**，裁决为 `NO_MERGE`。源码取证实证：四个 legacy 组件 `CanvasNodeImage` / `CanvasNodeVideo` / `CanvasNodeAudio` / `CanvasNodeText` 合计 1025 行，生产引用分别为 3 / 3 / 2 / 3 处，覆盖只读页链、回放页链与画布页分派链，零孤儿；`NodeRenderer.vue` 是唯一 `isMobileLayout` 布局分派点，移动侧薄壳 `MobileNodeTile.vue` 消费 1419 行的 `NodeTileView.vue`。四条裁决理由：
+
+1. `CanvasReadonlyPage.vue` 与 `ReplayPage.vue` 的 `nodeTypes` 映射固定 PC 形态且无移动端替代路径，删除会直接破坏只读页与回放页。
+2. `NodeTileView.vue` 1419 行是 Phase 0–1 锚抬升后的移动端锚，含 tap / 长按 / 选择模式 / 提示词审核策略（`NodeRenderer.policy.test.ts` 锁策略）；PC 画布节点是拖拽 / 多选 / 角标 / 编辑器语义，二者不是同一形态。
+3. 本文 §3 明确 L5 外壳「各端自理」，PC dock 与 `MobileCanvasShell` 是既定边界；强合并等于回退锚抬升成果，且与 Phase 3 结项规格 §4「不按功能簇拆」冲突。
+4. `NodeRenderer.vue` 的布局分派是活跃分支而非遗留死链，运行时同时服务两端，没有可整体下线的半边。
+
+**（3）删除动作终止**：结合 §15.8 的 `NO_DELETE_TARGET`（`presentation/` 侧 27 blob 零孤儿）与本节的 `components/canvas/` 侧零孤儿，§9 的「删 1100–1450 行 PC 冗余渲染」在 true master 上**不存在可删对象**，登记 `DELETE_ACTION_CLOSED_NO_TARGET`，该行数目标不再作为待办。后继不再按 §9 字面重启删除刀。
+
+**（4）该侧行为级准入契约**：若将来以产品需求驱动重启合并，须按 `docs/ops/2026-11-09-pc-canvas-legacy-scope-runbook.md` §7 补齐 `components/canvas/` 侧行为级护栏：PC 画布节点渲染形态的 CDP 冒烟取证 + PC / 移动两端契约测试 + 两端截图，并遵守 ② 的四项准入（`VERDICT ALL_PASS` / `diff_count=0` / `SHA_A` 与 `SHA_B` 相等 / PNG 截图路径），且不得修改 `pc-visual-baseline.json`、fixture、采集脚本或判据。此属真实行为变更且 `deploy.yml` 的 `push.paths` 含 `apps/web/**`，会触发生产发布，必须单独规格评审 + 生产复测。本刀不改任何产品代码、零生产发布。
+
+**（5）诚实边界**：本节**不宣称** Phase 4 功能闭环、**不宣称**删除动作已执行、**不宣称** ② 护栏被修改、**不宣称** §9 原文被修正。`NO_MERGE` 是规格裁决与动作终止，不等于「删 PC 冗余渲染」已实现；「口径已裁决」与「动作已执行」按「历史时点结论不追溯改写，只做只追加状态回填」纪律分列。
+
+**（6）后继**：路线 ③ 逐处搬 21 点 `isMobileLayout` 读取与本裁决零相交，按 `docs/ops/2026-11-09-is-mobile-layout-scope-runbook.md` §6 四条准入另行推进，本刀不改 `MAX_ALLOWED`；PR #625（SP-E CAS v2 规格待评审）与 A-6 真机复测保持独立窗口。冻结边界不变，不按功能簇拆。
