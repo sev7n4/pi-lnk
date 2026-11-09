@@ -3012,6 +3012,7 @@ defineExpose({
               'is-dragging': dragging,
               'has-studio-dock': studioDockOpen,
               'is-canvas-imm': mobileCanvasImm,
+              'is-composer-focused': composerFocused,
             },
           ]"
           :style="floating && !isMobileLayout ? {
@@ -4332,6 +4333,16 @@ defineExpose({
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+  /* 2026-11-09：清掉 base 的 18px 圆角——移动端裸条卡片视觉由 .composer-bare-bar 独占，
+   * dock 透明容器不应再呈现圆角外形（否则聚焦环套在圆角外像是「第二张卡片」）。 */
+  border-radius: 0;
+}
+
+/* 2026-11-09：清掉 base .agent-input-dock:focus-within 的 2px 聚焦环——移动端聚焦描边已由
+ * .composer-bare-bar:focus-within 承载，dock 这圈套在裸条外会被读作「裸条外面的边框卡片」。 */
+.agent-panel-mobile-dock .agent-input-dock:focus-within {
+  box-shadow: none;
+  border-color: transparent;
 }
 
 .agent-panel-mobile-dock .agent-input-dock::before {
@@ -4394,6 +4405,15 @@ defineExpose({
 .agent-panel-mobile-dock.is-conversation-view .agent-input-dock {
   padding-left: 12px;
   padding-right: 12px;
+}
+
+/* 2026-11-09：composer 聚焦（输入态）时面板贴底、零安全区内缩——键盘弹起后 composer 直接
+ * 贴键盘顶，消除「面板 bottom(=tabbar-h) 与 padding-bottom(=safe-area) 双重计入 safe-area」
+ * 造成的 ~2×safe-area 大块空白。此态页签已隐藏（MobileTabBar 同步把 --lnk-tabbar-h 回落 0），
+ * 无需再为其与键盘之间留位。 */
+.agent-panel-mobile-dock.is-composer-focused.is-conversation-view.agent-panel-shell {
+  bottom: 0;
+  padding-bottom: 0;
 }
 
 /* （2026-10-27 三页顶栏重构）is-conversation-view 历史 popover 向下恢复规则已随

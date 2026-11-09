@@ -27,9 +27,11 @@ const TABS: Array<{ key: MobileAppTab; label: string }> = [
 
 const composerFocused = useMobileComposerFocus()
 
-// 页签基础高度 56px + 安全区；聚焦隐藏时回落为仅安全区（composer 贴底、回收 56px）
+// 页签基础高度 56px + 安全区；聚焦（输入态）隐藏页签时回落为 0——
+// 页签已隐藏无需为其留位，且面板自身在 is-composer-focused 时 bottom:0 + padding-bottom:0
+// 直接贴键盘顶，避免 safe-area 被面板 bottom 与 padding 双重计入导致键盘与 composer 间留大块空白。
 const TABBAR_H = 'calc(56px + env(safe-area-inset-bottom, 0px))'
-const TABBAR_H_HIDDEN = 'env(safe-area-inset-bottom, 0px)'
+const TABBAR_H_HIDDEN = '0px'
 
 onMounted(() => {
   document.documentElement.style.setProperty('--lnk-tabbar-h', TABBAR_H)
@@ -114,7 +116,8 @@ onUnmounted(() => {
 }
 
 /* 2026-11-09：composer 聚焦（输入态）时整条下滑隐藏——回收 56px、SSE 对话流可见区更大。
- * 隐藏时同步由 watch 把 --lnk-tabbar-h 回落为仅安全区，composer 贴底、不被页签+键盘顶高。 */
+ * 隐藏时同步由 watch 把 --lnk-tabbar-h 回落为 0（页签已隐、无需留位），面板在
+ * is-composer-focused 时 bottom:0 + padding-bottom:0 直接贴键盘顶，消除键盘与 composer 间空白。 */
 .mobile-tab-bar.is-hidden {
   transform: translateY(100%);
   opacity: 0;
