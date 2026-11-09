@@ -22,7 +22,7 @@ REAL_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SELF = pathlib.Path(__file__).resolve()
 # 上限取「剥离注释后」的有效读取点数，而非 grep 的行数：
 # grep 计到 22 行，其中 1 行是文档注释 ⇒ 真实基线 21。留余量会让「多一处读取」的变异被吞掉。
-MAX_ALLOWED = 12
+MAX_ALLOWED = 11
 GATE_CMD = 'python3 scripts/verify-is-mobile-layout-scope.py'
 STDLIB_ONLY = {'argparse', 'json', 'pathlib', 're', 'sys', 'collections', 'difflib', 'hashlib'}
 SCAN_SUFFIXES = {'.vue', '.ts', '.tsx', '.js', '.mjs'}
@@ -170,7 +170,7 @@ def group_v3(impl, ctx):
     ratchet = function_body(impl, 'within_ratchet')
     if 'count <= limit' not in ratchet:
         problems.append('棘轮方向判据被改写或删除')
-    if not re.search(r'^MAX_ALLOWED = 12$', impl, re.M):
+    if not re.search(r'^MAX_ALLOWED = 11$', impl, re.M):
         problems.append('上限常量来源丢失')
     return not problems, '; '.join(problems) if problems else f'Shell 读取点 {ctx["sfc_count"]} <= {MAX_ALLOWED}，方向判据在位'
 
