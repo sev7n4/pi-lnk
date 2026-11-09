@@ -300,3 +300,28 @@ flowchart LR
 **排除项（显式登记，禁止一笔带过）**：本刀**不上收**上述 5 处读取。理由：它们紧邻 `sendMessage` / 历史加载的冻结边界，且携带 304 修复口径；在无行为级契约测试 + 变异验证的前提下搬动，收益低于风险。判据 D 的重开条件：只有当「SFC 零网络调用」的收益被重新论证成立，且先补齐行为级契约测试与变异验证，才允许单独开刀处理；不得夹带在文档刀或门禁刀里。
 
 **诚实边界**：「口径已澄清」≠「5 处 `fetch` 已上收」，也 ≠ 新增了 CI 守卫。本节不宣称任何产品代码改动；`Issue #755` 的 Phase 2 条目打勾仅代表口径决策已入库。§15.4 的排序不变：第 3 项 22 处 `isMobileLayout` 收敛仍在后续；本文 Phase 4「删 PC 冗余渲染」仍未实施。冻结边界不变。
+
+
+### 15.8 删除域重界定与路线 ① 收口（2026-11-09，只追加）
+
+**本节不改写 §2 / §6.2 / §9 / §13 / §15.1–§15.7 的任何历史结论与当时口径。** 全部数值以 `gh api` 取的 true master `75f597c765a8cec5eca79a26911773d6ffa9d0a9` 代码实证为准；本地并行工作树 951 个源文件中有 7 个裸 blob sha 与 master 不同，不采信。
+
+**（1）§15.4 三格已闭环**：第 1 项「PC 自动化视觉回归套件」由 PR #791（`74c5e0c0`）交付；第 2 项「Phase 2 口径澄清」由 PR #792（`3d35d42a`）收敛为「L1 指令零内联调用」；第 3 项「22 处 `isMobileLayout` 单向收敛」由 PR #793（`75f597c7`）立可失败棘轮门禁（有效读取点精算为 21）。§15.4 的排序不变，第 4 项冻结边界不变。
+
+**（2）§9 删除对象已漂移，按字面执行会删错**：§9 写「删除 `components/agent/presentation/` 下被共享层取代的 PC 冗余渲染约 1100–1450 行（存量规模见 §13.1 复核 #3）」。以 true master 复核：
+
+| 取证项 | §9/§13.1 当时口径 | true master 实证 |
+| --- | --- | --- |
+| §13.1 #3 列举的 10 个组件 | 约 1100–1450 行 | 合计 **1460 行**，且**全部有生产引用、零孤儿** |
+| `AgentPresentationHost.vue` + 7 个子组件 | 归为「PC 冗余」 | 被 `AgentSideRail.vue` / `agentInterruptGate.ts` / `executionTraceReducer.ts` 消费，是 PC 呈现主链 |
+| `NodeTileView.vue` / `NodeViewerView.vue` | 当时尚未抬升 | **1419 + 1407 = 2826 行**，是 Phase 0–1 锚抬升后的**共享层本体**，由移动端薄壳 `MobileNodeTile.vue` / `MobileNodeViewer.vue` 消费 |
+| `presentation/` 全目录 | 待删区 | 27 个 blob（26 源文件 + 1 快照），非测试条目 **16 个全部 ≥1 生产引用** |
+| PC 画布 legacy 渲染 | 记为「已退役」 | 实际在 `components/canvas/`（`NeoBaseNode` 331 / `NodeRenderer` 126 / 4 个 `CanvasNode*`），由 `NodeRenderer` 按 `isMobileLayout` 分叉，**仍是活跃分支**，不是死代码 |
+
+**（3）护栏与删除刀互斥（本轮新发现，必须显式登记）**：PR #791 的 PC 视觉回归护栏，其 fixture 经本地 Vite 挂载的**真实组件正是 `AgentPresentationHost.vue`**（`prose_block` / `shot_table` 两组 envelope），并覆盖 Stepper / ProseBlock / ShotTable 等子组件。即「**§9 要删的对象 = 护栏保护的对象**」。若按 §9 删除，必然 `diff_count>0` ⇒ 护栏 RED；而 `docs/ops/2026-11-09-pc-visual-regression-runbook.md` §7 又规定删除刀必须附 `diff_count=0` 且不得改 baseline / fixture / 采集脚本 / verifier。二者构成规格级**互斥**，不能靠「照 §9 开刀」解决，也不得通过放宽护栏来绕过。
+
+**（4）本轮结论**：路线 ① 交付 `scripts/verify-phase4-delete-scope.py` 与 `scripts/fixtures/phase4-delete-scope-manifest.json`，把删除域锁成可机检棘轮：当前 `delete_targets: []`、`verdict: NO_DELETE_TARGET`，V1–V7 全 PASS。**「母规格完成度收口」≠「Phase 4 删除动作已完成」**：本文 Phase 4 仍为 ⏳ 未闭环，但闭环前置已从「护栏就绪」升级为「先重新界定删除对象」。
+
+**（5）后继约束**：删除刀若重启，须先回答「`components/canvas/` 的 PC legacy 分支与移动端共享锚是否合并」，并补该侧行为级护栏；这是真实行为变更且 `deploy.yml` 的 `push.paths` 含 `apps/web/**` ⇒ 会触发生产发布，必须单独规格评审 + 生产复测，不得夹带在文档刀或门禁刀里。逐处搬 21 点读取与本删除域零相交（`presentation/` 内 `isMobileLayout` 命中 0），按 #793 runbook §6 四条准入另行推进。冻结边界不变，不按功能簇拆。
+
+**诚实边界**：本节不宣称任何产品代码改动、不宣称护栏被修改、不宣称 Phase 4 删除已完成、不宣称 §9 原文被修正。「口径已重界定」与「动作已执行」是两件事，按「历史时点结论不追溯改写，只做只追加状态回填」纪律分列。

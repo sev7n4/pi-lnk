@@ -1,0 +1,204 @@
+{
+  "schema": "lnkpi.phase4-delete-scope.v1",
+  "baseline_sha": "75f597c765a8cec5eca79a26911773d6ffa9d0a9",
+  "baseline_source": "gh api Git Data API true master tree; local parallel worktree NOT trusted",
+  "target_dir": "apps/web/src/components/agent/presentation",
+  "delete_targets": [],
+  "verdict": "NO_DELETE_TARGET",
+  "append_only_prefix_bytes": 30150,
+  "append_only_prefix_sha256": "151b0105a2e00a478eed2519f9dda4ca206b1ffba1ba3e151733cb8c19215abc",
+  "protected": {
+    "shared_anchors": [
+      "NodeTileView.vue",
+      "NodeViewerView.vue"
+    ],
+    "guard_mount": "AgentPresentationHost.vue",
+    "reason": "Phase 0-1 锚抬升后的共享层本体；② 护栏 fixture 挂载的真实组件链"
+  },
+  "inventory": [
+    {
+      "name": "AgentDeliveryCards.test.ts",
+      "kind": "test",
+      "prod_refs": []
+    },
+    {
+      "name": "AgentDeliveryCards.vue",
+      "kind": "vue",
+      "prod_refs": [
+        "components/agent/presentation/AgentPresentationHost.vue"
+      ]
+    },
+    {
+      "name": "AgentDeliverySummaryTable.vue",
+      "kind": "vue",
+      "prod_refs": [
+        "components/agent/presentation/AgentPresentationHost.vue"
+      ]
+    },
+    {
+      "name": "AgentMacroSchemeCards.vue",
+      "kind": "vue",
+      "prod_refs": [
+        "components/agent/presentation/AgentPresentationHost.vue"
+      ]
+    },
+    {
+      "name": "AgentNodeGraph.test.ts",
+      "kind": "test",
+      "prod_refs": []
+    },
+    {
+      "name": "AgentNodeGraph.vue",
+      "kind": "vue",
+      "prod_refs": [
+        "components/agent/AgentSideRail.vue",
+        "components/agent/agentMessageRender.ts",
+        "pages/CanvasPage.vue"
+      ]
+    },
+    {
+      "name": "AgentPresentationHost.vue",
+      "kind": "vue",
+      "prod_refs": [
+        "components/agent/AgentSideRail.vue"
+      ]
+    },
+    {
+      "name": "AgentProseBlock.vue",
+      "kind": "vue",
+      "prod_refs": [
+        "components/agent/AgentSideRail.vue",
+        "components/agent/presentation/AgentPresentationHost.vue"
+      ]
+    },
+    {
+      "name": "AgentShotTable.vue",
+      "kind": "vue",
+      "prod_refs": [
+        "components/agent/presentation/AgentPresentationHost.vue"
+      ]
+    },
+    {
+      "name": "AgentStepper.vue",
+      "kind": "vue",
+      "prod_refs": [
+        "components/agent/presentation/AgentPresentationHost.vue"
+      ]
+    },
+    {
+      "name": "AgentSvgCard.test.ts",
+      "kind": "test",
+      "prod_refs": []
+    },
+    {
+      "name": "AgentSvgCard.vue",
+      "kind": "vue",
+      "prod_refs": [
+        "components/agent/AgentSideRail.vue"
+      ]
+    },
+    {
+      "name": "AgentTopoCardList.test.ts",
+      "kind": "test",
+      "prod_refs": []
+    },
+    {
+      "name": "AgentTopoCardList.vue",
+      "kind": "vue",
+      "prod_refs": [
+        "components/agent/presentation/AgentPresentationHost.vue"
+      ]
+    },
+    {
+      "name": "NodeTileView.test.ts",
+      "kind": "test",
+      "prod_refs": []
+    },
+    {
+      "name": "NodeTileView.vue",
+      "kind": "vue",
+      "prod_refs": [
+        "components/mobile/MobileNodeTile.vue"
+      ]
+    },
+    {
+      "name": "NodeViewerView.test.ts",
+      "kind": "test",
+      "prod_refs": []
+    },
+    {
+      "name": "NodeViewerView.vue",
+      "kind": "vue",
+      "prod_refs": [
+        "components/mobile/MobileNodeViewer.vue"
+      ]
+    },
+    {
+      "name": "__snapshots__/AgentTopoCardList.test.ts.snap",
+      "kind": "test",
+      "prod_refs": []
+    },
+    {
+      "name": "node-graph-export.test.ts",
+      "kind": "test",
+      "prod_refs": []
+    },
+    {
+      "name": "node-graph-export.ts",
+      "kind": "module",
+      "prod_refs": [
+        "components/agent/presentation/AgentNodeGraph.vue"
+      ]
+    },
+    {
+      "name": "presentation.test.ts",
+      "kind": "test",
+      "prod_refs": []
+    },
+    {
+      "name": "schemeDraftProse.test.ts",
+      "kind": "test",
+      "prod_refs": []
+    },
+    {
+      "name": "schemeDraftProse.ts",
+      "kind": "module",
+      "prod_refs": [
+        "components/agent/agentMessageRender.ts",
+        "components/agent/presentation/AgentMacroSchemeCards.vue",
+        "components/agent/presentation/AgentProseBlock.vue"
+      ]
+    },
+    {
+      "name": "style-guards.test.ts",
+      "kind": "test",
+      "prod_refs": []
+    },
+    {
+      "name": "svg-sanitize.ts",
+      "kind": "module",
+      "prod_refs": [
+        "components/agent/presentation/AgentSvgCard.vue"
+      ]
+    },
+    {
+      "name": "types.ts",
+      "kind": "module",
+      "prod_refs": [
+        "components/agent/AgentSideRail.vue",
+        "components/agent/agentMessageRender.ts",
+        "components/agent/executionTraceReducer.ts",
+        "components/agent/presentation/AgentDeliveryCards.vue",
+        "components/agent/presentation/AgentDeliverySummaryTable.vue",
+        "components/agent/presentation/AgentPresentationHost.vue",
+        "components/agent/presentation/AgentShotTable.vue",
+        "components/agent/presentation/AgentStepper.vue",
+        "components/agent/presentation/AgentTopoCardList.vue",
+        "components/agent/useAgentThread.ts",
+        "components/canvases/ProjectGrid.vue",
+        "components/canvases/ProjectList.vue",
+        "stores/agent.ts"
+      ]
+    }
+  ]
+}
