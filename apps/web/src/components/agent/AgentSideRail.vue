@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, reactive, onMounted, nextTick, watch } from 'vue'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
+import { useMobileComposerFocus } from '@/composables/useMobileComposerFocus'
 import { useRouter } from 'vue-router'
 import { useAgentStore } from '@/stores/agent'
 import { useDockNoticeStore } from '@/stores/dockNotice'
@@ -1198,8 +1199,10 @@ async function loadOlder() {
  * 语音识别已于 2026-10-21 整体下线（移动端 + PC）：本组件不再有录音态与麦克风钮。 */
 const composerExpanded = ref(false)
 /* 2026-10-18 ③ ◎ 引用入口门控：聚焦即算「进入输入态」，◎ 立即可见（PC/移动通用），
- * 不再等用户敲出第一个字。 */
-const composerFocused = ref(false)
+ * 不再等用户敲出第一个字。
+ * 2026-11-09：改为跨组件共享单例（useMobileComposerFocus）——MobileTabBar 需读取同一份
+ * 状态以在聚焦态隐藏底部页签；本组件只写不另起本地 ref。 */
+const composerFocused = useMobileComposerFocus()
 const composerDockRef = ref<HTMLElement | null>(null)
 
 // 输入框被程序填充（如待发消息取回）时自动进入伸展态
@@ -4383,6 +4386,16 @@ defineExpose({
   max-height: none;
 }
 
+/* 2026-11-09 用户裁定：对话态裸条距左右屏缘留 12px 对称留白（与 .agent-turn 的 px-3
+ * 对齐，裸条卡片左缘 = 对话文本左缘），不顶着屏幕边缘。dock 背景仍 full-bleed 满屏、
+ * 不露画布；此 padding 在 dock 内，不影响面板出血。
+ * 窗态裸条已由 dock left/right:12px 提供同量留白 ⇒ 两态对称一致。
+ * 锚（.composer-canvas-ref-btn，相对裸条定位）随裸条右移 12px，仍完整可见。 */
+.agent-panel-mobile-dock.is-conversation-view .agent-input-dock {
+  padding-left: 12px;
+  padding-right: 12px;
+}
+
 /* （2026-10-27 三页顶栏重构）is-conversation-view 历史 popover 向下恢复规则已随
    header 历史 popover 退役（ADR-0015 单对话）删除 */
 
@@ -5591,9 +5604,11 @@ defineExpose({
   padding: 0;
   border: none;
   border-radius: var(--lnk-radius-full);
-  background: color-mix(in srgb, var(--lnk-text-muted) 60%, var(--lnk-surface-base));
+  /* 2026-11-09 用户裁定：去掉中灰盘——直接出 anchor-badge.png（与 SSE 轮次抬头 /
+   * 提议卡同源裸徽标），由徽标自身黑盘 + 白环承载视觉，外环不再有冗余灰圈。 */
+  background: transparent;
   color: var(--lnk-hi-text);
-  box-shadow: var(--lnk-shadow-xs);
+  box-shadow: none;
   transform: translate(-65%, -65%);
   transition:
     color var(--lnk-duration-fast) var(--lnk-ease-standard),
@@ -5601,10 +5616,10 @@ defineExpose({
   cursor: pointer;
 }
 
-/* 激活（pick 模式）= 点亮：hi-bg 盘 + hi-text glyph + hi-shadow 辉光 */
+/* 激活（pick 模式）= 点亮：徽标下垫 hi-bg 盘 + hi-shadow 辉光（黑徽标浮在彩色盘上 =
+ * 与旧「灰盘+黑徽标」同款点亮观感，只是常态下盘透明）。 */
 .composer-canvas-ref-btn.is-active {
   background: var(--lnk-hi-bg);
-  color: var(--lnk-hi-text);
   box-shadow: var(--lnk-hi-shadow);
 }
 
@@ -5616,28 +5631,30 @@ defineExpose({
   filter: brightness(1.06);
 }
 
-/* 2026-10-18 真机反馈：移动端 -65% 偏离顶点太远——圆心与裸条左顶点重合（半露）；
- * PC 端维持 -65%（「顶点长锚角」观感）不变。
- * 2026-10-19 真机反馈②：composer full-bleed 后顶点距屏缘仅 12px，-50% 圆心让圆左缘
- * 距屏 1px——曲面屏上「溢出屏幕」观感。left:4px 把圆心内移到距屏 17px（圆左缘 6px），
- * 垂直仍骑缝在条顶边（半露进流区，dock overflow:visible 不裁切）。
+/* 移动端锚定位（2026-11-09 截图复现修正）：
+ * 旧 left:4px + translate(-50%) 只在「窗态」成立——窗态 dock 内缩 12px（left:12px），
+ * 锚圆心距屏 17px、圆左缘 6px，刚好在屏内。但「对话态」dock 已 full-bleed（left:0，见
+ * .is-conversation-view 块），裸条左缘即屏缘，同一组值会把锚圆心推到屏外约 7px ⇒
+ * 截图里锚被左屏缘切掉半边（用户报「左侧被遮挡」）。
+ * 修正：落在裸条左内边距（--lnk-space-2=8px）内、不左溢；仅保留 translateY(-50%) 上骑缝，
+ * 维持「顶点角」观感且窗态/对话态两端都完整可见。
  * ⭐ 必须排在基础规则之后：canvasRefEntry 契约测试用首个 `.{类名}{` 正则取幽灵态规则，
  *   覆盖规则在前会被误当基础规则（transform-only）而假红。 */
 .agent-panel-mobile-dock .composer-canvas-ref-btn {
-  left: 4px;
-  transform: translate(-50%, -50%);
+  left: var(--lnk-space-2);
+  transform: translate(0, -50%);
 }
 
-/* 定位锚 glyph（2026-10-26 用户裁定④）：改**双色徽标**（黑盘 + 白锚 + 外环）。
- * ⛔ 不再走 mask：mask 会把徽标压成单一 currentColor，双色全丢 ⇒ 必须 <img> 原样出图。
- * 16px 落在 22px 的幽灵盘里 ⇒ 盘还留 ~3px 中灰圈边（读作「盘的边」，不是「第二个圆」）；
- * 徽标撑到盘的 73% ⇒ 与旧 20px 纯锚线条同视觉体量，不会退回「小图标」。
- * 高亮（pick 模式）仍由外层 .composer-canvas-ref-btn.is-active 的盘色承载——
- * 徽标本身是定色资产，不吃 currentColor（这与旧实现唯一的语义差别，已写进注释防回退）。 */
+/* 定位锚 glyph：anchor-badge.png = 裸徽标（黑盘 + 白锚 + 白环），与 SSE 轮次抬头、
+ * 提议卡同源（2026-11-09 起撤销外层灰盘，见 .composer-canvas-ref-btn）。
+ * ⛔ 不走 mask：mask 会把双色压成单色、白环丢失 ⇒ 必须 <img> 原样出图。
+ * 20px 撑满 22px 按钮，外缘即徽标自带白环（不再有外层灰圈）。
+ * 徽标是定色资产、不吃 currentColor；高亮（pick 模式）由外层 .is-active 的 hi-bg 盘垫底。 */
 .composer-locate-glyph {
   display: block;
-  width: 16px;
-  height: 16px;
+  /* 裸徽标：图本身即「黑盘 + 白锚 + 白环」，撑满 22px 按钮，外缘即徽标外环 */
+  width: 20px;
+  height: 20px;
   object-fit: contain;
   pointer-events: none;
 }
@@ -5653,7 +5670,8 @@ defineExpose({
   outline-offset: 2px;
 }
 
-/* 提议生成卡片「定位」按钮的锚盘（2026-10-18）：与 composer ◎ 同款幽灵/点亮两态。
+/* 提议生成卡片「定位」按钮的锚盘（2026-10-18）：保留中灰盘（卡片语境下与白底卡片更搭）；
+ * composer ◎ 已改为裸徽标（2026-11-09），二者不再同款，仅激活点亮语义一致。
  * 幽灵 = 中灰盘（text-muted⊕surface-base）+ hi-text 锚 + shadow-xs；
  * hover/聚焦点亮 = hi-bg 盘（glyph 仍 hi-text）+ hi-shadow 辉光。 */
 .propose-locate-disc {

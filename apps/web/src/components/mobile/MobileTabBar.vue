@@ -2,8 +2,11 @@
 /** 移动端应用骨架 · 底部页签（2026-10-18 IA v3，抄 WorkBuddy 壳）。
  * 四页签：对话 / 画布 / 发现 / 我的。画布页签图标 = 传送门（章鱼+光环）——
  * 「门」的最终形态：固定坐在第二位，三态零跳变；旧浮动门/顶栏门由此退役。
- * 挂载时发布 --lnk-tabbar-h 供 composer / DockStudioToolbar / pick bar 避让。 */
-import { onMounted, onUnmounted } from 'vue'
+ * 挂载时发布 --lnk-tabbar-h 供 composer / DockStudioToolbar / pick bar 避让。
+ * 2026-11-09：composer 聚焦（输入态）时整条隐藏并回收其高度——SSE 对话流可见区更大、
+ * 不被页签+键盘顶得太高。 */
+import { onMounted, onUnmounted, watch } from 'vue'
+import { useMobileComposerFocus } from '@/composables/useMobileComposerFocus'
 
 export type MobileAppTab = 'chat' | 'canvas' | 'discover' | 'mine'
 
@@ -22,10 +25,20 @@ const TABS: Array<{ key: MobileAppTab; label: string }> = [
   { key: 'mine', label: '我的' },
 ]
 
+const composerFocused = useMobileComposerFocus()
+
+// 页签基础高度 56px + 安全区；聚焦隐藏时回落为仅安全区（composer 贴底、回收 56px）
+const TABBAR_H = 'calc(56px + env(safe-area-inset-bottom, 0px))'
+const TABBAR_H_HIDDEN = 'env(safe-area-inset-bottom, 0px)'
+
 onMounted(() => {
+  document.documentElement.style.setProperty('--lnk-tabbar-h', TABBAR_H)
+})
+
+watch(composerFocused, (focused) => {
   document.documentElement.style.setProperty(
     '--lnk-tabbar-h',
-    'calc(56px + env(safe-area-inset-bottom, 0px))',
+    focused ? TABBAR_H_HIDDEN : TABBAR_H,
   )
 })
 
@@ -35,7 +48,11 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <nav class="mobile-tab-bar" aria-label="主导航">
+  <nav
+    class="mobile-tab-bar"
+    :class="{ 'is-hidden': composerFocused }"
+    aria-label="主导航"
+  >
     <button
       v-for="tab in TABS"
       :key="tab.key"
@@ -93,6 +110,15 @@ onUnmounted(() => {
   -webkit-backdrop-filter: blur(12px);
   border-top: 0.5px solid var(--lnk-border-subtle);
   transform: translateZ(0);
+  transition: transform 0.22s ease, opacity 0.22s ease;
+}
+
+/* 2026-11-09：composer 聚焦（输入态）时整条下滑隐藏——回收 56px、SSE 对话流可见区更大。
+ * 隐藏时同步由 watch 把 --lnk-tabbar-h 回落为仅安全区，composer 贴底、不被页签+键盘顶高。 */
+.mobile-tab-bar.is-hidden {
+  transform: translateY(100%);
+  opacity: 0;
+  pointer-events: none;
 }
 
 .tab-item {
