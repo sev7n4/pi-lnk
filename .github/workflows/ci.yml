@@ -66,6 +66,9 @@ jobs:
       - name: Verify phase4 delete scope (NO_DELETE_TARGET ratchet)
         run: python3 scripts/verify-phase4-delete-scope.py
 
+      - name: Verify pc canvas legacy scope (NO_MERGE ratchet)
+        run: python3 scripts/verify-pc-canvas-legacy-scope.py
+
       - name: Spec figures summary
         if: always()
         run: |
