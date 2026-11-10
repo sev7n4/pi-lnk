@@ -5,7 +5,7 @@ import { MOBILE_NODE_ACTION_REQUEST_KEY } from '@/composables/canvasNodeActions'
 import { resetAudioPlaybackForTest } from '@/utils/audioPlayback'
 
 function fireTouch(wrapper: any, type: string) {
-  const el = wrapper.element as HTMLElement
+  const el = wrapper.get('.mobile-node-tile').element as HTMLElement
   const ev = new Event(type, { bubbles: true }) as any
   ev.touches = [{ clientX: 0, clientY: 0 }]
   el.dispatchEvent(ev)
@@ -19,7 +19,7 @@ afterEach(() => {
 describe('MobileNodeTile gesture', () => {
   it('tap 触发主内容动作', async () => {
     const w = mount(MobileNodeTile, { props: { id: 'n1', type: 'image', data: { url: 'x' } } })
-    await w.trigger('click')
+    await w.get('.mobile-node-tile').trigger('click')
     expect(w.emitted('tap')).toHaveLength(1)
   })
 

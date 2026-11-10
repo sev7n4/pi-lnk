@@ -84,7 +84,7 @@
       "prod_refs": [
         "components/canvas/NodeRenderer.vue"
       ],
-      "lines": 279
+      "lines": 286
     },
     {
       "name": "NodeTileView.vue",

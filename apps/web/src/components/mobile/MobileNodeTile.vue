@@ -10,6 +10,12 @@ import {
   type CanvasNodeClickGuard,
 } from '@/composables/canvasNodeActions'
 import NodeTileView from '@/components/agent/presentation/NodeTileView.vue'
+import MobileNodeHandles from './MobileNodeHandles.vue'
+
+// ⭐ 移动端节点现渲染两个根（NodeTileView 瓦片 + MobileNodeHandles 连线锚点）。
+// 关闭自动透传，显式把非 prop 属性（class/style 等）路由到 NodeTileView，
+// 避免多根下的"extraneous attributes"告警与属性丢失。
+defineOptions({ inheritAttrs: false })
 
 /**
  * 移动端节点瓦片 —— **薄壳**（Task 2，Phase 1 视图层统一）。
@@ -171,7 +177,7 @@ function onTileClick() {
 <template>
   <NodeTileView
     ref="nodeTileRef"
-    v-bind="$props"
+    v-bind="{ ...$attrs, ...$props }"
     @retry="$emit('retry')"
     @open-prompt-review="$emit('open-prompt-review')"
     @touchstart="bindings.onTouchstart"
@@ -180,6 +186,7 @@ function onTileClick() {
     @touchcancel="bindings.onTouchcancel"
     @click="onTileClick"
   />
+  <MobileNodeHandles />
 </template>
 
 <!--

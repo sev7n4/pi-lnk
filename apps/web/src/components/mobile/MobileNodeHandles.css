@@ -1,0 +1,29 @@
+/* 移动端连线手柄覆盖（修复 P3：MobileNodeTile 无 Handle 导致的锚点退化）。
+ *
+ * 复用 PC neo-node.css 的 `.neo-node-wrapper .vue-flow__handle.neo-flow-handle` 手柄体系，
+ * 此处只做移动端差异化，并用 `.vue-flow__node` 前缀抬高特异性，无需依赖 import 顺序。
+ *
+ * 结构：MobileNodeTile → NodeRenderer 片段 →
+ *   <NodeTileView class="mobile-node-tile"> … </NodeTileView>   （瓦片主体，负责 tap=打开）
+ *   <MobileNodeHandles> <div class="neo-node-wrapper mobile-node-connect-wrap"> … </div>
+ *
+ * 手柄与瓦片主体同处一个 VueFlow 节点（.vue-flow__node）内，故以它作定位/特异性锚点。 */
+
+/* wrapper 满铺节点盒；pointer-events:none ⇒ 仅手柄区域可点，瓦片主体 tap 仍透传打开查看器。 */
+.vue-flow__node .neo-node-wrapper.mobile-node-connect-wrap {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* 常驻可连线：.show-handles 已开（见组件）⇒ 手柄默认 auto；此处显式兜底，防止被其它规则关掉。 */
+.vue-flow__node .neo-node-wrapper.mobile-node-connect-wrap .vue-flow__handle.neo-flow-handle {
+  pointer-events: auto;
+}
+
+/* 命中区：PC 是 inset:-32px（≈72px），移动端收到 -18px ≈ 44px 触控标准，
+ * 减小对瓦片正文的误触（手柄在左右中轴，纵向仅 ±18px）。 */
+.vue-flow__node .neo-node-wrapper.mobile-node-connect-wrap .handle-hitbox {
+  inset: -18px;
+  pointer-events: auto;
+}

@@ -18,7 +18,7 @@ function tileStyle(type: string, data: Record<string, unknown> = {}): Record<str
   const w = mount(MobileNodeTile, {
     props: { id: 'n1', type: type as 'image', data: data as never },
   })
-  const raw = w.attributes('style') ?? ''
+  const raw = w.get('.mobile-node-tile').attributes('style') ?? ''
   w.unmount()
   const out: Record<string, string> = {}
   for (const decl of raw.split(';')) {

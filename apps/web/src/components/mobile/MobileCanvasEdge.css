@@ -12,7 +12,9 @@
  * - 状态高亮边（selected / upstream / downstream / hover）不抢占：:not 链挂在 edge 元素上，
  *   特异性抬到 (0,7,0) 的同时显式让出这些态（评审 Important#2，脱离 import 顺序依赖）；
  * - 由壳层 MobileCanvasShell.vue 导入（AGENTS.md 移动端规则 1：编排唯一所有者是壳层）。
- * 锚点退化（MobileNodeTile 无 Handle）与布局网格属 P3，不在本文件。
+ * 锚点退化（移动端节点无 Handle）已于 2026-11-10 修复：MobileNodeTile 经 MobileNodeHandles
+ *   补回 target(左)/source(右) 两个 VueFlow Handle（id 与 PC 一致），存量边无需迁移即从
+ *   A 右→B 左路由。布局网格仍属 P3，不在本文件。
  */
 @media (max-width: 767px) {
   .vue-flow
