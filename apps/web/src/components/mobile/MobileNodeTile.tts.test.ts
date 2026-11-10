@@ -29,7 +29,7 @@ describe('MobileNodeTile text tap → 阅读器', () => {
     const speak = stubSpeech()
     const long = '字'.repeat(200)
     const w = mount(MobileNodeTile, { props: { type: 'text', data: { content: long } } })
-    await w.trigger('click')
+    await w.get('.mobile-node-tile').trigger('click')
     expect(w.emitted('open-reader')).toHaveLength(1)
     expect(speak).not.toHaveBeenCalled()
   })
@@ -37,7 +37,7 @@ describe('MobileNodeTile text tap → 阅读器', () => {
   it('短文 tap emit open-reader（开阅读器）且不触发 TTS', async () => {
     const speak = stubSpeech()
     const w = mount(MobileNodeTile, { props: { type: 'text', data: { content: '短' } } })
-    await w.trigger('click')
+    await w.get('.mobile-node-tile').trigger('click')
     expect(w.emitted('open-reader')).toHaveLength(1)
     expect(speak).not.toHaveBeenCalled()
   })
@@ -47,7 +47,7 @@ describe('MobileNodeTile text tap → 阅读器', () => {
     const w = mount(MobileNodeTile, {
       props: { type: 'text', data: { content: '字'.repeat(TTS_THRESHOLD) } },
     })
-    await w.trigger('click')
+    await w.get('.mobile-node-tile').trigger('click')
     expect(w.emitted('open-reader')).toHaveLength(1)
     expect(speak).not.toHaveBeenCalled()
   })
