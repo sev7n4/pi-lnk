@@ -1,6 +1,6 @@
 # Phase 4 删除域重界定设计规格（路线 ① 第一刀）
 
-状态：待评审（2026-11-09）
+状态：已闭环（2026-11-10，adjudicated NO_DELETE_TARGET；删除刀本体按母规格 §9 字面终止，后继转入 ② 删除刀重定义，不在路线 ③ 主线）
 前置：`docs/superpowers/specs/2026-11-05-sse-conversation-view-unification-design.md` §9 / §13.1 / §15.4；`docs/ops/2026-11-09-pc-visual-regression-runbook.md` §7；Phase 3 结项规格 §4
 实施计划：`docs/superpowers/plans/2026-11-09-phase4-delete-scope-rebaseline.md`
 真值基线：`75f597c765a8cec5eca79a26911773d6ffa9d0a9`（`gh api` 取的 true master；本地并行工作树不可信）
@@ -162,3 +162,11 @@ flowchart TD
 - **中文文档只追加判据**：前缀长度是字节数，`spec[30150:]` 字符切片恒空 ⇒ V5 假红；改为 `raw[:n]` 后再 decode。
 - **V1 计数 bug**：`dir_count` 是 int 而非集合，初版 `len(ctx['dir_count'])` 抛 `TypeError`；已修并重跑全绿。
 - 本节不改写 §1–§13 的任何结论；所有数值为执行时实测。
+
+## 15. 状态收口（2026-11-10 只追加）
+
+- **结论锁定**：`NO_DELETE_TARGET` 成立（V1–V7 + 14 组变异全 PASS）。母规格 §9 要删的对象 = ② 护栏保护对象，规格级互斥 ⇒ **删除刀按 §9 字面终止，无待办功能**。
+- **状态变更**：顶部状态由「待评审（2026-11-09）」改为「已闭环（2026-11-10，adjudicated NO_DELETE_TARGET）」。闭环不代表"删除了什么"，而是"经实证确认无可删对象，删除动作终止"——消除此前"母规格 Phase 4 仍 ⏳ 未闭环"的假进行中信号。
+- **真实后继**：删除域如要重新开启，须先回答「PC 画布 legacy（`components/canvas/`）与移动端锚是否合并」并补 `components/canvas/` 侧行为级护栏；这是真实行为变更 + 生产发布，归 ② 删除刀重定义，**不在路线 ③ 主线**，须单独规格评审。
+- **与路线 ③ 的关系**：`AgentSideRail.vue` 残留的 8 处 `isMobileLayout` 读取（grep 实证 master：L737/L839/L859/L1005/L1253/L1264/L1272/L1295）已整批移交 PR5 移动壳层（relocate/remove），**不在此删除域范围内**（删除域只管 `presentation/`，与 `isMobileLayout` 读取零相交）。
+- **诚实边界**：不宣称"Phase 4 删除动作已完成"——本就无对象可删；不宣称 §9 原文被修正、护栏被放宽、新增 required check。
