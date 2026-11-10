@@ -1,11 +1,14 @@
 import { ElMessage } from 'element-plus'
 import { h, onScopeDispose } from 'vue'
+import { isFailureTerminalStatus } from '@/utils/incompleteNode'
 
 interface NodeErrorLike {
   status?: unknown
   errorMessage?: unknown
   errorCode?: unknown
   generationRecordId?: unknown
+  /** 历史失败分窗标记（2026-11-10）：historical / dismissed 永不弹活跃提示。 */
+  failureScope?: unknown
 }
 
 /**
@@ -28,6 +31,11 @@ function isCancellation(node: NodeErrorLike): boolean {
  * 只对「本次转移到 error」的边为真，快照相等/重复轮询/终态改挂均不为真：
  * - 轮询会把同一 error 态反复推进来，见边就 toast 会刷屏；
  * - completed → error 是节点被改挂，不是这次生成失败。
+ *
+ * ⭐ 2026-11-10 历史失败分窗：新增两条抑制，堵住「加载期对账把持久化
+ * `failed` 刷成 `error`」造成的伪转移（用户实测：重开历史会话必弹 4 条黄条）。
+ * 这两道是**分层防御**：对账侧（`resolveHistoricalFailurePatch`）负责不产生
+ * 转移，此处负责即使别的写者产生转移也不弹。任一被去掉，对应用例必须转红。
  */
 export function shouldToastForFailure(
   prev: NodeErrorLike | null | undefined,
@@ -35,8 +43,11 @@ export function shouldToastForFailure(
 ): boolean {
   if (!next || next.status !== 'error') return false
   if (isCancellation(next)) return false
-  if (prev?.status === 'error') return false
+  // 失败终态之间的转移（failed/error/fallback_pending → error）不是新失败。
+  // 取代原先只判 `prev?.status === 'error'`，同时覆盖 failed 与 fallback_pending。
+  if (isFailureTerminalStatus(prev?.status)) return false
   if (prev?.status === 'completed') return false
+  if (next.failureScope === 'historical' || next.failureScope === 'dismissed') return false
   return true
 }
 
@@ -47,6 +58,7 @@ export interface FailureToastNode {
   errorMessage?: unknown
   errorCode?: unknown
   generationRecordId?: unknown
+  failureScope?: unknown
 }
 
 export interface FailureToastOptions {

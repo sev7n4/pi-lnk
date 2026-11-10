@@ -162,6 +162,7 @@ import {
   CANVAS_NODE_RENAME_KEY,
   CANVAS_NODE_RENAME_REQUEST_KEY,
   CANVAS_NODE_RETRY_KEY,
+  CANVAS_NODE_DISMISS_FAILURE_KEY,
   CANVAS_AGENT_DIAGNOSE_KEY,
   CANVAS_REF_PICK_ACTIVE_KEY,
   CANVAS_REF_PICK_NODE_IDS_KEY,
@@ -223,6 +224,7 @@ import { dedupeNodesById, mergeCanvasNodesFromServer } from '@/pages/canvas/canv
 import { useSelectedNodeEditor, type EditableFlowNode, EDITABLE_NODE_TYPES } from '@/composables/useSelectedNodeEditor'
 import type { CanvasEdgeLike } from '@/composables/useUpstreamNodeContext'
 import { buildPollingFailurePatch, getRecordFailureMessage } from '@/utils/generationDiagnostic'
+import { resolveDismissFailurePatch, resolveHistoricalFailurePatch } from '@/utils/historicalFailure'
 
 const route = useRoute()
 const router = useRouter()
@@ -4597,6 +4599,8 @@ watch(
     // 文案不作判据；去重键 = 生成记录维度，重载不清 rec 键。
     errorCode: n.data?.errorCode,
     generationRecordId: n.data?.generationRecordId,
+    // 历史失败分窗标记随快照透传（2026-11-10）：historical/dismissed 永不弹活跃提示。
+    failureScope: n.data?.failureScope,
   })),
   (curr, prevByIdArr) => {
     const prevById = new Map((prevByIdArr ?? []).map((p) => [p.id, p]))
@@ -5435,6 +5439,22 @@ function retryNodeGeneration(nodeId: string, overrides?: CanvasNodeRetryOverride
 
 provide(CANVAS_NODE_CANCEL_KEY, (id) => cancelGeneration(id))
 provide(CANVAS_NODE_RETRY_KEY, (id, overrides) => { void retryNodeGeneration(id, overrides) })
+/**
+ * 用户点「忽略/不再提示」：只把节点 data 的 failureScope 标为 dismissed，
+ * 经既有 patchNodeData + saveCanvas 持久化。不删节点/记录、不改 status/退费；
+ * 失败原因与退分信息仍在历史面板与诊断抽屉可查。
+ */
+function dismissNodeFailure(nodeId: string) {
+  const node = nodes.value.find((n) => n.id === nodeId)
+  if (!node) return
+  const dismissPatch = resolveDismissFailurePatch(
+    (node.data ?? {}) as Record<string, unknown>,
+  )
+  if (!dismissPatch) return
+  patchNodeData(nodeId, dismissPatch)
+  void saveCanvas()
+}
+provide(CANVAS_NODE_DISMISS_FAILURE_KEY, dismissNodeFailure)
 // PR1「让 Agent 诊断」：诊断抽屉按钮 → 预填 composer（不自动发送，等用户显式发送）
 provide(CANVAS_AGENT_DIAGNOSE_KEY, (info) => {
   const reason = info.errorCode
@@ -5698,13 +5718,22 @@ async function reconcileMissingGenerationRecords() {
 }
 
 function buildStudioRecordPatch(
-  _node: EditableFlowNode,
+  node: EditableFlowNode,
   record: GenerationRecord,
 ): Record<string, unknown> | null {
   // Skip non-terminal records — polling will catch them.
   if (record.status !== 'completed' && record.status !== 'failed' && record.status !== 'error') {
     return null
   }
+  // ⭐ 2026-11-10 历史失败分窗：加载期对账不得把从持久化画布恢复的失败终态
+  // 重新激活成「本次失败」。否则 failed → error 转移会触发失败 toast，用户
+  // 每次重开历史会话都弹出早已终结的失败黄条（生产实测 4 条）。
+  // 判据抽成纯函数（utils/historicalFailure.ts）以便行为级测试 + 变异验证。
+  const historicalPatch = resolveHistoricalFailurePatch(
+    (node.data ?? {}) as Record<string, unknown>,
+    { id: record.id, status: record.status },
+  )
+  if (historicalPatch) return historicalPatch
   const status =
     record.status === 'completed'
       ? NODE_GENERATION_STATUS.completed

@@ -84,6 +84,17 @@
   line-height: 1.2;
 }
 
+/* 历史失败「忽略」按钮（2026-11-10）：颜色/字号/圆角全部复用 .neo-task-elapsed，
+   本类只补按钮交互属性 ⇒ 不新增任何 hex / rgba 颜色值（Design_system.md §2）。 */
+.neo-task-dismiss-btn {
+  border: none;
+  cursor: pointer;
+}
+
+.neo-task-dismiss-btn:hover {
+  text-decoration: underline;
+}
+
 .neo-task-chrome-btn {
   display: inline-flex;
   width: 28px;

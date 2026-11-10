@@ -41,6 +41,20 @@
 /** 后端写入的「未完成」状态值（与 `incomplete-node.ts` 的常量同源）。 */
 export const NODE_INCOMPLETE_STATUS = 'incomplete'
 
+/**
+ * 节点是否处于「失败终态」。
+ *
+ * ⭐ 2026-11-10 历史失败分窗：加载期对账（`buildStudioRecordPatch`）会把从
+ * 持久化画布恢复的 `failed` 节点刷成 `error`，构成失败 toast 的「转移到 error」
+ * 边 ⇒ 用户每次重开历史会话都弹出早已终结的失败黄条。判据必须覆盖
+ * `failed` / `error` / `fallback_pending` 三值，且**排除 `incomplete`**
+ * （后者是「这一轮中断时还没跑完」的事实陈述，不是生成失败，见模块头注释）。
+ */
+export function isFailureTerminalStatus(status: unknown): boolean {
+  const s = String(status ?? '')
+  return s === 'failed' || s === 'error' || s === 'fallback_pending'
+}
+
 /** 节点是否处于「未完成」态。 */
 export function isIncompleteNode(data: unknown): boolean {
   if (!data || typeof data !== 'object') return false
@@ -74,15 +88,28 @@ export function incompleteBadgeLabel(data: unknown): string {
  * ⇒ 统一走这里，一个取值点。
  *
  * @param generatingText 各节点自己的「生成中」文案（如视频节点是「视频生成中...」）。
+ * @param failureScope 历史失败分窗标记（见 `historicalFailure.ts`）：历史失败显示
+ *   静态、诚实、可重试的标记；已忽略的节点显示极简占位。缺省 = 活跃失败，
+ *   提示由 toast + 错误条承担，占位文案不变。
  *
  * ⚠️ 语义顺序要紧：`incomplete` 优先于 `generating`——
  * 后端标 `incomplete` 时节点原本是 `generating`，两者可能同时成立
  * （后台任务还在跑，但那一轮已中断）⇒ 展示层应说「未完成」而不是「生成中」。
+ * 失败标记分支放在其后，且用 `isFailureTerminalStatus` 收口，
+ * 保证 `incomplete` 永远不会被误判成生成失败。
  */
-export function nodePlaceholderText(status: unknown, generatingText = '生成中...'): string {
+export function nodePlaceholderText(
+  status: unknown,
+  generatingText = '生成中...',
+  failureScope?: unknown,
+): string {
   const s = String(status ?? '')
   if (s === NODE_INCOMPLETE_STATUS) return '未完成'
   if (s === 'uploading') return '上传中'
   if (s === 'generating') return generatingText
+  if (isFailureTerminalStatus(s)) {
+    if (failureScope === 'historical') return '生成失败 · 可重试'
+    if (failureScope === 'dismissed') return '已忽略'
+  }
   return '上传或等待生成'
 }
