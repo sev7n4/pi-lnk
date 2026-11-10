@@ -7,10 +7,10 @@
  * / ＋FAB / 新建 sheet / 任务 sheet / 多选动作条）收敛到本壳层一处。
  *
  * 边界：
- * - 画布世界（VueFlow + 胶囊 MobileCanvasTopControls + 空态 mobile-canvas-empty）仍由
- *   CanvasPage 承载——胶囊包在 VueFlow 的 <Panel> 内、空态 absolute 在 canvasArea 内，
- *   依赖 VueFlow 内部定位，不能搬出。这两处 isMobileLayout 残留留待后续定位重构
- *   （已在 PR 描述标注）。
+ * - 画布世界（VueFlow + PC 工具条 Panel + 空态 mobile-canvas-empty）仍由 CanvasPage
+ *   承载：PC 工具条包在 VueFlow 的 <Panel> 内、空态 absolute 在 canvasArea 内，依赖
+ *   VueFlow/canvasArea 定位，不能搬出。浮动胶囊已于 2026-10-27 上提 MobileTopBar
+ *   并删除组件（见 mobileChromeHygiene 守卫）；空态经 overlay-residuals spike 裁决保留。
  * - 共享状态真源留在 CanvasPage（mobileAppTab / mobileCanvasView / mobileCanvasImm 被
  *   AgentSideRail、mobileStudioDockOpen、focusNodeById、pickMode watch 共用），壳层只
  *   接收并渲染；壳层通过 actions 函数 prop 触发 CanvasPage 核心逻辑，不回写共享状态。

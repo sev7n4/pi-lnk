@@ -6412,7 +6412,7 @@ onUnmounted(() => {
             :target-y="connectPicker.y"
           />
 
-          <!-- PC 右下视口工具条：移动端隐藏（由 MobileCanvasTopControls 顶部胶囊接管）。
+          <!-- PC 右下视口工具条：移动端隐藏（移动端 ⤢ 适应画布已于 2026-10-27 上提至 MobileTopBar，不再有浮动胶囊）。
                2026-10-22 与收缩态 agent FAB 左右互换（侧栏翻左后整体镜像）。 -->
           <Panel v-if="!isMobileLayout" position="bottom-right" class="canvas-panel-bottom-right">
             <CanvasBottomLeftControls
@@ -6598,8 +6598,8 @@ onUnmounted(() => {
     <!--ⓘ 移动端应用骨架（IA v3）：顶栏三区 + 底部四页签 + 发现/我的两页。
          fixed 定位组件，挂载在容器外避免被画布 transform 影响避让计算。 -->
     <!-- PR5（D-9）：移动端导航/面板/状态/入口层收敛到 MobileCanvasShell 单一壳层。
-         画布世界（VueFlow + 胶囊 + 空态）仍在此页承载；胶囊/空态因依赖 VueFlow 内部
-         定位暂留（见 MobileCanvasShell 头部注释与 PR 描述）。 -->
+         画布世界（VueFlow + PC 工具条 + 空态）仍在此页承载；空态因依赖 canvasArea
+         定位经 overlay-residuals spike 裁决保留（见 MobileCanvasShell 头部注释）。 -->
     <MobileCanvasShell
       v-if="isMobileLayout"
       :mobile-app-tab="mobileAppTab"
