@@ -1932,6 +1932,24 @@ export class AgentService implements OnModuleInit {
   }
 
   /**
+   * P1（历史会话加载对账）：查询该会话在 pi-runtime 是否仍有**活跃**的阻塞等待
+   * （propose_generation / ask_user）。用于前端打开旧会话时判断持久化的 pending_confirm
+   * 是「活闸门」还是「死等待」（callId 已不在 runtime registry，或会话早已结束）。
+   * 失败安全：探活调用异常时返回 true（假定仍活跃，保留闸门而非误隐）。
+   */
+  async getPendingLiveness(sessionId: string, threadId?: string | null): Promise<boolean> {
+    const piUrl = this.getPiRuntimeUrl()
+    if (!piUrl) return false
+    const sessionKey = threadId?.trim() || sessionId
+    try {
+      const pending = await this.createPiRuntimeClient(piUrl).getPending(sessionKey)
+      return pending != null
+    } catch {
+      return true
+    }
+  }
+
+  /**
    * P1-A（规格 2026-11-01 §4.2）：/answers 在 runtime 侧真丢失时的 durable part 裁决。
    *
    * 真源 = AgentMessage.metadata.executionEvents 里的 waiting_user 事件（#648 起落库）。

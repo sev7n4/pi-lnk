@@ -521,10 +521,19 @@ export class GenerationReaperService implements OnModuleInit {
     // BYOK 记录的失败退款在正常路径用 byok_refund（studio.service.ts completeImage），
     // 这里对齐同一语义；金额与 category 不受影响。
     const refundStatus = meta.providerSource === 'user' ? 'byok_refund' : 'failed_refund'
+    // 诚实错误语义（P1）：reaper 只选中 `status:'generating'` 且超阈值的记录——
+    // 说明这次生成结果**从未被任何回调结算**（进程重启 / 会话结束 / detached
+    // completion 丢失）= 本地服务「弄丢了这次生成」，并非「上游真的超时」。
+    // 旧逻辑一律标 upstream_timeout 会误导用户去重试一个已死的依赖（"请稍后重试"）。
+    // 真正由上游明确超时返回的 errorCode=upstream_timeout 由 diagnostics 分类器在
+    // 正常失败路径落库（届时 status 已是 failed，reaper 不会碰），此处不受影响。
+    // ⇒ 所有被回收记录一律标 interrupted（诚实告知「服务中断，可重新生成」）。
     const baseMeta: Record<string, unknown> = {
       ...meta,
-      errorCode: 'upstream_timeout',
-      userMessage: needRefund ? '生成超时，积分已退回' : '生成超时',
+      errorCode: 'interrupted',
+      userMessage: needRefund
+        ? '生成因服务中断未完结，积分已退回，可重新生成'
+        : '生成因服务中断未完结，可重新生成',
       failedAt: new Date().toISOString(),
       reapReason: 'stale_generating',
     }

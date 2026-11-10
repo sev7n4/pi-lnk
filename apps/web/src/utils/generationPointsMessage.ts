@@ -13,6 +13,7 @@ type ErrorResponseData = {
 const ERROR_CODES = new Set<string>([
   'insufficient_points',
   'upstream_timeout',
+  'interrupted',
   'upstream_error',
   'rate_limited',
   'cancelled',
