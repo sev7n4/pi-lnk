@@ -43,10 +43,14 @@ export function sanitizeHistoryMessages<T extends HistoryRow>(input: readonly T[
       continue // K4：纯机器载荷 user 行不进渲染序列
     }
     if (r.role === 'assistant' && contentEmpty) {
-      // D16：空 assistant 行剔除——无正文则 metadata 无从渲染，恢复定位不受干扰
-      //（含 metadata 畸形的空行，「全畸形输入得空结果」Review Focus #4）
-      droppedEmptyAssistant++
-      continue
+      // D16 修正（P0-C，SSE 会话恢复）：服务端允许"有 thinking/toolCalls 无正文"的回合落库
+      // （agent.service.ts 已实证），这类回合带 executionEvents、历史回放需重建过程态，
+      // 不得静默丢行。仅剔除"正文空且毫无过程事件"的真空行；带 executionEvents 的空正文行保留。
+      const hasEvents = !!(r.metadata && /"executionEvents"\s*:\s*\[/.test(r.metadata))
+      if (!hasEvents) {
+        droppedEmptyAssistant++
+        continue
+      }
     }
     if (r.role === 'assistant' && r.metadata != null && !isParsableJson(r.metadata)) {
       degradedIds.add(r.id) // D15：行保留（正文可能有效），降级显式化
