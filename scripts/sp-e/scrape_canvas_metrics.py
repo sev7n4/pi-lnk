@@ -14,8 +14,8 @@
   - 累积只在成功抓取后写入；存储文件即真相源，可随脚本重启恢复。
   - window_start / window_baseline 显式由 --init-window 设定（day-0），
     窗口内计数 = 当前累积 - 窗口基线。
-  - 将来阶段 2 服务端补 raw 事件后，脚本自动多抓 conflictEventsTotal /
-    recentConflicts / sessionsWithStaleConflict（COUNTER_FIELDS 追加即可）。
+  - 阶段 2 服务端补 raw 事件后，脚本自动多抓 recentConflicts /
+    sessionsWithStaleConflict（conflictEvents 去重持久化）。
 
 用法：
   python3 scrape_canvas_metrics.py --once            # 抓取一次并累积
@@ -24,6 +24,14 @@
   python3 scrape_canvas_metrics.py --reset-store     # 清空存储（慎用）
   --url <base>   默认 http://119.29.173.89:8888
   --store <path> 默认 $SP_E_STORE 或脚本同目录 metrics-store.json
+  --trigger-threshold <n>  缺口C条件触发阈值 (默认 5)
+
+缺口 C 运行模式（2026-11-10 改为条件触发，不硬锁 14 天）：
+  决策门原设计是设 day-0 后硬跑 14 天窗口判门。鉴于生产实采 92 写 / 0 冲突
+  （分母≈0），硬跑几乎注定 NO-GO 且空耗 14 天 PATCH 开发锁定。故改为：
+  以 cron 持续 `--once` 跨部署累积，当累积 staleConflict 达 --trigger-threshold
+  即 CONDITION_TRIGGERED，再手动 `--init-window` 启动正式 14 天窗口重判。
+  这保留『有分母才决策』的能力，又不强制空跑锁定。
 """
 from __future__ import annotations
 
@@ -39,7 +47,6 @@ from datetime import datetime, timezone
 STORE_VERSION = 1
 
 # 需要跨部署累加的单调计数器字段（服务端 snapshot() 的 metrics 内）。
-# 阶段 2 服务端补 raw 事件后追加：conflictEventsTotal / sessionsWithStaleConflict。
 COUNTER_FIELDS = [
     "patches",
     "ops",
@@ -180,6 +187,7 @@ def cmd_once(args) -> int:
     print(f"[ok] scraped @ {ts}  reset_detected={reset}")
     print(f"     cumulative={json.dumps(store['cumulative'], ensure_ascii=False)}")
     print(f"     latest distinctClients={store['latest']['distinctClients']}")
+    _check_trigger(store, args.trigger_threshold)
     return 0
 
 
@@ -223,7 +231,20 @@ def cmd_report(args) -> int:
     print(f"  G1 session >= 3      ? {len(conflict_sessions)} distinct (raw 事件去重) -> {'MET' if len(conflict_sessions) >= 3 else 'NOT MET (当前)'}")
     print(f"  G3 409率上界        ? {g3_upper:.4%} (冲突事件 {window_conflict_events} / patches {window['patches']}) < 0.5% -> {'MET' if g3_upper < 0.005 else 'NOT MET'}")
     print("  G2 用户可感知丢失    ? 外部证据门（客诉/事故/刻意复现），须人工收集，不能自动判定")
+    _check_trigger(store, args.trigger_threshold)
     return 0
+
+
+def _check_trigger(store: dict, threshold: int) -> bool:
+    """缺口 C 条件触发：跨部署累积 staleConflict 达阈值即建议启动正式 14 天窗口。"""
+    cum = store["cumulative"]
+    triggered = cum["staleConflict"] >= threshold
+    if triggered:
+        print(f"[TRIGGER] CONDITION_TRIGGERED: cumulative staleConflict={cum['staleConflict']} >= {threshold}")
+        print("          建议：启动正式 14 天窗口（--init-window）重判是否上 CAS（决策门 §1.3）。")
+    else:
+        print(f"[TRIGGER] no trigger: cumulative staleConflict={cum['staleConflict']} < {threshold}")
+    return triggered
 
 
 def cmd_reset_store(args) -> int:
@@ -246,6 +267,8 @@ def main() -> int:
     grp.add_argument("--init-window", action="store_true", help="set day-0 window start")
     grp.add_argument("--report", action="store_true", help="print window cumulative + gate status")
     grp.add_argument("--reset-store", action="store_true", help="wipe store")
+    ap.add_argument("--trigger-threshold", type=int, default=5,
+                    help="缺口C条件触发阈值：跨部署累积 staleConflict 达此值即建议启动正式14天窗口 (default 5)")
     args = ap.parse_args()
 
     if args.once:
