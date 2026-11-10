@@ -84,7 +84,7 @@
       "prod_refs": [
         "components/canvas/NodeRenderer.vue"
       ],
-      "lines": 286
+      "lines": 303
     },
     {
       "name": "NodeTileView.vue",
@@ -101,7 +101,7 @@
         "composables/useRoutePreload.ts",
         "router/index.ts"
       ],
-      "lines": 6844
+      "lines": 6886
     },
     {
       "name": "CanvasReadonlyPage.vue",

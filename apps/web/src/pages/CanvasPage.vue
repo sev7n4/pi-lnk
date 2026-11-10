@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, onBeforeUnmount, computed, nextTick, provide, watch, h, type Ref } from 'vue'
+import { registerConnectHandler, mobileConnectMode } from '@/composables/useMobileNodeConnect'
+import { useHaptics } from '@/composables/useHaptics'
 import { useRoute, useRouter } from 'vue-router'
 import {
   VueFlow,
@@ -1544,6 +1546,40 @@ async function onConnect(connection: Connection) {
   }
 }
 
+/**
+ * 移动端点选式连线落库通道（R-C2）：复用与 onConnect 一致的服务端统一校验通道。
+ * 经 useMobileNodeConnect 的 registerConnectHandler 注入，UI 与类型无关。
+ */
+async function connectNodesFlow(connection: Connection) {
+  const source = connection.source
+  const target = connection.target
+  if (!source || !target) return
+  const edgeId = `e-${source}-${target}`
+  addEdge({
+    id: edgeId,
+    source,
+    target,
+    sourceHandle: connection.sourceHandle ?? undefined,
+    targetHandle: connection.targetHandle ?? undefined,
+  })
+  canvasUndo.commitAfterChange()
+  try {
+    await canvasApi.connectNodes(sessionId.value, [{ source, target }])
+  } catch (err) {
+    edges.value = edges.value.filter((e) => e.id !== edgeId)
+    canvasUndo.commitAfterChange()
+    const reason = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    ElMessage.error(reason ? `连线被拒：${reason}` : '连线保存失败，请重试')
+  }
+}
+
+// 注册移动端点选式连线落库通道 + 成功触感（R-C2 / R-C7）
+registerConnectHandler(async (connection) => {
+  await connectNodesFlow(connection)
+  useHaptics().fire('connectSuccess')
+})
+
+
 function onConnectStart(params: OnConnectStartParams & { event?: MouseEvent | TouchEvent }) {
   connectCompleted = false
   connectPicker.value = null
@@ -2604,6 +2640,12 @@ async function handleGenerateVideoFromSelection() {
 }
 
 function onPaneClick() {
+  // R-C4：连线模式下点空白画布 = 取消三选一之一
+  if (mobileConnectMode.pendingSource.value) {
+    mobileConnectMode.cancel()
+    useHaptics().fire('connectCancel')
+    return
+  }
   if (applyRefineSelectionDecision(null) === 'block') return
   // 多选模式（D-4）：点空白 = 退出 S3（连同清除选择）
   exitMultiSelectMode()
