@@ -39,7 +39,7 @@
         "pages/CanvasReadonlyPage.vue",
         "pages/ReplayPage.vue"
       ],
-      "lines": 256
+      "lines": 253
     },
     {
       "name": "CanvasNodeVideo.vue",
@@ -49,7 +49,7 @@
         "pages/CanvasReadonlyPage.vue",
         "pages/ReplayPage.vue"
       ],
-      "lines": 314
+      "lines": 311
     },
     {
       "name": "CanvasNodeAudio.vue",
@@ -58,7 +58,7 @@
         "components/canvas/NodeRenderer.vue",
         "pages/CanvasReadonlyPage.vue"
       ],
-      "lines": 283
+      "lines": 280
     },
     {
       "name": "CanvasNodeText.vue",
@@ -68,7 +68,7 @@
         "pages/CanvasReadonlyPage.vue",
         "pages/ReplayPage.vue"
       ],
-      "lines": 185
+      "lines": 181
     },
     {
       "name": "NodeRenderer.vue",
@@ -84,7 +84,7 @@
       "prod_refs": [
         "components/canvas/NodeRenderer.vue"
       ],
-      "lines": 279
+      "lines": 286
     },
     {
       "name": "NodeTileView.vue",
@@ -101,7 +101,7 @@
         "composables/useRoutePreload.ts",
         "router/index.ts"
       ],
-      "lines": 6844
+      "lines": 6807
     },
     {
       "name": "CanvasReadonlyPage.vue",
