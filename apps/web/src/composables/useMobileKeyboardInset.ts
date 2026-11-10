@@ -15,13 +15,16 @@ import { onBeforeUnmount, onMounted, ref } from 'vue'
  *   2. 面板 CSS 在键盘开启时 `bottom` 直接取 `var(--mobile-kb-inset)`，关闭时回落 `var(--lnk-tabbar-h)`。
  *   3. `index.html` 加 `interactive-widget=resizes-content`，键盘弹起时把布局视口确定性收缩。
  *
- * 三次修正（本版，2026-11-09 用户复测反馈「贴太紧 + 上顶与键盘不同步有割裂感」）：
- *   - **逐帧跟随**：聚焦/失焦后开启一个约 500ms 的 rAF 采样窗口，每帧读取 visualViewport
- *     实时写入 `--mobile-kb-inset`，使 composer 与键盘 **同帧**升降，而非「等 280ms 再跳」。
- *   - **状态随键盘真值翻转**：`isKeyboardOpen` 不再在聚焦瞬间硬切，而是键盘真正开始移动
- *     （inset > 1）时才开、收起归零（inset ≤ 1）时才关——消除聚焦瞬间 composer 先坠到底的突兀。
- *   - 配套 CSS：面板壳加 `transition: bottom 0.1s ease` 做收尾平滑；键盘开启 `bottom`
- *     取 `calc(var(--mobile-kb-inset) + 8px)`，与键盘上沿留 8px 视觉空隙。
+ * 最终修正（键盘间隙 + 跨模式可靠触发，2026-11-10 复盘）：
+ *   - **聚焦即开、失焦即收（跨模式可靠）**：`isKeyboardOpen` 由「可编辑元素获焦」直接驱动，
+ *     而非由 `inset > 1` 推导——因为 `interactive-widget=resizes-content` 下布局视口直接收缩、
+ *     键盘不叠层，`inset` 恒为 0，靠 inset>1 判定会让 `.is-keyboard-open` 永远不挂、间隙规则成死代码
+ *     （用户实测 8px/12px 毫无区别的根因）。
+ *   - **逐帧跟随**：聚焦/失焦后开启约 500ms 的 rAF 采样窗口，每帧读取 visualViewport 实时写入
+ *     `--mobile-kb-inset`，使 pan/resizes-visual 模式下 composer 与键盘 **同帧**升降，消除割裂感。
+ *   - 配套 CSS：面板壳 `transition: bottom 0.1s ease` 收尾平滑；键盘开启 `bottom`
+ *     取 `calc(var(--mobile-kb-inset) + 12px)`，与键盘上沿留 12px 视觉空隙
+ *     （resizes-content 下 inset=0 ⇒ 即 12px 固定间隙；pan 下 inset=键盘高 ⇒ 键盘上沿+12px）。
  *
  * inset 公式 `max(0, innerHeight - vv.height - vv.offsetTop)`：
  *   - resize（视口被键盘压缩）：vv.height 已缩小、offsetTop=0 ⇒ inset≈0（布局收缩已承担贴边）；
@@ -63,9 +66,9 @@ function scheduleCompute() {
   })
 }
 
-// 键盘开/合动画期内逐帧采样 visualViewport：composer 与键盘同帧升降，消除「割裂感」。
-// 开：键盘真正开始移动（inset>1）才置 isKeyboardOpen=true；
-// 关：收起归零（inset≤1）才置 isKeyboardOpen=false，避免聚焦/失焦瞬间突兀跳变。
+// 键盘开/合动画期内逐帧采样 visualViewport：pan/resizes-visual 模式下 composer 与键盘同帧升降。
+// 开：已由 focusInHandler 在获焦瞬间置 isKeyboardOpen=true（跨模式可靠，不依赖 inset）；
+// 关：由 focusOutHandler 进入 closing，待 inset≤1（键盘动画结束 / 视口收缩完成）才置 false。
 function trackLoop() {
   const now = typeof performance !== 'undefined' ? performance.now() : Date.now()
   const inset = computeInset()
@@ -77,10 +80,8 @@ function trackLoop() {
       return
     }
   } else if (inset > 1) {
+    // 兜底：pan/resizes-visual 模式下若已检测到键盘高度，确保开启（聚焦已先行开启）。
     isKeyboardOpen.value = true
-  } else if (now >= trackUntil) {
-    // 窗口结束仍未检测到键盘（如外接键盘/无软键盘）→ 维持关闭
-    isKeyboardOpen.value = false
   }
   if (now < trackUntil) {
     trackRaf = requestAnimationFrame(trackLoop)
@@ -106,7 +107,10 @@ function isEditableTarget(t: EventTarget | null): boolean {
 function focusInHandler(e: FocusEvent) {
   if (!isEditableTarget(e.target)) return
   closing = false
-  // 立即开启逐帧采样：键盘一动 inset 即 >0，composer 同步上顶（不再等 280ms 后跳）
+  // 聚焦即判定键盘将开（跨模式可靠）：resizes-content 下视口收缩、inset 恒为 0，
+  // 不能靠 inset>1 判定，否则 .is-keyboard-open 永远不挂、间隙规则成死代码。
+  isKeyboardOpen.value = true
+  // 开启逐帧采样：pan/resizes-visual 模式下 inset 随键盘升降，composer 同帧跟随。
   startTracking(500)
 }
 
