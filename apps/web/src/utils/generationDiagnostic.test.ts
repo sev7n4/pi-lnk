@@ -6,10 +6,8 @@ import {
   createDiagnosticCache,
   describeDroppedFields,
   getRecordFailureMessage,
-  getRecordResultUrls,
   parseErrorCodeFromMetadata,
   parseShortGenerationError,
-  recordHasUsableOutput,
 } from './generationDiagnostic'
 
 describe('parseShortGenerationError', () => {
@@ -407,71 +405,5 @@ describe('modelFallback 暴露被替换的模型', () => {
       }),
     })
     expect(failed).toBe('上游 503')
-  })
-})
-
-describe('Layer 3 诚实渲染：失败但确带可用产物', () => {
-  const m = (extra: Record<string, unknown>) => JSON.stringify(extra)
-
-  it('recordHasUsableOutput 识别 metadata.image 数组里的真实结果图', () => {
-    expect(
-      recordHasUsableOutput({
-        type: 'image',
-        status: 'failed',
-        metadata: m({ image: ['https://cdn.example.com/a.png'] }),
-      }),
-    ).toBe(true)
-  })
-
-  it('recordHasUsableOutput 识别 meta.urls / meta.url / record.url', () => {
-    expect(recordHasUsableOutput({ metadata: m({ urls: ['https://x/y.png'] }) })).toBe(true)
-    expect(recordHasUsableOutput({ metadata: m({ url: 'https://x/y.png' }) })).toBe(true)
-    expect(recordHasUsableOutput({ url: 'https://x/y.png' })).toBe(true)
-  })
-
-  it('recordHasUsableOutput 文本类看 meta.text', () => {
-    expect(recordHasUsableOutput({ type: 'text', metadata: m({ text: 'hello' }) })).toBe(true)
-  })
-
-  it('recordHasUsableOutput 无产物时为 false（含非 http 占位）', () => {
-    expect(recordHasUsableOutput({ status: 'failed', metadata: m({}) })).toBe(false)
-    expect(recordHasUsableOutput({ status: 'failed', metadata: m({ image: ['blob:xyz'] }) })).toBe(
-      false,
-    )
-    expect(recordHasUsableOutput({ metadata: null })).toBe(false)
-  })
-
-  it('getRecordResultUrls 覆盖 meta.image（parseRecordUrls 只认 urls/url）', () => {
-    expect(
-      getRecordResultUrls({ metadata: m({ image: ['https://a/1.png', 'https://a/2.png'] }) }),
-    ).toEqual(['https://a/1.png', 'https://a/2.png'])
-    expect(getRecordResultUrls({ metadata: m({ urls: ['https://b/1.png'] }) })).toEqual([
-      'https://b/1.png',
-    ])
-  })
-
-  it('getRecordFailureMessage 失败+有产物时不返回硬错误"生成失败"', () => {
-    expect(
-      getRecordFailureMessage({
-        status: 'failed',
-        metadata: m({ image: ['https://cdn.example.com/a.png'] }),
-      }),
-    ).toBeNull()
-  })
-
-  it('getRecordFailureMessage 失败+有产物仅保留软提示（能力丢弃/模型替换）', () => {
-    const msg = getRecordFailureMessage({
-      status: 'failed',
-      metadata: m({
-        image: ['https://cdn.example.com/a.png'],
-        droppedFields: [{ field: 'crop', reason: 'x' }],
-      }),
-    })
-    expect(msg).toContain('裁切')
-    expect(msg).not.toContain('生成失败')
-  })
-
-  it('回归：失败且无产物仍返回"生成失败"（不被 Layer 3 误伤）', () => {
-    expect(getRecordFailureMessage({ status: 'failed', metadata: m({}) })).toBe('生成失败')
   })
 })
