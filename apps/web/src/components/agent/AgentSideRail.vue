@@ -1010,7 +1010,7 @@ function openPanel() {
 
 function closePanel() {
   // P1-5：移动端裸条常驻、无「收起」形态（fab 已退役），closePanel 仅桌面有意义
-  if (isMobileLayout.value) return
+  if (!isDesktopDock.value) return
   open.value = false
   emit('expandedChange', false)
 }
