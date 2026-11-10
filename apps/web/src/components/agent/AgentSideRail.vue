@@ -4443,11 +4443,18 @@ defineExpose({
  * 布局视口确定性收缩，resizes-content 模式下 bottom:0 即精确贴键盘上沿。规则同时覆盖对话态与
  * 画布窗态（两者都带 agent-panel-shell）。 */
 .agent-panel-mobile-dock.is-keyboard-open.agent-panel-shell {
-  /* 2026-11-09 三次修正：键盘贴边后留 12px 视觉空隙（用户二次复测反馈「8px 仍显挤」）。
-   * 在 pan 模式（inset=键盘高）与 resizes-content 模式（inset=0、布局视口已收缩）下，
-   * bottom 都比较「键盘上沿 + 12px」，即 composer 与键盘之间恒留 12px 间隙。 */
-  bottom: calc(var(--mobile-kb-inset, 0px) + 12px);
-  padding-bottom: 0;
+  /* 2026-11-10 修复：键盘贴边后留 12px 视觉空隙（用户二次复测反馈「8px 仍显挤」），
+   * 但 12px 必须落在【面板内部】，不能落在外面。
+   * 旧写法 bottom:calc(inset + 12px) 把 12px 放在面板底边之外——这条 12px 带位于
+   * 键盘上沿之上、面板底边之下，是面板没盖住的可见条带。在软键盘以 overlay 方式处理的
+   * webview（如 Microsoft Edge）上，该条带直接透出后面的画布层，而画布的白节点卡带缩略图，
+   * 表现为「贴着键盘、在 composer 左下露出的白色块/柱子」（用户真机复现）。
+   * 改为面板 bottom 直接贴在键盘上沿（bottom:inset），用面板内部 padding-bottom:12px
+   * 保留同样 12px 呼吸位——间隙填的是面板自身不透明背景（--lnk-surface-canvas），
+   * 画布不再漏出，间距视觉不变。
+   * inset 语义不变：pan 模式=键盘高、resizes-content=0（布局已收缩）、resizes-visual=真实键盘高。 */
+  bottom: var(--mobile-kb-inset, 0px);
+  padding-bottom: 12px;
 }
 
 /* 2026-11-09 真机修复 #3：画布拾取窗态（◎ 定位锚进入 is-canvas-view）下 composer 被遮挡。
