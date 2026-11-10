@@ -42,3 +42,7 @@ lnkpi-logo*/
 .workbuddy/
 .worktrees/
 .worktrees/
+
+# SP-E 阶段 2 数据门：外部 scraper 的运行时持久化存储（含 .tmp 原子写）
+scripts/sp-e/metrics-store.json
+scripts/sp-e/*.tmp
