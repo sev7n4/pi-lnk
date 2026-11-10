@@ -12,6 +12,7 @@ const PRESENTATION_DIR = join(here, 'presentation')
 // 当前 Mobile* 允许列表（Phase 1 提升后，被提升者从此列表移除并迁入 presentation/）
 const ALLOWED_MOBILE = new Set([
   'DiscoverPane', 'MobileAnnotationCapsule', 'MobileCanvasCreateFab', 'MobileCanvasShell',
+  'MobileConnectModeOverlay',
   'MobileCreateSheet', 'MobileMultiSelectBar', 'MobileMultiSelectMoreSheet',
   'MobileNodeActionSheet', 'MobileNodeAnnotateSheet', 'MobileNodeCoachMark',
   'MobileNodeEditorSheet', 'MobileNodeStatusBar', 'MobileNodeTile', 'MobileNodeHandles',

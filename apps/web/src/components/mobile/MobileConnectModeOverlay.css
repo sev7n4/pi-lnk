@@ -1,0 +1,48 @@
+/* 移动端连线模式浮层（R-C1 / R-C4）。
+ * 仅消费 design-tokens.css 的 L2/L3 令牌（R-C9）；非阻塞：wrapper 不吞事件，
+ * 仅提示条 / 取消按钮恢复 auto，故不阻挡用户点目标节点完成连线（R-C2）。 */
+
+.connect-mode-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--lnk-z-overlay);
+  /* 非阻塞：浮层不吞画布点击，仅 pill 内部按钮可点 */
+  pointer-events: none;
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  padding-bottom: calc(var(--lnk-tabbar-h, 56px) + var(--lnk-space-6) + env(safe-area-inset-bottom));
+}
+
+.connect-mode-pill {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--lnk-space-3);
+  max-width: calc(100vw - var(--lnk-space-6));
+  padding: var(--lnk-space-3) var(--lnk-space-4);
+  border-radius: var(--lnk-radius-xl);
+  background: var(--lnk-surface-raised);
+  border: 0.5px solid var(--lnk-border-subtle);
+  box-shadow: var(--lnk-shadow-md);
+}
+
+.connect-mode-text {
+  font-size: var(--lnk-text-base);
+  color: var(--lnk-text-primary);
+  white-space: nowrap;
+}
+
+.connect-mode-cancel {
+  flex: none;
+  min-height: var(--lnk-touch-target);
+  padding: 0 var(--lnk-space-3);
+  border: none;
+  border-radius: var(--lnk-radius-xl);
+  background: var(--lnk-accent-subtle);
+  color: var(--lnk-accent);
+  font-size: var(--lnk-text-sm);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}

@@ -1,10 +1,21 @@
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect, beforeAll, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { defineComponent, h, nextTick, ref } from 'vue'
 import { VueFlow } from '@vue-flow/core'
 import MobileNodeHandles from './MobileNodeHandles.vue'
 import MobileNodeTile from './MobileNodeTile.vue'
 import { CANVAS_MULTI_SELECT_ACTIVE_KEY } from '@/composables/canvasNodeActions'
+import {
+  useMobileNodeConnect,
+  __resetMobileConnectForTest,
+} from '@/composables/useMobileNodeConnect'
+
+// 仅覆盖 useNodeId：让组件（含 VueFlow 节点内挂载）拿到稳定节点 id 'n1'，
+// 便于断言「点 + ⇒ enter('n1')」。VueFlow 其余导出保持真实。
+vi.mock('@vue-flow/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@vue-flow/core')>()
+  return { ...actual, useNodeId: () => 'n1' }
+})
 
 /**
  * 移动端连线手柄守卫（修复 P3 锚点退化）。
@@ -40,7 +51,12 @@ beforeAll(() => {
   }
 })
 
-async function mountAsFlowNode(nodeTypeComponent: any, nodeType: string, nodeData: any = {}) {
+async function mountAsFlowNode(
+  nodeTypeComponent: any,
+  nodeType: string,
+  nodeData: any = {},
+  extraProvide: Record<symbol, unknown> = {},
+) {
   const nodes = ref<any[]>([{ id: 'n1', type: nodeType, position: { x: 0, y: 0 }, data: nodeData }])
   const edges = ref<any[]>([])
   const nodeTypes = { [nodeType]: nodeTypeComponent }
@@ -55,7 +71,7 @@ async function mountAsFlowNode(nodeTypeComponent: any, nodeType: string, nodeDat
       })
     },
   })
-  const w = mount(Harness, { attachTo: document.body })
+  const w = mount(Harness, { attachTo: document.body, global: { provide: extraProvide } })
   await nextTick()
   await nextTick()
   await flushPromises()
@@ -147,5 +163,64 @@ describe('MobileNodeTile + 连线手柄集成', () => {
     await flushPromises()
     expect(w2.findAll('.vue-flow__handle')).toHaveLength(2)
     w2.unmount()
+  })
+})
+
+/** ⭐ 变异自检：断言精确——删掉 handle-tap-catch / 改 enter 行为 / 改成不 .stop，
+ *  都会让以下用例变红，证明断言非恒真、非恒假。
+ *  连线模式为模块单例（useMobileNodeConnect），手柄组件直接 import，无需跨 VueFlow
+ *  子树 inject；此处作为 VueFlow 节点挂载（Handle 依赖节点上下文）验证点击接线。 */
+describe('MobileNodeHandles · 点 + 进入连线模式（R-C1 / R-C4）', () => {
+  beforeEach(() => __resetMobileConnectForTest())
+
+  async function mountHandlesInFlow() {
+    const nodes = ref<any[]>([{ id: 'n1', type: 'handles', position: { x: 0, y: 0 }, data: {} }])
+    const edges = ref<any[]>([])
+    const nodeTypes = { handles: MobileNodeHandles }
+    const Wrapper = defineComponent({
+      render() {
+        return h(VueFlow as any, {
+          nodes: nodes.value,
+          edges: edges.value,
+          nodeTypes,
+          'apply-default': false,
+          nodesConnectable: true,
+        })
+      },
+    })
+    const w = mount(Wrapper, { attachTo: document.body })
+    await nextTick()
+    await nextTick()
+    await flushPromises()
+    return w
+  }
+
+  it('源 + 覆盖层存在且点击 ⇒ 单例 enter(nodeId)', async () => {
+    const w = await mountHandlesInFlow()
+    const tapCatch = w.find('.handle-tap-catch')
+    expect(tapCatch.exists()).toBe(true)
+    expect(useMobileNodeConnect().pendingSource.value).toBeNull()
+    await tapCatch.trigger('click')
+    expect(useMobileNodeConnect().pendingSource.value).toBe('n1')
+    w.unmount()
+  })
+
+  it('再点同一源 + ⇒ 单例 cancel（R-C4 三选一之一）', async () => {
+    const w = await mountHandlesInFlow()
+    const tapCatch = w.find('.handle-tap-catch')
+    await tapCatch.trigger('click') // 进入
+    expect(useMobileNodeConnect().pendingSource.value).toBe('n1')
+    await tapCatch.trigger('click') // 再点同一源 ⇒ 取消
+    expect(useMobileNodeConnect().pendingSource.value).toBeNull()
+    w.unmount()
+  })
+
+  it('未注册落库回调时点击 + 不抛错（降级安全）', async () => {
+    const w = await mountHandlesInFlow()
+    const tapCatch = w.find('.handle-tap-catch')
+    expect(tapCatch.exists()).toBe(true)
+    await tapCatch.trigger('click')
+    expect(useMobileNodeConnect().pendingSource.value).toBe('n1')
+    w.unmount()
   })
 })

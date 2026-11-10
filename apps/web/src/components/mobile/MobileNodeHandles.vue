@@ -1,5 +1,8 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { Handle, Position, useNodeId } from '@vue-flow/core'
+import { useMobileNodeConnect } from '@/composables/useMobileNodeConnect'
+import { useHaptics } from '@/composables/useHaptics'
 import './MobileNodeHandles.css'
 
 /**
@@ -8,6 +11,39 @@ import './MobileNodeHandles.css'
  * 既保护非画布挂载不崩，也避免把无意义手柄挂到节点外。
  */
 const nodeId = useNodeId()
+
+/**
+ * 连线模式状态机（模块级单例，见 useMobileNodeConnect）：点源 + 进入模式、再点同一源取消。
+ * 本组件只消费 `enter` / `cancel` + 触感反馈；落库通道由 CanvasPage 注册，无需 inject。
+ */
+const connect = useMobileNodeConnect()
+const haptics = useHaptics()
+
+/**
+ * 连线态视觉提示（M-1 / A-2）：进入模式后所有节点左锚发光（提示可连）、源节点脉冲高亮。
+ * 仅消费令牌（R-C9），不阻挡瓦片点击（pointer-events 由 .css 控制）。
+ */
+const isLinking = computed(() => !!connect.pendingSource.value)
+const isSource = computed(
+  () => !!nodeId && connect.pendingSource.value === nodeId,
+)
+
+/**
+ * 点源 + ：进入连线模式（R-C1）；再次点击同一源 ⇒ 取消（R-C4 三选一之一）。
+ * 用覆盖层 div 拦截点击：既捕获点按进入模式，又 `.stop` 阻止 VueFlow 原生 click-connect
+ * 与我们的状态机并发（VueFlow 的 Handle 根自带 onClick=handleClick，父子同元素，
+ * 父层 `.stop` 无法拦截子层监听 ⇒ 必须在子元素上拦截）。
+ */
+function onPlusClick() {
+  if (!nodeId) return
+  if (connect.pendingSource.value === nodeId) {
+    connect.cancel()
+    haptics.fire('connectCancel')
+  } else {
+    connect.enter(nodeId)
+    haptics.fire('connectModeEnter')
+  }
+}
 
 
 /**
@@ -35,6 +71,7 @@ const nodeId = useNodeId()
   <div
     v-if="nodeId"
     class="neo-node-wrapper mobile-node-connect-wrap show-handles"
+    :class="{ 'is-link-mode': isLinking, 'is-source': isSource }"
     data-testid="mobile-node-handles"
   >
     <Handle id="target" type="target" :position="Position.Left" class="neo-flow-handle">
@@ -48,6 +85,12 @@ const nodeId = useNodeId()
       <div class="handle-plus">
         <div class="handle-plus-inner" />
       </div>
+      <div
+        class="handle-tap-catch"
+        role="button"
+        :aria-label="connect && connect.pendingSource.value === nodeId ? '取消连线' : '进入连线模式'"
+        @click.stop="onPlusClick"
+      />
     </Handle>
   </div>
 </template>

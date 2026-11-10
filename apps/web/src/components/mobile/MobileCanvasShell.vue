@@ -34,6 +34,8 @@ import type { MobilePendingNode } from '@/composables/mobileNodeTaskSummary'
 import DiscoverPane from './DiscoverPane.vue'
 import ProfilePane from './ProfilePane.vue'
 import MobileCanvasCreateFab from './MobileCanvasCreateFab.vue'
+import MobileConnectModeOverlay from './MobileConnectModeOverlay.vue'
+import { useMobileNodeConnect } from '@/composables/useMobileNodeConnect'
 import MobileCreateSheet from './MobileCreateSheet.vue'
 import MobileTaskSheet from './MobileTaskSheet.vue'
 import MobileMultiSelectBar from './MobileMultiSelectBar.vue'
@@ -239,6 +241,13 @@ export interface MobileEditorContext {
 const auth = useAuthStore()
 
 /**
+ * 连线模式状态机（模块级单例，见 useMobileNodeConnect）。
+ * 壳层只负责在正确位置渲染「连线模式浮层」并隐藏与连线冲突的入口（＋FAB）；
+ * 落库通道由 CanvasPage 经 registerConnectHandler 注册（R-C7 单一真源）。
+ */
+const connect = useMobileNodeConnect()
+
+/**
  * 移动端「我的积分 / 我的订阅」二级面板状态（内容复用与 PC 路由页同一份面板组件，
  * 这里只管移动端外壳与打开/关闭）。
  */
@@ -433,7 +442,8 @@ watch(
       !canvasChromeHidden &&
       !multiSelectActive &&
       !dockExpanded &&
-      !composerVisible
+      !composerVisible &&
+      !connect.pendingSource.value
     "
     :breathe="!hasNodes"
     @click="showMobileCreateSheet = true"
@@ -502,6 +512,8 @@ watch(
   />
   <!-- R1-T7：节点交互范式反转一次性引导（点按播放 · 长按编辑），仅画布页签首进一次 -->
   <MobileNodeCoachMark v-if="mobileAppTab === 'canvas'" />
+<!-- PR MOBILE-CONN-ENH：连线模式浮层（提示 + 取消），仅在连线态出现（R-C1 / R-C4） -->
+<MobileConnectModeOverlay />
 </template>
 
 <style scoped>

@@ -11,6 +11,7 @@ import {
 } from '@/composables/canvasNodeActions'
 import NodeTileView from '@/components/agent/presentation/NodeTileView.vue'
 import MobileNodeHandles from './MobileNodeHandles.vue'
+import { useMobileNodeConnect } from '@/composables/useMobileNodeConnect'
 
 // ⭐ 移动端节点现渲染两个根（NodeTileView 瓦片 + MobileNodeHandles 连线锚点）。
 // 关闭自动透传，显式把非 prop 属性（class/style 等）路由到 NodeTileView，
@@ -110,6 +111,12 @@ const clickGuard = inject<CanvasNodeClickGuard>(CANVAS_NODE_CLICK_GUARD_KEY, {
 const mobileActionRequest = inject<MobileNodeActionRequestFn>(MOBILE_NODE_ACTION_REQUEST_KEY, () => {})
 
 /**
+ * 连线模式状态机（模块级单例）：本瓦片消费 `pendingSource` 判定是否处于连线模式，
+ * 并在模式下把「点瓦片主体」转译为「完成连线」（R-C2），而非打开查看器。
+ */
+const mobileConnect = useMobileNodeConnect()
+
+/**
  * ⭐ D4 / H1（§4.9）：**选择模式内的长按 = 同义切换选中**，不再弹单节点 Menu
  * （避免退回单节点管理语境，破坏 selection mode 的心智）。
  * 常态长按 ⇒ 经 `mobileActionRequest` 请求本端动作 sheet（编辑 / 撰写等）。
@@ -138,6 +145,16 @@ const { bindings } = useLongPress(() => {
  * - text：打开阅读器；其它有产物：交 NodeRenderer 开查看器（受 `clickGuard` 抑制则吞掉）。
  */
 function onTileClick() {
+  // R-C2：连线模式下点目标瓦片主体 ⇒ 完成连线（走统一落库通道），不打开查看器。
+  // 点源自身（R-C3 自环 / R-C4 再点源）⇒ 取消、离开模式；两种点源（＋或瓦片）都可取消。
+  if (mobileConnect.pendingSource.value) {
+    if (mobileConnect.pendingSource.value === props.id) {
+      mobileConnect.cancel()
+    } else {
+      mobileConnect.complete(props.id ?? '')
+    }
+    return
+  }
   if (isSelectionMode.value) {
     emit('toggle-select')
     return

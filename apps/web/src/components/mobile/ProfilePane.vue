@@ -7,6 +7,7 @@ import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
+import { usePreferences } from '@/composables/usePreferences'
 import ThemeToggle from '@/components/layout/ThemeToggle.vue'
 import TopupModal from '@/components/membership/TopupModal.vue'
 import { OFFICIAL_SITE_URL } from '@/constants/brand'
@@ -25,6 +26,9 @@ const emit = defineEmits<{
 
 const auth = useAuthStore()
 const router = useRouter()
+
+/** 偏好（localStorage 持久化）：触感反馈开关默认开（R-C5 / R-C6）。 */
+const prefs = usePreferences()
 
 const nickname = computed(() => auth.user?.nickname || '未登录')
 
@@ -144,6 +148,21 @@ function onLogout() {
         <div class="row-item is-static">
           <span class="row-label">外观</span>
           <ThemeToggle class="profile-theme-toggle" />
+        </div>
+        <!-- PR MOBILE-CONN-ENH：触感反馈开关（S-5 / S-6）。受偏好门控；iOS 无 Vibration
+             API ⇒ 开关仍显示但静默 no-op（N-1 平台限制，已在设置文案诚实告知）。 -->
+        <div class="row-item is-static haptics-row">
+          <span class="row-label">触感反馈</span>
+          <button
+            type="button"
+            class="haptics-switch"
+            role="switch"
+            :aria-checked="prefs.haptics"
+            :aria-label="prefs.haptics ? '关闭触感反馈' : '开启触感反馈'"
+            @click="prefs.haptics = !prefs.haptics"
+          >
+            <span class="haptics-knob" />
+          </button>
         </div>
         <button type="button" class="row-item" @click="emit('open-model-settings')">
           <span class="row-label">模型配置</span>
@@ -288,6 +307,41 @@ function onLogout() {
 
 .profile-theme-toggle {
   pointer-events: auto;
+}
+
+/* PR MOBILE-CONN-ENH：触感反馈开关（S-5 / S-6）。仅消费 L2/L3 令牌（R-C9）。 */
+.haptics-row {
+  justify-content: space-between;
+}
+.haptics-switch {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--lnk-border-subtle);
+  cursor: pointer;
+  transition: background-color var(--lnk-duration-fast) var(--lnk-ease-standard);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.haptics-switch[aria-checked='true'] {
+  background: var(--lnk-accent);
+}
+.haptics-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--lnk-text-on-accent);
+  transition: transform var(--lnk-duration-fast) var(--lnk-ease-standard);
+}
+.haptics-switch[aria-checked='true'] .haptics-knob {
+  transform: translateX(18px);
 }
 
 /* 退出登录：唯一居中文本（用户裁决），其余行全部左对齐 */
