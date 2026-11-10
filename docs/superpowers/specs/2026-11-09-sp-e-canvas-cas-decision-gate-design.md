@@ -449,10 +449,24 @@ python3 scripts/docs/gen_index.py > scripts/docs/index_data.json && python3 scri
 
 | 项 | 状态 |
 |---|---|
-| PR #625 审视结论回填 / 关闭或改写 | ⏳ 未发（外部动作，需授权） |
-| 上游 §7-4 只追加回填落盘 | ⏳ 补丁已备好，待推 PR 时按 master 裸 blob 应用 |
-| `docs/README.md` 登记 + INDEX 重生成 | ⏳ 同上 |
-| 阶段 1 代码实施与生产发布 | ⏳ 未授权 |
-| 14 天观测窗口 / 三条数据门 | ⏳ 未开始 |
-| 阶段 2 通过后的 409 规格（H1–H10） | ⏳ 未发生 |
+| PR #625 审视结论回填 / 关闭或改写 | ✅ 已定案（2026-11-10）：PR #625 评论 `DECIDED_NO_GO_FOR_IMPLEMENTATION` |
+| 上游 §7-4 只追加回填落盘 | ⚠️ 目标文件 `2026-11-02-p1c-write-path-governance-design.md` 在 master 不存在（Glob `*governance*` 无果）；裁决与证据内化至 §13.6，不再依赖 P1-C 回填 |
+| `docs/README.md` 登记 + INDEX 重生成 | ✅ 本 PR 补登决策门文档一行（INDEX 为生成产物，跳过手改） |
+| 阶段 1 代码实施与生产发布 | ✅ 已合 #805（`07121c30`）并部署，端点已上线 |
+| 14 天观测窗口 / 三条数据门 | ✅ 取数机制已合 #810（`5962276636`）部署；缺口 C 改为持续观测 + 条件触发（不硬锁 14 天） |
+| 阶段 2 通过后的 409 规格（H1–H10） | ⏳ 未发生（数据门未触发升级，NO-GO 定案） |
 | 真机复测（A-6）与既有独立窗口议题 | ⏳ 与本规格无关，仍挂账 |
+
+### 13.6 最终裁决回填（2026-11-10）
+
+**裁决：`DECIDED_NO_GO_FOR_IMPLEMENTATION`**（与 PR #625 评论一致）。
+
+- **定案依据**：阶段 0（#802 决策门规格，13 章，已合 `ecf4ee0d`）重估 v2 CAS 方案，被最新生产代码证伪（§4.1 九条证伪 + §4.3 十条遗漏：假 409、DTO 假绿、推翻 10-26 事故纪律、重放不幂等等）。
+- **取数机制就绪**：阶段 1（#805 零契约观测，已合部署 `07121c30`）+ 阶段 2（#810 外部 scraper + 服务端 raw 冲突事件，已合部署 `5962276636`）。
+- **阶段 2 数据门判定（§1.3 三条须同时满足）**：
+  - G1 `stale_conflict ≥ 30 且 ≥ 3 session`：生产实采 `patches:92, distinctClients:2, staleConflict:0` —— 分母≈0，窗口内几乎必然不达标；
+  - G2 ≥1 起可复现丢失：零客诉 / 零事故（外部证据门）；
+  - G3 409 率 <0.5%：上界估算无冲突信号支撑升级。
+  - 三条不全满足 ⇒ **NO-GO 定案**。
+- **后继机制**：缺口 C 改为持续观测 + 条件触发——`scripts/sp-e/scrape_canvas_metrics.py` 跨部署累积 `staleConflict`，达 `--trigger-threshold`（默认 5）再启正式 14 天窗口重判；v2 方案缺陷未解前不重新提交。
+- **证据路径**：PR #802 / #805 / #810 均已合部署；生产端点 `/api/health/canvas-patch-metrics` 已含 `sessionsWithStaleConflict` / `recentConflicts`；阈值校准 `outputs/sp-e-g1-threshold-calibration.md`。

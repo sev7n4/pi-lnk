@@ -78,30 +78,15 @@
 > 该规格**不新增 agent 工具**（走会话级 SSE 与投影面），因此不阻塞
 > `agent/tool-framework-roadmap.html` §4 P1 的常驻集下沉。
 
-| [`superpowers/specs/2026-10-28-agent-history-recovery-h0-h1-design.md`](./superpowers/specs/2026-10-28-agent-history-recovery-h0-h1-design.md) | **会话历史恢复治本 H0+H1** —— 把 2026-10-28 域审视的 H0/H1 固化为可实施规格：H0-a 服务端缓存收口（`NoCacheInterceptor` 全局 no-store，K1 判据）/ H0-b legacy 归并迁移（细化承接 ADR-0015 T1，含 `archivedAt` 加列、去重谓词、幂等校验与生产三道闸）/ H0-c legacy 行禁用态 / H0-d 失败重试入口；H1 分页游标 + 轻量计数 + thread-state 死端点退役 + 加载期 sanitize + 机器载荷清单 shared 单源。含 K1–K5 可复用判据、3 张 Mermaid 结构图、S1–S8 验收场景与文件级清单（§9）；H2/H3 显式归 ADR-0015 Phase 2 与 Task 7，不另起炉灶 | 活资产 —— 实现依据 |
-| [`superpowers/plans/2026-10-28-agent-history-recovery-h0-h1.md`](./superpowers/plans/2026-10-28-agent-history-recovery-h0-h1.md) | **会话历史恢复治本 H0+H1 实施计划** —— 12 个 task（缓存拦截器 / archivedAt 加列 / 归并迁移+校验脚本 / 读端过滤 / 禁用态 / 重试卡 / 服务端游标 / 前端翻页 / 轻量计数+fail-open / 死端点退役 / sanitize / shared 单源），每 task 含「写失败测试→跑失败→最小实现→跑通过→commit」与真实测试代码；服务端纯逻辑抽为可单测导出函数（`messages-cursor` / `isCacheablePath` / `visibleThreadWhere`）；5 条 Review Focus + 7 个 PR 分组 + 自审记录 | 活资产 —— 实现依据 |
-
-## 架构审视（2026-10-28）
-
-| 文件 | 内容 | 性质 |
-|---|---|---|
-| [`discussion/2026-10-28-canvas-agent-architecture-review-discussion.md`](./discussion/2026-10-28-canvas-agent-architecture-review-discussion.md) | **画布 Agent 架构审视**——移动端连线不可见 canary → 上游 pi 能力对照（7 项未用）+ F1–F18 静默失败清单 + P0–P4 治本路线图 + §9 评审（G1–G8 修订项） | 活资产 —— 方向/决策来源 |
-| [`discussion/2026-10-28-agent-history-multidevice-review-discussion.md`](./discussion/2026-10-28-agent-history-multidevice-review-discussion.md) | **会话历史与多端一致性域审视：从「刷新后对话白屏」到恢复协议的系统性治本** —— 同日第二只金丝雀（画布 cmvryhipi… 刷新后对话白屏，生产取证双成因：304 空体陷阱【已修】+ legacy 孤儿线程 223 条/10,795 消息未归并【J5 门禁违约，未修】），31 项域内缺陷（D1-D31）+ 六条根因 + 上游 pi Branch/seq/snapshot 能力对照 + Codex「SSOT/索引分层、thin surfaces」与 Claude「加载期 sanitize」对标，给出 H0 停血（服务端缓存收口/legacy 归并/失败重试）→ H1 读协议（分页游标/count 端点/死端点处置）→ H2 服务端权威活跃叶子（= ADR-0015 Phase 2 本体）→ H3 持久 seq 游标的路线图 | 活资产 —— ADR-0015 Phase 2 与姊妹篇 P2a 的上游补充，H0 为本周可执行的停血项 |
 ## 连线根治闭环（2026-10-28 起）
 
 | 文件 | 内容 | 性质 |
 |---|---|---|
+| [`discussion/2026-10-28-canvas-agent-architecture-review-discussion.md`](./discussion/2026-10-28-canvas-agent-architecture-review-discussion.md) | **画布 Agent 架构审视**——移动端连线不可见 canary → 上游 pi 能力对照（7 项未用）+ F1–F18 静默失败清单 + P0–P4 治本路线图 + §9 评审（G1–G8 修订项） | 活资产 —— 方向/决策来源 |
 | [`superpowers/specs/2026-10-28-canvas-edge-remedy-loop-design.md`](./superpowers/specs/2026-10-28-canvas-edge-remedy-loop-design.md) | **SP-F 连线根治闭环**——Q1 移动端边可见性 + P1c connectNodes 回执（缩范围：SP-D 已在 master 落 fail-closed）+ O1/O2 派发/暂存丢弃可观测；含实施期 Task 1 Ruling 修订 | 活资产 —— 实现依据 |
 | [`superpowers/plans/2026-10-28-canvas-edge-remedy-loop.md`](./superpowers/plans/2026-10-28-canvas-edge-remedy-loop.md) | **SP-F 实施计划**——3 task TDD 步骤 | 活资产 —— 实现依据 |
-
-
-
-## SP-E 画布并发写决策门（2026-11-09）
-
-| 文件 | 内容 | 性质 |
-|---|---|---|
-| [`superpowers/specs/2026-11-09-sp-e-canvas-cas-decision-gate-design.md`](./superpowers/specs/2026-11-09-sp-e-canvas-cas-decision-gate-design.md) | **SP-E CAS 决策门（v2.1，13 章）**——基于 true master `2b6693c5` 与生产 9088 次 PATCH 取证，重估 PR #625 必要性；9 条证伪 / 10 条遗漏 / 三阶段决策门 / 14 天数据门阈值 / 409 升级硬约束 H1–H10 / 准入三问 | 活资产 —— 决策依据 |
-| [`superpowers/plans/2026-11-09-sp-e-phase1-observability.md`](./superpowers/plans/2026-11-09-sp-e-phase1-observability.md) | **SP-E 阶段 1 实施计划**——8 个 task（clientId / 计数器 / applier 幂等 / PATCH 埋点 / header / health 端点 / web 注入 / 生产验收），逐 task TDD 步骤 + 5 条 Review Focus + 变异测试 + 发布回滚 | 活资产 —— 实现依据（未执行） |
+| [`superpowers/specs/2026-11-09-sp-e-canvas-cas-decision-gate-design.md`](./superpowers/specs/2026-11-09-sp-e-canvas-cas-decision-gate-design.md) | **SP-E 画布并发写 CAS：决策门规格（v2.1，13 章）**——v2 CAS 方案重估，裁决 `A—决策门` 三阶段；最终 `DECIDED_NO_GO_FOR_IMPLEMENTATION`（2026-11-10） | 已结项 —— 决策来源 |
+| [`superpowers/plans/2026-11-09-sp-e-phase1-observability.md`](./superpowers/plans/2026-11-09-sp-e-phase1-observability.md) | **SP-E 阶段 1 零契约观测计划**——#805 实施依据 | 已结项 —— 实现依据 |
 
 ## 保留的目录
 
