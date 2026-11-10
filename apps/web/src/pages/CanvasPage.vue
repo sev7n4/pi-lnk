@@ -222,7 +222,12 @@ import { useAgentStore } from '@/stores/agent'
 import { dedupeNodesById, mergeCanvasNodesFromServer } from '@/pages/canvas/canvasNodeMerge'
 import { useSelectedNodeEditor, type EditableFlowNode, EDITABLE_NODE_TYPES } from '@/composables/useSelectedNodeEditor'
 import type { CanvasEdgeLike } from '@/composables/useUpstreamNodeContext'
-import { buildPollingFailurePatch, getRecordFailureMessage } from '@/utils/generationDiagnostic'
+import {
+  buildPollingFailurePatch,
+  getRecordFailureMessage,
+  getRecordResultUrls,
+  recordHasUsableOutput,
+} from '@/utils/generationDiagnostic'
 
 const route = useRoute()
 const router = useRouter()
@@ -5708,9 +5713,13 @@ function buildStudioRecordPatch(
   const status =
     record.status === 'completed'
       ? NODE_GENERATION_STATUS.completed
-      : record.status === 'failed' || record.status === 'error'
-        ? NODE_GENERATION_STATUS.error
-        : record.status
+      // Layer 3 诚实渲染：失败但确带可用产物（图/视频/文本/音频）的记录按"已生成"渲染——
+      // 结果图即事实，不应被卡死的失败态遮挡（生产取证：客户端轮询超时误标成功生成为失败）。
+      : (record.status === 'failed' || record.status === 'error') && recordHasUsableOutput(record)
+        ? NODE_GENERATION_STATUS.completed
+        : record.status === 'failed' || record.status === 'error'
+          ? NODE_GENERATION_STATUS.error
+          : record.status
   // 对账回填文案走统一映射（规格 2026-11-04-generation-terminal-projection §5.1
   // 条款 2 / P1-3）：此前一刀切「图像生成未完成或超时」——把取消/上游失败等一律
   // 说成超时，是五写者多重解释病灶之一。
@@ -5735,7 +5744,7 @@ function buildStudioRecordPatch(
   if (record.type === 'text') {
     patch.content = parseRecordText(record)
   } else {
-    const urls = parseRecordUrls(record)
+    const urls = getRecordResultUrls(record)
     if (urls.length) {
       patch.url = urls[0]
       patch.images = urls
