@@ -55,6 +55,15 @@
 配套判据：`CanvasPage.gestureWiring.test.ts`（手势单一出处）、`CanvasPage.mobileEntryWiring.test.ts`
 （入口收敛）、`CanvasPage.mobileSelectionWiring.test.ts`（多选接线）三份静态契约把上述规则钉在代码里。
 
+> ⚠️ **规则 3 状态注（2026-11-10，规范-实现漂移回填）**：上条「形态 × 能力集」是**设计目标，
+> 不是已实现事实**。回真 master 代码核实：`apps/web/src/composables/useAgentMobileLayout.ts`
+> 目前只按 `(max-width: 767px)` 返回单个 `isMobileLayout` 布尔，形态与能力集两个维度均**未拆分**；
+> 能力集拆分被配对方案阻塞，裁决 `CONDITIONAL_DEFER`（依据与重启条件见
+> `docs/design/2026-10-19-mobile-canvas-ux-redesign.md` §6.2 第 3 条、§6.5.1）。
+> ⇒ 现阶段判断移动端形态以**单布尔现状**为实现依据，二维语义仅作设计方向，勿据此认为能力集
+> 已可消费；拆分真正落地时必须同步回写本条并复核配套静态契约。本状态注零代码改动、
+> 零行为变更，不改章节名、不删原文、不动冻结边界。
+
 ## 项目目标
 
 **打造以 `pi-agent-core` 为内核的 canvas agent，驱动画布的超创平台 lnk π。**
