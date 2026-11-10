@@ -173,6 +173,25 @@
 - **VueFlow 胶囊 / 空态 2 处残留**：独立可行性 spike（壳层注释"留待后续定位重构"）。
 - 若未来移动 UX 真有需求重构 `AgentSideRail` 移动形态，再评估是否打破"hidden 挂载"契约（须先解决 onMounted 历史加载依赖）。
 
+### 状态回填（2026-11-10，只追加，不改写上文结论）
+
+**§11 第 2 项「VueFlow 胶囊 / 空态 2 处残留」已裁决关闭**：`NO_GO_FOR_MIGRATION`，证据与判据见
+[`docs/agent/pr5-canvas-overlay-residuals-spike.md`](../../agent/pr5-canvas-overlay-residuals-spike.md)。
+
+- 取证基线 true master `0e7dd154`：`MobileCanvasTopControls.vue` 组件已在 2026-10-27 三页顶栏重构中删除
+  （⤢ 上提至 `MobileTopBar`），并有 `CanvasPage.mobileChromeHygiene.test.ts:46` 静态守卫防回潮
+  ⇒ 「胶囊残留」是**伪目标，已消解**；当前 `<Panel v-if="!isMobileLayout">`（L6388）内是 **PC 专属**
+  `CanvasBottomLeftControls`，不是移动端胶囊。
+- 「空态残留」**真实存在但不可搬**：`mobile-canvas-empty` 是 `canvasAreaRef` 内 `absolute; inset:0` 的
+  overlay，壳层 fixed 且挂在容器外；文案依赖 CanvasPage 内部状态 `mobileCanvasImm`（壳层明确不接收）；
+  且 `CanvasPage.mobileEntryWiring.test.ts:148` 逐字钉死其 `v-if` ⇒ 搬入即 RED + 真机定位风险。
+- 因此 §11 该项**关闭**，`MAX_ALLOWED=11` 保持不变、壳层边界不变、零产品行为变更。
+- 同时登记**规格-实现漂移**：`MobileCanvasShell.vue` L10–13、`CanvasPage.vue` L6386–6387 / L6572–6573
+  三处注释仍称「胶囊仍在 / 两处残留留待后续」，与代码及静态守卫矛盾。注释回填属**独立小 PR**
+  （改 `apps/web/**` 会触发生产发布，须按合并窗口授权 + 生产复测纪律），不在本次 docs-only 刀内。
+- §11 其余两项（A-6 真机复测、未来 `AgentSideRail` 移动形态重构）状态**不变**：设计 §7 明示
+  「合并上线 ≠ 验收完成」，T/I/V 走查项仍欠真机，本 spike 不替代、不宣称验收完成。
+
 ---
 
 ## 12. 引用契约
