@@ -140,3 +140,26 @@ flowchart LR
 - V1 `AskUserCard.test.ts` 17/17 全绿（原 14 + 新增 3），node24 `--maxWorkers=1 --no-file-parallelism`。
 - V2 `vue-tsc -b` 本组件零类型错误。
 - V3 令牌守卫：仅 `--lnk-*`、零 `--neo-*` 新增、neoUsageRatchet 计数不增（D2 内联 SVG 复用现有对勾风格，零新增色值）。
+
+## 11. 修订：D3 选项序号 + D2 更强版（选项层 ○/□ 类型指示）+ 组合自定义捕获加固（2026-11-11）
+
+### 11.1 走查发现与决策
+用户在真机走查后提出三点期望（PM 视角）：
+- **D3 选项序号**：每个选项前应有稳定序号 1/2/3…，便于口头指代「选第 3 个」，且 ≥5 项时降低认知负荷。
+- **D2 更强版**：把单选/多选的「类型」语义下放到**选项层**——单选项前缀恒定 ○（circle）、多选项前缀恒定 □（rect），与「选中态（右侧 accent 对勾）」分离为两层语义，点选前即可预判题型；保留 §10 的题干级 `.ask-cardinality` 标签作为冗余稳定提示。
+- **组合自定义捕获**：用户期望「勾选若干预设项 + 『其他』补充文字」能被 agent 接住。经核实 wire 契约（`ask_user` 工具 `answers: Record<string,string[]>`，`validateAskQuestions` 只校验 questions、不校验 answers）→ 自定义文本本就以自由字符串原样透传，**无需新增解析语法**；本次仅补回归断言加固该契约。
+
+### 11.2 改动
+| 文件 | 改动 |
+|---|---|
+| `apps/web/src/components/agent/AskUserCard.vue` | +D3：选项 `v-for` 增加索引 `i`，每个选项前缀加 `.ask-chip-lead`（`.ask-chip-marker` 单○/多□ 恒定类型 SVG + `.ask-chip-index` 序号 1..n）；「其他…」行与自定义 chip 行加对齐前缀（＋/✎ 图标，无序号）；`.ask-chip-label` 加 `flex:1` 左对齐并推开右侧对勾；`.ask-chip.is-selected .ask-chip-marker/.ask-chip-index` 高亮 accent；纯 `--lnk-*` 令牌，零新增色值 |
+| `apps/web/src/components/agent/AskUserCard.test.ts` | +3 用例：D3 序号 1..n 且「其他…」不编号；D2 更强版单○/多□ shape 不混；加固 multiSelect 勾 A+B+「其他」补充 → answers = `['a','b','用户自身补充内容']` |
+| `apps/web/src/components/agent/AgentSideRail.askInline.test.ts` | 适配：点选项断言改为按 `.ask-chip-label` 子元素文字匹配（D3 序号前缀使按钮整文字变为「1 皮克斯」，原精确匹配 `=== '皮克斯'` 失效） |
+| `docs/superpowers/specs/2026-10-28-askuser-card-visual-refinement.md` | 新增本 §11 修订记录 |
+
+### 11.3 验收
+- V1 `AskUserCard.test.ts` **20/20** 全绿（§10 的 17 + 本次 3）；`AgentSideRail.askInline.test.ts` 4/4 全绿（点选项断言已适配 `.ask-chip-label`）；node24 `--maxWorkers=1 --no-file-parallelism`。
+- V2 `vue-tsc -b` 本组件零类型错误（项目其余预存错误与本改动无关）。
+- V3 令牌守卫：`design-token.test.ts` **99/99** 全绿；仅 `--lnk-*`、零 `--neo-*` 新增、neoUsageRatchet 计数不增。
+- V4（部署后人工）待生产复测：单选/多选题前缀分别显示 ○/□，且多选「其他」打字后答案数组同时含选项值与自定义文本。
+- V5 PR #830 CI 全绿（`Build monorepo` / `Verify spec figures` / `Build API Docker image` 均 success）。
