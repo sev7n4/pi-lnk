@@ -163,8 +163,33 @@ function unskip(q: AskUserQuestion) {
 	skipped.value.delete(q.id)
 }
 function startOther(q: AskUserQuestion) {
+	// 单选自定义「其他」回填：当前答案即自定义文本时，重新打开预填，避免改答丢字（D1）
+	if (!q.multiSelect) {
+		const v = singleSelected.value[q.id]
+		if (v && !q.options.some((o) => o.value === v)) otherText.value[q.id] = v
+	}
 	otherEditing.value[q.id] = true
 	nextTick(() => otherInputEl.value?.focus())
+}
+/** 是否存在「自定义其他」答案（已选值不在 options 内） */
+function hasCustomOther(q: AskUserQuestion): boolean {
+	if (q.multiSelect) return customOtherValues(q).length > 0
+	const v = singleSelected.value[q.id]
+	return !!v && !q.options.some((o) => o.value === v)
+}
+/** 「其他…」行选中态：单选自定义文本 / 多选含自定义项时点亮 */
+function otherIsSelected(q: AskUserQuestion): boolean {
+	return hasCustomOther(q)
+}
+/** multiSelect：列出不在 options 内的自定义「其他」条目（可见可移除渲染，D1 修复静默丢弃后的可见性缺口） */
+function customOtherValues(q: AskUserQuestion): string[] {
+	if (!q.multiSelect) return []
+	const optVals = new Set(q.options.map((o) => o.value))
+	return (multiSelected.value[q.id] ?? []).filter((v) => !optVals.has(v))
+}
+/** 移除一条自定义「其他」条目 */
+function removeCustomOther(q: AskUserQuestion, val: string) {
+	multiSelected.value[q.id] = (multiSelected.value[q.id] ?? []).filter((v) => v !== val)
 }
 function cancelOther(q: AskUserQuestion) {
 	otherEditing.value[q.id] = false
@@ -224,6 +249,12 @@ function submitOther(q: AskUserQuestion) {
 					@click="skip(current)"
 				>{{ skipped.has(current.id) ? '已跳过' : '跳过' }}</button>
 			</div>
+			<!-- D2 基数信号：单选用 ○ / 多选用 ☑，稳定标签，不随选项增减变化 -->
+			<div class="ask-cardinality" :aria-label="current.multiSelect ? '本题可多选' : '本题单选'">
+				<svg v-if="current.multiSelect" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="3" /><path d="m8 12 3 3 5-6" /></svg>
+				<svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="7" /></svg>
+				<span>{{ current.multiSelect ? '可多选' : '单选' }}</span>
+			</div>
 			<div class="ask-options">
 				<button
 					v-for="opt in current.options"
@@ -258,10 +289,25 @@ function submitOther(q: AskUserQuestion) {
 						v-else
 						type="button"
 						class="ask-chip ask-chip-other"
+						:class="{ 'is-selected': otherIsSelected(current) }"
 						aria-label="其他：输入自定义答案"
 						@click="startOther(current)"
 					>
 						<span class="ask-chip-label">其他…</span>
+					</button>
+				</template>
+				<!-- D1 修复：multiSelect 自定义「其他」条目可见且可移除（否则提交后用户看不到/无法取消） -->
+				<template v-if="current.multiSelect">
+					<button
+						v-for="cust in customOtherValues(current)"
+						:key="'custom-' + cust"
+						type="button"
+						class="ask-chip ask-chip-custom is-selected"
+						:aria-label="'移除自定义项：' + cust"
+						@click="removeCustomOther(current, cust)"
+					>
+						<span class="ask-chip-label">{{ cust }}</span>
+						<span class="ask-chip-remove" aria-hidden="true">×</span>
 					</button>
 				</template>
 			</div>
@@ -483,6 +529,40 @@ function submitOther(q: AskUserQuestion) {
 }
 .ask-chip-other .ask-chip-label {
 	color: var(--lnk-text-secondary);
+}
+
+/* ── D2 基数信号标签：单选用 ○ / 多选用 ☑，稳定呈现，不随选项增减变化 ── */
+.ask-cardinality {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--lnk-space-1);
+	font-size: var(--lnk-text-xs);
+	color: var(--lnk-text-muted);
+	line-height: var(--lnk-lh-xs);
+}
+.ask-cardinality svg {
+	width: var(--lnk-space-3);
+	height: var(--lnk-space-3);
+	flex: none;
+}
+
+/* ── D1 修复：多选自定义「其他」条目可见 + 可移除（否则提交后用户看不到也无法取消） ── */
+.ask-chip-remove {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--lnk-space-5);
+	height: var(--lnk-space-5);
+	border-radius: var(--lnk-radius-full);
+	color: var(--lnk-text-secondary);
+	font-size: var(--lnk-text-md);
+	line-height: 1;
+	transition: color var(--lnk-duration-instant) var(--lnk-ease-standard), background var(--lnk-duration-fast) var(--lnk-ease-standard);
+}
+.ask-chip-custom:hover:not(:disabled) .ask-chip-remove {
+	color: var(--lnk-text-primary);
+	background: var(--lnk-surface-sunken);
 }
 
 /* ── 「其他」展开的输入编辑器：sunken 井 + focus 2px border-focus 外环（Input 规范） ── */
