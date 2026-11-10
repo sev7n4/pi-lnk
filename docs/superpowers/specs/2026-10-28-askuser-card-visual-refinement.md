@@ -120,3 +120,23 @@ flowchart LR
 | `docs/superpowers/specs/2026-10-28-askuser-card-visual-refinement.md` | 本规格 |
 
 不改：`AgentSideRail.vue`（宿主零改动）、`services/pi-runtime/**`（wire 契约不变）、令牌文件。
+
+## 10. 修订：D1 其他回填/可见性 + D2 基数信号（2026-11-10）
+
+### 10.1 走查发现
+重开会话真机走查（用户复现）确认核心能力 intact，但暴露两点真实缺陷与一处可用性短板：
+- **D1-① 多选「其他」自定义项不可见/不可移除**：多选题中经「其他…」输入的自定义文本确实进入答案集合，但 UI 仅渲染 `options` 内选项，用户打的字既看不到、也取消不掉 → 静默不可见。
+- **D1-② 单选「其他」回填丢失**：多选卡里用过「其他」写的自定义答案，翻回该题时「其他…」行不显示已选态、重开输入框丢失原字 → 回填丢失。
+- **D2 基数无法一眼区分**：单选/多选共用同一对勾徽标，多选语义仅在交互后靠「确认（已选 N 项）」钮暴露；点选前二者外观一致 → 用户无法预判「选一个还是选多个」。
+
+### 10.2 改动
+| 文件 | 改动 |
+|---|---|
+| `apps/web/src/components/agent/AskUserCard.vue` | +D1-① 多选自定义项可见可移除（`.ask-chip-custom` chip + `removeCustomOther`）；+D1-② 单选「其他」重开回填 `otherText` + `otherIsSelected` 点亮已选态；+D2 题干与选项间新增 `.ask-cardinality` 稳定基数标签（单选 ○ / 多选 ☑，内联 SVG 圆·方框，仅 `--lnk-*` 令牌） |
+| `apps/web/src/components/agent/AskUserCard.test.ts` | +3 用例：D2 基数标签存在且文案正确、D1-① 多选自定义项可见并可 × 移除、D1-② 单选翻回该题「其他…」显示已选且回填原字 |
+| `docs/superpowers/specs/2026-10-28-askuser-card-visual-refinement.md` | 新增本 §10 修订记录 |
+
+### 10.3 验收
+- V1 `AskUserCard.test.ts` 17/17 全绿（原 14 + 新增 3），node24 `--maxWorkers=1 --no-file-parallelism`。
+- V2 `vue-tsc -b` 本组件零类型错误。
+- V3 令牌守卫：仅 `--lnk-*`、零 `--neo-*` 新增、neoUsageRatchet 计数不增（D2 内联 SVG 复用现有对勾风格，零新增色值）。

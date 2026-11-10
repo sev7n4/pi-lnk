@@ -54,6 +54,48 @@ describe('AskUserCard（spec 2026-10-28 分页单题推进 / T0-T2 + 视觉重�
 		expect(w.emitted('submit')![0][0]).toEqual({ answers: { m: ['a', '自定义'] } })
 	})
 
+	// ---- D2 基数信号（单选用 ○ / 多选用 ☑）----
+	it('D2：单选题干标注「单选」、多选标注「可多选」（稳定标签，不随选项变化）', () => {
+		const single = mount(AskUserCard, { props: { questions: [Q2[0]] } })
+		expect(single.find('.ask-cardinality').text()).toContain('单选')
+		expect(single.find('.ask-cardinality svg').exists()).toBe(true)
+
+		const multi = mount(AskUserCard, {
+			props: { questions: [{ id: 'm', question: '多选？', multiSelect: true, options: [{ label: 'A', value: 'a' }] }] },
+		})
+		expect(multi.find('.ask-cardinality').text()).toContain('可多选')
+		expect(multi.find('.ask-cardinality svg').exists()).toBe(true)
+	})
+
+	// ---- D1 修复回归：自定义「其他」可见可移除 + 单选自定义回填 ----
+	it('D1：multiSelect 自定义「其他」渲染为可见可移除 chip，移除后不再提交', async () => {
+		const q = { id: 'm', question: '多选？', multiSelect: true, options: [{ label: 'A', value: 'a' }, { label: 'B', value: 'b' }] }
+		const w = mount(AskUserCard, { props: { questions: [q] } })
+		await w.findAll('.ask-chip')[0].trigger('click') // A
+		await w.find('.ask-chip-other').trigger('click')
+		await w.find('.ask-other-input').setValue('自定义')
+		await w.find('.ask-other-done').trigger('click')
+		const custom = w.findAll('.ask-chip-custom')
+		expect(custom).toHaveLength(1)
+		expect(custom[0].text()).toContain('自定义')
+		await custom[0].trigger('click') // 移除
+		expect(w.findAll('.ask-chip-custom')).toHaveLength(0)
+		await w.find('.ask-multi-confirm').trigger('click')
+		expect(w.emitted('submit')![0][0]).toEqual({ answers: { m: ['a'] } })
+	})
+	it('D1：多题卡单选自定义「其他」回填——返回该题时「其他…」高亮且重开预填文本', async () => {
+		const q = { id: 's', question: '单选？', options: [{ label: 'A', value: 'a' }] }
+		const w = mount(AskUserCard, { props: { questions: [q, Q2[1]] } })
+		await w.find('.ask-chip-other').trigger('click') // 展开
+		await w.find('.ask-other-input').setValue('自填项')
+		await w.find('.ask-other-input').trigger('keyup.enter') // 提交并自动推进到 Q2
+		expect(w.find('.ask-progress').text()).toContain('第 2 / 2 题')
+		await w.find('.ask-nav-prev').trigger('click') // 回到 Q1
+		expect(w.find('.ask-chip-other').classes()).toContain('is-selected')
+		await w.find('.ask-chip-other').trigger('click') // 重开应预填
+		expect((w.find('.ask-other-input').element as HTMLInputElement).value).toBe('自填项')
+	})
+
 	// ---- T1 分页单题推进（吸上游 questionnaire.ts 范式）----
 	it('多题卡：一次只渲染一题（DOM 有界，防溢出死锁，S2/S6）', () => {
 		const five = Array.from({ length: 5 }, (_, i) => ({
