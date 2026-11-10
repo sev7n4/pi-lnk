@@ -52,6 +52,53 @@ describe('shouldToastForFailure', () => {
     expect(shouldToastForFailure({ status: 'generating' }, { status: 'completed' })).toBe(false)
     expect(shouldToastForFailure({ status: 'generating' }, null)).toBe(false)
   })
+
+  // ── 历史失败分窗（2026-11-10）：加载期对账把持久化 failed 刷成 error，
+  //    不是「本次新失败」，不得弹黄条。用户实测：重开会话必弹 4 条。 ──
+  it('T1 ⭐ failed → error（历史失败被对账重新激活）：不 toast', () => {
+    expect(
+      shouldToastForFailure(
+        { status: 'failed', errorCode: 'upstream_timeout' },
+        { status: 'error', errorMessage: '上游超时，请稍后重试', errorCode: 'upstream_timeout' },
+      ),
+    ).toBe(false)
+  })
+
+  it('fallback_pending → error（同为失败终态）：不 toast', () => {
+    expect(
+      shouldToastForFailure({ status: 'fallback_pending' }, { status: 'error', errorMessage: 'x' }),
+    ).toBe(false)
+  })
+
+  it('T4 failed → error 且 next.failureScope=historical：不 toast', () => {
+    expect(
+      shouldToastForFailure(
+        { status: 'failed' },
+        { status: 'error', errorMessage: 'x', failureScope: 'historical' },
+      ),
+    ).toBe(false)
+  })
+
+  it('T5 generating → error 但 next.failureScope=dismissed：不 toast', () => {
+    expect(
+      shouldToastForFailure(
+        { status: 'generating' },
+        { status: 'error', errorMessage: 'x', failureScope: 'dismissed' },
+      ),
+    ).toBe(false)
+  })
+
+  it('T2 本次真实失败（generating → error、scope 缺省）：仍 toast（不回归）', () => {
+    expect(
+      shouldToastForFailure({ status: 'generating' }, { status: 'error', errorMessage: '上游超时' }),
+    ).toBe(true)
+    expect(
+      shouldToastForFailure(
+        { status: 'generating' },
+        { status: 'error', errorMessage: 'x', failureScope: 'active' },
+      ),
+    ).toBe(true)
+  })
 })
 
 describe('useGenerationFailureToast', () => {

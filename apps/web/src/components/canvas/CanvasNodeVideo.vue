@@ -31,6 +31,8 @@ const props = defineProps<{
     label?: string
     errorMessage?: string
     errorCode?: string
+    /** 2026-11-10 历史失败分窗：historical / dismissed / 缺省=本次失败 */
+    failureScope?: string
     generationStartedAt?: string
     generationRecordId?: string
     materialId?: string
@@ -269,7 +271,7 @@ function openMediaInspector(e?: Event) {
               {{
                 data.status === 'uploading'
                   ? `上传中 ${data.uploadProgress ?? 0}%`
-                  : nodePlaceholderText(data.status, '视频生成中...')
+                  : nodePlaceholderText(data.status, '视频生成中...', data.failureScope)
               }}
             </span>
           </template>
@@ -300,6 +302,7 @@ function openMediaInspector(e?: Event) {
         :started-at="typeof data.generationStartedAt === 'string' ? data.generationStartedAt : undefined"
         :error-message="data.errorMessage as string | undefined"
         :error-code="data.errorCode as string | undefined"
+        :failure-scope="data.failureScope"
         :task-kind="taskKind"
         :task-id="taskId"
         :node-label="typeof data.label === 'string' ? data.label : undefined"

@@ -3,7 +3,12 @@ import { computed, inject, onUnmounted, ref, watch } from 'vue'
 import { useNodeId } from '@vue-flow/core'
 import type { TaskKind } from '@lnkpi/shared'
 import { resolveTaskChrome, truncateError } from '@/components/canvas/nodeTaskChrome'
-import { CANVAS_NODE_CANCEL_KEY, CANVAS_NODE_RETRY_KEY } from '@/composables/canvasNodeActions'
+import {
+  CANVAS_NODE_CANCEL_KEY,
+  CANVAS_NODE_RETRY_KEY,
+  CANVAS_NODE_DISMISS_FAILURE_KEY,
+} from '@/composables/canvasNodeActions'
+import { isFailureTerminalStatus } from '@/utils/incompleteNode'
 import { useMediaInspector } from '@/composables/useMediaInspector'
 import { NODE_GENERATION_STATUS } from '@/constants/dockStudio'
 
@@ -24,11 +29,14 @@ const props = defineProps<{
    *   （NodeStatusInfoButton），同时保证重试/取消按钮位置与生成中状态完全一致。
    */
   errorDetail?: 'row' | 'status-icon'
+  /** 2026-11-10 历史失败分窗：仅 'historical' 提供「忽略 / 不再提示」入口。 */
+  failureScope?: unknown
 }>()
 
 const nodeId = useNodeId()
 const cancel = inject(CANVAS_NODE_CANCEL_KEY, null)
 const retry = inject(CANVAS_NODE_RETRY_KEY, null)
+const dismissFailure = inject(CANVAS_NODE_DISMISS_FAILURE_KEY, null)
 const { openInspector } = useMediaInspector()
 
 const nowMs = ref(Date.now())
@@ -82,14 +90,17 @@ const chrome = computed(() =>
 )
 
 const err = computed(() => truncateError(props.errorMessage))
-const showError = computed(
-  () =>
+const showError = computed(() => {
+  // 用户已忽略的历史失败：不再显示活跃错误条（失败原因仍可在诊断抽屉查）。
+  if (props.failureScope === 'dismissed') return false
+  return (
     (Boolean(err.value) &&
       (props.status === NODE_GENERATION_STATUS.error ||
         props.status === NODE_GENERATION_STATUS.failed ||
         isFallbackPending.value)) ||
-    isFallbackPending.value,
-)
+    isFallbackPending.value
+  )
+})
 const displayErr = computed(() => {
   if (err.value) return err.value
   if (isFallbackPending.value) return '平台回退待确认'
@@ -104,6 +115,18 @@ const canOpenDiagnostic = computed(
 const isClickable = computed(
   () => chrome.value?.action === 'cancel' || chrome.value?.action === 'retry',
 )
+
+/** 只有从持久化画布恢复的历史失败才允许「忽略」；本次真实失败不消音。 */
+const canDismissFailure = computed(
+  () => props.failureScope === 'historical' && isFailureTerminalStatus(props.status),
+)
+
+function onDismissFailure(e: Event) {
+  e.stopPropagation()
+  e.preventDefault()
+  if (!nodeId || !canDismissFailure.value) return
+  dismissFailure?.(nodeId)
+}
 
 function onAction(e: Event) {
   e.stopPropagation()
@@ -150,6 +173,16 @@ function openDiagnostic(e: Event) {
     </div>
     <div class="neo-task-chrome-row">
       <span v-if="chrome.elapsedText" class="neo-task-elapsed">{{ chrome.elapsedText }}</span>
+      <button
+        v-if="canDismissFailure"
+        type="button"
+        class="neo-task-elapsed neo-task-dismiss-btn"
+        aria-label="忽略此失败提示"
+        title="忽略此失败提示（不再提示）"
+        @click="onDismissFailure"
+      >
+        忽略
+      </button>
       <button
         type="button"
         class="neo-task-chrome-btn"

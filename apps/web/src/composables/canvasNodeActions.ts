@@ -33,6 +33,16 @@ export type CanvasNodeRetryFn = (
 export const CANVAS_NODE_CANCEL_KEY: InjectionKey<CanvasNodeCancelFn> = Symbol('canvasNodeCancel')
 export const CANVAS_NODE_RETRY_KEY: InjectionKey<CanvasNodeRetryFn> = Symbol('canvasNodeRetry')
 
+/**
+ * 2026-11-10 历史失败分窗：用户点「忽略/不再提示」时由页面级 provider 写
+ * `failureScope: 'dismissed'` 并持久化。只改节点 data 的一个字段，
+ * 不删节点/记录、不改 status 与退费事实。
+ */
+export type CanvasNodeDismissFailureFn = (nodeId: string) => void
+export const CANVAS_NODE_DISMISS_FAILURE_KEY: InjectionKey<CanvasNodeDismissFailureFn> = Symbol(
+  'canvasNodeDismissFailure',
+)
+
 export const CANVAS_NODE_LOCATE_FLASH_KEY: InjectionKey<Ref<Set<string>>> = Symbol('canvasNodeLocateFlash')
 
 /** PR1：诊断抽屉「让 Agent 诊断」——预填 composer（不自动发送，等用户显式点发送表达意图）。 */

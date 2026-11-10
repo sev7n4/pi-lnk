@@ -12,6 +12,7 @@ import {
   NODE_INCOMPLETE_STATUS,
   incompleteBadgeLabel,
   incompleteReasonOf,
+  isFailureTerminalStatus,
   isIncompleteNode,
   nodePlaceholderText,
 } from '@/utils/incompleteNode'
@@ -85,6 +86,44 @@ describe('nodePlaceholderText', () => {
     expect(nodePlaceholderText('generating')).toBe('生成中...')
     expect(nodePlaceholderText('completed')).toBe('上传或等待生成')
     expect(nodePlaceholderText(undefined)).toBe('上传或等待生成')
+  })
+})
+
+describe('isFailureTerminalStatus（历史失败分窗判据）', () => {
+  it('失败终态三值 ⇒ true', () => {
+    expect(isFailureTerminalStatus('failed')).toBe(true)
+    expect(isFailureTerminalStatus('error')).toBe(true)
+    expect(isFailureTerminalStatus('fallback_pending')).toBe(true)
+  })
+
+  it('非失败终态 ⇒ false（incomplete 必须排除，否则「未完成」语义被吞）', () => {
+    expect(isFailureTerminalStatus('incomplete')).toBe(false)
+    expect(isFailureTerminalStatus('generating')).toBe(false)
+    expect(isFailureTerminalStatus('completed')).toBe(false)
+    expect(isFailureTerminalStatus(undefined)).toBe(false)
+  })
+})
+
+describe('nodePlaceholderText 历史失败静态标记', () => {
+  it('T6 failed + historical ⇒ 「生成失败 · 可重试」（诚实、不伪装成功）', () => {
+    expect(nodePlaceholderText('failed', undefined, 'historical')).toBe('生成失败 · 可重试')
+  })
+
+  it('T7 failed + dismissed ⇒ 「已忽略」', () => {
+    expect(nodePlaceholderText('failed', undefined, 'dismissed')).toBe('已忽略')
+  })
+
+  it('T8 incomplete + historical ⇒ 仍「未完成」（incomplete 优先，M6 变异守）', () => {
+    expect(nodePlaceholderText('incomplete', undefined, 'historical')).toBe('未完成')
+  })
+
+  it('error + historical 同样降级；scope 缺省保持既有默认（活跃失败由 toast 承担）', () => {
+    expect(nodePlaceholderText('error', undefined, 'historical')).toBe('生成失败 · 可重试')
+    expect(nodePlaceholderText('failed', undefined)).toBe('上传或等待生成')
+  })
+
+  it('generating 定制文案不受第三参数影响', () => {
+    expect(nodePlaceholderText('generating', '视频生成中...', 'historical')).toBe('视频生成中...')
   })
 })
 

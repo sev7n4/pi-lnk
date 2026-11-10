@@ -87,6 +87,9 @@
 | [`superpowers/plans/2026-10-28-canvas-edge-remedy-loop.md`](./superpowers/plans/2026-10-28-canvas-edge-remedy-loop.md) | **SP-F 实施计划**——3 task TDD 步骤 | 活资产 —— 实现依据 |
 | [`superpowers/specs/2026-11-09-sp-e-canvas-cas-decision-gate-design.md`](./superpowers/specs/2026-11-09-sp-e-canvas-cas-decision-gate-design.md) | **SP-E 画布并发写 CAS：决策门规格（v2.1，13 章）**——v2 CAS 方案重估，裁决 `A—决策门` 三阶段；最终 `DECIDED_NO_GO_FOR_IMPLEMENTATION`（2026-11-10） | 已结项 —— 决策来源 |
 | [`superpowers/plans/2026-11-09-sp-e-phase1-observability.md`](./superpowers/plans/2026-11-09-sp-e-phase1-observability.md) | **SP-E 阶段 1 零契约观测计划**——#805 实施依据 | 已结项 —— 实现依据 |
+| [`superpowers/specs/2026-11-10-historical-failure-scope-design.md`](./superpowers/specs/2026-11-10-historical-failure-scope-design.md) | **历史失败分窗与「忽略/不再提示」**——生产取证（4 条真失败、92/92 无产物且已退费）+ 根因链（加载期对账 `failed→error` 触发 toast）+ `failureScope` 三态契约 + 12 条行为级用例 / 8 组变异 + 端到端浏览器复测为闭环前置；含 #815 回滚定位 | 活资产 —— 实现依据 |
+| [`superpowers/plans/2026-11-10-historical-failure-scope.md`](./superpowers/plans/2026-11-10-historical-failure-scope.md) | **历史失败分窗实施计划**——Task 0 回滚 #815 → Task 1–4 纯函数/对账/UI TDD → Task 5 门禁 → Task 6 合并部署与端到端复测；含 Review Focus 与回滚顺序 | 活资产 —— 实现依据 |
+| [`ops/2026-11-10-historical-failure-scope-prod-verify.md`](./ops/2026-11-10-historical-failure-scope-prod-verify.md) | **生产端到端复测 runbook**——复用 `scripts/prod-cdp-smoke.mjs` 自签 JWT 只读通道；黄条计数 0 / 静态标记 4 / 诊断可查 / 忽略刷新不复发；区分 A 级 DOM 证据与 B/C 级推断证据 | 活资产 —— 生产取证 |
 
 ## 保留的目录
 
