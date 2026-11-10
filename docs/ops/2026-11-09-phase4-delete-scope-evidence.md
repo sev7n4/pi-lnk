@@ -156,3 +156,9 @@ verify-phase4-delete-scope.py           VERDICT ALL_PASS NO_DELETE_TARGET
 - ⭐ **引用图重新验证**：前移包含 `AgentSideRail.vue`，它是 `presentation/` 组件的主要消费方。按新 master 的 4 个 blob 重建镜像沙箱后重算 `compute_inventory`，与 manifest 逐项比对 `DIFF_COUNT 0`；V1–V7 在新基线上再跑一次仍 `VERDICT ALL_PASS NO_DELETE_TARGET`、`exit 0`。
 - 字符级核对：母规格 30150 → 34217 字节，前缀 sha256 相等（`151b0105a2e00a47…`），零删除改写；`ci.yml` 的 diff 恰为 **1 处纯插入、128 字符、零删除**（`INSERT_ONLY True`）——是在既有 `spec-figures` job 内插入 2 行，不是尾部追加。
 - 上文 §1–§7 出现的 `75f597c7` 均为写作时点记录，按「历史时点结论不追溯改写，只做只追加状态回填」原样保留。
+
+## 9. 状态更正（2026-11-10 只追加）
+
+- 本证据文档 §7 写「母规格 Phase 4 仍为 ⏳ 未闭环」——此为写作时点（2026-11-09）状态。**2026-11-10 该 gate 已 adjudicate 闭环**：对应设计规格 `2026-11-09-phase4-delete-scope-rebaseline-design.md` 顶部状态由「待评审」改为「已闭环（adjudicated NO_DELETE_TARGET）」，并新增 §15 状态收口段。
+- 闭环语义：经实证 `NO_DELETE_TARGET`，删除刀按母规格 §9 字面**终止**（无待办功能），后继转入 ② 删除刀重定义（独立、不在路线 ③ 主线）。删除域 gate 自此不再产生"进行中"信号。
+- 上文 §7「⏳ 未闭环」按「历史时点结论不追溯改写」原样保留，本段仅作状态更正，不抹除时点记录。
