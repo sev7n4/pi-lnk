@@ -166,56 +166,6 @@ export function isFailedGenerationStatus(status: string): boolean {
   )
 }
 
-const HTTP_URL_RE = /^https?:\/\//i
-
-/** metadata 里所有可能承载结果产物的 URL 字段（含图像类常落的 `image` 数组）。 */
-function collectResultUrls(meta: Record<string, unknown>): string[] {
-  const out: string[] = []
-  const push = (v: unknown) => {
-    if (typeof v === 'string' && HTTP_URL_RE.test(v.trim())) out.push(v.trim())
-  }
-  if (typeof meta.url === 'string') push(meta.url)
-  if (Array.isArray(meta.urls)) meta.urls.forEach(push)
-  if (Array.isArray(meta.image)) meta.image.forEach(push)
-  return out
-}
-
-/**
- * 一条 generation 记录是否**实际产出了可用产物**。
- *
- * 根因背景（生产取证 cmw56hqit00nck801povzca3e）：客户端轮询超时把已成功生成的图
- * 误标成 `failed`+`upstream_timeout`，但 metadata 仍带着真实结果图 URL。
- * 渲染层应以"是否真的拿到结果"为准——有产物即按"已生成"渲染，不被卡死的失败态遮挡。
- *
- * 判据覆盖：record.url / meta.url / meta.urls / meta.image（图像类产物常落在 `image`
- * 数组，而 `parseRecordUrls` 只认 urls/url，故此处一并纳入）；文本类看 meta.text。
- */
-export function recordHasUsableOutput(record: {
-  status?: string | null
-  type?: string | null
-  url?: string | null
-  metadata?: string | null
-}): boolean {
-  const meta = parseGenerationRecordMeta(record.metadata)
-  if (typeof record.url === 'string' && HTTP_URL_RE.test(record.url.trim())) return true
-  if (collectResultUrls(meta).length > 0) return true
-  if (record.type === 'text') {
-    const t = meta.text
-    if (typeof t === 'string' && t.trim()) return true
-  }
-  return false
-}
-
-/** 取出记录的实际结果 URL（含 `meta.image`），供节点补 url/images 使用。 */
-export function getRecordResultUrls(record: {
-  status?: string | null
-  type?: string | null
-  url?: string | null
-  metadata?: string | null
-}): string[] {
-  return collectResultUrls(parseGenerationRecordMeta(record.metadata))
-}
-
 /** 后端 droppedFields 的字段名 → 用户可读标签。未登记的字段直接透出原名，不静默吞掉。 */
 export const DROPPED_FIELD_LABEL: Record<string, string> = {
   generateAudio: '音轨',
@@ -327,9 +277,6 @@ export function getRecordFailureMessage(
     // 成功态也返回提示：能力被丢弃/模型被替换不是错误，但用户必须看得见
     return combinedNotice
   }
-  // Layer 3 诚实渲染：失败但确带可用产物（图/视频/文本/音频）时，不当作硬错误返回——
-  // 横幅、历史面板、诊断抽屉统一不再弹"生成失败"，仅保留能力丢弃/模型替换这类软提示。
-  if (recordHasUsableOutput(record)) return combinedNotice
   if (typeof meta.userMessage === 'string' && meta.userMessage) return meta.userMessage
   const byok =
     (typeof meta.byokErrorRaw === 'string' && meta.byokErrorRaw) ||
@@ -354,9 +301,7 @@ export function buildFallbackDiagnostic(record: GenerationRecord): GenerationDia
     (typeof meta.errorRaw === 'string' && meta.errorRaw) ||
     ''
   return {
-    // Layer 3：失败但确带可用产物时不回退"生成失败"硬错误（结果图即事实）。
-    userMessage:
-      getRecordFailureMessage(record) || (recordHasUsableOutput(record) ? '' : '生成失败'),
+    userMessage: getRecordFailureMessage(record) || '生成失败',
     code: isFallback
       ? 'fallback_pending'
       : ((parseErrorCodeFromMetadata(record.metadata) as ErrorCode | undefined) || 'unknown'),
