@@ -96,6 +96,15 @@ D3 → 「画布世界（VueFlow + PC 工具条 + 空态）仍在此页承载；
 
 > 注释修正改 `apps/web/**` ⇒ 命中 `deploy.yml push.paths` **会触发生产发布**，故作为**独立小 PR**，须按「合并窗口单独授权 + 生产复测」纪律执行；本 spike 刀不含代码改动。预期 esbuild 剥离注释 ⇒ bundle 内容零变化，可作为发布复测的强锚点。
 
+> ⚠️ **判据修正（2026-11-10 19:40，#822 实证；只追加，不改写上文）**：上一段末句
+> 「预期 esbuild 剥离注释 ⇒ bundle 内容零变化，可作为发布复测的强锚点」**已被证伪**。
+> 干净沙箱 3 次 `vite build` 对照显示：注释文本在产物 0 命中成立，但 Rollup chunk 命名 hash
+> 级联 ⇒ 163 个产物里 106 个 `.js` + 1 个 `.css` + `index.html` 内容变化；第 3 次不改文件重构建
+> 0 差异证明 `BUILD_DETERMINISTIC`。且 esbuild 恒剥离注释 ⇒「产物内注释 0 命中」是**恒真判据**，
+> 不能证明上线的是本刀源码。正确复测锚点见 §4 状态回填第 1 条：deploy 日志 `IMAGE_TAG` +
+> 构建 chunk 名 + `MANIFEST_OK` + 与上一版 chunk 名不同，以及本地最终树产物规范化全部 Rollup hash 后
+> 与生产主 chunk 逐字节对照。**禁用「chunk hash 不变 / 注释 0 命中」当上线证据。**
+
 ---
 
 ## 4. 建议动作与主线下一步（PM/架构师拍板）
@@ -104,6 +113,22 @@ D3 → 「画布世界（VueFlow + PC 工具条 + 空态）仍在此页承载；
 2. **下一刀（代码注释回填）**：按 §3 精确替换 3 处注释，行数不变 ⇒ V2 行数漂移 ratchet 不受影响；改动前跑 `CanvasPage.mobileChromeHygiene.test.ts` / `mobileEntryWiring.test.ts` / `viewport.test.ts`（守卫作者已注明「注释里的旧名不计」，预期全绿）；推 PR 后**停在合并前等授权**。
 3. **A-6 真机走查**：设计 §7 明示「合并上线 ≠ 验收完成」，T-1~T-5/T-7~T-8、I-2~I-7、V-1~V-6 尚待逐项跑，须 iOS Safari + Android Chrome 真机 + 带鉴权会话，**本环境无法替代真机，不宣称通过**。
 4. **§6.5 两条待裁决**（PC `MultiSelectToolbar` 底部化规格内部冲突、形态×能力集拆分被配对方案阻塞）：属独立产品决策，本 spike 不擅自裁定。
+
+### 状态回填（2026-11-10 19:40，只追加；上文第 2 / 4 项为历史时点结论）
+
+1. **第 2 项「代码注释回填」已完成**：PR #822 squash 合入 master `0f55fb3b`，deploy #635 /
+   CI #1849 全绿；三处注释逐行回填（行数不变 573 / 6844）+ 新增
+   `CanvasPage.pr5CommentDrift.test.ts` 5 条静态契约（RED→PASS + 3 组变异自检）。
+   合并后 master tree 与已验证的 PR head tree 相同、DELTA 恰 3 文件，#821 / #823 并行文件全保留。
+   生产 17/17 取证 ALL_PASS；本地最终树 `vite build` 与生产 dist 对照：独立资源逐字节相同、
+   108 个 chunk size 逐一相同、规范化全部 Rollup hash 后主 chunk 逐字节相同（含变异自检）
+   ⇒ 零产品行为变更。发布复测锚点按 §3 判据修正执行。
+2. **第 4 项「§6.5 两条待裁决」已由 PM / 架构师拍板**：见母规格
+   `docs/design/2026-10-19-mobile-canvas-ux-redesign.md` §6.5.1 裁决回填 ——
+   PC 工具条底部化 `NO_GO_FOR_CHANGE`、形态×能力集拆分 `CONDITIONAL_DEFER`（附重启条件），
+   不产生代码改动、不改 `MAX_ALLOWED`、不触发发布。
+3. **第 3 项 A-6 真机走查状态不变**：仍需 iOS Safari + Android Chrome 真机 + 鉴权会话，
+   本环境不可代跑，不宣称验收完成；§11 未来 `AgentSideRail` 移动形态重构亦不改状态。
 
 ---
 
