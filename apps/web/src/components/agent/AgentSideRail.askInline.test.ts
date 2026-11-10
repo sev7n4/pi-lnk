@@ -147,7 +147,7 @@ describe('根治规格：ask_user 等待的单一真相 = 时间线 question par
     seedTimelineQuestion()
     await flushPromises()
 
-    const optionBtn = w.findAll('button').find((b) => b.text().trim() === '皮克斯')
+    const optionBtn = w.findAll('button.ask-chip').find((b) => b.find('.ask-chip-label').text().trim() === '皮克斯')
     expect(optionBtn, '选项按钮在内联卡上').toBeTruthy()
     await optionBtn!.trigger('click')
     await flushPromises()

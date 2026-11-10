@@ -10,6 +10,8 @@ import { computed, nextTick, ref } from 'vue'
  * - 行为增强：单选答后自动推进到下一未答题（修改已答题不推进，防误跳）；
  *   multiSelect 的「其他」文本进已选集合（修复旧实现写入单选暂存位被静默丢弃的缺陷）。
  * - 样式只消费 --lnk-* L2/L3 令牌（暗/亮主题自适应；design-token.test.ts 成对性守卫）。
+ * - D2 更强版 + D3（本回合）：选项前缀恒定类型指示（单选用 ○ / 多选用 □）+ 序号 1..n；
+ *   选中态沿用右侧 accent 对勾徽标，「单选/多选」与「未选/已选」两层语义在选项层分离。
  *   6 态契约齐备：hover/active/focus-visible(2px border-focus 外环)/disabled（显式 text-disabled，不用 opacity）。
  *   动效只动 transform/opacity，prefers-reduced-motion 强制静止。
  *   零第三方图标：对勾为内联 SVG（24 网格）。
@@ -257,7 +259,7 @@ function submitOther(q: AskUserQuestion) {
 			</div>
 			<div class="ask-options">
 				<button
-					v-for="opt in current.options"
+					v-for="(opt, i) in current.options"
 					:key="opt.value"
 					type="button"
 					class="ask-chip"
@@ -266,6 +268,13 @@ function submitOther(q: AskUserQuestion) {
 					:disabled="skipped.has(current.id)"
 					@click="pick(current, opt.value)"
 				>
+					<span class="ask-chip-lead" aria-hidden="true">
+						<span class="ask-chip-marker">
+							<svg v-if="current.multiSelect" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="3" /></svg>
+							<svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="7" /></svg>
+						</span>
+						<span class="ask-chip-index">{{ i + 1 }}</span>
+					</span>
 					<span class="ask-chip-label">{{ opt.label }}</span>
 					<span class="ask-chip-check" aria-hidden="true">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7" /></svg>
@@ -293,6 +302,11 @@ function submitOther(q: AskUserQuestion) {
 						aria-label="其他：输入自定义答案"
 						@click="startOther(current)"
 					>
+						<span class="ask-chip-lead" aria-hidden="true">
+							<span class="ask-chip-marker ask-chip-marker-add">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14" /></svg>
+							</span>
+						</span>
 						<span class="ask-chip-label">其他…</span>
 					</button>
 				</template>
@@ -306,6 +320,11 @@ function submitOther(q: AskUserQuestion) {
 						:aria-label="'移除自定义项：' + cust"
 						@click="removeCustomOther(current, cust)"
 					>
+						<span class="ask-chip-lead" aria-hidden="true">
+							<span class="ask-chip-marker ask-chip-marker-edit">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+							</span>
+						</span>
 						<span class="ask-chip-label">{{ cust }}</span>
 						<span class="ask-chip-remove" aria-hidden="true">×</span>
 					</button>
@@ -505,6 +524,10 @@ function submitOther(q: AskUserQuestion) {
 	color: var(--lnk-text-disabled);
 	cursor: not-allowed;
 }
+.ask-chip-label {
+	flex: 1 1 auto;
+	min-width: 0;
+}
 .ask-chip-check {
 	flex: none;
 	display: flex;
@@ -544,6 +567,44 @@ function submitOther(q: AskUserQuestion) {
 	width: var(--lnk-space-3);
 	height: var(--lnk-space-3);
 	flex: none;
+}
+
+/* ── D3 序号 + D2 更强版：选项前缀簇（左）── 单选用 ○ / 多选用 □ 为恒定类型指示；序号 1..n ── */
+.ask-chip-lead {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--lnk-space-2);
+	flex: none;
+}
+.ask-chip-marker {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--lnk-space-5);
+	height: var(--lnk-space-5);
+	color: var(--lnk-text-muted);
+}
+.ask-chip-marker svg {
+	width: var(--lnk-space-4);
+	height: var(--lnk-space-4);
+}
+.ask-chip.is-selected .ask-chip-marker {
+	color: var(--lnk-accent-text);
+}
+.ask-chip-marker-add,
+.ask-chip-marker-edit {
+	color: var(--lnk-text-secondary);
+}
+.ask-chip-index {
+	font-size: var(--lnk-text-sm);
+	font-weight: var(--lnk-weight-medium);
+	color: var(--lnk-text-muted);
+	font-variant-numeric: tabular-nums;
+	min-width: var(--lnk-space-4);
+	text-align: center;
+}
+.ask-chip.is-selected .ask-chip-index {
+	color: var(--lnk-text-secondary);
 }
 
 /* ── D1 修复：多选自定义「其他」条目可见 + 可移除（否则提交后用户看不到也无法取消） ── */

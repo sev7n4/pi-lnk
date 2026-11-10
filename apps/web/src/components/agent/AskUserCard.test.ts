@@ -67,7 +67,45 @@ describe('AskUserCard（spec 2026-10-28 分页单题推进 / T0-T2 + 视觉重�
 		expect(multi.find('.ask-cardinality svg').exists()).toBe(true)
 	})
 
-	// ---- D1 修复回归：自定义「其他」可见可移除 + 单选自定义回填 ----
+		// ---- D3 序号 + D2 更强版（选项前缀 ○/□ + 序号）----
+	it('D3：每个选项前缀渲染序号 1..n；「其他…」行不编号（非预设选项）', () => {
+		const w = mount(AskUserCard, {
+			props: { questions: [{ id: 'q', question: '?', options: [{ label: 'A', value: 'a' }, { label: 'B', value: 'b' }, { label: 'C', value: 'c' }] }] },
+		})
+		expect(w.findAll('.ask-chip-index').map((e) => e.text())).toEqual(['1', '2', '3'])
+		expect(w.find('.ask-chip-other').find('.ask-chip-index').exists()).toBe(false)
+	})
+	it('D2 更强版：单选项前缀为 ○(circle)、多选项前缀为 □(rect)，两类 shape 不混', () => {
+		const single = mount(AskUserCard, {
+			props: { questions: [{ id: 's', question: '?', options: [{ label: 'A', value: 'a' }] }] },
+		})
+		const sSvg = single.find('.ask-chip-marker svg').element as SVGElement
+		expect(sSvg.querySelector('circle')).not.toBeNull()
+		expect(sSvg.querySelector('rect')).toBeNull()
+
+		const multi = mount(AskUserCard, {
+			props: { questions: [{ id: 'm', question: '?', multiSelect: true, options: [{ label: 'A', value: 'a' }] }] },
+		})
+		const mSvg = multi.find('.ask-chip-marker svg').element as SVGElement
+		expect(mSvg.querySelector('rect')).not.toBeNull()
+		expect(mSvg.querySelector('circle')).toBeNull()
+	})
+
+	// ---- 加固：multiSelect 勾选预设项 + 「其他」补充文字 → wire 契约把两者都交给 agent ----
+	it('加固：multiSelect 勾选 A、B 并「其他」补充文字 → answers 同时含选项值与自定义文本', async () => {
+		const q = { id: 'm', question: '多选？', multiSelect: true, options: [{ label: 'A', value: 'a' }, { label: 'B', value: 'b' }] }
+		const w = mount(AskUserCard, { props: { questions: [q] } })
+		await w.findAll('.ask-chip')[0].trigger('click') // A
+		await w.findAll('.ask-chip')[1].trigger('click') // B
+		await w.find('.ask-chip-other').trigger('click')
+		await w.find('.ask-other-input').setValue('用户自身补充内容')
+		await w.find('.ask-other-done').trigger('click')
+		expect(w.find('.ask-multi-confirm').text()).toContain('已选 3 项')
+		await w.find('.ask-multi-confirm').trigger('click')
+		expect(w.emitted('submit')![0][0]).toEqual({ answers: { m: ['a', 'b', '用户自身补充内容'] } })
+	})
+
+// ---- D1 修复回归：自定义「其他」可见可移除 + 单选自定义回填 ----
 	it('D1：multiSelect 自定义「其他」渲染为可见可移除 chip，移除后不再提交', async () => {
 		const q = { id: 'm', question: '多选？', multiSelect: true, options: [{ label: 'A', value: 'a' }, { label: 'B', value: 'b' }] }
 		const w = mount(AskUserCard, { props: { questions: [q] } })
