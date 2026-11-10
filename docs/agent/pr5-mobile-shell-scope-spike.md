@@ -1,5 +1,12 @@
 # PR5 移动画布壳层 · 范围设计 Spike（路线 ③ 收口）
 
+> ⚠️ **本 spike 已被 supersede**：`docs/superpowers/specs/2026-11-10-pr5-mobile-isMobile-layout-convergence-design.md`
+> 重核 true master 后推翻本文件的「扩展既有壳（6 迁移 + 1 改造 + 1 删死代码）」假设——
+> 壳层已**完整落地**（2026-10-20 PR5 / D-9，MobileCanvasShell.vue 573 行、已承载移动端导航），
+> AgentSideRail 移动端仍 hidden 挂载（onMounted 加载历史），全仓 **0 处可搬壳层 / 0 处死代码**
+> （L1272 是桌面守卫非死代码，非早先误判的死代码）。路线③棘轮**正式停在 11**
+> （MAX_ALLOWED=11 长期保留为 guardrail，是完成态非未达标）。**请勿再据此「继续磨 8 点」。**
+>
 > 类型：**范围设计 spike**（非 13 章规格）。目的：在起草正式规格前把边界锁死。
 > 关联：路线 ③ `isMobileLayout` 棘轮（#799/#801/#806/#808 已闭环，有效读取 21→11）。
 > 真值基线：`gh api` 取的 true master（2026-11-10 重取 `AgentSideRail.vue` 与 `useAgentDock.ts` 实证）。
@@ -20,7 +27,7 @@
 - `useAgentMobileLayout.ts` **已存在**（L234 正是用它的），`composable` 自取布局的契约改造零新增依赖。
 - `components/mobile/` 已有 `MobileTopBar.vue` / `MobileNodeEditorSheet.vue` / `MobileCanvasCreateFab.vue` 等成熟移动组件。
 
-⇒ PR5 不是"从零建壳"，而是**扩展既有壳（6 迁移）+ 契约改造（1）+ 删死代码（1）**，规模比预期小，属中号 PR 量级，不是大 initiative。
+⇒ PR5 不是"从零建壳"，而是**扩展既有壳（6 迁移）+ 契约改造（1）+ 删死代码（1）**，规模比预期小，属中号 PR 量级，不是大 initiative。（⚠️ 此"扩展既有壳"判断仍被后续收敛审计规格证伪——壳层已完整落地且边界钉死，全仓无 6 处可迁移对象、L1272 非死代码；本 spike 的迁移/删除假设不成立，仅供历史参考，不构成待办。）
 
 ## 1. 真值基线：`AgentSideRail.vue` 当前 `isMobileLayout` 读取点（11，grep 实证 master）
 
