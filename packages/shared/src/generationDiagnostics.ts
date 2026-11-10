@@ -1,6 +1,7 @@
 export type ErrorCode =
   | 'insufficient_points'
   | 'upstream_timeout'
+  | 'interrupted'
   | 'upstream_error'
   | 'rate_limited'
   | 'cancelled'

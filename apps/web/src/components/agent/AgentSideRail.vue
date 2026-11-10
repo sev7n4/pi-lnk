@@ -1064,6 +1064,38 @@ function resolveCanvasNodeUrl(nodeId: string): string | undefined {
   return typeof url === 'string' && url ? url : undefined
 }
 
+async function fetchPendingLiveness(sessionId: string, threadId: string): Promise<boolean> {
+  try {
+    const res = await fetch(
+      apiUrl(
+        `/api/agent/sessions/${encodeURIComponent(sessionId)}/pending-liveness?threadId=${encodeURIComponent(threadId)}`,
+      ),
+      { cache: 'no-store' },
+    )
+    if (!res.ok) return true
+    const json = (await res.json()) as { data?: { hasLivePending?: boolean } }
+    return Boolean(json?.data?.hasLivePending)
+  } catch {
+    return true
+  }
+}
+
+// P1（历史会话加载对账）：若时间线 replay 出 pending_confirm 等待，但 pi-runtime 侧已无
+// 活跃阻塞等待（callId 为空，或会话早已结束 registry 已无该 callId），即历史死等待，
+// 加载期即清除——先通知画布把节点翻离 pending_confirm（emit 时 pendingProposal 仍有效），
+// 再清除时间线 part（胶囊消失）。顺序不可反：cancelProposeForNode 依赖 pendingProposal。
+async function reconcilePendingOnLoad(sessionId: string, threadId: string) {
+  const wait = agent.pendingProposal
+  if (!wait || wait.toolName !== 'propose_generation') return
+  const callId = typeof wait.callId === 'string' ? wait.callId.trim() : ''
+  // callId 为空 ⇒ 无 runtime 阻塞态可对应 ⇒ 必然是死等待
+  const live = callId ? await fetchPendingLiveness(sessionId, threadId) : false
+  if (live) return
+  const nodeId = typeof wait.nodeId === 'string' ? wait.nodeId.trim() : ''
+  if (nodeId) void propose.cancelProposeForNode(nodeId)
+  agent.trackWaitingUser({ status: 'resolved', toolName: 'propose_generation', reason: 'expired' })
+}
+
 /** H0-d（规格 §2/K3）：历史加载失败必须 fail-visible + 可重入，禁止 toast+空白（验收 S1）。 */
 type HistoryLoadState = 'idle' | 'loading' | 'failed'
 const historyLoadState = ref<HistoryLoadState>('idle')
@@ -1076,6 +1108,7 @@ const historyRows = ref<PersistedAgentMessage[]>([])
 const historyCursor = ref<string | null>(null)
 const historyHasMore = ref(false)
 const historyLoadingOlder = ref(false)
+
 
 async function loadHistory() {
   agent.clear()
@@ -1116,6 +1149,9 @@ async function loadHistory() {
       const sanitized = sanitizeHistoryMessages(historyRows.value)
       degradedHistory.value = sanitized.degradedIds.size > 0
       agent.loadHistory(sanitized.rows)
+      // P1：加载对账——replay 出的 pending_confirm 若 pi-runtime 侧已无活跃阻塞等待
+      // （callId 为空或会话早已结束），属历史死等待，加载期即清除，不再渲染成活闸门。
+      void reconcilePendingOnLoad(props.sessionId, agentThreadId.value)
       // P1#5：最后一回合若有 task 事件（plan 标记派生），恢复任务卡进度
       const msgs = json.data as Array<{ role: string; content?: string; metadata?: string }>
       // H1-d（§8④）：恢复锚点 = 最后一条非空 assistant（空行 metadata 会污染任务卡/ask_user 恢复）

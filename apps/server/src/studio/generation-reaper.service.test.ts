@@ -148,7 +148,7 @@ describe('GenerationReaperService 收尾机制', () => {
     process.env = env
   })
 
-  it('卡死记录：标记 failed(upstream_timeout) + 同事务退款，退款带 generationId', async () => {
+  it('卡死记录：标记 failed(interrupted) + 同事务退款，退款带 generationId', async () => {
     seed({ id: 'r1', type: 'image', model: 'seedream-5.0-pro' })
 
     const n = await svc.reapOnce('manual')
@@ -157,7 +157,10 @@ describe('GenerationReaperService 收尾机制', () => {
     const data = generationUpdateMany.mock.calls[0][0].data
     expect(data.status).toBe('failed')
     const meta = JSON.parse(String(data.metadata))
-    expect(meta.errorCode).toBe('upstream_timeout')
+    // P1 诚实错误码：被回收 = 本地服务中断/失联（detached completion 丢失），
+    // 不是「上游真的超时」，不再诱导「请稍后重试」。
+    expect(meta.errorCode).toBe('interrupted')
+    expect(meta.userMessage).toBe('生成因服务中断未完结，积分已退回，可重新生成')
     expect(meta.refundedPoints).toBe(10)
     expect(meta.refundReason).toBe('超时回收退款')
     // 退款在事务内且 generationId 指向该记录
@@ -181,7 +184,7 @@ describe('GenerationReaperService 收尾机制', () => {
     expect(refundInTx).not.toHaveBeenCalled()
     const meta = JSON.parse(String(generationUpdateMany.mock.calls[0][0].data.metadata))
     expect(meta.refundedPoints).toBe(10) // 保留原退款标记
-    expect(meta.errorCode).toBe('upstream_timeout')
+    expect(meta.errorCode).toBe('interrupted')
   })
 
   it('用户已取消的记录：标记 failed 但不退款', async () => {
@@ -193,7 +196,7 @@ describe('GenerationReaperService 收尾机制', () => {
     expect(refundInTx).not.toHaveBeenCalled()
   })
 
-  it('无 chargedPoints 的记录：只迁移状态', async () => {
+  it('无 chargedPoints 的记录：只迁移状态，无退款文案', async () => {
     seed({ id: 'r4', type: 'image', metadata: JSON.stringify({ foo: 1 }) })
 
     const n = await svc.reapOnce('manual')
@@ -201,7 +204,25 @@ describe('GenerationReaperService 收尾机制', () => {
     expect(n).toBe(1)
     expect(refundInTx).not.toHaveBeenCalled()
     const meta = JSON.parse(String(generationUpdateMany.mock.calls[0][0].data.metadata))
-    expect(meta.userMessage).toBe('生成超时')
+    expect(meta.userMessage).toBe('生成因服务中断未完结，可重新生成')
+  })
+
+  /**
+   * 锁死「诚实错误码是 reaper 的默认语义，不依赖任何输入标记」——
+   * 这正是修复前的回归点：旧实现用 `meta.reapReason === 'stale_generating'`
+   * 作为 interrupted 的闸门，但没有任何上游路径会写入该输入标记 ⇒ 分支永远
+   * 走不到（恒为 upstream_timeout），等于没修。此处用一条**不带任何 reapReason**
+   * 的普通卡死记录断言它仍产出 interrupted，防止该死闸门悄悄回归。
+   */
+  it('默认即 interrupted：不带 reapReason 的普通卡死记录也标 interrupted（防死闸门回归）', async () => {
+    // 普通 seed：metadata 仅 chargedPoints，无 reapReason / 无 errorCode
+    seed({ id: 'rx', type: 'image' })
+
+    await svc.reapOnce('manual')
+
+    const meta = JSON.parse(String(generationUpdateMany.mock.calls[0][0].data.metadata))
+    expect(meta.errorCode).toBe('interrupted')
+    expect(meta.userMessage).toBe('生成因服务中断未完结，积分已退回，可重新生成')
   })
 
   it('状态守卫未命中（completeImage 已先行结算）：跳过且不退款', async () => {
@@ -432,7 +453,7 @@ describe('GenerationReaperService 收尾机制', () => {
     expect(n).toBe(1)
     const data = generationUpdateMany.mock.calls[0][0].data
     expect(data.status).toBe('failed')
-    expect(JSON.parse(String(data.metadata)).errorCode).toBe('upstream_timeout')
+    expect(JSON.parse(String(data.metadata)).errorCode).toBe('interrupted')
     expect(refundInTx).toHaveBeenCalledWith(
       expect.anything(),
       'u1',

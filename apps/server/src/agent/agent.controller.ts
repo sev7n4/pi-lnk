@@ -753,6 +753,19 @@ export class AgentController {
     return { code: 0, message: 'ok', data }
   }
 
+  /** P1（历史会话加载对账）：该会话在 pi-runtime 是否仍有活跃阻塞等待。 */
+  @Get('sessions/:sessionId/pending-liveness')
+  @UseGuards(AuthGuard)
+  async getPendingLiveness(
+    @Param('sessionId') sessionId: string,
+    @Query('threadId') threadId: string,
+    @Req() req: Request & { user: { sub: string } },
+  ) {
+    await this.sessionsService.findOne(sessionId, req.user.sub)
+    const hasLivePending = await this.agentService.getPendingLiveness(sessionId, threadId)
+    return { code: 0, message: 'ok', data: { hasLivePending } }
+  }
+
   @Post('chat/optimize-prompt')
   async optimizePrompt(@Body() dto: OptimizePromptDto) {
     const data = await this.agentService.optimizePrompt(dto.prompt, dto.style)

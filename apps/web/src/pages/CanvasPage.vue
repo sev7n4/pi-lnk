@@ -222,7 +222,7 @@ import { useAgentStore } from '@/stores/agent'
 import { dedupeNodesById, mergeCanvasNodesFromServer } from '@/pages/canvas/canvasNodeMerge'
 import { useSelectedNodeEditor, type EditableFlowNode, EDITABLE_NODE_TYPES } from '@/composables/useSelectedNodeEditor'
 import type { CanvasEdgeLike } from '@/composables/useUpstreamNodeContext'
-import { buildPollingFailurePatch } from '@/utils/generationDiagnostic'
+import { buildPollingFailurePatch, getRecordFailureMessage } from '@/utils/generationDiagnostic'
 
 const route = useRoute()
 const router = useRouter()
@@ -5721,7 +5721,15 @@ function buildStudioRecordPatch(
   const patch: Record<string, unknown> = {
     status,
     generationRecordId: record.id,
-    errorMessage: failurePatch ? failurePatch.errorMessage : null,
+    // 诚实错误码（P1）：失败时优先复用记录自带的、由 reaper / 失败路径写下的
+    // 诚实 userMessage（如「生成因服务中断未完结，积分已退回，可重新生成」），
+    // 不再用写死的「图像生成未完成或超时」——旧文案既掩盖真因，又对 video/text/audio
+    // 错误误标成「图像生成」。getRecordFailureMessage 已是诊断抽屉的单一事实来源，
+    // 此处复用保证横幅与抽屉文案一致；master 的 failurePatch.errorMessage（退款文案）作兜底。
+    errorMessage:
+      status === NODE_GENERATION_STATUS.error
+        ? getRecordFailureMessage(record) ?? (failurePatch ? failurePatch.errorMessage : null) ?? '生成失败'
+        : null,
   }
   if (failurePatch?.errorCode) patch.errorCode = failurePatch.errorCode
   if (record.type === 'text') {

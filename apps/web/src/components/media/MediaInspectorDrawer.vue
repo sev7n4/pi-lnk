@@ -204,6 +204,7 @@ const diagnosticHint = computed(() => {
 const DIAGNOSTIC_CODE_LABELS: Record<string, string> = {
   insufficient_points: '积分不足',
   upstream_timeout: '上游超时',
+  interrupted: '生成中断',
   upstream_error: '上游错误',
   rate_limited: '上游限流',
   cancelled: '已取消',
