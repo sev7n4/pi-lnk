@@ -714,11 +714,18 @@ export class AgentService implements OnModuleInit {
       }
       return !supersededBy
     })
-    // P3 G3（D5 收口）：queued 的消费判定走**读时派生**——steer 在 turn 边界消费、
+    // P3 G3（D5 收口）：queued 的消费判定**曾经**只走读时派生——steer 在 turn 边界消费、
     // followUp 在收尾边界消费，而 owner 流在 agent_end 即收尾（早于 followUp 消费）
     // ⇒ 写时翻转要么过早要么依赖 runtime queue_update 事件（刻意不进 SSE，
     // session-manager.ts:1740）。desc 分页下 reply 恒新于 user 行 ⇒ 必在同窗或更早页，
     // 窗口内判定即全局判定（P3 计划 Review Focus 4）。
+    //
+    // 2026-11-11（插话气泡实时化 + 消费终态）升级为**权威终态优先**：
+    // `consumedAt`（服务端观察到 pi_message_end{role=user, entryId} 命中本行时写入）
+    // 与 `reconciled`（对账判定滞留终态）任一非空 ⇒ 派生值**让位**——生产实证 13/66
+    // 条「入队但从未被消费」的行恰恰有更晚 assistant 行，派生会把它们误判成已发送。
+    // 派生保留为 `consumedAt==NULL && !reconciled` 时的 legacy fallback：存量行无权威
+    // 信号，直接删派生会让全部历史插话回显「排队中」（回归）。
     const latestAssistantAt = visible.reduce<number>((acc, r) => {
       if (r.role === 'assistant') {
         const ts = new Date(r.createdAt).getTime()
@@ -726,13 +733,12 @@ export class AgentService implements OnModuleInit {
       }
       return acc
     }, 0)
-    const derived = visible.map((r) =>
-      r.role === 'user' &&
-      r.queued &&
-      latestAssistantAt > new Date(r.createdAt).getTime()
-        ? { ...r, queued: false }
-        : r,
-    )
+    const derived = visible.map((r) => {
+      if (r.role !== 'user' || !r.queued) return r
+      if (r.consumedAt || r.reconciled) return r // 权威终态：queued 保持 DB 原值（consumed 时已翻 false）
+      if (latestAssistantAt > new Date(r.createdAt).getTime()) return { ...r, queued: false }
+      return r
+    })
     // rawCount = DB 原始行数（过滤前）：overfetch 窗口 (take*2) 被打满时保守判定有下一页，
     // 避免 superseded 重负载线程误判 hasMore=false 截断历史（审查 P1）。
     return paginateVisibleRows(derived, take, rows.length)
@@ -1384,9 +1390,32 @@ export class AgentService implements OnModuleInit {
         for (const u of unsubs) u()
       }
     }
+    // 2026-11-11 用户发言领域事件补桥（跨端实时气泡 + 消费终态）：steer/followup
+    // 是独立 HTTP 请求，无法注入既有 SSE 连接 ⇒ 经 SessionEventBus 扇出到本通道
+    // 的全部订阅者（发起端与旁听端同源）。合成帧无 pi seq ⇒ controller 不写 id 行
+    // （Last-Event-ID 不指向它们）；晚加入者靠历史 GET 的 DB 权威值兜底。
+    let utteranceUnsub: (() => void) | undefined
+    if (this.eventBus) {
+      utteranceUnsub = this.eventBus.subscribeSessionUserUtterance(sessionKey, (ev) => {
+        const { sessionId: _routeKey, ...data } = ev
+        const type =
+          ev.kind === 'queued'
+            ? 'user_utterance_queued'
+            : ev.kind === 'consumed'
+              ? 'user_utterance_consumed'
+              : 'user_utterance_stuck'
+        queue.push({ type, data } as unknown as AgentStreamEvent)
+        notify?.()
+      })
+    }
     const unsubscribe = client.streamEvents(
       sessionKey,
       (event) => {
+        // 2026-11-11 消费终态挂钩（旁听侧）：主流在 agent_end 收尾、早于 followUp 的
+        // 收尾边界消费 ⇒ drain 派生新一代的 user message_end 只有本通道看得到。
+        // 零订阅者窗口内的消费写不进 DB（已知缺口，--reconcile 脚本兜底）。
+        const consumedEntry = this.extractConsumableUtteranceEnd(event)
+        if (consumedEntry) void this.noteUtteranceConsumed(sessionKey, consumedEntry)
         // 统一事件通道 P0：全量投影派生（canvas_command / canvas_action / task /
         // thinking / usage / 结构化 error / map 归一）——askuser 卡等此前被 pi_
         // 前缀静默丢弃的事件在此恢复。顺序 = 主链路既有顺序（projector 内编排列）。
@@ -1436,6 +1465,7 @@ export class AgentService implements OnModuleInit {
       creditUnsub?.()
       settledUnsub?.()
       turnAckUnsub?.()
+      utteranceUnsub?.()
     }
   }
 
@@ -1692,9 +1722,79 @@ export class AgentService implements OnModuleInit {
           update: {},
         }),
       )
+      // 2026-11-11（插话气泡实时化）：落库成功即广播 `user_utterance_queued`
+      // 用户发言领域事件（经 SessionEventBus 扇出到 runEventStream 全部订阅者，
+      // 含旁听端）——跨端实时用户气泡的数据源。content 是**用户原话**（本方法的
+      // input.text 已是原文；发给 pi 的拼装文本不在此处）。重放命中 update 分支
+      // 也会再 emit 一次：前端按 entryId 幂等（decideQueueBubbleSync），双发无害。
+      // emit 失败不阻断（事件总线的 emit 只操作内存 Map，且订阅缺失时为 no-op）。
+      this.eventBus?.emitUserUtterance({
+        sessionId: threadKey,
+        threadId: threadKey,
+        entryId: entry,
+        kind: 'queued',
+        content,
+        ts: new Date().toISOString(),
+      })
     } catch (err) {
       this.piLogger?.warn?.(
         `queued user message persist skipped (fail-soft, thread=${threadKey}, entryId=${entry}): ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+  }
+
+  /**
+   * 从 pi 原始事件里抽取「可判消费的 user 消息收束」：仅 `message_end` 且
+   * `message.role==='user'` 且带非空 `entryId`（assistant 收束/无身份事件不触发）。
+   * 命中返回 entryId，否则 null。纯函数（可单测）。
+   */
+  private extractConsumableUtteranceEnd(event: unknown): string | null {
+    if (!event || typeof event !== 'object') return null
+    const ev = event as { type?: unknown; data?: unknown }
+    if (ev.type !== 'message_end') return null
+    const data = ev.data as { message?: { role?: unknown }; entryId?: unknown } | undefined
+    const entryId = typeof data?.entryId === 'string' ? data.entryId.trim() : ''
+    if (!entryId || data?.message?.role !== 'user') return null
+    return entryId
+  }
+
+  /**
+   * 「已接住」权威消费信号（2026-11-11，插话气泡实时化 + 消费终态）。
+   *
+   * 触发口径：任一 SSE 通道（主流 `streamConversation` / 旁听 `runEventStream`）
+   * 观察到 pi 原始事件 `message_end{role:'user', entryId}`，且 DB 命中 `queued=true`
+   * 行 ⇒ 该 entry 已物化为 transcript `kind:entry`（vendor `boundary.ts:115-142`
+   * 物化 + `checkpoint.ts:114-122` 续生成 ⇒ 必被下一轮 `readBoundedContext` 读入），
+   * **事件已写 ⇔ 内容已进上下文被模型接住**——这是规格 §4.5 的 SSOT。
+   *
+   * 副作用：`queued=false + consumedAt=now`（幂等：`WHERE queued=true` 只命中一次）
+   * + 经 SessionEventBus 广播 `user_utterance_consumed`（前端据此实时翻转徽标）。
+   *
+   * 为什么旁听通道也要挂钩：主流在 `agent_end` 收尾，**早于** followUp 的收尾边界
+   * 消费（P3 G3 注释为证）；drain 派生的新一代事件只有旁听通道看得到。
+   *
+   * fail-soft：消费已发生，写不进去/发不出去都不影响对话（与 persist 同款理由）。
+   */
+  private async noteUtteranceConsumed(threadKey: string, entryId: string): Promise<void> {
+    if (!threadKey?.trim() || !entryId?.trim()) return
+    const entry = entryId.trim()
+    try {
+      const res = await this.prisma.agentMessage.updateMany({
+        where: { entryId: entry, queued: true },
+        data: { queued: false, consumedAt: new Date() },
+      })
+      if (res.count > 0) {
+        this.eventBus?.emitUserUtterance({
+          sessionId: threadKey.trim(),
+          threadId: threadKey.trim(),
+          entryId: entry,
+          kind: 'consumed',
+          ts: new Date().toISOString(),
+        })
+      }
+    } catch (err) {
+      this.piLogger?.warn?.(
+        `utterance consumed persist skipped (fail-soft, thread=${threadKey}, entryId=${entry}): ${err instanceof Error ? err.message : String(err)}`,
       )
     }
   }
@@ -3499,6 +3599,11 @@ export class AgentService implements OnModuleInit {
           textPersister.flush() // 收束前把正文段归入当前 messageIndex
           traceMessageIndex += 1
         }
+        // 2026-11-11 消费终态挂钩（主流侧）：user 消息 entry 物化进 transcript ⇒
+        // queued=true 行翻终态 + 广播 user_utterance_consumed（见 noteUtteranceConsumed）。
+        // fire-and-forget：写库失败 fail-soft，不阻塞事件流。
+        const consumedEntry = this.extractConsumableUtteranceEnd(event)
+        if (consumedEntry) void this.noteUtteranceConsumed(sessionKey, consumedEntry)
         // turn_suspended 判据：waiting{waiting} 置位；同流内见到 resolved（等待在
         // 本流生命周期内被 answered/取消）则复位——挂起事件只在「流耗尽时仍挂着」发。
         if (ui.type === 'waiting_user') {

@@ -477,8 +477,29 @@ model AgentMessage {
   /**
    * 排队中标记（D5）：插话/尾随在 pi 侧队列里**尚未被消费**时为 true，
    * 被消费后转 false。不转终态的话用户会永远看到「排队中」（Review Focus #3）。
+   *
+   * 2026-11-11（插话气泡实时化 + 消费终态，规格
+   * `docs/superpowers/specs/2026-11-11-queue-user-bubble-context-verify-design.md`）：
+   * 本列升级为**权威状态**——翻转仅由 `user_utterance_consumed`（服务端观察到
+   * `pi_message_end{role=user, entryId}` 命中本行）或对账 `reconciled` 驱动；
+   * 「同窗有更晚 assistant 行」的读时派生降级为 `consumedAt==NULL` 时的 legacy
+   * fallback（存量行无 consumedAt，删派生会让历史插话回显「排队中」）。
    */
   queued        Boolean     @default(false)
+  /**
+   * 「已接住」权威终态（2026-11-11）：消费事件发出时写入——内容已物化为 transcript
+   * `kind:entry` 且必被下一轮 readBoundedContext 读入 ⇒ 事件已发 ⇔ 已进上下文。
+   * NULL = 尚无权威消费信号（不等于未消费：legacy 行靠读时派生兜底显示）。
+   * 纯 additive、存量零回填、可原样回滚。
+   */
+  consumedAt    DateTime?
+  /**
+   * 滞留终态标记（2026-11-11）：对账（scripts/verify-queue-context.ts --reconcile）
+   * 判定 entry 既不在 transcript 也不在 inbox 且超时窗口 ⇒ true。
+   * `queued=true && consumedAt=NULL && reconciled=true` ⇒ UI 显「未接住」；
+   * `queued=true && consumedAt=NULL && reconciled=false` ⇒ UI 显「待接住」（诚实中间态）。
+   */
+  reconciled    Boolean     @default(false)
   createdAt     DateTime    @default(now())
 
   /// 回合唯一性不变式：同一 thread 里同一 run 至多一条消息。

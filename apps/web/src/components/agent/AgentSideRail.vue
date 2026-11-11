@@ -2296,6 +2296,46 @@ function handleEvent(event: { type: string; data: unknown }) {
           void persistUserEntryId(entryId)
         },
       })
+      // 2026-11-11 消费终态共存（AC5）：pi_message_end 即「entry 已物化进 transcript」
+      // ⇒ 该 entryId 若命中仍带 queued 标记的气泡（含本组件插入的插话气泡与 409
+      // 隐式插话 attach 后的行）实时翻 false。与 user_utterance_consumed 事件双通道
+      // 幂等（先到者翻、后到者 no-op），不双插。
+      const consumedEntryId =
+        typeof (event.data as { entryId?: unknown } | null | undefined)?.entryId === 'string'
+          ? ((event.data as { entryId: string }).entryId.trim())
+          : ''
+      if (consumedEntryId) agent.markMessageUtteranceConsumed(consumedEntryId)
+      break
+    }
+    case 'user_utterance_queued': {
+      // 2026-11-11 跨端实时插话气泡（规格 2026-11-11-queue-user-bubble-context-verify）：
+      // steer/followup 落库成功后服务端经 SessionEventBus 扇出，所有订阅同 thread
+      // /runs/events 的端（含旁听端）立即出现用户气泡。content 是服务端落库的用户原话。
+      // ⭐ 与发起端既有四态槽位并存（规格 §8：气泡进 messages、槽位仍是 composer
+      // 上方的状态卡），与 pi_message_end 补建路径经 entryId 幂等共存（先到者建）。
+      const d = event.data as { entryId?: unknown; content?: unknown } | null | undefined
+      const entryId = typeof d?.entryId === 'string' ? d.entryId.trim() : ''
+      const text = typeof d?.content === 'string' ? d.content.trim() : ''
+      if (entryId && text && !agent.messages.some((m) => m.entryId === entryId)) {
+        agent.insertUserMessageBeforeAssistant(text, { entryId, queued: true })
+        // 活内容已入主滚动流，内容增长须跟随（仅 followLatest 时生效）
+        scrollToBottom()
+      }
+      break
+    }
+    case 'user_utterance_consumed': {
+      // 「已接住」终态（= 内容已进 transcript 且被下一轮 readBoundedContext 读入）。
+      // 未知 entryId 幂等 no-op；与 pi_message_end 分支的翻转双通道幂等。
+      const d = event.data as { entryId?: unknown } | null | undefined
+      const entryId = typeof d?.entryId === 'string' ? d.entryId.trim() : ''
+      if (entryId) agent.markMessageUtteranceConsumed(entryId)
+      break
+    }
+    case 'user_utterance_stuck': {
+      // 滞留终态（对账判定 entry 既不在 transcript 也不在 inbox）：徽标改显「未接住」。
+      const d = event.data as { entryId?: unknown } | null | undefined
+      const entryId = typeof d?.entryId === 'string' ? d.entryId.trim() : ''
+      if (entryId) agent.markMessageUtteranceStuck(entryId)
       break
     }
     case 'thread_forked': {
@@ -3238,14 +3278,24 @@ defineExpose({
                 ]"
                 @click="onUserBubbleClick(msg)"
               >
-                <!-- D5（P3）：排队中徽标。数据源=server 读时派生的 queued
-                     （无更晚 assistant 行才保持 true）；实时清除由
-                     turn_ack{messageId} → consumeQueued 承载（徽标随消费消失）。 -->
+                <!-- D5（P3）：排队中徽标。数据源=server getMessages：2026-11-11 起权威
+                     终态优先（consumedAt 驱动 queued=false；consumedAt==NULL 行保留
+                     legacy 派生兜底）；实时清除由 turn_ack{messageId} → consumeQueued
+                     与 user_utterance_consumed{entryId} → markMessageUtteranceConsumed
+                     共同承载（徽标随消费消失）。 -->
+                <!-- 2026-11-11 滞留终态：queued 且对账 reconciled ⇒ 「未接住」
+                     （entry 既不在 transcript 也不在 inbox，模型从未看到——
+                     绝不因「有后续回答」而误显已发送）。 -->
                 <span
-                  v-if="msg.role === 'user' && msg.queued"
+                  v-if="msg.role === 'user' && msg.queued && msg.reconciled"
+                  class="agent-queued-badge agent-queued-badge--stuck"
+                  data-testid="queued-badge-stuck"
+                >未接住</span>
+                <span
+                  v-else-if="msg.role === 'user' && msg.queued"
                   class="agent-queued-badge"
                   data-testid="queued-badge"
-                >排队中</span>
+                >待接住</span>
                 <AgentProseBlock
                   v-if="shouldRenderSchemeDraftProse(msg)"
                   :content="msg.content"
@@ -5187,6 +5237,14 @@ defineExpose({
   font-size: var(--lnk-text-2xs);
   line-height: 1.6;
   color: color-mix(in srgb, var(--agent-user-text) 72%, transparent);
+}
+
+/* 2026-11-11 滞留终态「未接住」：同样的明暗跟随 + color-mix（不引入新 hex，令牌 SSOT）。
+ * 用更高实色比与加重边框与「待接住」区分——这是需要用户注意的异常态。 */
+.agent-queued-badge--stuck {
+  border-color: color-mix(in srgb, var(--agent-user-text) 55%, transparent);
+  color: var(--agent-user-text);
+  font-weight: 600;
 }
 
 /* 展示态图标行 .agent-msg-actions 的同槽：同样的左对齐、8px 顶距、26px 行高。
