@@ -88,6 +88,7 @@ function mapTimelinePart(p: TimelinePart): ShareTurnPart | null {
 					options: q.options.map((o) => o.label),
 					multiSelect: q.multiSelect,
 					allowOther: q.allowOther,
+					...(q.plan ? { plan: q.plan } : {}),
 				})),
 			}
 		default:

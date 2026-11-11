@@ -125,6 +125,7 @@ export type TimelinePart =
         options: { label: string; value: string }[]
         multiSelect?: boolean
         allowOther?: boolean
+        plan?: { summary: string; explanation?: string; steps: { content: string; activeForm?: string }[] }
       }>
       startedAt: number
     }

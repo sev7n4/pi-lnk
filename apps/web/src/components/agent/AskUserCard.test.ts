@@ -213,4 +213,37 @@ describe('AskUserCard（spec 2026-10-28 分页单题推进 / T0-T2 + 视觉重�
 		const w = mount(AskUserCard, { props: { questions: Q2 } })
 		expect(w.find('.ask-partial').exists()).toBe(false) // 0 答：不显
 	})
+
+	// ---- P0-2（2026-11-11）：确认卡内联方案本体 ----
+	it('P0-2：question.plan 存在时渲染方案摘要 + 有序步骤清单（先看方案再决策）', () => {
+		const q = {
+			id: 'plan_confirm',
+			question: '三步制作 Codex 教学视频',
+			plan: {
+				summary: '三步制作 Codex 知识教学视频（脚本→封面→成片）',
+				explanation: '先脚本确保内容准确，再封面吸引点击，最后成片交付',
+				steps: [
+					{ content: '编写教学脚本大纲：什么是 Codex + 核心功能 + 操作步骤 + 案例演示' },
+					{ content: '创建视频封面图', activeForm: '正在创建封面图' },
+					{ content: '生成教学视频正文' },
+				],
+			},
+			options: [
+				{ label: '开始执行', value: 'execute' },
+				{ label: '调整计划', value: 'refine' },
+				{ label: '仅保留方案', value: 'keep' },
+			],
+			allowOther: true,
+		}
+		const w = mount(AskUserCard, { props: { questions: [q] } })
+		const plan = w.find('.ask-plan')
+		expect(plan.exists()).toBe(true)
+		expect(plan.find('.ask-plan-title').text()).toContain('三步制作 Codex')
+		expect(plan.find('.ask-plan-explanation').text()).toContain('先脚本确保内容准确')
+		expect(plan.findAll('.ask-plan-step')).toHaveLength(3)
+		expect(plan.findAll('.ask-plan-step')[0].find('.ask-plan-step-text').text()).toContain('编写教学脚本大纲')
+		expect(plan.findAll('.ask-plan-step')[1].find('.ask-plan-step-active').text()).toContain('正在创建封面图')
+		// 方案块不破坏决策交互：3 选项 + 「其他…」共 4 个 chip
+		expect(w.findAll('.ask-chip')).toHaveLength(4)
+	})
 })
