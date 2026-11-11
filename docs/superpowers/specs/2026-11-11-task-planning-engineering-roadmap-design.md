@@ -49,6 +49,7 @@
 
 - 最近一条生产 `task_list` 载荷（原文）：`{"items":[{"id":"plan-4","title":"创建教学脚本大纲节点","status":"done","activeForm":"编写脚本"},{"id":"plan-7",...},{"id":"plan-9",...}]}` —— id 为位置序且跳号，字段全集仅 `content / activeForm / status`。
 - **C4 产物断层**：生产运行镜像全量搜索（排除 `*.db`/`*.bak*`）`spawn_subagent` **0 命中**；Nest `dist` 内 `todo_write` 命中 6 处、`propose_plan` 1 处、C4 为 0。源码（master 与 `141d5d97` 两棵树）均在且已注册装配 ⇒ **「源码在、运行时不在」**，根因（构建输入 vs 部署链路）未定位。
+- **2026-11-11 复核纠偏（同日，B-4 调查刀）**：上条「源码在、运行时不在」**被证伪**——根因是取证范围错误：只搜了 Nest `lnkpi-api` 容器，而 pi-runtime 是 K3s 独立部署单元（`deploy/pi-lnk-runtime`，NodePort 30100，见 `docs/ops/RUNBOOK-pi-runtime-deploy.md`），从未被搜过（Nest dist 内 `todo_write` 6 处命中实为 prompt fallback 常量文本）。复核实证：生产 pi-runtime 镜像 `d9085d33` 的 dist 内 `spawn_subagent` **6 文件全命中**（`tools/config.js` 装配两处、`index.js` SubagentCoordinator 构造、`gate/subagent.js`、`metrics.js`），`/metrics` 暴露 `pi_runtime_subagent_spawned/rejected/outcome_total` 三系列 ⇒ **C4 已进入生产运行时且已注册**；`spawned_total=0` 为模型零调用，根因是 `prompt-registry/` 与 `skills/` **零点名**（AGENTS.md 工具分层纪律：未点名 ⇒ 模型不知道用，与 `tool_search` 激活率 0 同构）。§2.4① 与 §4 G4① 的「运行时不在」表述一并以此为准；阶段 B-4「定位根因 + 上线刀」**作废**（无需上线），替代动作 = 按点名纪律补 prompt/skill 点名（独立小刀）。另记构建输入风险：pi-runtime 构建源为主仓 rsync 工作树快照，而主仓工作树 pi-runtime 源码陈旧（工作树 `index.ts` 缺 coordinator 接线而 HEAD 有）——本次镜像内容与 master 一致未受影响，但后续构建须先核对工作树新鲜度。
 - 可观测性：Nest `/metrics` 返回 200 但无 `pi_runtime_plan_*` / `subagent_*` / `turn_budget_*` 命名指标暴露；交付清单 `docs/ops/2026-10-09-task-tool-delivery-checklist.md` 实测 14 个 `- [ ]` / 0 个 `- [x]`；`[legacy-plan-marker]` 近 7 天日志 0 次（达标但未回填）。
 - 版本漂移：生产镜像 `141d5d97`（11-10 04:49Z）落后真 master `31808ec0`（11-10 15:27Z）**17 个提交**（多为 docs-only 与前端修复）。
 
@@ -83,6 +84,8 @@
 
 **G4 · 生产落地与可观测性断层**
 ① C4「源码在、运行时不在」（§2.3）；因此**总纲 §5 的 C1-B 触发条件①「C4 子代理落地出现并行清单需求」至今未满足**——C1-B「未立项」是门禁生效，不是遗漏。② 交付清单 14 项全未勾选，生产取证与指标基线未回填。③ 生产镜像落后 master 17 提交。④ 规划链路指标未暴露到 Nest `/metrics`；`plan-gate-design.md:114` 记 `plan_decision_total`（单数）与实际渲染 `plan_decisions_total`（复数）不一致。
+
+> **2026-11-11 复核纠偏**：①中「C4 源码在、运行时不在」被同日 B-4 调查刀证伪（取证范围漏了 pi-runtime K3s 独立部署单元）——真实状态：**C4 已进入生产运行时且已注册，零调用为用量缺口（prompt/skill 零点名）**；触发条件①证据面更新为「C4 已落地但零调用」，判定结论不变（仍未满足），C1-B「未立项」仍是门禁生效。详见 §2.3 复核纠偏条。
 
 **G5 · 规格-实现漂移与上游升级悬崖**
 状态自相矛盾：总纲 `:3` 头「待评审」但 §3 记 C1 已上线；`plan-gate-design.md:6` `draft-review` 但代码已合 #329；C4 spec 写「PR 待合并」但源码已在 master。文档债：早期四份 Python 侧规格（`intent-planning-guard` / `codex-style-tool-plan-harness` / `workflow-recipe-planner` / `planner-confirm-instantiate-gate`）有设计无实现（`services/agent-runtime/**` 工作树与 HEAD 均不存在），其中 codex harness spec 自身 §0 已标注 V7 废止、`select_narrow_write_tools` 退役——易被误读为「规划层从未设计」或「已实现」。上游 1.0.0 breaking（harness → `pi-durable`）使一切绑定 harness hook 的新工程带重映射成本（总纲 §1 坑位 3 / §7 维护规则 2）。

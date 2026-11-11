@@ -44,4 +44,5 @@
 | `task_list` / `task_update` 事件 | 111 / 656 | — | — | task_list 首现 2026-10-09 10:49（与 C1 上线日吻合） |
 
 - 最近一条生产 `task_list` 载荷（原文）：`{"items":[{"id":"plan-4","title":"创建教学脚本大纲节点","status":"done","activeForm":"编写脚本"},{"id":"plan-7",...},{"id":"plan-9",...}]}` —— id 为位置序且跳号，字段全集仅 `content / activeForm / status`。
+- 2026-11-11 复核纠偏：上表 spawn_subagent 行判读「未进入生产运行时」有误——取证范围漏了 pi-runtime K3s 独立部署单元；复核生产 pi-runtime（镜像 d9085d33）dist 内 6 文件命中 + `pi_runtime_subagent_*` 三系列 metrics 暴露 ⇒ **已注册进生产运行时**，零调用为用量缺口（prompt-registry/skills 零点名，与 tool_search 激活率 0 同构）。详见路标规格 §2.3 复核纠偏条。
 - 可观测性：Nest `/metrics` 返回 200 但无 `pi_runtime_plan_*` / `subagent_*` / `turn_budget_*` 命名指标暴露；`[legacy-plan-marker]` 近 7 天日志 0 次。
