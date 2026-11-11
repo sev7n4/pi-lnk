@@ -50,13 +50,13 @@ INJECTION_BASELINE: dict[str, int] = {
     "useAgentDock": 10,
     "useAgentQueue": 11,
     "useUtteranceRotation": 5,
-    "useAgentObserver": 12,
+    "useAgentObserver": 13,  # P1b snapshot resync: +reloadAuthoritativeHistory
     "useNetworkNotice": 1,
     "useAgentThread": 16,
 }
 MAX_INJECTION_POINTS = 10
-MAX_TOTAL_KEYS = 81
-MAX_CALLBACK_KEYS = 17
+MAX_TOTAL_KEYS = 82
+MAX_CALLBACK_KEYS = 18
 
 _results: list[tuple[str, bool, str]] = []
 
