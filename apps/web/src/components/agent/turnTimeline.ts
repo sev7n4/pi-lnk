@@ -46,7 +46,7 @@ export type TimelinePart =
       id: string
       toolName: string
       args?: string
-      status: 'running' | 'done' | 'failed'
+      status: 'running' | 'done' | 'failed' | 'interrupted'
       resultSummary?: string
       ms?: number
       nodeRef?: string
@@ -222,6 +222,21 @@ export type TimelineEvent =
         ruleVersion?: string
         degraded?: boolean
         released?: boolean
+      }
+    }
+  | {
+      /**
+       * D1（2026-11-11 生产事故 cmwbvfp4p000qrk01pch77w13）：主流自然耗尽且
+       * 从未收到 agent_end/error。⚠️ reason 只陈述可观测事实（no_terminal_event），
+       * 不臆断 pod 重启 / nginx 掐断 / 客户端断网。随 executionEvents 落库重放，
+       * 让刷新 / 断连续传后中断态仍在（而非被 finalizeTurnTimeline 翻回 ✓）。
+       */
+      type: 'turn_interrupted'
+      data: {
+        reason: 'no_terminal_event'
+        runId?: string
+        lastSeq?: number
+        outstandingToolCallIds?: string[]
       }
     }
   | {
@@ -554,13 +569,25 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
           )
         : timeline.parts.find(
             (p): p is Extract<TimelinePart, { kind: 'tool' }> =>
-              p.kind === 'tool' && p.toolName === name && p.status === 'running',
+              p.kind === 'tool' && p.toolName === name &&
+              (p.status === 'running' || p.status === 'interrupted'),
           )
       const resultSummary = summarizeToolResult(d.result)
       if (existing) {
         existing.status = d.isError ? 'failed' : 'done'
         existing.isError = d.isError === true
         if (resultSummary) existing.resultSummary = resultSummary
+        // D1 可恢复：followUp tail 续传的结果把最后一条未配对工具补齐后，
+        // 中断 notice 不再成立 ⇒ 原地移除（避免界面继续说「未交付」）。
+        const stillPending = timeline.parts.some(
+          (p) => p.kind === 'tool' && (p.status === 'running' || p.status === 'interrupted'),
+        )
+        if (!stillPending) {
+          const idx = timeline.parts.findIndex(
+            (p) => p.kind === 'notice' && p.id === 'notice:turn-interrupted',
+          )
+          if (idx >= 0) timeline.parts.splice(idx, 1)
+        }
         return
       }
       // ── TURN-IDENTITY PR3（孤儿降级）──
@@ -843,6 +870,32 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
       }
       return
     }
+    case 'turn_interrupted': {
+      // D1：上游流耗尽且无权威收束。把「还没回来」的工具从 running 翻成
+      // interrupted ⇒ finalizeTurnTimeline 只处理 running，收口时不会翻回 ✓。
+      // ⚠️ 不改 finalizeTurnTimeline 签名：实时 SSE / 刷新重放 / 断连续传三条
+      // 路径都靠这个落库事件驱动，无需第二套判据。
+      for (const p of timeline.parts) {
+        if (p.kind === 'tool' && p.status === 'running') p.status = 'interrupted'
+      }
+      // 稳定 id ⇒ 重放 / 重复下发不叠加（同 notice:partial-ledger 家族）。
+      if (!timeline.parts.some((p) => p.kind === 'notice' && p.id === 'notice:turn-interrupted')) {
+        const hasSubagent = timeline.parts.some(
+          (p) => p.kind === 'tool' && p.toolName === 'spawn_subagent' && p.status === 'interrupted',
+        )
+        timeline.parts.push({
+          kind: 'notice',
+          id: 'notice:turn-interrupted',
+          // 中性文案：只陈述可观测事实，不臆断「服务更新打断」等无证据归因。
+          text:
+            '本轮未收到完成确认，结果可能未交付；本次未扣费' +
+            (hasSubagent ? ' · 子代理调研没有返回结果' : ''),
+          tone: 'error',
+          retryLabel: '可重新发送这条消息重试',
+        })
+      }
+      return
+    }
     case 'error': {
       const d = event.data
       const text = d.message || d.retry_hint || '执行出错'
@@ -969,6 +1022,8 @@ export function finalizeTurnTimeline(timeline: TurnTimeline): void {
     if (p.kind === 'text' && p.status === 'streaming') {
       p.status = 'done'
     }
+    // D1：只收口 running。interrupted 由落库 turn_interrupted 事件先一步置位，
+    // 此处不翻回 done（否则刷新后界面又把「✓ 0ms」当成成功，二次说谎）。
     if (p.kind === 'tool' && p.status === 'running') {
       p.status = 'done'
     }

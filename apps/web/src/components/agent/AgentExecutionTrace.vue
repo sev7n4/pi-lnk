@@ -92,13 +92,17 @@ function statusIcon(step: ExecutionStep): string {
       return '!'
     case 'skipped':
       return '–'
+    // D1：中断 ≠ 完成，绝不能落到 ✓ / default 的「○」都不足以表达「没回来」。
+    case 'interrupted':
+      return '⏹'
     default:
       return '○'
   }
 }
 
 function stepDuration(step: ExecutionStep): string {
-  if (step.ms == null || step.status === 'running') return ''
+  // D1：中断没有「完成耗时」，显式禁显——否则会复刻事故里的「✓ 用时 0ms」二次说谎。
+  if (step.ms == null || step.status === 'running' || step.status === 'interrupted') return ''
   if (step.ms === 0) return ''
   return ` · ${formatDuration(step.ms)}`
 }
@@ -170,7 +174,7 @@ const phaseBadge = computed(() => {
             :style="{ animationDelay: `${Math.min(i * 60, 600)}ms` }"
             :class="[
               step.meta?.nodeId ? 'cursor-pointer hover:text-[var(--neo-text-primary)]' : '',
-              step.status === 'failed' ? 'text-danger' : 'text-[var(--neo-text-muted)]',
+              step.status === 'failed' || step.status === 'interrupted' ? 'text-danger' : 'text-[var(--neo-text-muted)]',
               step.status === 'running' ? 'animate-pulse' : '',
               step.kind === 'thinking' ? 'italic opacity-80' : '',
               step.kind === 'explore' ? 'opacity-90' : '',

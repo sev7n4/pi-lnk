@@ -31,6 +31,7 @@ import {
   replayExecutionTraceEvents,
   replaySvgCardPresentation,
   replayNodeGraphPresentation,
+  applyTurnInterrupted,
   type ExecutionTraceState,
 } from '@/components/agent/executionTraceReducer'
 import {
@@ -478,6 +479,13 @@ export const useAgentStore = defineStore('agent', () => {
       }
     }
     applyTimelineEvent(last.timeline, event)
+    // D1（2026-11-11）：turn_interrupted 是纯终态事件，无其它副作用，故由此漏斗统一
+    // 落到两个呈现通道 —— timeline（主路径）与 executionTrace（flag 关闭时的回落视图）。
+    // 放在这里而非各组件里重复判定，保证实时与重放（replayExecutionTraceEvents 同款
+    // case）两路同源；否则回落视图仍会被 finalizeExecutionTrace 翻成「✓ 完成」。
+    if (event.type === 'turn_interrupted' && last.executionTrace) {
+      applyTurnInterrupted(last.executionTrace)
+    }
     if (resolvedProposal) {
       reportWaitResolved('proposal', resolvedProposal.callId, 'confirmed', resolvedProposal.startedAt)
     }
@@ -1202,6 +1210,9 @@ export const useAgentStore = defineStore('agent', () => {
     replaceAssistantText,
     beginToolCall,
     endToolCall,
+    // D1：turn_interrupted 的直接喂入口（SideRail handleEvent 消费 SSE 事件）。
+    // 其余事件走各 trackX 包装，本事件无附加副作用，直接暴露 typed 漏斗即可。
+    feedTimeline,
     trackNodeStatus,
     trackGenerationProgress,
     backfillTimelineNodeStatus,

@@ -68,6 +68,8 @@ const emit = defineEmits<{
   /** 根治规格（2026-10-28）：对话流内联 question 卡的提交 / 取消（取代组件级 pendingAskUser ref）。 */
   askSubmit: [callId: string, payload: { answers: Record<string, string[]>; skipped?: string[] }]
   askCancel: [callId: string]
+  /** D1（2026-11-11）：中断 notice 的重试入口；SideRail 复用 sendMessage(..., isRetry=true) 续跑。 */
+  retryTurn: []
 }>()
 
 const VIDEO_URL_RE = /\.(mp4|webm|mov)(\?|$)/i
@@ -465,6 +467,7 @@ const rootClass = computed(() =>
             />
             <span v-else-if="part.status === 'done'" class="ml-auto text-[var(--neo-text-muted)]">✓</span>
             <span v-else-if="part.status === 'failed'" class="ml-auto text-danger">✗</span>
+            <span v-else-if="part.status === 'interrupted'" class="ml-auto text-danger">⏹ 未收到结果</span>
           </summary>
           <p class="mt-1 whitespace-pre-wrap text-[10px] text-[var(--neo-text-muted)]">{{ part.resultSummary }}</p>
         </details>
@@ -477,6 +480,7 @@ const rootClass = computed(() =>
           />
           <span v-else-if="part.status === 'done'" class="ml-auto text-[var(--neo-text-muted)]">✓</span>
           <span v-else-if="part.status === 'failed'" class="ml-auto text-danger">✗</span>
+          <span v-else-if="part.status === 'interrupted'" class="ml-auto text-danger">⏹ 未收到结果</span>
         </div>
       </div>
 
@@ -803,7 +807,16 @@ const rootClass = computed(() =>
           :title="part.detail"
         >
           {{ part.text }}
-          <span v-if="part.retryLabel" class="ml-1 opacity-80">{{ part.retryLabel }}</span>
+          <!-- D1：只有中断 notice（稳定 id）出可点重试；其余 notice 的 retryLabel 仍是纯文本提示，
+               避免把「错误提示文案」误做成点不动/语义不明的按钮。 -->
+          <button
+            v-if="part.retryLabel && part.id === 'notice:turn-interrupted'"
+            type="button"
+            class="ml-1 underline"
+            data-test="retry-turn"
+            @click="emit('retryTurn')"
+          >重试</button>
+          <span v-else-if="part.retryLabel" class="ml-1 opacity-80">{{ part.retryLabel }}</span>
         </span>
       </div>
     </template>

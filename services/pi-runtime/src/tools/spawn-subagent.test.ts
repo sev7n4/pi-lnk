@@ -85,4 +85,58 @@ describe("spawn_subagent 工具", () => {
 		assert.equal(body.ok, false);
 		assert.equal(called, 0);
 	});
+
+	// —— D1（2026-11-11）：outcome 埋点（spawned 已有，outcome 全仓零业务调用）——
+	it("outcome 埋点：正常路径产出 completed 样本", async () => {
+		const c = new SubagentCoordinator();
+		c.attach({
+			runSubagent: async () => ({ report: "R", turns: 1, durationMs: 10, status: "completed" }),
+		});
+		const m = new Metrics();
+		await createSpawnSubagentTool(c, m).execute(
+			"call-ok", { task: "t" } as never, noopUpdate,
+			{ piSessionKey: "k" } as never, invocation as never, chordCtx as never,
+		);
+		const text = m.render(0, "test");
+		assert.match(text, /pi_runtime_subagent_spawned_total 1/);
+		assert.match(text, /pi_runtime_subagent_outcome_total\{status="completed"\} 1/);
+	});
+
+	it("outcome 埋点：failed / timeout / budget_exceeded 各产出一次", async () => {
+		for (const status of ["failed", "timeout", "budget_exceeded"] as const) {
+			const c = new SubagentCoordinator();
+			c.attach({
+				runSubagent: async () => ({ report: "R", turns: 1, durationMs: 10, status }),
+			});
+			const m = new Metrics();
+			await createSpawnSubagentTool(c, m).execute(
+				`call-${status}`, { task: "t" } as never, noopUpdate,
+				{ piSessionKey: "k" } as never, invocation as never, chordCtx as never,
+			);
+			assert.match(m.render(0, "test"), new RegExp(`pi_runtime_subagent_outcome_total\\{status="${status}"\\} 1`));
+		}
+	});
+
+	it("rejected 分支不产生 outcome（spawned 也不增加）", async () => {
+		const m = new Metrics();
+		const tool = createSpawnSubagentTool(new SubagentCoordinator(), m);
+		await tool.execute(
+			"call-rej", { task: "t" } as never, noopUpdate,
+			{ piSessionKey: "k" } as never, invocation as never, chordCtx as never,
+		);
+		const text = m.render(0, "test");
+		assert.match(text, /pi_runtime_subagent_spawned_total 0/);
+		assert.doesNotMatch(text, /pi_runtime_subagent_outcome_total\{status=/);
+	});
+
+	it("runner reject（coordinator 兜底 failed）也产出 failed 样本", async () => {
+		const c = new SubagentCoordinator();
+		c.attach({ runSubagent: () => Promise.reject(new Error("boom")) });
+		const m = new Metrics();
+		await createSpawnSubagentTool(c, m).execute(
+			"call-fail", { task: "t" } as never, noopUpdate,
+			{ piSessionKey: "k" } as never, invocation as never, chordCtx as never,
+		);
+		assert.match(m.render(0, "test"), /pi_runtime_subagent_outcome_total\{status="failed"\} 1/);
+	});
 });

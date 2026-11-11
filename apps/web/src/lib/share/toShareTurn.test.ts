@@ -56,6 +56,22 @@ describe('toShareTurn · 产品时间线 8 类 part 逐类保真', () => {
 		expect(ofType(parts, 'tool')[0]).toMatchObject({ status: 'failed', isError: true })
 	})
 
+	// D1（2026-11-11）：产品时间线新增 interrupted 后，分享快照必须原样透传，
+	// 否则公开页会把「子代理没回来」渲染成无状态（等价于「没什么问题」）。
+	it('★ D1 回归锁：tool interrupted 状态透传到分享快照，不塌成 done/running', () => {
+		const { parts } = toShareTurn(msgWithTimeline([
+			{
+				kind: 'tool', id: 't', toolName: 'spawn_subagent', args: '调研 X',
+				status: 'interrupted', ms: 0,
+			},
+		]))
+		expect(ofType(parts, 'tool')[0]).toMatchObject({
+			type: 'tool', name: 'spawn_subagent', status: 'interrupted',
+		})
+		expect(ofType(parts, 'tool')[0]).not.toMatchObject({ status: 'done' })
+		expect(JSON.stringify(parts)).not.toContain('"args"')
+	})
+
 	it('notice tone: error 与 info 都不丢', () => {
 		const { parts } = toShareTurn(msgWithTimeline([
 			{ kind: 'notice', id: 'n', text: '出错', tone: 'error' },
