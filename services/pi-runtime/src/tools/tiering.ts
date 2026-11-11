@@ -156,6 +156,16 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	// 方案确认门（C3，2026-10-10）：prompt 规则 task_tool.md 点名（「先 propose_plan 征得确认」），
 	// 按本文件准绳（被点名 ⇒ 必须常驻）；且它承载「确认前绝不执行」的解锁入口，延迟即不可达。
 	"propose_plan",
+	// C4 只读调研子代理（2026-10-10 上线，2026-11-11 提回常驻）：
+	// 此前落在延迟集 ⇒ 模型拿不到 schema 与「何时必用」description，发现通道只剩
+	// tool_search，而该通道无动机时触发率为 0（见文件头铁律）⇒ 生产 spawned 恒 0
+	//（2026-11-11 取证：tiering=true、dist 常驻集 0 命中、tool_search hit=4）。
+	// 提回依据同分组三先例：官方模式 description 承担发现能力（工具自述何时必用）；
+	// 且只读深度调研是唯一入口——web_search / web_fetch 虽常驻但只能凑部分答案
+	//（仅 web、不带画布/文档上下文），按文件头「部分替代 ⇒ 幻觉」铁律反而加重提回必要性。
+	// 资产点名恒 0 ⇒ 守卫 A1 不受影响；「可下沉候选」提示列表会列出它，
+	// 裁决即不下沉（docs/superpowers/specs/2026-11-11-subagent-tier-promotion-design.md §3）。
+	"spawn_subagent",
 	// gen（用户确认后当轮即用）
 	"run_image_generation",
 	"run_video_generation",

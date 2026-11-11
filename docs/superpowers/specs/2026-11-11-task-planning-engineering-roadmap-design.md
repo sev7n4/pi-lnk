@@ -110,6 +110,8 @@
 
 - **阶段 A · 补契约（最小刀）**：① 回填交付清单 14 项生产取证（数据见 §2.3，可直接引用）；② 任务快照 item 增稳定 `id` 字段 + `applyIncremental` fold（总纲 §5 早已预留的 C1-B 升级点，保持全量快照 SSOT 与事件格式不变面）；③ `propose_plan` 摘要增 `assumptions[]`（声明式假设结构化落点）。**门禁**：全量快照不变面测试全绿 + 生产零行为变更复测（沿用注释类刀取证纪律，不用 chunk hash 当锚点）+ 合并窗口单独授权。
 - **阶段 B · 吃满上游 + C4 决策门**：① 移植 `setActiveTools` 只读切换；② `EntryProjector` + `appendCustomEntry` 承载任务契约注入；③ `promptSnippet`/`promptGuidelines` 下沉工具引导；④ C4 先定位产物断层根因，单 PR 上线 + 生产复测，按真实调用量决定是否触发总纲 §5 条件①（沿用 SP-E「条件触发、不硬锁窗口」纪律）。**门禁**：C4 断层根因定位报告 + 生产端点行为断言；C1-B 立项按总纲 §5 字面判定。
+
+  > **2026-11-11 可达性修正刀（B-4 收口后的最小代码刀）**：上条复核纠偏归因「零点名」为表层症状，后续调查钉死结构根因——`spawn_subagent` 落在 tiering **延迟集**（`ALWAYS_ON_TOOL_NAMES` 不含它，生产 `PI_RUNTIME_TOOL_TIERING=true`），模型拿不到 schema，发现通道只剩 `tool_search`（无动机触发率 0），属 C4 与 tiering 两刀间的规范-实现漂移（C4 spec 对 tiering 零提及、守卫 A1 对「零点名+延迟」组合恒绿）。修复 = 提回常驻（`get_canvas_summary`/分组三工具先例：description 承担发现能力 + 唯一入口性），设计见 `2026-11-11-subagent-tier-promotion-design.md`；prompt 点名路径仍封锁（L6 余量 25 字符且点名不解决 schema 可达性）。
 - **阶段 C · 质量闭环 + upmerge 预研**：① 按 Anthropic trial/transcript/outcome 建 30–50 条 canvas 场景 eval，判据锚定画布终态（节点存在 / 参数已设 / 生成记录存在），**只观测与门禁、不自动 replan**；② 任务项增可选 `acceptance` / `dependsOn`（依赖稳定 id），`after_tool` 收尾校验，仅在确定性 oracle 子域启用；③ HookMap 依赖面收敛到 `scripts/verify-tool-contract.ts` 可机检范围 + 1.0.0/`pi-durable` 迁移映射预研。**门禁**：eval 基线建档 + upmerge 评审。
 
 ### 5.3 No-Go 清单（明确不做）
