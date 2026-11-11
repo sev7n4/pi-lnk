@@ -407,8 +407,45 @@ model AgentThread {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   messages  AgentMessage[]
+  /**
+   * P1a PR-B（spec 2026-11-11-sse-event-firstclass-p1a §2.1）：事件一等化 append-only
+   * 账本（owner 唯一写者 = streamFromPiRuntime.pushTraceEvent 派生漏斗）。
+   * 线程删除级联清理（与 messages 同策略）。
+   */
+  events    AgentEvent[]
 
   @@index([sessionId, updatedAt(sort: Desc)])
+}
+
+/**
+ * SSE 事件一等化 P1a PR-B：append-only 事件账本（additive，零破坏）。
+ *
+ * - `gSeq` 与 pi-runtime 会话内单调 seq（即 /runs/events 的 SSE `id:`）**同源同值**
+ *   ——不新增第三套 seq（母计划红线）；前端游标跨通道通用。
+ * - `sSeq` 子序号（run 内单调）：同一 pi 事件可派生多个 UiEvent（如 tool_execution_end
+ *   → canvas_command + canvas_action + activity），共享同一 gSeq ⇒ 唯一键必须含子序号
+ *   才能全量落账（PR-A 帧契约后 UiEvent 均带 ts，本表 data 与 SSE 帧同构）。
+ * - 合成事件（无 pi seq）不落本表：不可游标寻址，展示快照仍以 executionEvents 为权威
+ *   （P1b 才换读）。
+ * - SQLite 唯一索引下 NULL 互不冲突，但本表写入侧已过滤 gSeq undefined ⇒ 键恒可寻址。
+ * - 幂等：同 (threadId, gSeq, sSeq) 重放（SSE 重跑/重投）冲突即覆盖。
+ */
+model AgentEvent {
+  id        String   @id @default(cuid())
+  threadId  String
+  thread    AgentThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  gSeq      Int
+  sSeq      Int
+  /** 回合身份（pi-runtime operationId，随 run_start 透传；未携带时 NULL）。 */
+  runId     String?
+  type      String
+  ts        DateTime
+  /** JSON 字符串：UiEvent.data（与 SSE 帧同构，消费端无需二次投影）。 */
+  data      String
+  createdAt DateTime @default(now())
+
+  @@unique([threadId, gSeq, sSeq])
+  @@index([threadId, gSeq])
 }
 
 model AgentMessage {
