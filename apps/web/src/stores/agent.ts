@@ -64,12 +64,19 @@ export interface AgentStreamMessage {
    */
   entryId?: string
   /**
-   * D5（P3）：排队中标记（历史面）。数据源=server getMessages **读时派生**后的
-   * queued（无更晚 assistant 行才为 true）⇒ 可直接渲染徽标；实时清除走
-   * consumeQueued（turn_ack{messageId}）。本地直发气泡不入此状态（实时反馈由
-   * turnRefusal callout 承载），刷新后由历史行恢复。
+   * D5（P3）：排队中标记（历史面）。数据源=server getMessages：2026-11-11 起
+   * **权威终态优先**（consumedAt/reconciled 驱动，服务端已消费即 queued=false），
+   * 读时派生降级为 consumedAt==NULL 行的 legacy fallback（服务端完成派生后再透传）
+   * ⇒ 可直接渲染徽标；实时清除走 consumeQueued（turn_ack{messageId}）与
+   * markMessageUtteranceConsumed（user_utterance_consumed{entryId}）。本地直发气泡
+   * 不入此状态（实时反馈由 turnRefusal callout 承载），刷新后由历史行恢复。
    */
   queued?: boolean
+  /**
+   * 2026-11-11 滞留终态（历史面 + user_utterance_stuck 实时）：queued=true 且
+   * reconciled=true ⇒ 徽标显「未接住」（绝不因「有后续回答」而误显已发送）。
+   */
+  reconciled?: boolean
   streaming?: boolean
   textReplaceHistory?: string[]
   executionTrace?: ExecutionTraceState
@@ -120,6 +127,13 @@ export interface AgentStreamMessage {
 export type PersistedAgentMessage = Omit<AgentChatMessage, 'metadata' | 'linkedOutputs'> & {
   linkedOutputs?: string | null
   metadata?: string | null
+  /**
+   * 2026-11-11 消费终态透出：对账判定滞留（queued=true && consumedAt=NULL 时显「未接住」）。
+   * 服务端 JSON 透传，shared 声明未跟上 ⇒ 在此放宽（运行时事实更宽，见上方注释）。
+   */
+  reconciled?: boolean
+  /** 「已接住」权威时刻（ISO）。queued=false 时它即翻转依据；前端不直接消费。 */
+  consumedAt?: string | null
 }
 
 /**
@@ -312,6 +326,8 @@ export const useAgentStore = defineStore('agent', () => {
       attachments?: SidebarAttachment[]
       attachmentRefKeys?: string[]
       selectionNodeIds?: string[]
+      /** 2026-11-11：user_utterance_queued 插入的插话气泡带排队标记（消费后翻 false）。 */
+      queued?: boolean
     },
   ) {
     let at = messages.value.length
@@ -327,6 +343,7 @@ export const useAgentStore = defineStore('agent', () => {
       role: 'user',
       content,
       ...(extras?.entryId ? { entryId: extras.entryId } : {}),
+      ...(extras?.queued ? { queued: true } : {}),
       ...(extras?.attachments?.length
         ? { attachments: extras.attachments.map((attachment) => ({ ...attachment })) }
         : {}),
@@ -1020,9 +1037,11 @@ export const useAgentStore = defineStore('agent', () => {
       role: persisted.role as 'user' | 'assistant',
       content: persisted.content,
       createdAt: persisted.createdAt,
-      // D5（P3）：queued 透传（读时派生值）。role 门：徽标只对 user 行有意义，
-      // assistant 行归一 false（DB 列异常也不渲染徽标）。
+      // D5（P3）：queued 透传（服务端权威终态优先 + legacy 派生兜底，2026-11-11 起
+      // 派生在服务端完成）。role 门：徽标只对 user 行有意义，assistant 行归一 false
+      // （DB 列异常也不渲染徽标）。
       queued: persisted.role === 'user' && persisted.queued === true,
+      reconciled: persisted.role === 'user' && persisted.reconciled === true,
       attachments: parseAttachments(persisted.attachments),
       linkedOutputs: parseLinkedOutputs(persisted.linkedOutputs),
       canvasActions: parsePersistedToolCalls(persisted.toolCalls),
@@ -1042,6 +1061,30 @@ export const useAgentStore = defineStore('agent', () => {
     if (idx < 0 || !messages.value[idx]?.queued) return
     const next = [...messages.value]
     next[idx] = { ...next[idx], queued: false }
+    messages.value = next
+  }
+
+  /**
+   * 2026-11-11：`user_utterance_consumed{entryId}` 的实时翻转（「已接住」终态）。
+   * 未知 entryId 幂等 no-op（409 隐式插话的本地气泡无 entryId，本就不持 queued 标记
+   * ⇒ 天然 no-op；其行面终态由刷新后的历史权威值承载）。幂等：已翻 false 再到不重排。
+   */
+  function markMessageUtteranceConsumed(entryId: string): void {
+    if (!entryId) return
+    const idx = messages.value.findIndex((m) => m.entryId === entryId)
+    if (idx < 0 || !messages.value[idx]?.queued) return
+    const next = [...messages.value]
+    next[idx] = { ...next[idx], queued: false }
+    messages.value = next
+  }
+
+  /** 2026-11-11：`user_utterance_stuck{entryId}` 的滞留终态标记（徽标改显「未接住」）。 */
+  function markMessageUtteranceStuck(entryId: string): void {
+    if (!entryId) return
+    const idx = messages.value.findIndex((m) => m.entryId === entryId)
+    if (idx < 0) return
+    const next = [...messages.value]
+    next[idx] = { ...next[idx], reconciled: true }
     messages.value = next
   }
 
@@ -1135,6 +1178,8 @@ export const useAgentStore = defineStore('agent', () => {
     turnRefusal,
     setTurnRefusal,
     consumeQueued,
+    markMessageUtteranceConsumed,
+    markMessageUtteranceStuck,
     setRecovering,
     addUserMessage,
     insertUserMessageBeforeAssistant,

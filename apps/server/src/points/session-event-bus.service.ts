@@ -52,6 +52,30 @@ export type TurnAckListener = (ev: TurnAckBusEvent) => void
 export type TurnNotSubmittedListener = (ev: TurnNotSubmittedBusEvent) => void
 
 /**
+ * user_utterance 总线事件（2026-11-11 插话气泡实时化 + 消费终态，规格
+ * `docs/superpowers/specs/2026-11-11-queue-user-bubble-context-verify-design.md`）：
+ * 「用户发言已提交 / 已被模型接住 / 滞留未接住」三类**用户发言领域事件**。
+ *
+ * 与 vendor `queue_update` 的边界（`session-manager.ts` 刻意不派发进 SSE 的原意仍成立）：
+ * queue_update 是内部积压记账，本事件是 Nest 侧对话流领域事件（与 message_* 同级），
+ * 走 Nest 总线而非 lane buffer ⇒ `services/pi-runtime/**` 零改动、合成帧无 pi seq
+ * ⇒ controller 不写 `id:` 行，Last-Event-ID 不指向它们；晚加入者的终态由 DB
+ * 权威源（AgentMessage.queued/consumedAt/reconciled，历史 GET）兜底，不靠事件重放。
+ */
+export type UserUtteranceBusEvent = {
+  /** 路由键：threadId?.trim() || sessionId（与 runEventStream 订阅键同口径）。 */
+  sessionId?: string
+  threadId: string
+  entryId: string
+  kind: 'queued' | 'consumed' | 'stuck'
+  /** 仅 queued 携带：落库原文（非拼过 QUEUE_MARK/[In=…] 的机器载荷）。 */
+  content?: string
+  ts: string
+}
+
+export type UserUtteranceListener = (ev: UserUtteranceBusEvent) => void
+
+/**
  * 迟到订阅回放窗口（2026-11-04 结算实时性根治，机制 A 防御）：
  * 仅回放保留时刻距今不超过该窗口的最近一笔 turn_settled。
  *
@@ -86,6 +110,8 @@ export class SessionEventBus {
   private readonly turnSettledEmitters = new Map<string, EventEmitter>()
   /** turn_ack 与 turn_not_submitted 共用注册表（两者同源于 streamConversation 的裁定块）。 */
   private readonly turnAckEmitters = new Map<string, EventEmitter>()
+  /** user_utterance 三类用户发言领域事件共用注册表（2026-11-11，见 UserUtteranceBusEvent）。 */
+  private readonly userUtteranceEmitters = new Map<string, EventEmitter>()
 
   /**
    * 迟到订阅回放（2026-11-04 结算实时性根治，机制 A 防御）：按会话保留最近一笔
@@ -179,11 +205,27 @@ export class SessionEventBus {
     return this.subscribe(this.turnAckEmitters, sessionId, 'turn_not_submitted', fn)
   }
 
+  /**
+   * steerPiRun/followUpPiRun/noteUtteranceConsumed/对账在事件成立时调用；
+   * 无路由键静默丢弃。⭐ 刻意**无迟到回放**（与 turn_ack 同理由）：queued 晚回放会让
+   * 重挂端插出与历史 hydration 重复的气泡（entryId 幂等虽可拦，但双通道竞态下
+   * 「先历史后回放」的插入落点不可控）；consumed/stuck 的权威源是 DB。
+   */
+  emitUserUtterance(ev: UserUtteranceBusEvent): void {
+    if (!ev.sessionId) return
+    this.userUtteranceEmitters.get(ev.sessionId)?.emit('user_utterance', ev)
+  }
+
+  /** runEventStream 订阅本会话的用户发言领域事件；结束时退订。无回放（见 emit 侧注释）。 */
+  subscribeSessionUserUtterance(sessionId: string, fn: UserUtteranceListener): () => void {
+    return this.subscribe(this.userUtteranceEmitters, sessionId, 'user_utterance', fn)
+  }
+
   private subscribe(
     registry: Map<string, EventEmitter>,
     key: string,
-    event: 'credit_tx' | 'turn_settled' | 'turn_ack' | 'turn_not_submitted',
-    fn: CreditTxListener | TurnSettledListener | TurnAckListener | TurnNotSubmittedListener,
+    event: 'credit_tx' | 'turn_settled' | 'turn_ack' | 'turn_not_submitted' | 'user_utterance',
+    fn: CreditTxListener | TurnSettledListener | TurnAckListener | TurnNotSubmittedListener | UserUtteranceListener,
   ): () => void {
     let emitter = registry.get(key)
     if (!emitter) {
