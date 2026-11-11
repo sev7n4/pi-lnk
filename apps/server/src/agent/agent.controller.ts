@@ -280,6 +280,42 @@ export class AgentController {
     return { code: 0, message: 'ok', data: result.page, hasMore: result.hasMore, nextCursor: result.nextCursor }
   }
 
+  // ── P1a PR-B（事件一等化，spec 2026-11-11-sse-event-firstclass-p1a §2.3）：双只读 API ──
+  // 前端 reconcile 自愈的 durable 兜底：SSE buffer 溢出/进程重启后，按 gSeq 游标从
+  // AgentEvent 账本收敛（账本空 ⇒ lastGSeq null，前端回落 DB 快照，向后兼容）。
+  // 属主校验在 service（403 不区分 404，防线程存在性探测）。
+
+  /** 线程状态摘要：status / lastGSeq / pendingInterruption（P2 预留位，恒 null）。 */
+  @Get('threads/:threadId/state')
+  @UseGuards(AuthGuard)
+  async getThreadResumeState(
+    @Param('threadId') threadId: string,
+    @Req() req: Request & { user: { sub: string } },
+  ) {
+    const data = await this.agentService.getThreadResumeState(threadId, req.user.sub)
+    return { code: 0, message: 'ok', data }
+  }
+
+  /** 事件账本游标读取：since=Last gSeq（严格大于）、limit≤500、nextCursor 权威输出。 */
+  @Get('threads/:threadId/events')
+  @UseGuards(AuthGuard)
+  async getThreadEvents(
+    @Param('threadId') threadId: string,
+    @Query('since') since: string | undefined,
+    @Query('limit') limit: string | undefined,
+    @Req() req: Request & { user: { sub: string } },
+  ) {
+    const sinceNum = Number(since)
+    const limitNum = Number(limit)
+    const data = await this.agentService.getThreadEvents(
+      threadId,
+      req.user.sub,
+      Number.isFinite(sinceNum) && sinceNum >= 0 ? Math.floor(sinceNum) : 0,
+      Number.isFinite(limitNum) && limitNum > 0 ? Math.floor(limitNum) : 500,
+    )
+    return { code: 0, message: 'ok', data }
+  }
+
   /** 前端心跳：探 pi-runtime 是否可达（老 agent-runtime 已退役）。 */
   @Get('runtime-health')
   async runtimeHealth() {

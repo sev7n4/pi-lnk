@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   HttpException,
   Inject,
   Injectable,
@@ -1476,7 +1477,7 @@ export class AgentService implements OnModuleInit {
    * 断流后对账：回答「这个会话此刻有没有活跃/已完结的回合」。verify-before-fail 的
    * 服务端真相源——断流 ≠ 失败，先查真再判失败（红车根因 2026-11-01 P0）。
    *
-   * ⭐ 真相源刻意**不用** `getThreadState`/`getThreadTimeline`——两者已随 LangGraph
+   * ⭐ 真相源刻意**不用** `getThreadResumeState`/`getThreadTimeline`——两者已随 LangGraph
    * 退役（恒返回 null）。改用双源裁决：
    *   ① IdempotencyRecord 近窗（threadId + 30min）：processing ⇒ active、completed ⇒ settled
    *   ② runEventStream 流探测（5s 超时）：立即续到增量 ⇒ active（终止事件 ⇒ settled）
@@ -1563,6 +1564,89 @@ export class AgentService implements OnModuleInit {
       return { outcome: sawAny ? 'active' : 'none', lastSeq }
     } finally {
       clearTimeout(timer)
+    }
+  }
+
+  // ── P1a PR-B（事件一等化，spec 2026-11-11-sse-event-firstclass-p1a §2.3）：双只读 API ──
+
+  /**
+   * 线程属主校验（PR-B 双 API 共用）：thread 不存在或非本人会话一律 403
+   * （不区分 404/403，避免线程存在性探测）。
+   */
+  private async assertThreadOwner(threadId: string, userId: string): Promise<void> {
+    const thread = await this.prisma.agentThread.findUnique({
+      where: { id: threadId },
+      select: { session: { select: { userId: true } } },
+    })
+    if (!thread || thread.session.userId !== userId) throw new ForbiddenException()
+  }
+
+  /**
+   * `GET /api/agent/threads/:threadId/state`：线程状态摘要（前端 reconcile 自愈入口）。
+   * ⚠️ 方法名刻意避开 `getThreadState`——那是 H1-c 退役的死端点，D20 契约测试
+   * （agent.service.pi-runtime.test.ts）钉死其必须保持不存在，撞名即假红。
+   * - status：复用 reconcileLatestAssistant 双源裁决（IdempotencyRecord 近窗 + 流探测），
+   *   active ⇒ in_progress，settled / missing ⇒ complete（missing = 无进行中证据，历史态）。
+   * - lastGSeq：AgentEvent 账本本线程最大 gSeq（账本空 ⇒ null，前端回落 DB 快照）。
+   * - pendingInterruption：P2（待确认门 durable）预留位，P1 恒 null。
+   */
+  async getThreadResumeState(
+    threadId: string,
+    userId: string,
+  ): Promise<{
+    status: 'in_progress' | 'complete'
+    lastGSeq: number | null
+    pendingInterruption: null
+  }> {
+    await this.assertThreadOwner(threadId, userId)
+    const reconciled = await this.reconcileLatestAssistant(threadId, 0)
+    const lastGSeq = await this.prisma.agentEvent
+      .aggregate({ where: { threadId }, _max: { gSeq: true } })
+      .then((r) => r._max.gSeq ?? null)
+      .catch(() => null)
+    return {
+      status: reconciled.outcome === 'active' ? 'in_progress' : 'complete',
+      lastGSeq,
+      pendingInterruption: null,
+    }
+  }
+
+  /**
+   * `GET /api/agent/threads/:threadId/events?since=<gSeq>&limit=<n>`：
+   * 事件账本游标读取（升序、nextCursor、超尾空数组非 404）。
+   * - 游标语义 = gSeq 严格大于 since（与 SSE Last-Event-ID 同语义）；
+   * - 同 gSeq 多事件（一个 pi 事件派生多个 UiEvent）按 sSeq 稳定排序，
+   *   since 过滤按整组进退（不会出现同组半截）；
+   * - nextCursor = 返回末条 gSeq（空数组时原样回传 since，前端无需推进）。
+   */
+  async getThreadEvents(
+    threadId: string,
+    userId: string,
+    since: number,
+    limit: number,
+  ): Promise<{
+    events: Array<{ gSeq: number; sSeq: number; runId: string | null; type: string; ts: string; data: unknown }>
+    nextCursor: number
+  }> {
+    await this.assertThreadOwner(threadId, userId)
+    const safeLimit = Math.min(Math.max(limit, 1), 500)
+    const rows = await this.prisma.agentEvent
+      .findMany({
+        where: { threadId, gSeq: { gt: since } },
+        orderBy: [{ gSeq: 'asc' }, { sSeq: 'asc' }],
+        take: safeLimit,
+      })
+      .catch(() => [])
+    return {
+      events: rows.map((r) => ({
+        gSeq: r.gSeq,
+        sSeq: r.sSeq,
+        runId: r.runId,
+        type: r.type,
+        ts: r.ts.toISOString(),
+        data: JSON.parse(r.data) as unknown,
+      })),
+      nextCursor: rows.length ? rows[rows.length - 1]!.gSeq : since,
     }
   }
 
@@ -2864,6 +2948,49 @@ export class AgentService implements OnModuleInit {
     // 每段事件提取逻辑里，而这些逻辑本身并不关心 seq。改成由事件循环在每轮开头赋值、
     // pushTraceEvent 只读 —— 单线程生成器内无并发写，语义是明确的「当前事件」。
     let currentPiEvent: PiRuntimeEvent | undefined
+    // ── P1a PR-B（事件一等化，spec 2026-11-11-sse-event-firstclass-p1a §2.2）：AgentEvent
+    // append-only 双写 ──。单一写者：streamConversation 是 flag on（drain 丢 yield）/ off
+    // （SSE 直收）双通道共用的唯一 owner，本漏斗是其派生副作用唯一出口；text_delta 经
+    // textPersister 段折叠、flush() 边界以完整 text 事件进漏斗 ⇒「不半条」天然成立（S3）。
+    // - 只落带 pi gSeq 的事件（与 /runs/events 的 SSE `id:` 同源同值，游标可寻址）；
+    //   合成事件（无 gSeq）不落本表——展示权威仍是 executionEvents 落库快照（P1b 才换读）。
+    // - 幂等：@@unique([threadId, gSeq, sSeq]) 冲突即覆盖（SSE 重放/重投同帧安全）。
+    // - 失败不阻断主链路（fail-open，warn 打稳定 tag 供 grep）：事件表是兜底真解，
+    //   写失败只损失「溢出后可恢复性」，绝不影响实时对话。
+    const appendAgentEvent = (ev: PersistedExecutionEvent): void => {
+      const gSeq = ev.gSeq
+      // ev.seq（run 内 traceSeq）由 pushTraceEvent 恒写数字；类型可选守卫一并收口
+      if (typeof gSeq !== 'number' || typeof ev.seq !== 'number') return
+      const threadKey = threadId ?? sessionId
+      const runId = currentPiEvent?.runId
+      const payload = {
+        threadId: threadKey,
+        gSeq,
+        sSeq: ev.seq,
+        runId: runId ?? null,
+        type: ev.type,
+        ts: new Date(ev.ts ?? Date.now()),
+        data: JSON.stringify(ev.data ?? null),
+      }
+      try {
+        void this.prisma.agentEvent
+          .upsert({
+            where: { threadId_gSeq_sSeq: { threadId: threadKey, gSeq, sSeq: ev.seq } },
+            create: payload,
+            update: { type: payload.type, ts: payload.ts, data: payload.data, runId: payload.runId },
+          })
+          .catch((err: unknown) => {
+            this.piLogger?.warn?.(
+              `agent_event_append_failed thread=${threadKey} gSeq=${gSeq} sSeq=${ev.seq} type=${ev.type}: ${String(err)}`,
+            )
+          })
+      } catch (err) {
+        // 同步异常（测试桩缺 agentEvent delegate / client 未含新模型）同样 fail-open
+        this.piLogger?.warn?.(
+          `agent_event_append_failed thread=${threadKey} gSeq=${gSeq} sSeq=${ev.seq} type=${ev.type}: ${String(err)}`,
+        )
+      }
+    }
     const pushTraceEvent = (type: string, data: unknown): PersistedExecutionEvent => {
       if (type !== 'text') textPersister.flush()
       traceSeq += 1
@@ -2878,6 +3005,8 @@ export class AgentService implements OnModuleInit {
         messageIndex: traceMessageIndex,
       }
       executionEvents.push(ev)
+      // P1a PR-B：事件账本即时 append（fire-and-forget，不阻塞流）
+      appendAgentEvent(ev)
       return ev
     }
     // 正文分段落库（2026-10-14）：任何非文本 trace 事件落库前先 flush，text 事件 seq
