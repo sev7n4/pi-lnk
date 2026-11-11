@@ -159,9 +159,20 @@ describe('GET runs/events 的 SSE 游标（multi-device Task 4）', () => {
     await ctrl.runEvents('s1', 's1:t1', undefined, req, res as never)
 
     expect(
-      res.chunks[0],
-      '订阅建立即写就绪帧：浏览器拿到响应头才算「连上了」，否则整段静默期都处于未连接状态',
+      res.chunks[1],
+      '订阅建立即写就绪帧：浏览器拿到响应头才算「连上了」，否则整段静默期都处于未连接状态（P1a 起 retry 帧在前，就绪帧紧随其后）',
     ).toBe(': observer-ready\n\n')
+  })
+
+  it('P1a：retry: 3000 帧先于就绪帧（浏览器建立期即拿到断线重连间隔，WHATWG 9.2）——变异点：删掉 retry 帧', async () => {
+    const runEventStream = vi.fn(async function* () {})
+    const ctrl = makeController(runEventStream)
+    const res = makeFakeRes()
+
+    await ctrl.runEvents('s1', 's1:t1', undefined, req, res as never)
+
+    expect(res.chunks[0], 'retry 行必须是订阅建立期的第一帧').toBe('retry: 3000\n\n')
+    expect(res.chunks[1], 'retry 之后紧随就绪帧（顺序不可颠倒）').toBe(': observer-ready\n\n')
   })
 
   it('必须发 X-Accel-Buffering: no（nginx 默认缓冲会把 34 字节心跳憋死）——变异点：删掉该头', async () => {
