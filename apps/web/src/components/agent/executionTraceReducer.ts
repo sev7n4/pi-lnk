@@ -27,6 +27,13 @@ export type ExecutionStepStatus =
   | 'failed'
   | 'waiting_user'
   | 'skipped'
+  /**
+   * D1（2026-11-11 生产事故 cmwbvfp4p000qrk01pch77w13）：回合流自然耗尽但没有
+   * 权威收束 ⇒ 工具调用「没回来」，不是「成功」。与 done/failed 平级，专门用来阻止
+   * `finalizeExecutionTrace` 的 running→done 兜底把未交付的工具画成 ✓。
+   * 与 `turnTimeline.ts` 的 `TimelinePart.tool.status === 'interrupted'` 同语义。
+   */
+  | 'interrupted'
 
 export type ExecutionStepKind =
   | 'phase'
@@ -472,11 +479,32 @@ export function applyTaskUpdate(
   }
 }
 
+/**
+ * D1（2026-11-11）：`turn_interrupted` 落库事件的执行轨迹侧写入口。
+ *
+ * 与 `turnTimeline.ts` 的 `applyTimelineEvent('turn_interrupted')` 同款窄改：只把
+ * `running` 的 **tool** 步翻成 `interrupted`。不写 `endedAt` / `ms` —— 中断没有
+ * 「完成耗时」，若沿用 completeStep 会算出 0ms，复刻事故里「✓ 用时 0ms」的二次说谎；
+ * `stepDuration` 见 `ms == null` 直接返回空串。
+ *
+ * 实时路径由 `stores/agent.feedTimeline` 在喂时间线的同一漏斗调用；刷新重放由
+ * `replayExecutionTraceEvents` 的 `turn_interrupted` case 调用 —— 两路与 timeline 一一对应。
+ */
+export function applyTurnInterrupted(trace: ExecutionTraceState): void {
+  for (const step of trace.steps) {
+    if (step.kind === 'tool' && step.status === 'running') {
+      step.status = 'interrupted'
+    }
+  }
+}
+
 export function finalizeExecutionTrace(trace: ExecutionTraceState) {
   const now = Date.now()
   trace.turnEndedAt = now
   trace.totalMs = now - trace.turnStartedAt
   for (const step of trace.steps) {
+    // D1：循环体**只认 running**。`interrupted` 是已由 turn_interrupted 事件显式判定
+    // 的终态，绝不能在这里被兜底翻回 done ⇒ 否则 trace 视图继续显示「✓ 完成」。
     if (step.status === 'running') {
       completeStep(step)
     }
@@ -693,6 +721,11 @@ export function replayExecutionTraceEvents(
       case 'turn_settled':
         // P2 T7：结算明细随既有 executionEvents 重放通道还原（覆盖写入，幂等）。
         applyTurnSettled(trace, event.data as Parameters<typeof applyTurnSettled>[1])
+        break
+      case 'turn_interrupted':
+        // D1：落库事件随 executionEvents 重放。必须先于末尾 finalizeExecutionTrace，
+        // 否则 running 工具步会被兜底翻 done ⇒ 刷新后又看见「✓ 用时 0ms」。
+        applyTurnInterrupted(trace)
         break
       case 'explore':
         applyExplore(trace, event.data as Parameters<typeof applyExplore>[1])

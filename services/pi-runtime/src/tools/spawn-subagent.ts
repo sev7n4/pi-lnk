@@ -64,6 +64,15 @@ export function createSpawnSubagentTool(coordinator: SubagentCoordinator, metric
 		}
 		metrics.observeSubagentSpawned();
 		const outcome = await attempt.promise;
+		// C4 outcome 埋点（2026-11-11 D1）：补齐正常 4 态的结算样本，让
+		// ∑outcome 与 spawned 的差值在**单进程生命周期内**可判「派出去的那个回来没」。
+		//
+		// ⚠️ 诚实边界，不得据此宣称事故已闭环：本次生产事故是 pi-runtime pod 在
+		// tool_call 发出 0.4s 后被滚动更新替换 —— 进程连同父子 run 与这条内存 promise
+		// 一起蒸发，本行**永远执行不到**；且 counter 是进程内内存，pod 重启即归零。
+		// 中断归因由 Nest 侧落库的 AgentEvent 账本（turn_interrupted）承担；
+		// 真正的跨进程闭环要等 D2 子任务单据，不是这行埋点。
+		metrics.observeSubagentOutcome(outcome.status);
 		// 截断唯一属主 = runSubagent（已 slice 到 SUBAGENT_REPORT_MAX_CHARS），此处不再二次截
 		const report = outcome.report;
 			if (outcome.status === "completed") {

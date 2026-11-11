@@ -709,6 +709,13 @@ const runCancelled = ref(false)
  * run_cancelled / 旁听流 turn_end 收口。
  */
 const mainTurnSuspended = ref(false)
+/**
+ * D1（2026-11-11 生产事故）：收到 `turn_interrupted` 的回合是「上游流耗尽但无权威
+ * 收束」，不是「空回合」。中断呈现由时间线的 interrupted 工具卡 + notice 单一承载，
+ * finally 的「本轮无文本回复」兜底必须豁免，否则在 notice 下方再补一行误导文案。
+ * 与 mainTurnSuspended 平级但互不置位：挂起是「run 仍活着等用户」，中断是「本轮已结束」。
+ */
+const mainTurnInterrupted = ref(false)
 const threadRunState = ref<{ phase?: string | null; runCancelled?: boolean | null } | null>(null)
 const cancelledPresentation = ref<AgentPresentationEnvelope | null>(null)
 /** Progress line built from the cancel API response, before the checkpoint refresh lands. */
@@ -1655,6 +1662,17 @@ async function createOwnCanvas() {
 }
 
 /**
+ * D1（2026-11-11）：中断 notice 的重试入口。复用既有 `sendMessage(..., isRetry=true)`
+ * 续跑语义（不重复落 user 消息、不新造消息链路）；取最后一条用户原话，找不到就静默
+ * 返回，绝不凭空编造一条 prompt。
+ */
+function onRetryTurn() {
+  const lastUser = [...agent.messages].reverse().find((m) => m.role === 'user')
+  if (!lastUser?.content) return
+  void sendMessage(lastUser.content, undefined, true)
+}
+
+/**
  * @param branchFromEntryId ③ 重跑：pi 会话内目标消息的 entryId。提供时后端先 fork 出
  *   「截断到该消息之前」的新分支线程，再在新线程上跑本轮（真正的后端线程截断）。
  */
@@ -1747,6 +1765,7 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
   dockNotice.dismiss(REQUEST_FAILED_ID)
   runCancelled.value = false
   mainTurnSuspended.value = false
+  mainTurnInterrupted.value = false
   threadRunState.value = null
   cancelledPresentation.value = null
   cancelledProgressText.value = null
@@ -1949,6 +1968,8 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
     if (
       !runCancelled.value &&
       !mainTurnSuspended.value &&
+      // D1：中断回合已有 notice 说明「未收到完成确认」，不能再补「无文本回复」误导文案
+      !mainTurnInterrupted.value &&
       !agent.turnRefusal &&
       last?.role === 'assistant' &&
       !last.content.trim()
@@ -2545,6 +2566,14 @@ function handleEvent(event: { type: string; data: unknown }) {
       // 单一真相承载，钉底时间线存活期 = 回合进行中基座 isStreaming ∪ mainTurnSuspended。
       // 等待解除后续跑事件经旁听流（followUp tail）续传，turn_end 收口时复位。
       mainTurnSuspended.value = true
+      break
+    }
+    case 'turn_interrupted': {
+      // D1（2026-11-11）：上游流耗尽且无权威收束。中断态由时间线的 interrupted
+      // 工具卡 + notice 单一承载，刷新/重连后由落库事件重放还原。本 case 只喂时间线：
+      // 断链安抚文案属于 catch 分支，不在此叠加；也不置挂起态（本轮已收尾）。
+      mainTurnInterrupted.value = true
+      agent.feedTimeline(event as Parameters<typeof agent.feedTimeline>[0])
       break
     }
     case 'explore':
@@ -3400,6 +3429,7 @@ defineExpose({
                   :canvas-nodes="canvasNodes"
                   :digest-entry="digestEntryForTurn(sessionDigestEntry, msg.id === lastTimelineAssistantId)"
                   @retry-node="emit('generateNode', $event)"
+                  @retry-turn="onRetryTurn"
                   @focus-node="onFocusNode($event)"
                   @confirm-proposal="onInlineConfirmProposal($event)"
                   @cancel-proposal="onInlineCancelProposal($event)"

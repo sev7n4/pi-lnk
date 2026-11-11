@@ -91,6 +91,30 @@ describe('内容不丢', () => {
 		expect(h).not.toContain('secret')
 	})
 
+	// D1（2026-11-11 生产事故）：turn_interrupted 的 tool 在分享页不得复刻
+	// 「✓ 用时 0ms」式二次说谎——既不能标完成/失败，也不能编造完成耗时。
+	it('★ D1 回归锁：interrupted tool 明确标「未收到结果」，禁止 ✓/✗ 与耗时', () => {
+		const h = buildShareHtml([parts([
+			{
+				type: 'tool', name: 'spawn_subagent', status: 'interrupted',
+				ms: 0, result: undefined, args: { task: '调研 X' },
+			},
+		])])
+		expect(h).toContain('⏹ 未收到结果')
+		expect(h).not.toContain('✓ 完成')
+		expect(h).not.toContain('✗ 失败')
+		expect(h).not.toContain('0ms')
+		expect(h).not.toContain('调研 X')
+	})
+
+	it('★ D1 回归锁：正常 done tool 仍保留 ✓ 与真实耗时（不被 interrupted 分支吞掉）', () => {
+		const h = buildShareHtml([parts([
+			{ type: 'tool', name: 'search', status: 'done', ms: 17000, result: '命中 3 条' },
+		])])
+		expect(h).toContain('✓ 完成 · 17000ms')
+		expect(h).toContain('命中 3 条')
+	})
+
 	it('artifact / audio / file / canvas 各有卡片，不伪装成破图', () => {
 		const h = buildShareHtml([parts([
 			{ type: 'artifact', nodeType: 'text', title: '文案稿', status: 'failed', errorText: '余额不足' },

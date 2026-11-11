@@ -36,6 +36,12 @@ import { buildSidebarBlock, buildImageRecoveryHint, buildImageInjectedNotice } f
 import { decodeCursor, paginateVisibleRows } from './messages-cursor'
 import { runWithMessageSeq } from './agent-message-seq'
 import { normalizeIntent } from './intent-dedup'
+// D1（2026-11-11）：回合终态单一判据。SSE 下发 / 计费 / 落库同源消费。
+import {
+  classifyTurnEnd, deriveSignalsFromStream, outstandingToolCallIds,
+  shouldEmitInterrupted, shouldReleaseHold,
+  type TurnEndKind, type TurnEndSignals,
+} from './turn-end'
 import { MaterialService } from '../canvas/material.service'
 import {
   SessionEventBus,
@@ -3168,6 +3174,13 @@ export class AgentService implements OnModuleInit {
     // 原声明位置在首个流外 yield（selection_binding）之后；消费方在该 yield 处
     // abort 时 finally 会引用它们 → TDZ ReferenceError。上移后 finally 全程可用。
     const executionEvents: PersistedExecutionEvent[] = []
+    // D1（2026-11-11）：回合终态判据的**全量事实视图**，只存内存、不落库。
+    // P1c 写面分流后 executionEvents 是「最小兼容集」（tool_call / tool_result /
+    // turn_usage 等带 gSeq 的事件只进 AgentEvent 账本），而「是否有未配对工具 /
+    // 是否零 usage」是**完成判定**的事实，不能依赖被裁剪过的持久化数组，更不能
+    // 反过来依赖 fire-and-forget 账本的读回。故在漏斗处同步留一份全量投影，
+    // 专供 classifyTurnEnd / outstandingToolCallIds 求值（判定与持久化解耦）。
+    const turnFactEvents: PersistedExecutionEvent[] = []
     // P2-3：落库事件显式带 seq/ts/messageIndex（数组下标即序，seq 冗余但抗裁剪；
     // messageIndex 以 message_end 分段，供时间线还原「多段叙述各自成块」的块归属）。
     let traceSeq = 0
@@ -3246,10 +3259,17 @@ export class AgentService implements OnModuleInit {
       // 其余（text/tool_call/tool_result/thinking/canvas/task_list/turn_usage/plan_proposed…）
       // 带全量 gSeq 且账本全量在 ⇒ metadata 不再双写（债主体，生产实测 max 530KB/行）。
       // 返回值不变：调用点 pushTraceEvent(...).data / const settledData = … 依赖。
+      // D1：判据只读这份全量内存投影，与下面「是否落 metadata」的裁剪决策无关。
+      turnFactEvents.push(ev)
       if (
         typeof ev.gSeq !== 'number' ||
         ev.type === 'waiting_user' ||
-        ev.type === 'turn_settled'
+        ev.type === 'turn_settled' ||
+        // D1（与 turn_settled 同理由）：turn_interrupted 是**权威终态帧**，前端刷新 /
+        // 断连重放直接消费它把 running 工具翻成 interrupted。它若只进 fire-and-forget
+        // 账本，读时 enrichment 又要求 eventsShrunk=true 且 runId 非空，任一环缺失
+        // 就会丢帧 ⇒ 刷新后复现「✓ 用时 0ms」。故必须无条件留在 metadata 保留集。
+        ev.type === 'turn_interrupted'
       ) {
         executionEvents.push(ev)
       }
@@ -3593,6 +3613,11 @@ export class AgentService implements OnModuleInit {
     // `turnSettled` 保证整轮只落库一次（断连与正常路径互斥）。
     let loopCompletedNaturally = false
     let turnSettled = false
+    // D1（2026-11-11）：回合终态**只判一次**，SSE 下发 / 计费 / 落库共用。
+    // ⚠️ 声明在 try 之前：结算块位于 try/finally 之后，届时 executionEvents 已被
+    // 结算帧改变，若重复 derive 会算出不同结论（口径漂移）。
+    let turnEndSignals: TurnEndSignals | null = null
+    let turnEndKind: TurnEndKind = 'detached'
     try {
       await client.prompt(sessionKey, promptTextWithMarkers, "main", {
         forceSkills,
@@ -4058,6 +4083,38 @@ export class AgentService implements OnModuleInit {
         // 单段 cast 报 TS2352；CI 一致 checkout 下等价。
         yield { type: 'turn_suspended', data: {} } as unknown as AgentStreamEvent
       }
+      // ── D1（2026-11-11 生产事故）：上游流耗尽且无权威收束 ⇒ 显式中断 ──
+      // 事故形态：pi-runtime pod 在 spawn_subagent tool_call 发出 0.4s 后被滚动更新
+      // 替换，父子 run 与工具 promise 一起蒸发；Nest 侧把「事件流自然耗尽」当成
+      // 正常收尾，扣 1 积分 + 补 [DONE] ⇒ 用户看到「✓ 0ms」却没有任何结果。
+      // 能走到这里 = 循环自然退出（断连时 generator.return 在 yield 处回收，本段
+      // 不可达）⇒ loopCompletedNaturally 显式传 true。
+      turnEndSignals = deriveSignalsFromStream({
+        sawTerminalEvent,
+        runFailed,
+        sawWaitingUser,
+        loopCompletedNaturally: true,
+        turnRole,
+        promptAccepted,
+        // D1：全量事实视图，不是 P1c 分流后的 metadata 保留集（见声明处注释）。
+        executionEvents: turnFactEvents,
+      })
+      turnEndKind = classifyTurnEnd(turnEndSignals)
+      if (shouldEmitInterrupted(turnEndKind)) {
+        const unresolved = outstandingToolCallIds(turnFactEvents)
+        const interruptedData = {
+          reason: 'no_terminal_event' as const,
+          ...(turnRunId !== undefined ? { runId: turnRunId } : {}),
+          ...(currentPiEvent?.seq !== undefined ? { lastSeq: currentPiEvent.seq } : {}),
+          outstandingToolCallIds: unresolved,
+        }
+        // ⚠️ 必须走 pushTraceEvent：合成事件不在主循环那条「tool_call/tool_result/
+        // node_status/waiting_user」提取 if 内；TRACE_PERSIST_EVENT_TYPES 在 0.99.2
+        // 是死代码（全仓零引用），加它无效。pushTraceEvent 内部 appendAgentEvent
+        // 自动进 #840 AgentEvent 账本 ⇒ 刷新 / 断连续传可还原中断态。
+        const interruptedEvent = pushTraceEvent('turn_interrupted', interruptedData)
+        yield { type: interruptedEvent.type, data: interruptedEvent.data } as unknown as AgentStreamEvent
+      }
       // D2（Task 2）：只有 while 循环**自然**退出才置 true。消费方断连触发
       // `generator.return()` 时，generator 在 `yield` 处被回收，本语句不可达 ⇒
       // loopCompletedNaturally 保持 false，由下方 finally 接管落库。
@@ -4205,7 +4262,27 @@ export class AgentService implements OnModuleInit {
         outputTokens?: number
         cost?: number
       }
-      if (runFailed) {
+      if (turnEndSignals && shouldReleaseHold(turnEndSignals, turnEndKind)) {
+        // D1：零 usage + 有未配对 tool_call = 真的什么都没交付 ⇒ 未交付不收费。
+        // 复用 runFailed 分支的 release 样板；不碰 Math.max(1, ceil(quote.credits))
+        // （它服务于「有 usage 但 quote 归零」的正常回合，改动会扩大回归面）。
+        // ⚠️ 窄判据：全库 82 条 truncated 混着「Nest 提前收尾、pi 侧继续跑完并经
+        // followUp tail 续传」的正常长回合，一律 release 会误伤。
+        try {
+          await this.points.release(billingHold.id, '回合未收到完成确认，零交付不扣费')
+          holdOpen = false
+        } catch (err) {
+          this.piLogger.warn(
+            `turn hold release failed (hold=${billingHold.id}): ${err instanceof Error ? err.message : String(err)}`,
+          )
+        }
+        const settledData = pushTraceEvent('turn_settled', {
+          holdId: billingHold.id,
+          released: true,
+        }).data
+        emitSettled(settledData as TurnSettledBusEvent)
+        yield { type: 'turn_settled', data: settledData } as AgentStreamEvent
+      } else if (runFailed) {
         // error 路径：release 全退 + turn_settled {released: true}（键不出现纪律）
         try {
           await this.points.release(billingHold.id, '对话回合异常全退')

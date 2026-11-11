@@ -66,14 +66,16 @@ export type ShareTurnPart =
 	| { type: 'text'; text: string }
 	/** 思考过程：原生 `<details>`，done 收起 / running 展开（产品同款默认态）。 */
 	| { type: 'thinking'; text: string; done: boolean }
-	/** 工具调用：`status` / `ms` 用于 ✓✗ 与耗时标记；`result` 为产品同款摘要。 */
+	/** 工具调用：`status` / `ms` 用于 ✓✗⏹ 与耗时标记；`result` 为产品同款摘要。
+	 *  `interrupted`（D1 2026-11-11）= 上游流耗尽且无权威收束，与产品
+	 *  `TimelinePart.tool.status` 同字面量：既不是成功也不是失败，且无「完成耗时」。 */
 	| {
 			type: 'tool'
 			name: string
 			args?: unknown
 			result?: unknown
 			isError?: boolean
-			status?: 'running' | 'done' | 'failed'
+			status?: 'running' | 'done' | 'failed' | 'interrupted'
 			ms?: number
 	  }
 	/** 图片：`url` 为 `data:` URI（离线）或外链（托管）；`fallbackUrl` 用于占位卡的在线查看链接。 */
@@ -271,6 +273,8 @@ const STATUS_LABEL: Record<string, string> = {
 	running: '进行中',
 	done: '已完成',
 	failed: '失败',
+	/** D1：分享页状态徽标不把「没收到结果」误标成完成/失败。 */
+	interrupted: '未收到结果',
 }
 
 function statusBadge(status: string): string {
@@ -294,8 +298,13 @@ function renderPart(p: ShareTurnPart, offline: boolean): string {
 		case 'thinking':
 			return `<details class="step"${p.done ? '' : ' open'}><summary><span class="step__icon">${ICON.think}</span><span class="step__label">${p.done ? '思考' : '思考中'}</span><span class="step__chev">▾</span></summary><div class="step__body">${escapeHtml(collapseBlankRuns(p.text))}</div></details>`
 		case 'tool': {
-			const state = p.isError || p.status === 'failed' ? '✗ 失败' : p.status === 'running' ? '进行中' : p.status === 'done' ? '✓ 完成' : ''
-			const ms = typeof p.ms === 'number' ? `${Math.round(p.ms)}ms` : ''
+			// D1：interrupted 不能落进空 state（等于什么都没说），更不能复用 ✓/✗；
+			// 也不显示 ms —— 中断没有「完成耗时」，否则复刻「✓ 用时 0ms」二次说谎。
+			const interrupted = p.status === 'interrupted'
+			const state = interrupted
+				? '⏹ 未收到结果'
+				: p.isError || p.status === 'failed' ? '✗ 失败' : p.status === 'running' ? '进行中' : p.status === 'done' ? '✓ 完成' : ''
+			const ms = !interrupted && typeof p.ms === 'number' ? `${Math.round(p.ms)}ms` : ''
 			const body = p.result !== undefined
 				? `<div class="step__body">${escapeHtml(typeof p.result === 'string' ? p.result : JSON.stringify(p.result))}</div>`
 				: ''

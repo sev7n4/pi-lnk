@@ -111,6 +111,11 @@ export interface AgentStreamEvent {
     // （/runs/events followUp tail）续传。前端据此保持等待态呈现（等待条不随
     // isStreaming 熄灭）、不弹「连接已断开」断链文案——挂起 ≠ 断链。
     | 'turn_suspended'
+    // turn_interrupted（2026-11-11 生产事故 cmwbvfp4p000qrk01pch77w13）：主流自然耗尽
+    // 但从未收到 agent_end/error。⚠️ reason 只陈述可观测事实（no_terminal_event），
+    // 不臆断 pod 重启 / nginx 掐断 / 客户端断网。随 executionEvents 落库 ⇒ 刷新与
+    // 断连续传都能还原中断态。data: { reason, runId?, lastSeq?, outstandingToolCallIds? }。
+    | 'turn_interrupted'
     // Epic 1（2026-11-03-credit-consumption-display-design §5.1）：计费事务提交后统一下发的
     // 积分变动。在飞 SSE 流经 SessionEventBus 订阅注入（`streamFromPiRuntime` 主路径 +
     // `runEventStream` 旁听路径双订阅），前端据此实时累计本会话消耗并事件化刷新余额。
