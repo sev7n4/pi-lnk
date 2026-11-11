@@ -455,6 +455,37 @@ model AgentEvent {
   @@index([threadId, runId])
 }
 
+/**
+ * SSE 事件一等化 P2：待确认门 durable 化（additive，零破坏）。
+ *
+ * 真源从「进程内 PendingToolRegistry + 墓碑（重启即丢）/ metadata 读时裁决」
+ * 升级为 thread state 的一部分：expiresAt 持久化 ⇒ 刷新 / 进程重启 / 换设备后
+ * 门仍可裁决；status 由 CAS 单点翻转（pending → answered/expired/aborted），
+ * 终态门不再下发活卡片。
+ *
+ * - 不建 FK relation：threadId 可能是前端自定义的 threadKey（不保证 AgentThread 行存在）。
+ * - 唯一键 (threadId, callId)：waiting_user 与 canvas_command 两条通道仅靠 callId
+ *   关联，同帧重复下发必须幂等。
+ * - status 用 String 而非 enum：SQLite 无原生 enum，且 additive 迁移只建表不改存量。
+ */
+model PendingInterruption {
+  id            String   @id @default(cuid())
+  threadId      String
+  runId         String?
+  callId        String
+  kind          String   @default("ask_user")
+  questionsJson String?
+  status        String   @default("pending")
+  answerJson    String?
+  expiresAt     DateTime
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([threadId, callId])
+  @@index([threadId, status])
+  @@index([status, expiresAt])
+}
+
 model AgentMessage {
   id            String      @id @default(cuid())
   sessionId     String

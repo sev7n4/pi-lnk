@@ -108,6 +108,11 @@ import { normalizeAssistantText } from './text-normalize'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
 import { createUiEventProjector, createThinkingAccumulator, createTextSegmentPersister, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, extractPlanProposedEvent, extractTaskEvents, extractTextDelta, extractTextEnd, mapPiEventToUiEvent, classifyPiRunError, type PiRuntimeEvent } from './pi-runtime/pi-events'
 import { GenerationReaperService } from '../studio/generation-reaper.service'
+import {
+  DEFAULT_GATE_TTL_MS,
+  PendingInterruptionService,
+  type PendingInterruptionSummary,
+} from './pending-interruption.service'
 import { estimateCreditsFromUsdCost, resolveFxUsdCny } from '../pricing/pricing.core'
 import { InsufficientPointsError, PointsService } from '../points/points.service'
 import { PricingService } from '../pricing/pricing.service'
@@ -401,6 +406,11 @@ export class AgentService implements OnModuleInit {
     @Optional()
     @Inject(CanvasDigestService)
     private readonly canvasDigest?: CanvasDigestService,
+    // P2 待确认门 durable（2026-11-11）：最后一个 @Optional 参数 ⇒ 既有按位置构造
+    // 的单测零破坏；缺省（未装配）= 全链路短路，旧行为逐字节不变。
+    @Optional()
+    @Inject(PendingInterruptionService)
+    private readonly pendingInterruptions?: PendingInterruptionService,
   ) {}
 
   /**
@@ -804,7 +814,70 @@ export class AgentService implements OnModuleInit {
     // rawCount = DB 原始行数（过滤前）：overfetch 窗口 (take*2) 被打满时保守判定有下一页，
     // 避免 superseded 重负载线程误判 hasMore=false 截断历史（审查 P1）。
     // P1c 清债（读时 enrichment）：对分流行注入账本投影（只动 eventsShrunk 标记行的响应副本）
-    return this.enrichAssistantPage(threadId, paginateVisibleRows(derived, take, rows.length))
+    const enriched = await this.enrichAssistantPage(
+      threadId,
+      paginateVisibleRows(derived, take, rows.length),
+    )
+    // P2：终态门的历史重放不得复活活卡片（母计划 P1c-6）
+    return this.suppressTerminalGateCards(enriched)
+  }
+
+  /**
+   * P2 一致性（母计划 §3.2 第 5 条 / 判据 P1c-6）：门 answered/expired/aborted 后，
+   * 历史重放里同 callId 的 `canvas_command{ask_user}` 会被前端 `turnTimeline.ts:829`
+   * 无条件翻回 pending_answer ⇒ 死卡片复活。这里在**响应副本**上剔除终态门卡片。
+   *
+   * 阴性保证：无 P2 门记录（老会话）⇒ 零改动；无卡片 ⇒ 零查询；表读失败 ⇒ 保守放行。
+   */
+  private async suppressTerminalGateCards<
+    T extends { role: string; runId: string | null; metadata: string | null },
+  >(
+    result: { page: T[]; hasMore: boolean; nextCursor: string | null },
+  ): Promise<{ page: T[]; hasMore: boolean; nextCursor: string | null }> {
+    if (!this.pendingInterruptions) return result
+    const callIds: string[] = []
+    for (const r of result.page) {
+      if (r.role !== 'assistant' || !r.metadata) continue
+      try {
+        const meta = JSON.parse(r.metadata) as { executionEvents?: unknown }
+        if (!Array.isArray(meta.executionEvents)) continue
+        for (const ev of meta.executionEvents as Array<{ type?: string; data?: unknown }>) {
+          if (ev?.type !== 'canvas_command') continue
+          const d = ev.data as { type?: string; callId?: string } | undefined
+          if (d?.type === 'ask_user' && typeof d.callId === 'string') callIds.push(d.callId)
+        }
+      } catch {
+        // 坏行不动
+      }
+    }
+    if (!callIds.length) return result
+    const terminal = await this.pendingInterruptions.getTerminalCallIds(callIds)
+    if (!terminal.size) return result
+    let touched = false
+    const page = result.page.map((r) => {
+      if (r.role !== 'assistant' || !r.metadata) return r
+      let meta: Record<string, unknown>
+      try {
+        meta = JSON.parse(r.metadata) as Record<string, unknown>
+      } catch {
+        return r
+      }
+      const list = meta.executionEvents
+      if (!Array.isArray(list)) return r
+      const kept = list.filter((ev) => {
+        const e = ev as { type?: string; data?: { type?: string; callId?: string } } | null
+        return !(
+          e?.type === 'canvas_command' &&
+          e.data?.type === 'ask_user' &&
+          typeof e.data.callId === 'string' &&
+          terminal.has(e.data.callId)
+        )
+      })
+      if (kept.length === list.length) return r
+      touched = true
+      return { ...r, metadata: JSON.stringify({ ...meta, executionEvents: kept }) } as T
+    })
+    return touched ? { ...result, page } : result
   }
 
   /**
@@ -1710,7 +1783,8 @@ export class AgentService implements OnModuleInit {
    * - status：复用 reconcileLatestAssistant 双源裁决（IdempotencyRecord 近窗 + 流探测），
    *   active ⇒ in_progress，settled / missing ⇒ complete（missing = 无进行中证据，历史态）。
    * - lastGSeq：AgentEvent 账本本线程最大 gSeq（账本空 ⇒ null，前端回落 DB 快照）。
-   * - pendingInterruption：P2（待确认门 durable）预留位，P1 恒 null。
+   * - pendingInterruption：P2 待确认门 durable 摘要（PendingInterruption 表）；
+   *   无仍可点的门 / 未装配 P2 service ⇒ null（旧形状兼容）。
    */
   async getThreadResumeState(
     threadId: string,
@@ -1718,7 +1792,7 @@ export class AgentService implements OnModuleInit {
   ): Promise<{
     status: 'in_progress' | 'complete'
     lastGSeq: number | null
-    pendingInterruption: null
+    pendingInterruption: PendingInterruptionSummary | null
   }> {
     await this.assertThreadOwner(threadId, userId)
     const reconciled = await this.reconcileLatestAssistant(threadId, 0)
@@ -1729,7 +1803,8 @@ export class AgentService implements OnModuleInit {
     return {
       status: reconciled.outcome === 'active' ? 'in_progress' : 'complete',
       lastGSeq,
-      pendingInterruption: null,
+      // P2 durable 核心：从表读 ⇒ 进程重启后仍返回 pending（P1c-5）
+      pendingInterruption: (await this.pendingInterruptions?.getPending(threadId)) ?? null,
     }
   }
 
@@ -2223,12 +2298,27 @@ export class AgentService implements OnModuleInit {
       answers: input.answers,
       ...(input.decision ? { decision: input.decision } : {}),
     })
+    // P2：durable 终态的唯一写者——CAS 只翻 pending 行，重复作答/并发第二发幂等。
+    // 未装配 PendingInterruptionService（既有单测）⇒ 整段短路，响应形态逐字节不变。
+    const settle = (status: 'answered' | 'expired' | 'aborted') =>
+      this.pendingInterruptions?.settleGate({
+        threadId: sessionKey,
+        callId: input.callId,
+        status,
+        answerJson: input.answers,
+      })
     // 正常 settle（registry hit）：响应形态与 P1-A 前完全一致（规格 A3 零回归）。
-    if (!data.deduped) return data
+    if (!data.deduped) {
+      await settle(input.decision === 'decline' ? 'aborted' : 'answered')
+      return data
+    }
     // deduped:true + prior：runtime 本进程刚 settle（墓碑命中）——并发第二发的幂等回执，不裁决。
-    if (data.prior) return { ok: true, deduped: true, prior: data.prior }
+    if (data.prior) {
+      await settle(input.decision === 'decline' ? 'aborted' : 'answered')
+      return { ok: true, deduped: true, prior: data.prior }
+    }
     // deduped:true 无 prior：真丢失（runtime 重启 / 脏 callId）→ durable part 裁决（规格 §4.2）。
-    return this.adjudicateLateAnswer({
+    const late = await this.adjudicateLateAnswer({
       sessionId: input.sessionId,
       sessionKey,
       callId: input.callId,
@@ -2237,6 +2327,11 @@ export class AgentService implements OnModuleInit {
       userId: input.userId,
       client,
     })
+    // 表状态跟随最终裁决（expired 优先于 answered），CAS 保证终态门不被复活。
+    await settle(
+      late.expired ? 'expired' : input.decision === 'decline' ? 'aborted' : 'answered',
+    )
+    return late
   }
 
   /**
@@ -2274,6 +2369,18 @@ export class AgentService implements OnModuleInit {
     userId?: string
     client: PiRuntimeClient
   }): Promise<{ ok: boolean; deduped: boolean; prior?: string; late?: boolean; expired?: boolean }> {
+    // P2（判据 P1c-4）：表是权威——门已 answered/expired/aborted 或已过 expiresAt 时，
+    // late answer 只回终态回执，绝不注入 runtime、绝不把门翻回 pending（不复活门）。
+    // 未装配 P2 service / 老会话无门记录 ⇒ 短路，P1-A 既有裁决链逐字节不变。
+    const gate = await this.pendingInterruptions?.getGate(input.callId)
+    if (gate && (gate.status !== 'pending' || gate.expiresAt <= Date.now())) {
+      return {
+        ok: true,
+        deduped: false,
+        expired: gate.status === 'expired' || gate.expiresAt <= Date.now(),
+        late: true,
+      }
+    }
     const row = await this.findWaitingPartRow(input.sessionId, input.sessionKey, input.callId)
     // A6 脏 callId：无 waiting part（或已终态）→ 幂等回执，不泄漏探测面。
     if (!row) return { ok: true, deduped: true }
@@ -3749,6 +3856,20 @@ export class AgentService implements OnModuleInit {
         // B-6：tool_execution_update 也参与提取——阻塞 ask_user 卡片只在 update 快照
         // （onUpdate → partialResult.details.canvasCommands）里，end 事件只有答案文本
         for (const cmd of extractCanvasCommands(event)) {
+          // P2（判据 P1c-6）：终态门不再下发活卡片。propose-plan.ts 的 timeout/aborted
+          // 分支仍会经 tool_execution_end 携带 canvasCommands（卡片 payload 与结算态无关），
+          // 前端重放会把已 answered/expired 的 question part 翻回 pending_answer。
+          // 表无该 callId 记录（老会话）⇒ isGateLive 保守放行 ⇒ 旧行为零回归。
+          if (cmd.type === 'ask_user' && cmd.callId && this.pendingInterruptions) {
+            const live = await this.pendingInterruptions.isGateLive(cmd.callId)
+            if (!live) continue
+            await this.pendingInterruptions.openGate({
+              threadId: sessionKey,
+              callId: cmd.callId,
+              runId: currentPiEvent?.runId ?? null,
+              questions: (cmd as unknown as { questions?: unknown }).questions,
+            })
+          }
           // P1#7：ask_user 进 executionEvents → metadata 落库，刷新/重连后可恢复待答卡。
           // svg_card 与 ask_user 同走这条落库通道（spec §4.6 第 3 跳）：卡片只经 SSE
           // 实时上屏，刷新即失；落库后前端从 metadata.executionEvents 重放恢复。
@@ -3887,7 +4008,43 @@ export class AgentService implements OnModuleInit {
         // turn_suspended 判据：waiting{waiting} 置位；同流内见到 resolved（等待在
         // 本流生命周期内被 answered/取消）则复位——挂起事件只在「流耗尽时仍挂着」发。
         if (ui.type === 'waiting_user') {
-          sawWaitingUser = (ui.data as { status?: string }).status === 'waiting'
+          const wd = ui.data as {
+            status?: string
+            callId?: string
+            timeoutMs?: number
+            toolName?: string
+            reason?: string
+          }
+          sawWaitingUser = wd.status === 'waiting'
+          // P2：durable 开闸/收闸。runtime 的 setTimeout 仍负责让阻塞工具返回 timeout，
+          // 表只作权威状态；resolved 帧（reason=answered/timeout/aborted）把 state 对齐。
+          // 表写失败由 service fail-open 吞掉 ⇒ 不阻塞 SSE。
+          if (this.pendingInterruptions && typeof wd.callId === 'string' && wd.callId) {
+            if (wd.status === 'waiting') {
+              await this.pendingInterruptions.openGate({
+                threadId: sessionKey,
+                callId: wd.callId,
+                runId: currentPiEvent?.runId ?? null,
+                kind: wd.toolName,
+                expiresAt:
+                  Date.now() +
+                  (typeof wd.timeoutMs === 'number' && wd.timeoutMs > 0
+                    ? wd.timeoutMs
+                    : DEFAULT_GATE_TTL_MS),
+              })
+            } else if (wd.status === 'resolved') {
+              await this.pendingInterruptions.settleGate({
+                threadId: sessionKey,
+                callId: wd.callId,
+                status:
+                  wd.reason === 'timeout'
+                    ? 'expired'
+                    : wd.reason === 'aborted'
+                      ? 'aborted'
+                      : 'answered',
+              })
+            }
+          }
         }
         yield ui as AgentStreamEvent
       }
