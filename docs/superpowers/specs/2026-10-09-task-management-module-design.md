@@ -76,7 +76,7 @@
 | **C1-B** | 二期：增量式多工具（task_create/update/list），B=「A 基座 + fold 增量入口」 | 概要见 C1 spec §8；立项时独立成文 | 未立项（触发条件未满足） |
 | **C2** | turnBudget 轮次硬边界（小件，可与任一章节搭车） | `docs/superpowers/specs/2026-10-10-turn-budget-design.md` | **已立项（2026-10-10）**：per-run turn 计数（runId 匹配排除 compaction 轮）+ 软着陆 steer（预算-10 一次）+ 超限硬停（复用 stall watchdog 结算路径）+ `PI_RUNTIME_TURN_BUDGET=120/off` |
 | **C3** | Plan 确认门（generation-gate 泛化 + 会话级 planMode） | `docs/superpowers/specs/2026-10-10-plan-gate-design.md` | **已实现（2026-10-10，PR #329；生产部署 + 行为断言见 prod-deploy-verify）**：propose_plan + plan-gate（before_tool 拦写 + before_run_end followUp 执行轮）+ transcript 播种 + kill switch PI_RUNTIME_PLAN_GATE |
-| **C4** | 子代理（只读 Explore 型先行；并发/预算/超时三件套硬编码紧默认：全局并发 2 / turn 预算 30 复用 C2 / 超时 5min 复用 watchdog 结算） | `docs/superpowers/specs/2026-10-10-c4-subagent-design.md` | **已立项（2026-10-10）**：spawn_subagent 工具化自主派发 + 严格只读白名单 + 纯 fork 载体 + 同步阻塞返回（报告=工具结果，卡片透出，transcript 落盘无 UI）；一期不依赖 C1-B（只读语义下依赖环消解，见该 spec §4-5） |
+| **C4** | 子代理（只读 Explore 型先行；并发/预算/超时三件套硬编码紧默认：全局并发 2 / turn 预算 30 复用 C2 / 超时 5min 复用 watchdog 结算） | `docs/superpowers/specs/2026-10-10-c4-subagent-design.md` | **已立项（2026-10-10）**：spawn_subagent 工具化自主派发 + 严格只读白名单 + 纯 fork 载体 + 同步阻塞返回（报告=工具结果，卡片透出，transcript 落盘无 UI）；一期不依赖 C1-B（只读语义下依赖环消解，见该 spec §4-5）**；2026-11-11 生产取证注记：spawn_subagent 源码在 master 与生产镜像对应树中均在且已注册装配（config.ts/index.ts），但生产运行镜像全量搜索 0 命中、executionEvents 零调用（2026-11-10 快照 · 镜像 141d5d97，落后 master 17 提交）⇒ 未进入生产运行时，根因（构建输入 vs 部署链路）未定位，详见规格 docs/superpowers/specs/2026-11-11-task-planning-engineering-roadmap-design.md §4 G4** |
 | **C5** | Automations（cron 设施 + 无人值守护栏） | `docs/superpowers/specs/2026-10-11-automations-design.md` | **P0 已实现（2026-10-11，待部署验证）**：统一调度器 `AutomationSchedulerService`（单 timer 60s tick + handler 注册 + forbid 同步占位 + startup 延迟派发 + create-if-missing 种子）+ `AutomationJob`/`AutomationRun` 两表 + admin 三端点（list/runs/trigger，复用 AdminTokenGuard）；P0 已迁移 upstream-probe / generation-reaper（reason 映射 scheduled→periodic，业务函数零改动）；P1 失败告警 + PATCH 写端点，P2 cron 表达式 + 无代码新增任务（均未实现） |
 
 章节立项规则：每个章节独立走 spec → plan → implementation 循环；立项前在本文更新状态列；与 C1 有接口依赖的章节（C3 依赖 C1 的事件管道；C4 一期**不依赖 C1-B**——「依赖 id 化」在只读子代理语义下是伪依赖，已裁决消解，见 C4 spec §4-5）须回读前章 spec 的「不变面承诺」。
@@ -94,6 +94,7 @@
 - **升级点**：1 次工具注册 + `applyIncremental` fold 函数 + 快照 item 增稳定 id 字段（向后兼容）。
 - **不变面**：事件格式、details 存储、前端、注入逻辑、⟦plan⟧ 兼容层、无新增表。
 - **红线**：B→A 反向不可行——C1 及以后任何章节不得引入"绕过全量快照直接改状态"的旁路。
+- **2026-11-11 取证注记（时点快照 · 镜像 141d5d97）**：触发条件①证据仍为**未满足**——spawn_subagent 生产 executionEvents 零调用（全量 0 次）且生产运行镜像全量搜索 0 命中（源码在 master，运行时缺失，根因未定位）；触发条件②未见产品侧立项要求。C1-B 立项判定仍按本节字面执行，本注记只记证据不改判定。数据来源与边界见 docs/superpowers/specs/2026-11-11-task-planning-engineering-roadmap-design.md §2.3/§4。
 
 ## 6. 与其他模块的边界
 
