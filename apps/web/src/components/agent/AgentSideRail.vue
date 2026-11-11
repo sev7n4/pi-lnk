@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, reactive, onMounted, nextTick, watch } from 'vue'
+import { computed, ref, reactive, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import { useMobileComposerFocus } from '@/composables/useMobileComposerFocus'
 import { useMobileKeyboardInset } from '@/composables/useMobileKeyboardInset'
@@ -1137,6 +1137,37 @@ async function loadHistory() {
   }
   scrollToBottom(true)
 }
+
+/**
+ * P0-B（SSE 会话恢复）：切后台再回来 / bfcache 恢复时不重挂载 → 不 hydrate → 停在失效实时态。
+ * 此时若会话已非流式（最常见：已收束的对话被切走），直接以服务端权威快照重放
+ * （loadHistory 内置 merge 逻辑：保留本地流式气泡、按 id 去重、幂等）。
+ * 单飞：historyLoadState==='loading' 由 loadHistory 自身挡重入；再加组件级 single-flight 防
+ * visibilitychange 与 pageshow 同拍双触发。
+ */
+let reconcileSingleFlight = false
+function reconcileOnVisible() {
+  if (reconcileSingleFlight) return
+  if (document.visibilityState !== 'visible') return
+  if (agent.isStreaming) return // 流式回合：实时 SSE 是权威，clear 会丢半条消息
+  if (navigator.onLine === false) return // 无网不赌：clear 后失败 → 整页空白（既有陷阱）
+  if (!agentThreadId.value) return
+  reconcileSingleFlight = true
+  void loadHistory().finally(() => {
+    reconcileSingleFlight = false
+  })
+}
+function onPageShowReconcile(e: PageTransitionEvent) {
+  if (e.persisted) reconcileOnVisible() // bfcache 恢复：JS 被冻结未卸载，bootstrapThread 未重跑
+}
+onMounted(() => {
+  document.addEventListener('visibilitychange', reconcileOnVisible)
+  window.addEventListener('pageshow', onPageShowReconcile)
+})
+onUnmounted(() => {
+  document.removeEventListener('visibilitychange', reconcileOnVisible)
+  window.removeEventListener('pageshow', onPageShowReconcile)
+})
 
 /**
  * Epic 4：跨会话聚合卡数据源——按会话拉积分流水喂 trackCreditTx（txId 幂等，

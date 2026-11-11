@@ -1103,6 +1103,28 @@ export function composeSettledSegment(settled: {
  * 伪装成合法顺序、顶在思考和工具消息之前的机理。`gSeq` 是 pi-runtime 的会话级全局序号，
  * 与 `afterSeq` 同编号空间，跨流可比。存量消息无 `gSeq` ⇒ 回退 `seq`，兼容不破。
  */
+/**
+ * 历史回放归一化（P0-A，SSE 会话恢复）：服务端落库形态 `canvas_command{type:'ask_user'}`
+ * 收敛为时间线原生 `ask_user`，使历史路径与实时路径（trackAskUser → feedTimeline({type:'ask_user'})）
+ * 共用同一个 `applyTimelineEvent` 分支，避免确认卡片在历史重放中撞 `default: return` 被吞掉。
+ *
+ * 仅转换 `ask_user` 子类型；其它 `canvas_command`（set_group_color / focus_node / add_node 等）是
+ * 画布侧事件、不在时间线 parts 内，保持原样（撞 default 与现状一致，不引入行为变化）。
+ * 服务端至今仍按旧形态落库 `canvas_command`（生产实证：近期会话 `ask_user` 计数全为 0），
+ * 故历史路径必须桥接，不能依赖"服务端改发 ask_user"。
+ */
+function normalizePersistedTimelineEvent(
+  e: { type: string; data?: unknown; seq?: number; gSeq?: number },
+): { type: string; data?: unknown; seq?: number; gSeq?: number } {
+  if (e.type === 'canvas_command') {
+    const d = e.data as { type?: string } | undefined
+    if (d?.type === 'ask_user') {
+      return { type: 'ask_user', data: e.data, seq: e.seq, gSeq: e.gSeq }
+    }
+  }
+  return e
+}
+
 export function replayTimelineEvents(
   events: Array<{ type: string; data: unknown; seq?: number; gSeq?: number }>,
   bodyText?: string,
@@ -1124,7 +1146,7 @@ export function replayTimelineEvents(
     : events
   const timeline = createTurnTimeline()
   for (const event of ordered) {
-    applyTimelineEvent(timeline, event as TimelineEvent)
+    applyTimelineEvent(timeline, normalizePersistedTimelineEvent(event) as TimelineEvent)
   }
   // 历史无 text_delta：若没有任何文本块但有消息正文，补一个 done 文本块（避免时间线缺失正文）
   if (!timeline.parts.some((p) => p.kind === 'text') && bodyText && bodyText.trim()) {
