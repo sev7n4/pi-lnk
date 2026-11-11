@@ -35,10 +35,10 @@ export function createProposePlanTool(registry: PendingToolRegistry, metrics: Me
 		label: "提议方案",
 		summary: "提交整场执行方案并阻塞等待用户确认",
 		description:
-			"把多步执行方案提交给用户确认：步骤清单以任务卡展示，并弹出确认卡（开始执行/调整计划/仅保留方案），本回合内阻塞等待（有界，超时自动降级）。" +
+			"把多步执行方案提交给用户确认：步骤清单由宿主以任务卡展示，并弹出确认卡（开始执行/调整计划/仅保留方案），本回合内阻塞等待（有界，超时则保留方案并结束本轮，不自动执行）。" +
 			"何时必用：用户要求「先出方案/先规划/先别动手」，或任务需要多步写画布且做法需要用户拍板时。" +
-			"禁止把方案写成正文让用户手打回复；确认（confirmed=true）返回前禁止写画布节点或调用任何生成类工具。" +
-			"confirmed=true 后立即开始执行第 1 步，并用 todo_write 逐项更新状态。",
+			"方案由宿主渲染（任务卡 + 确认卡展示步骤），不要让用户手打回复；调用前可先用一两句话在对话里说明方案思路（explanation 参数）。" +
+			"确认（confirmed=true）返回前禁止写画布节点或调用任何生成类工具；confirmed=true 后立即开始执行第 1 步，并用 todo_write 逐项更新状态。",
 		parameters: Type.Object({
 			summary: Type.String({ description: "方案一句话概括（确认卡片题面，如「三步生成小红书配图并排版」）" }),
 			steps: Type.Array(
@@ -48,16 +48,17 @@ export function createProposePlanTool(registry: PendingToolRegistry, metrics: Me
 				}),
 				{ description: "方案步骤（确认后逐项执行并更新任务状态）", min: 1, max: 20 },
 			),
+			explanation: Type.Optional(Type.String({ description: "方案思路/取舍概述（1-2 句），随方案一起展示给用户，帮助其做确认决策" })),
 		}),
 		execute: async (
 			id: string,
-			p: { summary: string; steps: { content: string; activeForm?: string }[] },
+			p: { summary: string; steps: { content: string; activeForm?: string }[]; explanation?: string },
 			onUpdate: AgentHarnessToolUpdateCallback<{ ok: boolean; canvasCommands: unknown[] }> | undefined,
 			tc: LnkpiToolContext,
 		): Promise<AgentToolResult<{ ok: boolean; plan: Record<string, unknown> }>> => {
 			metrics.observePlanProposed();
 			// ① 步骤落 C1 管道：全 pending（方案尚未被确认执行）
-			const { snapshot } = overwriteTodos(
+			const { snapshot, diff } = overwriteTodos(
 				tc.sessionId,
 				p.steps.map((s) => ({
 					content: s.content,
@@ -69,6 +70,11 @@ export function createProposePlanTool(registry: PendingToolRegistry, metrics: Me
 			const question = {
 				id: "plan_confirm",
 				question: p.summary,
+				plan: {
+					summary: p.summary,
+					...(p.explanation ? { explanation: p.explanation } : {}),
+					steps: p.steps.map((s) => ({ content: s.content, ...(s.activeForm ? { activeForm: s.activeForm } : {}) })),
+				},
 				options: [
 					{ label: "开始执行", value: "execute" },
 					{ label: "调整计划", value: "refine" },
@@ -79,7 +85,12 @@ export function createProposePlanTool(registry: PendingToolRegistry, metrics: Me
 			const canvasCommands = [{ type: "ask_user", callId: id, questions: [question] }];
 			const build = (plan: Record<string, unknown>, text: string) => ({
 				content: [{ type: "text" as const, text }],
-				details: { ok: true, plan: { summary: p.summary, steps: snapshot, ...plan }, canvasCommands },
+				details: {
+					ok: true,
+					todo: { snapshot, diff },
+					plan: { summary: p.summary, ...(p.explanation ? { explanation: p.explanation } : {}), steps: snapshot, ...plan },
+					canvasCommands,
+				},
 			});
 			onUpdate?.({
 				content: [{ type: "text", text: JSON.stringify({ ok: true, canvasCommands }) }],

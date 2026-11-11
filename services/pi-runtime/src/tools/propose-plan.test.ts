@@ -23,7 +23,7 @@ const ctx = { abortSignal: undefined, value: () => undefined, toString: () => "t
 
 const CARD = { callId: "call-1" };
 
-function toolCall(id: string, p: { summary: string; steps: { content: string; activeForm?: string }[] }) {
+function toolCall(id: string, p: { summary: string; steps: { content: string; activeForm?: string }[]; explanation?: string }) {
 	return { id, p };
 }
 
@@ -106,5 +106,34 @@ describe("propose_plan 工具", () => {
 		assert.equal(cmd.callId, "c5");
 		assert.deepEqual(cmd.questions[0].options.map((o: { value: string }) => o.value), ["execute", "refine", "keep"]);
 		assert.equal(cmd.questions[0].allowOther, true);
+	});
+
+	it("P0-1/P0-2/P1-1：details 同时含 todo（供 task_list 投影）与 plan（steps+explanation），确认卡 questions[0].plan.steps 透传", async () => {
+		const t = createProposePlanTool(stubRegistry({ status: "answered", answers: { plan_confirm: ["execute"] } }), metrics);
+		const call = toolCall("c6", {
+			summary: "三步做视频",
+			explanation: "先脚本再封面最后成片，分步可控",
+			steps: [{ content: "写脚本", activeForm: "正在写脚本" }, { content: "做封面" }, { content: "出成片" }],
+		});
+		const res = await t.execute!(call.id, call.p, noopUpdate, { sessionId: "canvas-1" } as never, invocation as never, ctx as never);
+		const details = res.details as {
+			todo?: { snapshot: unknown[]; diff: { list?: unknown[]; updates: unknown[] } };
+			plan?: { summary: string; explanation?: string; steps: unknown[]; decision: string };
+			canvasCommands: { type: string; callId: string; questions: { plan?: { summary: string; explanation?: string; steps: unknown[] } }[] }[];
+		};
+		// P0-1：todo 投影载体存在，且 diff.list 含 3 步 → extractTaskEvents 将派生 task_list
+		assert.ok(details.todo, "details.todo 必须存在（供 extractTaskEvents 派生 task_list）");
+		assert.equal(details.todo!.snapshot.length, 3);
+		assert.ok(details.todo!.diff.list && details.todo!.diff.list.length === 3, "diff.list 含 3 步 → task_list 将发射");
+		// P0-2 + P1-1：plan 承载步骤与说明
+		assert.equal(details.plan!.summary, "三步做视频");
+		assert.equal(details.plan!.explanation, "先脚本再封面最后成片，分步可控");
+		assert.equal((details.plan!.steps as unknown[]).length, 3);
+		// 确认卡 payload 透传 plan.steps（前端 AskUserCard 据此渲染方案本体）
+		const q = details.canvasCommands[0].questions[0];
+		assert.ok(q.plan, "确认卡 question 必须携带 plan");
+		assert.equal(q.plan!.summary, "三步做视频");
+		assert.equal(q.plan!.explanation, "先脚本再封面最后成片，分步可控");
+		assert.equal(q.plan!.steps.length, 3);
 	});
 });

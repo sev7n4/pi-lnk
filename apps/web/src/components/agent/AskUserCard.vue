@@ -21,6 +21,7 @@ interface AskUserQuestion {
 	id: string
 	question: string
 	options: { label: string; value: string }[]
+	plan?: { summary: string; explanation?: string; steps: { content: string; activeForm?: string }[] }
 	multiSelect?: boolean
 	allowOther?: boolean
 }
@@ -251,6 +252,21 @@ function submitOther(q: AskUserQuestion) {
 					@click="skip(current)"
 				>{{ skipped.has(current.id) ? '已跳过' : '跳过' }}</button>
 			</div>
+			<!-- P0-2（2026-11-11）：方案本体直接内联在确认卡里——题面之上是方案摘要 + 步骤清单，
+			     让用户「看到方案再决策」，而非对着一句标题做选择。plan 由 propose_plan 经 SSE 透传。 -->
+			<div v-if="current.plan" class="ask-plan">
+				<div class="ask-plan-head">
+					<span class="ask-plan-title">{{ current.plan.summary }}</span>
+					<span v-if="current.plan.explanation" class="ask-plan-explanation">{{ current.plan.explanation }}</span>
+				</div>
+				<ol class="ask-plan-steps">
+					<li v-for="(step, i) in current.plan.steps" :key="i" class="ask-plan-step">
+						<span class="ask-plan-step-index">{{ i + 1 }}</span>
+						<span class="ask-plan-step-text">{{ step.content }}</span>
+						<span v-if="step.activeForm" class="ask-plan-step-active">{{ step.activeForm }}</span>
+					</li>
+				</ol>
+			</div>
 			<!-- D2 基数信号：单选用 ○ / 多选用 ☑，稳定标签，不随选项增减变化 -->
 			<div class="ask-cardinality" :aria-label="current.multiSelect ? '本题可多选' : '本题单选'">
 				<svg v-if="current.multiSelect" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="3" /><path d="m8 12 3 3 5-6" /></svg>
@@ -453,6 +469,67 @@ function submitOther(q: AskUserQuestion) {
 	font-weight: var(--lnk-weight-semibold);
 	line-height: var(--lnk-lh-md);
 	color: var(--lnk-text-primary);
+}
+
+/* ── P0-2（2026-11-11）：确认卡内联方案本体（摘要 + 有序步骤），让用户先看方案再决策 ── */
+.ask-plan {
+	display: flex;
+	flex-direction: column;
+	gap: var(--lnk-space-2);
+	padding: var(--lnk-space-3);
+	border: 1px solid var(--lnk-border-subtle);
+	border-radius: var(--lnk-radius-lg);
+	background: var(--lnk-surface-sunken);
+}
+.ask-plan-head {
+	display: flex;
+	flex-direction: column;
+	gap: var(--lnk-space-1);
+}
+.ask-plan-title {
+	font-size: var(--lnk-text-sm);
+	font-weight: var(--lnk-weight-semibold);
+	color: var(--lnk-text-primary);
+	line-height: var(--lnk-lh-sm);
+}
+.ask-plan-explanation {
+	font-size: var(--lnk-text-xs);
+	color: var(--lnk-text-secondary);
+	line-height: var(--lnk-lh-xs);
+}
+.ask-plan-steps {
+	display: flex;
+	flex-direction: column;
+	gap: var(--lnk-space-1);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.ask-plan-step {
+	display: flex;
+	align-items: baseline;
+	gap: var(--lnk-space-2);
+	font-size: var(--lnk-text-sm);
+	color: var(--lnk-text-primary);
+	line-height: var(--lnk-lh-sm);
+}
+.ask-plan-step-index {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: var(--lnk-space-4);
+	height: var(--lnk-space-4);
+	border-radius: var(--lnk-radius-full);
+	background: var(--lnk-accent-subtle);
+	color: var(--lnk-accent-text);
+	font-size: var(--lnk-text-xs);
+	font-weight: var(--lnk-weight-semibold);
+	font-variant-numeric: tabular-nums;
+}
+.ask-plan-step-active {
+	color: var(--lnk-text-muted);
+	font-size: var(--lnk-text-xs);
 }
 .ask-skip {
 	flex: none;
