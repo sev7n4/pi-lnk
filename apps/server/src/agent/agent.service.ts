@@ -1394,8 +1394,10 @@ export class AgentService implements OnModuleInit {
     // 是独立 HTTP 请求，无法注入既有 SSE 连接 ⇒ 经 SessionEventBus 扇出到本通道
     // 的全部订阅者（发起端与旁听端同源）。合成帧无 pi seq ⇒ controller 不写 id 行
     // （Last-Event-ID 不指向它们）；晚加入者靠历史 GET 的 DB 权威值兜底。
+    // ⭐ 防御性可选调用：测试手搓的 mock bus（只带旧三通道）与滚动升级窗口内的
+    // 旧实例都缺本方法 ⇒ 缺省即退化（不接桥），不得让旁听流生成器崩溃。
     let utteranceUnsub: (() => void) | undefined
-    if (this.eventBus) {
+    if (typeof this.eventBus?.subscribeSessionUserUtterance === 'function') {
       utteranceUnsub = this.eventBus.subscribeSessionUserUtterance(sessionKey, (ev) => {
         const { sessionId: _routeKey, ...data } = ev
         const type =

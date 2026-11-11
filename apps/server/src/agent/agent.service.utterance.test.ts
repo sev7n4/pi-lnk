@@ -266,4 +266,39 @@ describe('runEventStream 扇出 user_utterance_* 帧', () => {
     await iter.return?.(undefined)
     expect(unsub).toHaveBeenCalled()
   })
+
+  it('防御性可选调用：mock bus 缺 subscribeSessionUserUtterance ⇒ 退化不崩溃（CI 实测教训）', async () => {
+    vi.restoreAllMocks()
+    process.env.PI_RUNTIME_MODE = 'active'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:30100'
+    // 只带旧三通道的手搓 mock bus（与既有 turn-ack/turn-settled bridge 测试同款形态）
+    const legacyBus = {
+      subscribeSession: vi.fn(() => () => {}),
+      subscribeSessionTurnSettled: vi.fn(() => () => {}),
+      subscribeSessionTurnAck: vi.fn(() => () => {}),
+      subscribeSessionTurnNotSubmitted: vi.fn(() => () => {}),
+    }
+    const service = new AgentService(
+      buildPrisma(),
+      { createFromAgent: vi.fn() } as never,
+      { resolveForGeneration: vi.fn() } as never,
+      ...busArgs(legacyBus as unknown as SessionEventBus),
+    )
+    let onEvent: ((e: unknown) => void) | null = null
+    vi.spyOn(service as never, 'createPiRuntimeClient' as never).mockReturnValue({
+      streamEvents: vi.fn((_key: string, cb: (e: unknown) => void) => {
+        onEvent = cb
+        setTimeout(() => onEvent?.({ type: 'heartbeat', data: {} }), 5)
+        return () => {}
+      }),
+    } as never)
+    const iter = service.runEventStream('t1')
+    const frame = await Promise.race([
+      iter.next(),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error('crashed / no frame in 1s')), 1000)),
+    ])
+    expect(frame.done).toBe(false)
+    expect((frame.value as { type: string }).type).toBe('pi_heartbeat')
+    await iter.return?.(undefined)
+  })
 })
