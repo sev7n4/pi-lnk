@@ -8,6 +8,8 @@
 | 上游 | `2026-10-09-task-management-module-design.md` §3 C4 |
 | 决策人 | 用户（七项拍板，见 §4） |
 
+> **2026-11-11 状态注记（tier 归属缺陷与本刀修复）**：本 spec 未覆盖工具层级（tiering）归属——`spawn_subagent` 上线时落在 `ALWAYS_ON_TOOL_NAMES` 之外的延迟集，模型拿不到 schema（vendor generation 只下发 active 工具），发现通道 `tool_search` 无动机时触发率 0 ⇒ 生产 `pi_runtime_subagent_spawned_total` 恒 0。生产取证四件套（2026-11-11）：`PI_RUNTIME_TOOL_TIERING=true`、生产 dist `tiering.js` 常驻集 0 命中、`tool_search_calls_total{hit}=4`、spawned=0。修复 = 提回常驻（回归锁测试 + 变异自检），设计规格 `2026-11-11-subagent-tier-promotion-design.md`；本 spec 其余内容（白名单/网络出口/装配）不受影响。
+
 ## 1. 背景与动机
 
 任务管理模块对标调研（总体设计 §1）L4 层 = 并行执行 / 子代理 / 专家团。WorkBuddy 实测证据：子代理是高频形态（Agent/Task 工具 + subagent_type 全家桶），用户问题中「派个代理去查/研究」类诉求真实存在。

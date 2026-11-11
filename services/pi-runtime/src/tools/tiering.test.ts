@@ -472,3 +472,38 @@ describe("减点名下沉：读类诊断 9 工具必须延迟（2026-10-06，已
 		assert.ok((res.addedToolNames ?? []).includes("get_canvas_layout"));
 	});
 });
+
+/**
+ * C4 spawn_subagent 提回常驻回归锁（2026-11-11 可达性修正）。
+ *
+ * 根因链：spawn_subagent 此前不在 ALWAYS_ON_TOOL_NAMES（落在延迟集）⇒ vendor generation
+ * 只下发 active 工具 schema ⇒ 模型拿不到它的「何时必用」description ⇒ 发现通道只剩
+ * tool_search，而该通道无动机时触发率为 0（本文件头铁律）⇒ 生产
+*pi_runtime_subagent_spawned_total* 恒 0（2026-11-11 取证：tiering=true、dist tiering.js
+ * 常驻集 0 命中、tool_search hit=4）。
+ *
+ * 提回依据（同 get_canvas_summary / 分组三工具先例）：
+ * - description 自述何时必用，但延迟集下模型看不见 ⇒ 同「2026-10-07 提回」同构；
+ * - 只读深度调研唯一入口，无常驻替代品；web_search/web_fetch 常驻只能凑部分答案
+ *   （仅 web、不带画布/文档上下文）——按文件头铁律「部分替代 ⇒ 幻觉」；
+ * - 资产点名恒 0（零规则/skill 引用）⇒ verify-tool-tiering A1 不受影响；
+ *   「可下沉候选」提示列表会列出它——本刀裁决即不下沉，勿据此自动下沉。
+ * 依据：docs/superpowers/specs/2026-11-11-subagent-tier-promotion-design.md §2-3。
+ */
+describe("C4 spawn_subagent 必须常驻（2026-11-11：延迟集导致 schema 不可达）", () => {
+	it("spawn_subagent 在 ALWAYS_ON_TOOL_NAMES（防再次下沉）", () => {
+		assert.ok(
+			ALWAYS_ON_TOOL_NAMES.has("spawn_subagent"),
+			"spawn_subagent 落延迟集 ⇒ 模型拿不到 schema ⇒ 生产零调用（延迟即不可达），提回裁决见 2026-11-11 spec",
+		);
+	});
+
+	it("enabled 装配下 spawn_subagent 初始激活（模型可拿到 schema）", () => {
+		const e = buildToolEnsemble([fakeTool("spawn_subagent")], true);
+		assert.ok(
+			e.activeToolNames.includes("spawn_subagent"),
+			"常驻工具必须在初始 activeToolNames 内（generation 只下发 active schema）",
+		);
+		assert.ok(!e.activeToolNames.includes("tool_search"), "单工具全常驻时无需 tool_search");
+	});
+});
