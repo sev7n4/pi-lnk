@@ -7,6 +7,8 @@ status: draft-review
 upstream: docs/superpowers/specs/2026-10-09-task-management-module-design.md §C3
 ---
 
+> 2026-11-11 状态纠偏注记：本文状态字段 `draft-review` 为历史时点残留；实现事实为**已实现（2026-10-10，PR #329 squash=`f459d1f9`，合入 master 历史）**，模块全景（`2026-10-09-task-management-module-design.md` §3 C3）已记「已实现」。原状态字段保留不改写，以本注记为准。
+
 # C3 Plan 确认门设计规格
 
 > 一句话：新增 `propose_plan` 工具把「整场方案」提给用户阻塞确认（复用 ask_user 通道，前端零改动）；方案未确认期间 `before_tool` 拦截全部写类工具（generation-gate 同款 fail-closed）；确认后 `before_run_end {followUp}` 强制追加执行轮。零 vendor patch、零新表、零新端点、零前端改动。
