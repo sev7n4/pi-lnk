@@ -2047,6 +2047,11 @@ const observer = useAgentObserver({
   emitCanvasActions: (parts) => emit('canvasActions', parts as never),
   emitTurnComplete: () => emit('turnComplete'),
   setPoints: (balanceAfter) => useAuthStore().setPoints(balanceAfter),
+  // ⭐ P1b（事件一等化换读）：快照重同步 → 拉服务端权威历史补断连期缺口。
+  // loadHistory 自带单飞（historyLoadState==='loading' 挡重入）与 merge 幂等
+  // （loadHistory 内置去重/覆盖）；是否在跑由 composable 守卫（agent.isStreaming /
+  // observerTurnActive），此处不重复判。
+  reloadAuthoritativeHistory: () => void loadHistory(),
 })
 
 async function reconnectStream() {

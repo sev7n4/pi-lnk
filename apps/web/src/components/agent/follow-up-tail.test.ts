@@ -119,6 +119,15 @@ async function flush(): Promise<void> {
   await vi.advanceTimersByTimeAsync(0)
 }
 
+/**
+ * ⭐ P1b 加固：轮询排空到条件成立（read 链有多层 await，单次 flush 的排空深度
+ * 与 chunk 数/分支路径相关 ⇒ 单次 flush 断言偶发红——2026-11-11 实测）。
+ * 假时钟下每轮 advance 20ms（会顺带排空微任务），条件成立即止；超限后由调用方断言判红。
+ */
+async function pumpUntil(cond: () => boolean, rounds = 150): Promise<void> {
+  for (let i = 0; i < rounds && !cond(); i++) await vi.advanceTimersByTimeAsync(20)
+}
+
 describe('follow-up-tail 重连行为（multi-device Task 5）', () => {
   beforeEach(() => {
     vi.useFakeTimers()
@@ -755,5 +764,72 @@ describe('seedLastSeq（T1.4：主流断开后旁观流游标播种，2026-11-04
     await listener.start()
     await flush()
     expect(deps.urls[0]).not.toContain('lastEventId')
+  })
+
+  // ── P1b（事件一等化换读，plan 2026-11-11-sse-event-firstclass-p1b-swap-read.md §1.2）──
+
+  it('P1b：快照帧 → onSnapshotResync 恰一次 + 丢弃游标（变异点：游标不清 null / 回调不调）', async () => {
+    let call = 0
+    const resync = vi.fn()
+    const deps = makeDeps({
+      onSnapshotResync: resync,
+      backoffBaseMs: 100,
+      backoffCapMs: 1000,
+      fetchImpl: (_url, init) => {
+        call += 1
+        if (call === 1) {
+          // 第一程：先正常收帧推进游标到 110，再收到快照帧（409 重同步）
+          const chunks = [
+            ...Array.from({ length: 11 }, (_, i) => frame(100 + i, 'text_delta', { text: `t${100 + i}` })),
+            'data: {"type":"snapshot","data":{"operation":null}}\n\n',
+          ]
+          return Promise.resolve({ status: 200, ok: true, body: streamResetAfter(chunks) } as TailResponseLike)
+        }
+        // 第二程（重连）：发完挂住（常驻语义）
+        return Promise.resolve({
+          status: 200,
+          ok: true,
+          body: streamOf([frame(500, 'text_delta', { text: 'after-resync' })], init.signal),
+        } as TailResponseLike)
+      },
+    })
+    const listener = createFollowUpTailListener(deps)
+    await listener.start()
+    // 轮询排空：直到重连 URL 落地（第一程读完 → 抛错 → 退避 100ms → 第二程 fetch）
+    await pumpUntil(() => deps.urls.length >= 2)
+
+    // ① 快照帧触发宿主回调恰一次（快照本身不是显示事件，不该进 onEvent / 三回调）
+    expect(resync, '快照帧必须通知宿主拉权威历史').toHaveBeenCalledTimes(1)
+    // ② 游标必须被丢弃：重连 URL **不带** lastEventId（退化 from=now，与 Nest→pi forceLive 同构）
+    expect(deps.urls.length, '断线后必须重连').toBe(2)
+    expect(deps.urls[1]!, '游标已淘汰，重连不得再带 lastEventId').not.toContain('lastEventId')
+    listener.abort()
+  })
+
+  it('P1b：无快照时游标行为不变（阴性对照：重连仍带 lastEventId）', async () => {
+    let call = 0
+    const resync = vi.fn()
+    const deps = makeDeps({
+      onSnapshotResync: resync,
+      backoffBaseMs: 100,
+      backoffCapMs: 1000,
+      fetchImpl: (_url, init) => {
+        call += 1
+        if (call === 1) {
+          return Promise.resolve({
+            status: 200,
+            ok: true,
+            body: streamResetAfter([frame(110, 'text_delta', { text: 't110' })]),
+          } as TailResponseLike)
+        }
+        return Promise.resolve({ status: 200, ok: true, body: streamOf([], init.signal) } as TailResponseLike)
+      },
+    })
+    const listener = createFollowUpTailListener(deps)
+    await listener.start()
+    await pumpUntil(() => deps.urls.length >= 2)
+    expect(resync).not.toHaveBeenCalled()
+    expect(deps.urls[1]).toContain('lastEventId=110')
+    listener.abort()
   })
 })

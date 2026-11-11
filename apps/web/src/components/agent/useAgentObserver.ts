@@ -36,6 +36,14 @@ export interface AgentObserverDeps {
   emitCanvasActions: (parts: unknown[]) => void
   emitTurnComplete: () => void
   setPoints: (balanceAfter: number) => void
+  /**
+   * ⭐ P1b（事件一等化换读，plan 2026-11-11-sse-event-firstclass-p1b-swap-read.md §1.2）：
+   * **拉一次服务端权威历史**——快照重同步（pi buffer 溢出 409）后补断连期缺口。
+   * 宿主实现 = 组件 `loadHistory()`（no-store 拉 messages + `agent.loadHistory` 重放，
+   * 自带单飞与 merge 幂等）。是否可拉由 composable 内守卫（见 followUpTail 装配处），
+   * 本回调只管「拉」本身。
+   */
+  reloadAuthoritativeHistory: () => void
 }
 
 export interface AgentObserverApi {
@@ -60,6 +68,7 @@ export function useAgentObserver(deps: AgentObserverDeps): AgentObserverApi {
     emitCanvasActions,
     emitTurnComplete,
     setPoints,
+    reloadAuthoritativeHistory,
   } = deps
   let pointEventsConn: PointEventsConnection | null = null
 
@@ -317,6 +326,18 @@ function ensureSharedSubscription(): SharedSubscription | null {
 const followUpTail = createFollowUpTailListener({
   fetchImpl: (url, init) => fetch(url, init),
   headers: () => authHeaders(),
+  // ⭐ P1b（事件一等化换读）：快照重同步（pi buffer 溢出 409 → Nest 合成 snapshot 帧）。
+  // 游标丢弃在 follow-up-tail 内部（单点，见 onSnapshotResync dep 注释）；这里只做
+  // 「是否拉权威历史」的门：**有本端回合在跑时不拉**——流式中 DB 是半程快照（metadata
+  // 在收尾才落全），拉了会把流式气泡冲成残缺；收尾的 finishOwnTurnViaObserver /
+  // applyTurnEnd → reconcileLatestAssistant 会以权威历史收口，缺口在那里补。
+  // 旁观 / 空闲态直接拉：断连期内容在 DB 是全的（Nest drain 与前端连接无关）。
+  // ⚠️ turn_suspended（挂起回合续跑中）同守卫：DB 是半程快照，续跑收尾才落全。
+  onSnapshotResync: () => {
+    if (!agent.isStreaming && !observerTurnActive.value && !mainTurnSuspended.value) {
+      reloadAuthoritativeHistory()
+    }
+  },
   // 每次连接时求值：threadId 可能在会话中途切换（重跑 fork 出新线程）
   baseUrl: () =>
     apiUrl(
