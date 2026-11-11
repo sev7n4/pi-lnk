@@ -85,6 +85,8 @@ describe('AgentService 回合身份与单一写者（TURN-IDENTITY P0-1/P0-2）'
   const agentThreadUpdate = vi.fn()
   const sessionFindUnique = vi.fn()
   const sessionUpdate = vi.fn()
+  /** P1c 清债：账本 upsert 桩（D 用例断言对象随分流契约迁移到账本）。 */
+  const agentEventUpsert = vi.fn()
 
   let service: AgentService
 
@@ -104,6 +106,7 @@ describe('AgentService 回合身份与单一写者（TURN-IDENTITY P0-1/P0-2）'
       agentThreadUpdate,
       sessionFindUnique,
       sessionUpdate,
+      agentEventUpsert,
     ]) {
       spy.mockClear()
     }
@@ -115,6 +118,7 @@ describe('AgentService 回合身份与单一写者（TURN-IDENTITY P0-1/P0-2）'
     agentThreadUpdate.mockResolvedValue({})
     sessionFindUnique.mockResolvedValue({ id: 's1', canvasData: null })
     sessionUpdate.mockResolvedValue({})
+    agentEventUpsert.mockResolvedValue({})
 
     service = new AgentService(
       {
@@ -130,6 +134,7 @@ describe('AgentService 回合身份与单一写者（TURN-IDENTITY P0-1/P0-2）'
           update: agentThreadUpdate,
         },
         session: { findUnique: sessionFindUnique, update: sessionUpdate },
+        agentEvent: { upsert: agentEventUpsert },
         userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
       } as never,
       { createFromAgent: vi.fn() } as never,
@@ -247,22 +252,24 @@ describe('AgentService 回合身份与单一写者（TURN-IDENTITY P0-1/P0-2）'
   }, 120_000)
 
   it('D：落库事件带会话级全局 seq（gSeq），与 pi-runtime afterSeq 同编号空间', async () => {
-    const { } = await runTurn([
+    // P1c 清债：写面分流后，带 gSeq 的常规事件（tool_call 等）真源 = AgentEvent 账本
+    // （metadata.executionEvents 只留 waiting_user/turn_settled/合成保留集）。
+    // 本用例断言对象随契约迁移：账本行 (gSeq, sSeq) 与 SSE 帧 id 同编号空间。
+    await runTurn([
       seqEvent('tool_execution_start', { toolCallId: 'c1', toolName: 'propose_generation', args: {} }, 4242),
       piEvent('agent_end', { status: 'completed' }),
     ])
 
-    const call = agentMessageCreate.mock.calls.at(-1)?.[0] as {
-      data: { metadata?: string }
+    const upsert = agentEventUpsert.mock.calls.at(-1)?.[0] as {
+      where: { threadId_gSeq_sSeq: { gSeq: number; sSeq: number } }
+      create: { type: string; gSeq: number; sSeq: number }
     }
-    const meta = JSON.parse(call.data.metadata ?? '{}') as {
-      executionEvents?: Array<{ type: string; seq?: number; gSeq?: number }>
-    }
-    const toolCall = meta.executionEvents?.find((e) => e.type === 'tool_call')
-    expect(toolCall).toBeDefined()
+    expect(upsert).toBeDefined()
     // gSeq 来自 pi-runtime 的全局序号（本例 4242），不是 Nest 每条流从 1 起的局部 seq。
-    expect(toolCall?.gSeq).toBe(4242)
-    expect(toolCall?.seq).toBe(1)
+    expect(upsert.create.type).toBe('tool_call')
+    expect(upsert.where.threadId_gSeq_sSeq.gSeq).toBe(4242)
+    expect(upsert.where.threadId_gSeq_sSeq.sSeq).toBe(1)
+    expect(upsert.create.gSeq).toBe(4242)
   }, 120_000)
 
   it('D2：waiting_user（阻塞确认等待生命周期）必须落库 —— 刷新/历史重放才能重建 proposal part', async () => {

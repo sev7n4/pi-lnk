@@ -68,6 +68,15 @@ export interface AgentMessageMetadata {
   /** PR4 历史修复：本行被判定为影子行时指向 owner 消息 id；读取出口据此过滤。 */
   supersededBy?: string
   /**
+   * P1c 清债（写面分流）：本行 executionEvents 是**最小兼容集**（waiting_user /
+   * turn_settled / 无 gSeq 合成事件）而非全量——带 gSeq 的常规事件（text/tool_call/
+   * tool_result/thinking/canvas/task_list/turn_usage/plan_proposed…）全量在
+   * AgentEvent 账本，按 runId 投影可得（服务端 getMessages 读时 enrichment 注入；
+   * 直读 DB 的消费方据此判定需走账本投影，而非把本行当全量重放——N4 不冒充）。
+   * 键不出现纪律：未分流（账本时代之前的旧行）不写该键 ⇒ 读端缺省视为全量。
+   */
+  eventsShrunk?: boolean
+  /**
    * 回合外投影（2026-11-02 天鹅事故 P0-A）：本行由「回合外投影记账者」落库——
    * 该 run 不是任何用户 turn 的一部分（生成 job 终态的回合外简报轮等），Nest 侧
    * 没有主流写者 ⇒ reaper notify-generation 送达后挂短命订阅记账。前端可据此

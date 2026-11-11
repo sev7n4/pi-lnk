@@ -443,9 +443,16 @@ model AgentEvent {
   /** JSON 字符串：UiEvent.data（与 SSE 帧同构，消费端无需二次投影）。 */
   data      String
   createdAt DateTime @default(now())
+  /**
+   * P1c 清债（账本投影）：回合内第几条 assistant 消息段（以 message_end 分段，0 起）。
+   * message_end 不是 trace 事件（不进账本）⇒ 块归属只能由写侧随行落账，读侧无法重建。
+   * 读时 enrichment（getMessages 派生 executionEvents）据此还原「多段叙述各自成块」。
+   */
+  messageIndex Int @default(0)
 
   @@unique([threadId, gSeq, sSeq])
   @@index([threadId, gSeq])
+  @@index([threadId, runId])
 }
 
 model AgentMessage {
