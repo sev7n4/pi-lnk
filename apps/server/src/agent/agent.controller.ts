@@ -655,6 +655,10 @@ export class AgentController {
     // 归因**不是** nginx 缓冲（该机 `/api/` 已 `proxy_buffering off`），而是：改前首帧前
     // 不写任何字节 ⇒ 客户端始终拿不到响应头 ⇒ 处于「未建立」状态；此时任何一次掐断
     // （重挂 / 切走 / 重连）都只留下「200 + 0 字节」——看不出原因的静默故障记录。
+    // P1a（2026-11-11，计划 2026-11-11-sse-event-firstclass-p1a.md §1.1）：显式声明浏览器
+    // EventSource 断线重连间隔（WHATWG 9.2），不依赖 UA 默认值；放在 observer-ready 之前，
+    // 建立期即生效。⚠️ flag-off 旧主流 SSE 分支不加——该分支有「逐字节不变」回滚面承诺。
+    res.write('retry: 3000\n\n')
     res.write(': observer-ready\n\n')
     const idleTimer = setTimeout(() => {
       res.end()
