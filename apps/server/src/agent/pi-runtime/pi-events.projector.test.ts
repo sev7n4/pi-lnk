@@ -53,6 +53,7 @@ describe("createUiEventProjector（统一事件通道 P0：单一派生源）", 
 			type: "canvas_command",
 			data: { type: "ask_user", callId: "c1", questions },
 			seq: 7,
+			ts: expect.any(Number),
 		});
 		expect(out[1].type).toBe("pi_tool_execution_update");
 	});
@@ -73,7 +74,7 @@ describe("createUiEventProjector（统一事件通道 P0：单一派生源）", 
 				11,
 			),
 		);
-		expect(out[0]).toEqual({ type: "canvas_command", data: { type: "focus_node", nodeId: "n1" }, seq: 11 });
+		expect(out[0]).toEqual({ type: "canvas_command", data: { type: "focus_node", nodeId: "n1" }, seq: 11, ts: expect.any(Number) });
 		expect(out[1].type).toBe("tool_result");
 	});
 
@@ -114,7 +115,7 @@ describe("createUiEventProjector（统一事件通道 P0：单一派生源）", 
 	it("thinking：start→running、end→done（与 accumulator 契约一致）", () => {
 		const p = createUiEventProjector({ role: "observer" });
 		const start = p.feed(ev("message_update", { event: { type: "thinking_start" } }, 21));
-		expect(start).toEqual([{ type: "thinking", data: { status: "running" }, seq: 21 }]);
+		expect(start).toEqual([{ type: "thinking", data: { status: "running" }, seq: 21, ts: expect.any(Number) }]);
 		const end = p.feed(ev("message_update", { event: { type: "thinking_end" } }, 23));
 		expect(end.map((o) => o.type)).toEqual(["thinking"]);
 		expect((end[0].data as { status: string }).status).toBe("done");

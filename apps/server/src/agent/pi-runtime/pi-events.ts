@@ -75,12 +75,18 @@ export interface UiEvent<T = unknown> {
 	 * P0（agent-turn-timeline-design §5 P0-3）：把 pi-runtime 的会话内单调 `seq`
 	 * 透传下来，供 P1 按 seq 做稳定插入（P0 仍按 SSE 到达序渲染，不消费本字段）。
 	 * 可选：未携带时上游不保证序，且 `toEqual` 会忽略 undefined，不影响既有测试。
-	 * ⚠️ `ts` 暂不在此透传——`PiRuntimeEvent.ts` 为必填，既有 mapPiEventToUiEvent
-	 * 测试用 `toEqual({type,data})` 精确比对，带 ts 会破坏；P1 前端真正按序插入时再补并同步改测试。
 	 */
 	seq?: number;
 	/** 同 `seq`：回合身份透传（runtime 未携带时 undefined，`toEqual` 忽略，零回归）。 */
 	runId?: string;
+	/**
+	 * P1a（2026-11-11，计划 docs/superpowers/plans/2026-11-11-sse-event-firstclass-p1a.md）：
+	 * 把 pi-runtime 的事件毫秒时间戳透传到 UiEvent——SSE 帧（/runs/events）与
+	 * AgentEvent 表（PR-B）据此与 UI 事件同构，对账不再依赖 Nest 侧 Date.now()。
+	 * `PiRuntimeEvent.ts` 本为必填 number，派生点统一带 `ts: event.ts`；
+	 * 既有 `toEqual({type,data})` 精确比对处已同步补键。
+	 */
+	ts?: number;
 }
 
 /**
@@ -138,11 +144,13 @@ export function extractTextEnd(event: PiRuntimeEvent): string | null {
 export function mapPiEventToUiEvent(event: PiRuntimeEvent): UiEvent | null {
 	// P0（agent-turn-timeline-design §5 P0-3）：统一把服务端 seq 透传到 UiEvent，
 	// 供 P1 按 seq 稳定插入。seq 可选，未携带时为 undefined（toEqual 忽略，零回归）。
+	// P1a：同步透传 ts（PiRuntimeEvent.ts 必填）——SSE 帧与事件表同构的对账键。
 	const ui = (type: string, data: unknown): UiEvent => ({
 		type,
 		data,
 		seq: event.seq,
 		runId: event.runId,
+		ts: event.ts,
 	});
 
 	const delta = extractTextDelta(event);
@@ -695,7 +703,7 @@ export function createThinkingAccumulator(
 		feed(event: PiRuntimeEvent): UiEvent | null {
 			const t = extractThinking(event);
 			if (!t) return null;
-			if (t.phase === "start") return { type: "thinking", data: { status: "running" }, seq: event.seq };
+			if (t.phase === "start") return { type: "thinking", data: { status: "running" }, seq: event.seq, ts: event.ts };
 			if (t.phase === "delta" && t.text) {
 				buffer += t.text;
 				const ts = typeof event.ts === "number" && event.ts > 0 ? event.ts : Date.now();
@@ -705,6 +713,7 @@ export function createThinkingAccumulator(
 						type: "thinking",
 						data: { status: "running", summary: buffer.slice(0, limit), transient: true },
 						seq: event.seq,
+						ts: event.ts,
 					};
 				}
 				return null;
@@ -714,7 +723,7 @@ export function createThinkingAccumulator(
 		// 会带上此前**所有**段的全文（截图复盘：4 段 summary len 220/758/822/963 且 head
 		// 完全相同），前端时间线每段都渲染从头开始的转写 ⇒ 大面积重复。
 		buffer = "";
-		return { type: "thinking", data: { status: "done", summary: summary || undefined }, seq: event.seq };
+		return { type: "thinking", data: { status: "done", summary: summary || undefined }, seq: event.seq, ts: event.ts };
 		},
 	};
 }
@@ -851,6 +860,7 @@ export function createUsageAccumulator(estimateCredits?: (totals: TurnUsage) => 
 							transient: true,
 						},
 						seq: event.seq,
+						ts: event.ts,
 					};
 				}
 				return null;
@@ -869,6 +879,7 @@ export function createUsageAccumulator(estimateCredits?: (totals: TurnUsage) => 
 						...(est !== null ? { estimatedCredits: est } : {}),
 					},
 					seq: event.seq,
+					ts: event.ts,
 				};
 			}
 			return null;
@@ -920,19 +931,21 @@ export function createUiEventProjector(opts: UiEventProjectorOptions): UiEventPr
 					type: "error",
 					data: { message: turnErr.message, error_type: turnErr.kind, retry_hint: turnErr.retry_hint },
 					seq: event.seq,
+					ts: event.ts,
 				});
 			}
 			// 2) canvas_command（ask_user 卡 / svg_card / UI_COMMAND；B-6 契约）
 			for (const cmd of extractCanvasCommands(event)) {
-				out.push({ type: "canvas_command", data: cmd, seq: event.seq });
+				out.push({ type: "canvas_command", data: cmd, seq: event.seq, ts: event.ts });
 			}
 			// 3) canvas_action（画布数据动作 + 节点状态）
 			for (const action of extractCanvasActions(event)) {
-				out.push({ type: "canvas_action", data: action, seq: event.seq });
+				out.push({ type: "canvas_action", data: action, seq: event.seq, ts: event.ts });
 			}
-			// 4) task_list / task_update（todo_write diff）
+			// 4) task_list / task_update（todo_write diff）——extractTaskEvents 产物是无
+			//    seq/ts 的 TaskWireEvent（主链路也直接消费），此处统一补游标键再入列。
 			for (const task of extractTaskEvents(event)) {
-				out.push(task as UiEvent);
+				out.push({ ...task, seq: event.seq, ts: event.ts } as UiEvent);
 			}
 			// 5) thinking 折叠（accumulator 内部带节流与 seq 透传）
 			const thinkingUi = thinkingAccumulator.feed(event);
@@ -958,6 +971,7 @@ export function createUiEventProjector(opts: UiEventProjectorOptions): UiEventPr
 								})),
 							},
 							seq: event.seq,
+							ts: event.ts,
 						});
 					}
 					if (stripped.doneN != null) {
@@ -965,6 +979,7 @@ export function createUiEventProjector(opts: UiEventProjectorOptions): UiEventPr
 							type: "task_update",
 							data: { id: `plan-${stripped.doneN}`, status: "done" },
 							seq: event.seq,
+							ts: event.ts,
 						});
 					}
 				}

@@ -18,7 +18,7 @@ describe("B8 事件映射（11 → 现有 UI 事件，spec §8.5.2 最小集）"
 		const evt = baseEvent("message_update", {
 			event: { type: "text_delta", delta: "你好" },
 		});
-		expect(mapPiEventToUiEvent(evt)).toEqual({ type: "text_delta", data: { text: "你好" } });
+		expect(mapPiEventToUiEvent(evt)).toEqual({ type: "text_delta", data: { text: "你好" }, ts: expect.any(Number) });
 	});
 
 	it("message_update thinking delta → null（Round 5 决定 UI 事件）", () => {

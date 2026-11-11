@@ -260,11 +260,12 @@ describe("thinking 透传（可观测性专项 ③）", () => {
 		expect(acc.feed(thinkEvent("thinking_start"))).toEqual({
 			type: "thinking",
 			data: { status: "running" },
+			ts: 1,
 		});
 		expect(acc.feed(thinkEvent("thinking_delta", "一二三四五"))).toBeNull();
 		expect(acc.feed(thinkEvent("thinking_delta", "六七八九十〇一二三四"))).toBeNull();
 		const end = acc.feed(thinkEvent("thinking_end"));
-		expect(end).toEqual({ type: "thinking", data: { status: "done", summary: "一二三四五六七八九十〇" } });
+		expect(end).toEqual({ type: "thinking", data: { status: "done", summary: "一二三四五六七八九十〇" }, ts: 1 });
 	});
 
 	it("A4: 纯文本流（无 thinking）feed 全程返回 null", () => {
@@ -305,6 +306,7 @@ describe("turn_usage（P1 状态行）", () => {
 		expect(done).toEqual({
 			type: "turn_usage",
 			data: { inputTokens: 150, cacheReadTokens: 40, cacheWriteTokens: 10, outputTokens: 50 },
+			ts: 1,
 		});
 	});
 
@@ -317,6 +319,7 @@ describe("turn_usage（P1 状态行）", () => {
 		expect(accZero.feed({ type: "agent_end", ts: 1, data: {} } as never)).toEqual({
 			type: "turn_usage",
 			data: { inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 },
+			ts: 1,
 		});
 	});
 
@@ -360,12 +363,14 @@ describe("usage_delta / estimatedCredits（Q2 2026-10-14 积分预估展示）",
 		expect(accNoCb.feed({ type: "agent_end", ts: 1, data: {} } as never)).toEqual({
 			type: "turn_usage",
 			data: { inputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 10, cost: 0.5 },
+			ts: 1,
 		});
 		const accZero = createUsageAccumulator(estimate);
 		accZero.feed(msgEnd({ input: 100, output: 10 })); // 无 cost
 		expect(accZero.feed({ type: "agent_end", ts: 1, data: {} } as never)).toEqual({
 			type: "turn_usage",
 			data: { inputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 10 },
+			ts: 1,
 		});
 	});
 });
@@ -555,6 +560,7 @@ describe("waiting_user 透传（2026-10-01 阻塞等待可见化）", () => {
 		expect(out).toEqual({
 			type: "waiting_user",
 			data: { status: "waiting", toolName: "propose_generation", callId: "c1", timeoutMs: 300000, nodeId: "node-9", reason: undefined },
+			ts: 1,
 		});
 	});
 
@@ -567,6 +573,7 @@ describe("waiting_user 透传（2026-10-01 阻塞等待可见化）", () => {
 		expect(out).toEqual({
 			type: "waiting_user",
 			data: { status: "resolved", toolName: "ask_user", callId: "c1", timeoutMs: undefined, nodeId: undefined, reason: "answered" },
+			ts: 2,
 		});
 	});
 
@@ -587,7 +594,7 @@ describe("activity 透传（决策 8 · 正在做什么）", () => {
 			ts: 11,
 			data: { toolName: "upsert_media_node", done: 1 },
 		} as never);
-		expect(out).toEqual({ type: "activity", data: { toolName: "upsert_media_node", done: 1, total: undefined } });
+		expect(out).toEqual({ type: "activity", data: { toolName: "upsert_media_node", done: 1, total: undefined }, ts: 11 });
 	});
 
 	it("载荷只有英文工具名：中文翻译是客户端目录的责任（决策 7）", () => {
@@ -646,6 +653,7 @@ describe("turn_usage cost（审计 P0-③）", () => {
 		expect(done).toEqual({
 			type: "turn_usage",
 			data: { inputTokens: 150, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 50, cost: 1 },
+			ts: 1,
 		});
 	});
 
@@ -656,6 +664,7 @@ describe("turn_usage cost（审计 P0-③）", () => {
 		expect(done).toEqual({
 			type: "turn_usage",
 			data: { inputTokens: 100, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 20 },
+			ts: 1,
 		});
 	});
 });
