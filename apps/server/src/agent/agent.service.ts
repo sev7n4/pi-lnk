@@ -151,6 +151,12 @@ export function buildTurnMetadata(input: {
   executionTrace?: ExecutionTraceState
   executionEvents?: PersistedExecutionEvent[]
   /**
+   * P1c 清债（写面分流）：本行 executionEvents 是最小兼容集而非全量，全量在
+   * AgentEvent 账本（按 runId 投影）。读端（getMessages enrichment）据此判定
+   * 合并投影；直读 DB 消费方据此判定不得把本行当全量重放（N4）。
+   */
+  eventsShrunk?: boolean
+  /**
    * TURN-IDENTITY PR2：账本不完整（本流没捕获到 run 起点）。
    *
    * 键不出现纪律：完整时**不写** `partial` / `gapFrom` 两个键（老消息因此零变化），
@@ -168,6 +174,8 @@ export function buildTurnMetadata(input: {
   if (input.executionTrace) metadata.executionTrace = input.executionTrace
   if (input.presentation) metadata.presentation = input.presentation
   if (input.executionEvents?.length) metadata.executionEvents = input.executionEvents
+  // 键不出现纪律：未分流（旧行语义）不写该键 ⇒ 读端缺省视为全量
+  if (input.eventsShrunk) metadata.eventsShrunk = true
   if (input.partial) {
     metadata.partial = true
     if (input.gapFrom !== undefined) metadata.gapFrom = input.gapFrom
@@ -185,6 +193,59 @@ export function deriveLinkedOutputs(actions: CanvasAction[]): LinkedCanvasOutput
       nodeType: String(a.payload.nodeType || 'image'),
       status: 'done' as const,
     }))
+}
+
+// ── P1c 清债（账本投影，spec 2026-11-11-sse-p1c-ledger-projection-metadata-shrink §2.1）──
+
+/** 账本行的最小投影形状（prisma AgentEvent 行的结构子集；测试桩同构）。 */
+export interface AgentEventLedgerRow {
+  runId: string | null
+  gSeq: number
+  sSeq: number
+  type: string
+  data: string
+  ts: Date
+  messageIndex: number
+}
+
+/** 账本行 → PersistedExecutionEvent（data JSON 还原、sSeq→seq、ts→epoch ms；坏 JSON 不炸读路径）。 */
+export function ledgerRowToPersistedEvent(row: AgentEventLedgerRow): PersistedExecutionEvent {
+  let data: unknown = null
+  try {
+    data = JSON.parse(row.data)
+  } catch {
+    data = null
+  }
+  return {
+    type: row.type,
+    data,
+    seq: row.sSeq,
+    gSeq: row.gSeq,
+    ts: new Date(row.ts).getTime(),
+    messageIndex: row.messageIndex,
+  }
+}
+
+/**
+ * metadata 保留集（waiting_user/turn_settled/合成）与账本投影行归并：
+ * (gSeq, sSeq) 去重（waiting_user/turn_settled 两边都在——保留集与账本同写，先到者留），
+ * 按 seq 升序复原发生序。seq=traceSeq 计数器为两存储共用（R1：账本 sSeq 即 traceSeq），
+ * 同一行的所有事件来自同一流的漏斗 ⇒ seq 序即真实发生序。
+ */
+export function mergeShrunkEvents(
+  leftovers: readonly PersistedExecutionEvent[],
+  projected: readonly PersistedExecutionEvent[],
+): PersistedExecutionEvent[] {
+  const seen = new Set<string>()
+  const merged: PersistedExecutionEvent[] = []
+  for (const ev of [...leftovers, ...projected]) {
+    const key =
+      typeof ev.gSeq === 'number' && typeof ev.seq === 'number' ? `${ev.gSeq}:${ev.seq}` : `syn:${ev.seq ?? merged.length}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    merged.push(ev)
+  }
+  return merged.sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
 }
 
 /** 回合外 run 收束快照（P0-A 记账者产出，供 finalizeTurn 落库）。 */
@@ -742,7 +803,68 @@ export class AgentService implements OnModuleInit {
     })
     // rawCount = DB 原始行数（过滤前）：overfetch 窗口 (take*2) 被打满时保守判定有下一页，
     // 避免 superseded 重负载线程误判 hasMore=false 截断历史（审查 P1）。
-    return paginateVisibleRows(derived, take, rows.length)
+    // P1c 清债（读时 enrichment）：对分流行注入账本投影（只动 eventsShrunk 标记行的响应副本）
+    return this.enrichAssistantPage(threadId, paginateVisibleRows(derived, take, rows.length))
+  }
+
+  /**
+   * P1c 清债（读时 enrichment，spec §2.1）：写面分流后，新回合 assistant 行的
+   * metadata.executionEvents 只含最小兼容集——本方法对带 `eventsShrunk` 标记且 runId
+   * 非空的行，按 runId 从 AgentEvent 账本投影派生全量 executionEvents，与保留集归并后
+   * 注入**响应副本**（不落库）。前端历史重放（meta.executionEvents 全消费面）零改动。
+   *
+   * 兼容直通（响应与 DB 原样一致，键不出现纪律）：
+   * - 非 assistant / 无 runId / 无 eventsShrunk 标记（账本时代旧行、回合外投影行）；
+   * - 账本读失败（fail-open，与写面 appendAgentEvent 对称）；
+   * - 账本无该 runId 行（不注入空数组）；
+   * - metadata 解析失败（坏行不动）。
+   */
+  private async enrichAssistantPage<T extends { role: string; runId: string | null; metadata: string | null }>(
+    threadId: string,
+    result: { page: T[]; hasMore: boolean; nextCursor: string | null },
+  ): Promise<{ page: T[]; hasMore: boolean; nextCursor: string | null }> {
+    const runIdCandidates = result.page
+      .filter((r) => r.role === 'assistant' && typeof r.runId === 'string' && r.runId.length > 0)
+      .map((r) => r.runId as string)
+    if (!runIdCandidates.length) return result
+    let ledgerRows: AgentEventLedgerRow[]
+    try {
+      ledgerRows = (await this.prisma.agentEvent.findMany({
+        where: { threadId, runId: { in: [...new Set(runIdCandidates)] } },
+        orderBy: [{ gSeq: 'asc' }, { sSeq: 'asc' }],
+      })) as AgentEventLedgerRow[]
+    } catch {
+      return result
+    }
+    if (!ledgerRows.length) return result
+    const byRun = new Map<string, PersistedExecutionEvent[]>()
+    for (const row of ledgerRows) {
+      if (typeof row.runId !== 'string') continue
+      const ev = ledgerRowToPersistedEvent(row)
+      const list = byRun.get(row.runId)
+      if (list) list.push(ev)
+      else byRun.set(row.runId, [ev])
+    }
+    let touched = false
+    const page = result.page.map((r) => {
+      if (r.role !== 'assistant' || typeof r.runId !== 'string') return r
+      const projected = byRun.get(r.runId)
+      if (!projected?.length) return r
+      let meta: Record<string, unknown>
+      try {
+        meta = r.metadata ? (JSON.parse(r.metadata) as Record<string, unknown>) : {}
+      } catch {
+        return r
+      }
+      // 只对分流行（eventsShrunk 标记）合并投影；旧行直通——N4：不冒充全量、不改老数据
+      if (meta.eventsShrunk !== true) return r
+      const leftovers = Array.isArray(meta.executionEvents)
+        ? (meta.executionEvents as PersistedExecutionEvent[])
+        : []
+      touched = true
+      return { ...r, metadata: JSON.stringify({ ...meta, executionEvents: mergeShrunkEvents(leftovers, projected) }) } as T
+    })
+    return touched ? { ...result, page } : result
   }
 
   async listThreads(sessionId: string) {
@@ -2971,6 +3093,9 @@ export class AgentService implements OnModuleInit {
         type: ev.type,
         ts: new Date(ev.ts ?? Date.now()),
         data: JSON.stringify(ev.data ?? null),
+        // P1c 清债（账本投影）：回合内 assistant 消息段归属随行落账（message_end 不是
+        // trace 事件不进账本 ⇒ 块归属读侧无法重建，只能写侧带出）。
+        messageIndex: ev.messageIndex ?? 0,
       }
       try {
         void this.prisma.agentEvent
@@ -3004,11 +3129,26 @@ export class AgentService implements OnModuleInit {
         ts: Date.now(),
         messageIndex: traceMessageIndex,
       }
-      executionEvents.push(ev)
+      // P1c 清债（写面分流，spec 2026-11-11-sse-p1c-ledger-projection-metadata-shrink §2.2）：
+      // metadata.executionEvents 只保留**最小兼容集**，其余只进账本（appendAgentEvent）——
+      // - waiting_user：状态机读者（pending 查找/resolved 追加/清除）只在 metadata，
+      //   P2 PendingInterruption 表接管前不动（R7）；
+      // - turn_settled：经 awaited finalizeTurn 落 metadata 的权威终态，前端已结算探测
+      //   （L959/L1115 形态）健壮性不回退——账本是 fire-and-forget fail-open（R7）；
+      // - 无 gSeq 合成事件：账本不收（appendAgentEvent 直接跳过），metadata 是唯一落点（R6）。
+      // 其余（text/tool_call/tool_result/thinking/canvas/task_list/turn_usage/plan_proposed…）
+      // 带全量 gSeq 且账本全量在 ⇒ metadata 不再双写（债主体，生产实测 max 530KB/行）。
+      // 返回值不变：调用点 pushTraceEvent(...).data / const settledData = … 依赖。
+      if (
+        typeof ev.gSeq !== 'number' ||
+        ev.type === 'waiting_user' ||
+        ev.type === 'turn_settled'
+      ) {
+        executionEvents.push(ev)
+      }
       // P1a PR-B：事件账本即时 append（fire-and-forget，不阻塞流）
       appendAgentEvent(ev)
-      return ev
-    }
+      return ev    }
     // 正文分段落库（2026-10-14）：任何非文本 trace 事件落库前先 flush，text 事件 seq
     // 恒小于边界事件 ⇒ 前端重放时正文按真实时序归位（修「正文整体跑到工具行上面」）。
     const textPersister = createTextSegmentPersister((type, data) => pushTraceEvent(type, data))
@@ -3793,7 +3933,7 @@ export class AgentService implements OnModuleInit {
         const capture: LedgerCapture = {
           sawRunStart,
           firstSeq,
-          eventCount: executionEvents.length,
+          eventCount: traceSeq, // P1c R8：分流后 executionEvents 只存保留集，完整性判据用总推送计数
         }
         const partial = !isLedgerComplete(capture)
         if (partial) {
@@ -3814,6 +3954,8 @@ export class AgentService implements OnModuleInit {
               executionEvents,
               partial,
               gapFrom: ledgerGapFrom(capture),
+              // P1c 写面分流标记：traceSeq > 数组长 ⇒ 本行 executionEvents 是最小兼容集
+              eventsShrunk: traceSeq > executionEvents.length,
               // ⚠️ 只有**真的没见到 agent_end** 才是尾部截断。
               // 消费方在 agent_end 之后才断连（很常见：最后一帧已到、前端刚好刷新）
               // ⇒ 本流其实看全了 ⇒ 不能标 truncated（否则谎报缺口）。
@@ -4129,7 +4271,7 @@ export class AgentService implements OnModuleInit {
       const capture: LedgerCapture = {
         sawRunStart,
         firstSeq,
-        eventCount: executionEvents.length,
+        eventCount: traceSeq, // P1c R8：分流后 executionEvents 只存保留集，完整性判据用总推送计数
       }
       const partial = !isLedgerComplete(capture)
       if (partial) {
@@ -4145,6 +4287,8 @@ export class AgentService implements OnModuleInit {
         linkedOutputs: deriveLinkedOutputs(canvasActions),
         metadata: buildTurnMetadata({
           executionEvents,
+          // P1c 写面分流标记：traceSeq > 数组长 ⇒ 本行 executionEvents 是最小兼容集
+          eventsShrunk: traceSeq > executionEvents.length,
           ...(partial ? { partial: true, gapFrom: ledgerGapFrom(capture) } : {}),
           // D2（Task 2）：本流结束时**没见到 agent_end** ⇒ 这轮在 Nest 侧是个前缀
           // （pi 侧那轮仍在跑、仍会跑完）⇒ 必须标 truncated，不能冒充全量。
@@ -4448,7 +4592,11 @@ export class AgentService implements OnModuleInit {
     const sawTerminalEvent = opts.sawTerminalEvent !== false
     const runStarted = opts.runStarted === true
     const hasContent = Boolean(
-      assistantText || opts.metadata?.presentation || opts.metadata?.executionEvents?.length,
+      assistantText || opts.metadata?.presentation || opts.metadata?.executionEvents?.length ||
+        // P1c 清债：写面分流后 metadata.executionEvents 只剩保留集——「本流见到过事件」
+        // 的真值在 eventsShrunk 标记（traceSeq > 保留集长度 ⇒ 分流发生过）。漏判会让
+        // 「只见到保留集外事件（tool_call 等）的半路接入回合」整轮不落库（有执行、无记录回归）。
+        opts.metadata?.eventsShrunk,
     )
     // 未见到收束但**这轮确实在跑** ⇒ 必须留痕（哪怕本流一个字都没收到：
     // 「Nest 没看到」≠「这轮没发生」，前者是观测缺失，后者是事实缺失）。
