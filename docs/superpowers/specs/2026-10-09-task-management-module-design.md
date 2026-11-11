@@ -115,6 +115,7 @@ docs/superpowers/specs/2026-10-10-turn-budget-design.md          章节 C2：tur
 docs/superpowers/specs/2026-10-10-c4-subagent-design.md          章节 C4：子代理（只读 Explore 型）规格（2026-10-10 立项）
 docs/superpowers/specs/2026-10-11-automations-design.md          章节 C5：Automations 调度子系统立项规格（2026-10-11 立项）
 （未来）C1-B 各自 spec                                                   章节：立项时创建
+docs/superpowers/specs/2026-11-11-task-planning-engineering-roadmap-design.md  复盘与路标（2026-11-11 已拍板）：外部建议核验 · 缺口分析 · 分期方案（决策门性质，阶段 A/B/C 立项时按其门禁执行）
 ```
 
 **维护规则**：
