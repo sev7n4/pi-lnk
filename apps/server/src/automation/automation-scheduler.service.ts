@@ -47,6 +47,17 @@ export const AUTOMATION_DEFAULT_JOBS = [
     runOnStartup: false,
     params: '{}',
   },
+  {
+    // P2 durable 待确认门（2026-11-11）：按持久化 expiresAt 裁决超时门。
+    // 进程内 setTimeout 重启即丢 ⇒ 重启后必须有一次 startup 扫描把孤儿门收口。
+    id: 'job-pending-interruption-sweep',
+    name: '待确认门过期裁决',
+    description: 'P2 durable：按 expiresAt 把过期未裁决的 pendingInterruption 翻 expired（幂等）',
+    handlerKey: 'pending-interruption-sweep',
+    intervalMinutes: 1,
+    runOnStartup: true,
+    params: '{}',
+  },
 ] as const
 
 export type AutomationJobRow = Awaited<ReturnType<PrismaService['automationJob']['findUniqueOrThrow']>>

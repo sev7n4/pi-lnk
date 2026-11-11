@@ -27,6 +27,8 @@ import {
   TurnAutoResumeService,
 } from './turn-auto-resume/turn-auto-resume.service'
 import { TurnStateService } from './turn-state.service'
+import { PendingInterruptionService } from './pending-interruption.service'
+import { AutomationModule } from '../automation/automation.module'
 
 @Module({
   imports: [
@@ -38,10 +40,14 @@ import { TurnStateService } from './turn-state.service'
     // P2 T6（token 精确计费）：回合预扣/结算依赖（AgentService 构造 @Optional 注入）
     PointsModule,
     PricingModule,
+    // P2 待确认门 durable：过期扫描挂既有统一调度器（不新起 timer，G1 纪律）。
+    AutomationModule,
   ],
   controllers: [AgentController, AgentCanvasToolsController, DeliveryMetricsController],
   providers: [
     AgentService,
+    // P2：gate 表权威层 + 1min 过期扫描 handler（onModuleInit 注册到 AutomationScheduler）
+    PendingInterruptionService,
     AgentCanvasToolsService,
     AgentInternalGuard,
     WorkflowRecipeService,
