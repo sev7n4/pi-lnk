@@ -59,10 +59,15 @@ export function reduce(prev: readonly TodoItemWithId[], next: readonly TodoItem[
 	return { updates };
 }
 
-/** 从会话 transcript 条目（任意形态）反向扫描最后一个 todo_write 快照。
+/** 从会话 transcript 条目（任意形态）反向扫描最后一个任务清单快照。
  * 防御式字段访问：vendor entry 形态随版本可能变化——2026-10-09 生产 probe 实测形态为
  * `{type:"message", message:{role:"toolResult", toolName, details}}`（message 包裹层），
- * 同时保留官方 todo.ts 同构的顶层 `{toolName, details}` 与 `{result:{details}}` 兼容。 */
+ * 同时保留官方 todo.ts 同构的顶层 `{toolName, details}` 与 `{result:{details}}` 兼容。
+ * P1-2（spec 2026-11-11-propose-plan-visibility-design.md §8）：propose_plan 经 overwriteTodos
+ * 落清单但**不写 todo_write transcript 条目**——不识别它，重启/重连后 seedTodoState 播种为空
+ * ⇒ 任务卡消失且门状态无从恢复。识别 propose_plan 的 details.todo.snapshot（P0 形态），
+ * 兜底 details.plan.steps（同形 TodoItemWithId[]）。反向扫描「最新条目胜出」天然满足三态：
+ * 仅 todo_write / 仅 propose_plan / 二者皆有取时间序最新。 */
 export function pickLatestSnapshot(entries: readonly unknown[]): TodoItemWithId[] {
 	for (let i = entries.length - 1; i >= 0; i--) {
 		const e = entries[i] as {
@@ -73,14 +78,17 @@ export function pickLatestSnapshot(entries: readonly unknown[]): TodoItemWithId[
 		} | null;
 		if (!e) continue;
 		let raw: unknown;
-		if (e.toolName === "todo_write") {
+		if (e.toolName === "todo_write" || e.toolName === "propose_plan") {
 			raw = e.details ?? e.result?.details;
-		} else if (e.message?.toolName === "todo_write") {
+		} else if (e.message?.toolName === "todo_write" || e.message?.toolName === "propose_plan") {
 			raw = e.message.details ?? e.message.result?.details;
 		} else {
 			continue;
 		}
-		const snap = (raw as { todo?: { snapshot?: unknown } } | undefined)?.todo?.snapshot;
+		const o = raw as { todo?: { snapshot?: unknown }; plan?: { steps?: unknown } } | undefined;
+		const snap =
+			(Array.isArray(o?.todo?.snapshot) ? o?.todo?.snapshot : undefined) ??
+			(Array.isArray(o?.plan?.steps) ? o?.plan?.steps : undefined);
 		if (!Array.isArray(snap)) continue;
 		const items: TodoItemWithId[] = [];
 		for (const it of snap) {

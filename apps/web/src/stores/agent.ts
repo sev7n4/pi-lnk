@@ -814,6 +814,17 @@ export const useAgentStore = defineStore('agent', () => {
     feedTimeline({ type: 'ask_user', data })
   }
 
+  /** P1-2（spec 2026-11-11 D4）：plan_proposed 一等方案事件 → 时间线 plan part。
+   * live 与 executionEvents 重放（AgentSideRail.handleEvent 统一分发）同源。 */
+  function trackPlanProposed(data: {
+    callId?: string
+    summary: string
+    explanation?: string
+    steps: Array<{ content: string; activeForm?: string }>
+  }) {
+    feedTimeline({ type: 'plan_proposed', data })
+  }
+
   /**
    * 根治规格（2026-10-28）：提交/取消后把匹配的 question part 翻终态（answered/declined），
    * 或 POST 失败时回滚到 `pending_answer`（乐观置位防双击双发）。
@@ -1211,6 +1222,7 @@ export const useAgentStore = defineStore('agent', () => {
     trackUsageDelta,
     trackWaitingUser,
     trackAskUser,
+    trackPlanProposed,
     resolveQuestionPart,
     finishStreaming,
     loadHistory,

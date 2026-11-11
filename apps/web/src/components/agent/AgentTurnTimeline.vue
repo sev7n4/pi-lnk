@@ -766,6 +766,29 @@ const rootClass = computed(() =>
         >{{ part.status === 'answered' ? '已回答' : '已跳过' }}</p>
       </div>
 
+      <!-- plan（P1-2 spec 2026-11-11 D4）：propose_plan 方案本体在对话流的持久存档——
+           plan_proposed 事件派生（live 与 executionEvents 重放同源）。确认卡（question part
+           内联 plan）是决策面；本 part 是方案存档：卡被回答/超时后仍可见，也是二期方案面板
+           数据底座。令牌纪律同 question 分支：一律 --lnk-* 语义令牌（禁 hex/rgba 直引）。 -->
+      <div
+        v-else-if="part.kind === 'plan'"
+        class="rounded border border-[var(--lnk-border-subtle)] bg-[var(--lnk-surface-sunken)] px-2.5 py-2"
+        data-test="timeline-plan"
+      >
+        <div class="flex items-baseline gap-1.5">
+          <span class="flex-none text-[10px] font-semibold uppercase tracking-wide text-[var(--lnk-text-secondary)]">方案</span>
+          <span class="min-w-0 flex-1 text-xs font-semibold leading-snug text-[var(--lnk-text-primary)]">{{ part.summary }}</span>
+        </div>
+        <p v-if="part.explanation" class="mt-1 text-[10px] leading-relaxed text-[var(--lnk-text-secondary)]">{{ part.explanation }}</p>
+        <ol class="mt-1.5 space-y-1">
+          <li v-for="(step, i) in part.steps" :key="i" class="flex items-baseline gap-1.5">
+            <span class="inline-flex h-4 w-4 flex-none items-center justify-center rounded-full bg-[var(--lnk-accent-subtle)] text-[10px] font-semibold tabular-nums text-[var(--lnk-accent-text)]">{{ i + 1 }}</span>
+            <span class="min-w-0 flex-1 text-xs leading-snug text-[var(--lnk-text-primary)]">{{ step.content }}</span>
+            <span v-if="step.activeForm" class="flex-none text-[10px] text-[var(--lnk-text-muted)]">{{ step.activeForm }}</span>
+          </li>
+        </ol>
+      </div>
+
       <!-- notice -->
       <div
         v-else-if="part.kind === 'notice'"

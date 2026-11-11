@@ -1026,3 +1026,66 @@ describe('§14 结算段治理（2026-11-04 修订）', () => {
     expect(traceText!.includes('::')).toBe(false)
   })
 })
+
+// ---- P1-2（spec 2026-11-11-propose-plan-visibility-design.md D4）：plan_proposed → plan part ----
+describe('plan_proposed → plan part（方案一等公民，对话流持久存档）', () => {
+  const planEvent = (callId?: string): TimelineEvent => ({
+    type: 'plan_proposed',
+    data: {
+      ...(callId ? { callId } : {}),
+      summary: '三步制作 Codex 知识教学视频（脚本→封面→成片）',
+      explanation: '先脚本确保内容准确，再封面吸引点击，最后成片交付',
+      steps: [
+        { content: '编写教学脚本大纲' },
+        { content: '创建视频封面图', activeForm: '正在创建封面图' },
+        { content: '生成教学视频正文' },
+      ],
+    },
+  })
+
+  it('plan_proposed ⇒ 出 plan part（summary/explanation/steps 全透传）', () => {
+    const tl = feed([
+      { type: 'thinking', data: { status: 'done', summary: '想方案' } },
+      planEvent('c9'),
+      { type: 'ask_user', data: { callId: 'c9', title: 't', questions: [{ id: 'plan_confirm', question: '三步制作 Codex 教学视频', options: [{ label: '开始执行', value: 'execute' }] }] } },
+    ])
+    expect(kinds(tl)).toEqual(['thinking', 'plan', 'question'])
+    const plan = byKind(tl, 'plan')[0]
+    expect(plan.summary).toContain('三步制作 Codex')
+    expect(plan.explanation).toContain('先脚本')
+    expect(plan.steps).toHaveLength(3)
+    expect(plan.status).toBe('proposed')
+    expect(plan.callId).toBe('c9')
+  })
+
+  it('part id 稳定：带 callId ⇒ `plan:<callId>`（重放双跑 id 不漂移，part 稳定性纪律）', () => {
+    const a = replayTimelineEvents([planEvent('c9') as unknown as { type: string; data: unknown }])
+    const b = replayTimelineEvents([planEvent('c9') as unknown as { type: string; data: unknown }])
+    expect(a.parts[0].id).toBe('plan:c9')
+    expect(b.parts[0].id).toBe('plan:c9')
+  })
+
+  it('无 callId ⇒ nextPartId 兜底 id（仅 live 内存态退化路径；重放恒带 callId ⇒ 稳定 id）', () => {
+    const tl = feed([planEvent()])
+    const plan = byKind(tl, 'plan')[0]
+    expect(plan.id).toMatch(/^plan[-:]/)
+    expect(plan.callId).toBeUndefined()
+  })
+
+  it('refine 后再提案 = 对话流独立一步 ⇒ 两个 plan part（不 upsert 合并）', () => {
+    const tl = feed([planEvent('c1'), planEvent('c2')])
+    expect(byKind(tl, 'plan')).toHaveLength(2)
+    expect(byKind(tl, 'plan')[0].id).toBe('plan:c1')
+    expect(byKind(tl, 'plan')[1].id).toBe('plan:c2')
+  })
+
+  it('重放：plan_proposed 随 executionEvents 进 replayTimelineEvents ⇒ plan part 重建（刷新/重连后方案仍可见）', () => {
+    const tl = replayTimelineEvents([
+      { type: 'text', data: { text: '先说说方案思路' } },
+      planEvent('c9') as unknown as { type: string; data: unknown },
+      { type: 'canvas_command', data: { type: 'ask_user', callId: 'c9', questions: [{ id: 'plan_confirm', question: 'q', options: [] }] } },
+    ] as never)
+    expect(byKind(tl, 'plan')).toHaveLength(1)
+    expect(byKind(tl, 'plan')[0].steps).toHaveLength(3)
+  })
+})

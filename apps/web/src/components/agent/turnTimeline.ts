@@ -110,6 +110,23 @@ export type TimelinePart =
       startedAt: number
     }
   /**
+   * P1-2（spec 2026-11-11-propose-plan-visibility-design.md D4）：方案一等公民 part。
+   * 由 `plan_proposed` 事件派生（live SSE 与 executionEvents 重放同源）——确认卡
+   * （question part 内联 plan，P0-2）是决策面，本 part 是方案本体在对话流的**持久存档**：
+   * 卡被回答/超时后仍可见，也是二期方案面板（spec §12）的数据底座。
+   * 每 callId 一个 part（refine 后再提案 = 对话流独立一步，不 upsert）。
+   */
+  | {
+      kind: 'plan'
+      id: string
+      callId?: string
+      summary: string
+      explanation?: string
+      steps: Array<{ content: string; activeForm?: string }>
+      status: 'proposed'
+      startedAt: number
+    }
+  /**
    * 等待态单一真相（ask_user）：题面 + 选项 + 多选/其他，内联在对话流。
    * 取代组件级 `pendingAskUser` ref，成为 ask 等待的唯一来源。
    */
@@ -247,7 +264,21 @@ export type TimelineEvent =
           options: { label: string; value: string }[]
           multiSelect?: boolean
           allowOther?: boolean
+          /** P0-2（spec 2026-11-11）：propose_plan 确认卡内联方案（运行时透传；类型补齐于 P1-2）。 */
+          plan?: { summary: string; explanation?: string; steps: { content: string; activeForm?: string }[] }
         }>
+      }
+    }
+  | {
+      /** P1-2（spec 2026-11-11 D4）：plan_proposed 一等方案事件。server
+       *  pi-events.extractPlanProposedEvent 从 propose_plan 的 details.plan 派生，
+       *  随 executionEvents 落库 ⇒ 刷新/重连后方案仍可见（live 与重放同一 case 消费）。 */
+      type: 'plan_proposed'
+      data: {
+        callId?: string
+        summary: string
+        explanation?: string
+        steps: Array<{ content: string; activeForm?: string }>
       }
     }
   | {
@@ -768,6 +799,22 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
       } else {
         timeline.parts.push({ kind: 'notice', id: waitingNoticeId, text, tone: 'warn' })
       }
+      return
+    }
+    case 'plan_proposed': {
+      // P1-2：方案 part——每 callId 一个，不 upsert（refine 后再提案是对话流独立一步）。
+      // live 与 executionEvents 重放共用本 case（replayTimelineEvents 全量喂 applyTimelineEvent）。
+      const d = event.data
+      timeline.parts.push({
+        kind: 'plan',
+        id: d.callId ? `plan:${d.callId}` : nextPartId('plan'),
+        ...(d.callId ? { callId: d.callId } : {}),
+        summary: d.summary,
+        ...(d.explanation ? { explanation: d.explanation } : {}),
+        steps: d.steps,
+        status: 'proposed',
+        startedAt: Date.now(),
+      })
       return
     }
     case 'ask_user': {
