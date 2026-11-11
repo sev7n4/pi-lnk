@@ -83,6 +83,23 @@ export interface FollowUpTailDeps {
   onTextDelta?: (text: string) => void
   onCanvasAction?: (data: unknown) => void
   /**
+   * ⭐ P1b（事件一等化换读，plan 2026-11-11-sse-event-firstclass-p1b-swap-read.md §1.2）：
+   * **快照重同步信号**——服务端 409（pi-runtime 重放窗口过期）后合成 `snapshot` 帧
+   * （Nest→pi 侧 2026-10-18 上游对齐：快照替代重放，不再终止断流）。
+   *
+   * ⛔ 收到它意味着两件事，消费端（本监听器 + 宿主）必须**各做一半**：
+   *  ① 本监听器：**丢弃游标**（`lastSeq = null`）——旧游标已指向被服务端淘汰的事件，
+   *     继续沿用会让每次重连都重付一次 409→快照成本（且永远收不回缺口）；
+   *     下一程自然退化 `from=now`（与 Nest→pi 的 forceLive 同构）。
+   *  ② 宿主（`onSnapshotResync`）：拉一次服务端权威历史补断连期缺口——快照帧本身
+   *     只是重同步锚点，缺口内容在 DB（metadata 权威落库），不在快照载荷里。
+   *
+   * 单点拦截位置：**排他分派之前**（本监听器内）——快照不是显示事件，
+   * own-turn（handleEvent）与旁观（三回调）两条路都不该再见到它，否则两处要重复
+   * 处理同一语义（历史事故模式：语义漂移）。
+   */
+  onSnapshotResync?: () => void
+  /**
    * 回合收束（收到 `done` / `turn_ack`）：旁观轮到此为止，由宿主收尾
    * （结束 streaming、拉权威历史纠正）。可能被调用多次（done 后还有 ack）⇒ 需幂等。
    */
@@ -390,6 +407,15 @@ export function createFollowUpTailListener(deps: FollowUpTailDeps): FollowUpTail
                 continue
               }
               if (!payload) continue
+              // ⭐ P1b：快照重同步单点拦截（排他分派之前，own-turn 与旁观两路共用）。
+              // 语义见 FollowUpTailDeps.onSnapshotResync 注释：①丢游标 ②通知宿主拉权威历史。
+              // ⚠️ 快照帧无 id 行（Nest 只给带 seq 的事件写 id）⇒ 游标不会被动推进，
+              //    必须显式清 null，否则下次重连仍带已淘汰的游标（409→快照循环重付）。
+              if (payload.type === 'snapshot') {
+                lastSeq = null
+                deps.onSnapshotResync?.()
+                continue
+              }
               // 与主流的事件契约完全一致（Nest 两端共用 mapPiEventToUiEvent）。
               // ⭐ P1：onEvent 提供时**排他分派**——全量 payload 交给宿主路由
               //（ack 化主流需要全部事件语义，见 FollowUpTailDeps.onEvent 注释）；

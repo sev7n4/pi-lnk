@@ -65,3 +65,43 @@
 - 不改 `AgentEvent` 表结构（#840 刚上线，观测期）。
 - 不动服务端 waiting_user metadata 读取（R3，同进程便宜且与账本无关）。
 - 不做 P2 PendingInterruption durable（独立分期）。
+
+---
+
+## 5. 实施前真值核对修订（2026-11-11 实施刀，R1/R7 核对改写范围）
+
+按规范「实施前回代码核实，不按规格行号盲动」，R1/R7 核对结果**改写了本刀范围**：
+
+### 5.1 R7 核对结论（比预期乐观，也比预期深）
+
+- **Nest→pi 链路已有快照重同步**（pi-runtime.client.ts:708-719，2026-10-18 上游对齐）：409 不再终止，
+  改合成 `snapshot` 帧继续订阅（forceLive）。生产链路已具备「快照替代重放」。
+- **缺口在前端消费**：`snapshot` 帧前端**零消费**（stores/agent.ts / useAgentObserver / follow-up-tail 全文零命中），
+  且前端游标从不因快照丢弃 ⇒ ①每次重连重付一次 409→快照成本；②断连期丢失的增量**永远缺口**，
+  只能靠用户手动刷新补（DB metadata 是全的，前端没去拉）。
+- **测试断言落点修正**：T4「409 收敛」的真值 = 快照帧 → 丢游标 + 拉权威历史（T4b 探测本轮不实现，
+  快照帧无 id 行、`state.lastGSeq` 与消息投影的归位需 P1c 账本投影先行）。
+
+### 5.2 R1 核对结论（前端直接投影账本暂不可行，归属解锁推迟到 P1c）
+
+- `AgentMessage.runId` **已存在**（回合身份不变式，与账本 runId 同源同值）——归属**可解**；
+- 但 `AgentChatMessage`（shared）未声明 runId（API 返回全行、类型缺字段）⇒ 前端要消费需先补透传；
+- 账本→消息投影还需 messageIndex 分段复刻（server 以 message_end 分段写 messageIndex）⇒
+  **这是 P1c 清债刀（派生投影）的前置件**，本刀不复刻（双实现漂移风险）。
+- 推论：本刀「前端换读 events API 投影」**降级为「快照重同步收敛」**；events API 消费（T1/T2/T3/T6）
+  随 P1c 投影落地。metadata.executionEvents 重放仍是历史展示真源（兼容读不动）。
+
+### 5.3 修订后本刀实施面（实际落地）
+
+| 项 | 文件 | 内容 |
+|---|---|---|
+| ① 快照帧单点拦截 | `follow-up-tail.ts` | 新 dep `onSnapshotResync`；帧循环截获 `snapshot` → `lastSeq = null` + 宿主回调；拦截在排他分派**之前**（own-turn 与旁观共用同一语义） |
+| ② 守卫 + 装配 | `useAgentObserver.ts` | deps 增 `reloadAuthoritativeHistory`；`onSnapshotResync` 三态守卫（isStreaming / observerTurnActive / mainTurnSuspended——流式/挂起中 DB 是半程快照，拉了会冲残缺，收尾 reconcile 会补） |
+| ③ 权威历史重拉 | `AgentSideRail.vue` | 注入 `reloadAuthoritativeHistory: () => void loadHistory()`（no-store + 单飞 + merge 幂等，既有件） |
+| ④ 测试 | `follow-up-tail.test.ts` +2、`AgentSideRail.snapshotResyncWiring.test.ts`（新） | T4 行为双用例（快照→丢游标+回调恰一次；阴性对照游标不变）+ 三文件静态接线契约；**3 组变异自检 RED→还原**（M1 删游标丢弃 / M2 删宿主回调 / M3 删守卫） |
+
+### 5.4 测试用例矩阵修订
+
+- T1/T2/T3/T6/T7 **移交 P1c**（账本投影落地时一并实现——归属解锁依赖 runId 透传 + 分段复刻）。
+- T4 落地为本刀 §5.3-④（行为 + 接线双面）。T5（重拉失败降级）由 `loadHistory` 既有 catch 分支承载
+  （失败 → historyLoadState='failed' + 告警，不白屏），游标丢弃不受影响（在 tail 内，独立于宿主回调成败）。
