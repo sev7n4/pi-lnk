@@ -54,3 +54,12 @@ C4 `spawn_subagent` 生产零调用（`pi_runtime_subagent_spawned_total 0`）�
 - F5 的 plan-gate 错位是**候选抑制因素非已证根因**：`plan_gate_blocked_total{tool="spawn_subagent"}` 生产值为 0（从未被调过自然从未被拦），该因素只在「点名生效、开始有调用」后才可能显形——它是第二阶段的预案，不是本轮零调用的解释。
 - 本规格不改任何代码、不动生产；全部裁决在触发条件满足后才可执行，且 P3/P4 各自仍需独立 spec/plan + 授权。
 - tool_search 通道（hit 历史值 4/6 两时点）不是本预案对象：它已有 prompt 指引（tiering.ts 文件头记录的规则改写），其 activated=0 属流量画像问题，单独评估。
+
+## 7 行业对照（2026-11-11 补，用户问询触发；来源标注，非本地取证）
+
+- **W1 Anthropic Tool Search Tool（官方 engineering 博客）**：`defer_loading: true` 的延迟工具 + 常驻「最关键、高频」核心集 + 搜索按需展开——与 pi-lnk tiering「ALWAYS_ON 常驻 + 延迟集 + tool_search」**逐层同构**，内部评测 Opus 4 MCP evals 49%→74%。⇒ 架构方向无需自疑；「零点名」的对治不在架构层。
+- **W2 MCP 官方 Client Best Practices**：progressive discovery 三层（catalog→inspect→execute），建议阈值 1–5% context 才启用渐进发现；检索策略 keyword/embedding/subagent/hybrid 四选。⇒ pi-lnk 工具总量远未到 token 压力线，tiering 的动机本就是「可达性/聚焦」而非省 token——与上游 pi 官方模式一致。
+- **W3 Anthropic 子代理委派机制（官方 docs）**：「Claude uses each subagent's **description** to decide when to delegate tasks. When you create a subagent, **write a clear description** so Claude knows when to use it.」⇒ **F4 的 description 姿势正是行业一等做法**（用 description 做触发判断，非系统提示点名）；另有 `system-prompt-subagent-delegation-restraint` 系统提示片段管「委派克制」——即 Claude Code 同时用了 description 层 + 系统提示层两道点名（后者对应 P3）。
+- **W4 Claude Code plan mode 明确允许 `subagent dispatch via Task`**（permission-modes 文档：plan mode 白名单含 Read/Glob/Grep/WebSearch/WebFetch/**Task**/AskUserQuestion），且内置 **Plan 子代理**定义为「plan mode 期间做调研、产出留在子上下文」。⇒ **F5 错位被行业做法反向坐实**：只读调研子代理在 plan 待确认阶段正是被鼓励的能力，pi-lnk 的 `PLAN_GATED_TIERS` 拦 spawn_subagent 与此相悖——P4 从「候选抑制因素」升级为「有行业对标的设计偏差」，但豁免仍属 C3 安全语义变更，须独立评审。
+- **W5 WorkBuddy（本产品，会话内直接观察）**：三级同构——常驻核心工具 + `available_deferred_tools` 延迟不下发 schema + `ToolSearch`（MiniSearch 关键词/模糊检索）发现后经延迟执行器激活；且**系统提示里有检索路由指引段**（何时用知识检索/会话检索/域检索），即系统提示级点名真实存在于生产级产品。⇒ P3（动态 guideline 块）在一线产品有同款先例，非本项目首创。
+- **对照小结**：行业对「何时该用某工具」的答案分三层——① description 自足（最低成本，已就位 F4）；② 系统提示点名触发时机（P3，有 W3/W5 先例）；③ 时机面豁免（plan 期只读调研放行 = P4，有 W4 对标）。三层不必全做：先靠 F4 裸观测，触发后按 §4 顺序上 ②/③，与 Claude Code 的实际组合（②+③）收敛。
