@@ -5,6 +5,7 @@ import {
 	createUsageAccumulator,
 	extractCanvasActions,
 	extractCanvasCommands,
+	extractPlanProposedEvent,
 	piEventsLogger,
 	extractGenerationProgress,
 	extractTaskEvents,
@@ -902,5 +903,50 @@ describe("extractCanvasActions 可观测（SP-F O1）", () => {
 		);
 		expect(warn.mock.calls.length).toBe(before); // 合法路径零新增 warn
 		warn.mockRestore();
+	});
+});
+
+// ---- P1-2（spec 2026-11-11-propose-plan-visibility-design.md §5.3/D4）：plan_proposed 一等方案事件 ----
+describe("extractPlanProposedEvent（propose_plan details.plan → plan_proposed 派生）", () => {
+	const planDetails = {
+		ok: true,
+		todo: { snapshot: [{ id: "plan-1", content: "写脚本", status: "pending" }], diff: { list: [], updates: [] } },
+		plan: {
+			summary: "三步制作 Codex 教学视频",
+			explanation: "先脚本再封面最后成片",
+			steps: [{ content: "编写脚本大纲" }, { content: "创建封面", activeForm: "正在创建封面" }],
+		},
+		canvasCommands: [],
+	};
+
+	it("details.plan 存在 ⇒ 发 plan_proposed（callId=toolCallId，summary/explanation/steps 透传，键不出现纪律）", () => {
+		const ev = extractPlanProposedEvent(toolEnd({ details: planDetails }));
+		expect(ev).not.toBeNull();
+		expect(ev!.type).toBe("plan_proposed");
+		expect(ev!.data.callId).toBe("c1");
+		expect(ev!.data.summary).toBe("三步制作 Codex 教学视频");
+		expect(ev!.data.explanation).toBe("先脚本再封面最后成片");
+		expect(ev!.data.steps).toEqual([
+			{ content: "编写脚本大纲" },
+			{ content: "创建封面", activeForm: "正在创建封面" },
+		]);
+	});
+
+	it("无 explanation ⇒ 键不出现（wire 契约）", () => {
+		const ev = extractPlanProposedEvent(
+			toolEnd({ details: { ...planDetails, plan: { summary: "s", steps: [{ content: "a" }] } } }),
+		);
+		expect(ev).not.toBeNull();
+		expect("explanation" in ev!.data).toBe(false);
+	});
+
+	it("无 details.plan（todo_write 形态）⇒ null；isError ⇒ null；非 tool_execution_end ⇒ null", () => {
+		expect(extractPlanProposedEvent(toolEnd({ details: { todo: { snapshot: [], diff: { updates: [] } } } }))).toBeNull();
+		expect(extractPlanProposedEvent(toolEnd({ details: planDetails }, true))).toBeNull();
+		expect(extractPlanProposedEvent({ type: "message_update", ts: 0, data: {} } as never)).toBeNull();
+	});
+
+	it("plan.steps 为空数组（schema min 1）⇒ null（变异自检 RED 基线：判据依赖 steps 存在）", () => {
+		expect(extractPlanProposedEvent(toolEnd({ details: { plan: { summary: "s", steps: [] } } }))).toBeNull();
 	});
 });

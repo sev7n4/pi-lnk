@@ -660,6 +660,57 @@ export function extractTaskEvents(event: PiRuntimeEvent): TaskWireEvent[] {
 	});
 }
 
+/**
+ * P1-2（spec 2026-11-11-propose-plan-visibility-design.md §5.3/D4）：propose_plan 的
+ * details.plan → plan_proposed 一等方案事件。方案不再只是工具副作用：随 executionEvents
+ * 落库（agent.service pushTraceEvent 同 task_* 通道）⇒ 刷新/重连后方案独立于确认卡仍可见，
+ * 也是二期「前端方案面板」的数据底座（spec §12）。
+ * 判别条件：tool_execution_end 且非 isError 且 details.plan 存在（plan 键仅 propose_plan 写入，
+ * 无需 toolName 判别）。callId 取 toolCallId —— 前端 part 稳定 id 的依据（重放 part id 不漂移）。
+ */
+const PlanProposedSchema = z.object({
+	summary: z.string(),
+	explanation: z.string().optional(),
+	steps: z
+		.array(
+			z.object({
+				content: z.string(),
+				activeForm: z.string().optional(),
+			}),
+		)
+		.min(1),
+});
+
+export interface PlanProposedWireEvent {
+	type: "plan_proposed";
+	data: {
+		callId?: string;
+		summary: string;
+		explanation?: string;
+		steps: Array<{ content: string; activeForm?: string }>;
+	};
+}
+
+export function extractPlanProposedEvent(event: PiRuntimeEvent): PlanProposedWireEvent | null {
+	if (event.type !== "tool_execution_end") return null;
+	const d = event.data as { isError?: boolean; toolCallId?: string; result?: { details?: unknown } };
+	if (d.isError) return null;
+	const parsed = PlanProposedSchema.safeParse((d.result?.details as { plan?: unknown } | undefined)?.plan);
+	if (!parsed.success) return null;
+	return {
+		type: "plan_proposed",
+		data: {
+			...(d.toolCallId ? { callId: d.toolCallId } : {}),
+			summary: parsed.data.summary,
+			...(parsed.data.explanation ? { explanation: parsed.data.explanation } : {}),
+			steps: parsed.data.steps.map((s) => ({
+				content: s.content,
+				...(s.activeForm ? { activeForm: s.activeForm } : {}),
+			})),
+		},
+	};
+}
+
 /** message_update 内嵌的 thinking 子事件（thinking_start/delta/end，实测见文件头注释）。 */
 export interface ThinkingPhase {
 	phase: "start" | "delta" | "end";

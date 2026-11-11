@@ -55,6 +55,10 @@ export interface AgentStreamEvent {
     | 'task_list'
     | 'task_update'
     | 'task_summary'
+    // P1-2（spec 2026-11-11-propose-plan-visibility-design.md §5.3/D4）：方案一等公民事件。
+    // propose_plan 的 details.plan（summary/explanation?/steps）派生，随 executionEvents 落库
+    // ⇒ 刷新/重连后方案独立于确认卡仍可见。data: { callId?, summary, explanation?, steps }。
+    | 'plan_proposed'
     | 'step'
     | 'phase_hint'
     | 'thinking'

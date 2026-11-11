@@ -64,6 +64,17 @@ describe("plan-gate 状态机", () => {
 		assert.equal(isPlanPending("s1"), true);
 		assert.equal(consumePlanExecutionSignal("s1"), false);
 	});
+
+	it("D5 回归锁（spec 2026-11-11 §P1-3）：timeout/aborted/refine/keep 永不置 run 信号 ⇒ before_run_end 不会注入 followUp 续跑", () => {
+		// 防未来把「超时降级续跑」误接回 wiring：followUp 唯一触发条件是
+		// consumePlanExecutionSignal===true，而它只由 execute 置位。
+		for (const d of ["timeout", "aborted", "refine", "keep"] as const) {
+			resetPlanState("s1");
+			markPlanDecision("s1", d);
+			assert.equal(consumePlanExecutionSignal("s1"), false, `decision=${d} 不得置 run 信号`);
+			assert.equal(isPlanPending("s1"), true, `decision=${d} 须保持 pending（fail-closed）`);
+		}
+	});
 });
 
 describe("pickLatestPlanDecision", () => {

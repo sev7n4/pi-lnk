@@ -146,3 +146,61 @@ test("renderTodoBlock: 三态标记渲染", () => {
 	assert.ok(block.includes("[~] 配图"));
 	assert.ok(block.includes("[ ] 导出"));
 });
+
+// ---- P1-2（spec 2026-11-11-propose-plan-visibility-design.md §8）：pickLatestSnapshot 识别 propose_plan ----
+test("pickLatestSnapshot: 仅 propose_plan（details.todo.snapshot，P0 形态）⇒ 播种任务卡", () => {
+	const snap = pickLatestSnapshot([
+		{ type: "message", message: { role: "user" } },
+		{
+			type: "tool_result",
+			toolName: "propose_plan",
+			details: {
+				ok: true,
+				todo: { snapshot: [{ id: "plan-1", content: "写脚本", status: "pending" }] },
+				plan: { summary: "三步出片", steps: [{ id: "plan-1", content: "写脚本", status: "pending" }] },
+			},
+		},
+	]);
+	assert.equal(snap.length, 1);
+	assert.equal(snap[0].id, "plan-1");
+	assert.equal(snap[0].content, "写脚本");
+	assert.equal(snap[0].status, "pending");
+});
+
+test("pickLatestSnapshot: 仅 propose_plan 兜底 details.plan.steps（无 todo 键）⇒ 同样播种", () => {
+	const snap = pickLatestSnapshot([
+		{
+			type: "message",
+			message: {
+				toolName: "propose_plan",
+				details: { ok: true, plan: { summary: "s", steps: [{ id: "plan-2", content: "封面", status: "pending", activeForm: "正在封面" }] } },
+			},
+		},
+	]);
+	assert.equal(snap.length, 1);
+	assert.equal(snap[0].content, "封面");
+	assert.equal(snap[0].activeForm, "正在封面");
+});
+
+test("pickLatestSnapshot: todo_write 与 propose_plan 皆有 ⇒ 反向扫描取时间序最新", () => {
+	const snap = pickLatestSnapshot([
+		{ type: "tool_result", toolName: "propose_plan", details: { todo: { snapshot: [{ id: "plan-1", content: "旧提案", status: "pending" }] } } },
+		{ type: "tool_result", toolName: "todo_write", details: { todo: { snapshot: [{ id: "plan-1", content: "旧提案", status: "completed" }] } } },
+	]);
+	assert.equal(snap[0].status, "completed"); // todo_write 更新在后 ⇒ 最新胜出
+	const snap2 = pickLatestSnapshot([
+		{ type: "tool_result", toolName: "todo_write", details: { todo: { snapshot: [{ id: "plan-1", content: "旧", status: "completed" }] } } },
+		{ type: "tool_result", toolName: "propose_plan", details: { todo: { snapshot: [{ id: "plan-1", content: "旧", status: "pending" }, { id: "plan-2", content: "新步骤", status: "pending" }] } } },
+	]);
+	assert.equal(snap2.length, 2); // refine 后重新提案 ⇒ 新快照（含新增步骤）胜出
+	assert.equal(snap2[1].content, "新步骤");
+});
+
+test("pickLatestSnapshot: propose_plan 垃圾 details ⇒ 不崩、继续向前扫", () => {
+	const snap = pickLatestSnapshot([
+		{ type: "tool_result", toolName: "propose_plan", details: "junk" },
+		{ type: "tool_result", toolName: "todo_write", details: { todo: { snapshot: [{ id: "plan-1", content: "有效", status: "pending" }] } } },
+	]);
+	assert.equal(snap.length, 1);
+	assert.equal(snap[0].content, "有效");
+});

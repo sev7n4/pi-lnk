@@ -105,7 +105,7 @@ import { resolveForceSkills } from './pi-runtime/resolve-force-skills'
 import { stripPlanMarkers } from './planMarkers'
 import { normalizeAssistantText } from './text-normalize'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
-import { createUiEventProjector, createThinkingAccumulator, createTextSegmentPersister, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, extractTaskEvents, extractTextDelta, extractTextEnd, mapPiEventToUiEvent, classifyPiRunError, type PiRuntimeEvent } from './pi-runtime/pi-events'
+import { createUiEventProjector, createThinkingAccumulator, createTextSegmentPersister, createUsageAccumulator, extractCanvasActions, extractCanvasCommands, extractPlanProposedEvent, extractTaskEvents, extractTextDelta, extractTextEnd, mapPiEventToUiEvent, classifyPiRunError, type PiRuntimeEvent } from './pi-runtime/pi-events'
 import { GenerationReaperService } from '../studio/generation-reaper.service'
 import { estimateCreditsFromUsdCost, resolveFxUsdCny } from '../pricing/pricing.core'
 import { InsufficientPointsError, PointsService } from '../points/points.service'
@@ -3514,6 +3514,15 @@ export class AgentService implements OnModuleInit {
         for (const task of extractTaskEvents(event)) {
           pushTraceEvent(task.type, task.data)
           yield task as AgentStreamEvent
+        }
+        // P1-2（spec 2026-11-11-propose-plan-visibility-design.md §5.3/D4）：propose_plan 的
+        // details.plan → plan_proposed 一等方案事件。落库（pushTraceEvent）⇒ 刷新/重连后方案
+        // 独立于确认卡仍可见；确认卡内联 plan（P0-2）与本事件并存：卡是决策面，本事件是对话流
+        // 的方案存档 + 二期方案面板数据底座。
+        const planEv = extractPlanProposedEvent(event)
+        if (planEv) {
+          pushTraceEvent(planEv.type, planEv.data)
+          yield planEv as AgentStreamEvent
         }
         // 可观测性专项 ③：pi thinking 子事件折叠为老 UI 契约的 thinking 事件。
         // Q1（2026-10-14）：delta 阶段的节流流式快照带 transient:true——只 yield 走 SSE
