@@ -1,0 +1,79 @@
+name: Disk Watchdog
+
+# 2026-11-12 接入：磁盘水位巡检脚本（deploy/disk-watchdog.sh）此前写好却**未接 CI**，
+# 等于没生效（这正是用户记忆里「做过的监控」没发挥作用的原因）。本 workflow 每 30 分钟
+# SSH 进 CVM 跑断言，失败即 CI 红（GitHub 通知）—— 当前唯一「零新组件」的接收端
+# （同 observability-watchdog.yml 的设计：Prometheus 外网被安全组拦，runner 只能 SSH 进来跑）。
+#
+# 覆盖项：根分区可用/使用率、registry blob/tag、containerd 镜像数、sessions PVC、
+# 生产库备份、disk-guard 自愈有效性、**/tmp 取证副本体积（2026-11-12 爆盘根因）**。
+# 判据明细见 deploy/disk-watchdog.sh 头部注释。
+
+on:
+  schedule:
+    # 每 30 分钟（避开整点拥挤）
+    - cron: "7,37 * * * *"
+  workflow_dispatch: # 允许手动立刻跑一次（验证断言用）
+
+permissions:
+  contents: read
+
+concurrency:
+  group: disk-watchdog
+  cancel-in-progress: false # 巡检不该被上一次取消 —— 取消会让一次故障检查凭空消失
+
+jobs:
+  assert:
+    name: Assert disk health (on CVM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10 # 断言自身有 --max-time；整体兜底防 SSH 挂死
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure SSH to CVM
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.TENCENT_CLOUD_SSH_KEY || secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          cat >> ~/.ssh/config <<EOF
+          Host deploy-cvm
+            HostName ${{ secrets.TENCENT_CLOUD_IP || secrets.DEPLOY_HOST }}
+            User ${{ secrets.TENCENT_CLOUD_USER || secrets.DEPLOY_USER || 'root' }}
+            IdentityFile ~/.ssh/deploy_key
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+            ConnectTimeout 20
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Preflight — CVM 可达
+        run: |
+          set -euo pipefail
+          ok=0
+          for attempt in 1 2 3; do
+            if ssh -T deploy-cvm 'curl -sS --max-time 8 http://127.0.0.1:30100/healthz | head -c 200'; then
+              ok=1; break
+            fi
+            echo "ssh attempt ${attempt}/3 failed, retrying..."
+            sleep $((attempt * 5))
+          done
+          [ "$ok" = "1" ] || { echo "::error::无法 SSH 到 CVM —— 巡检无法执行（这本身就是故障信号）"; exit 1; }
+
+      - name: Run disk-health assertions
+        run: |
+          set -euo pipefail
+          # 断言只读 /metrics 与 healthz，不改任何状态；PromQL 在本机 127.0.0.1:30909 才有数据。
+          ssh -T deploy-cvm 'bash -s' < deploy/disk-watchdog.sh
+
+      - name: Publish result
+        if: always()
+        run: |
+          {
+            echo "### pi-lnk 磁盘水位巡检"
+            echo
+            echo "- 时间（UTC）：${{ github.event.schedule && 'scheduled' || 'manual' }} $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "- 结果：${{ job.status }}"
+            echo
+            echo "断言原始输出见上一步日志；完整判据说明见 \`deploy/disk-watchdog.sh\` 头部注释。"
+          } >> "$GITHUB_STEP_SUMMARY"

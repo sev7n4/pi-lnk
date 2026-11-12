@@ -378,6 +378,21 @@ prune_oversized_container_logs() {
     done
 }
 
+# ── 缺口 5（2026-11-12 补）：agent 生产取证只读副本 ────────────────────────
+# 根因：agent 做生产验证时 docker cp 出只读 DB 副本到 /tmp（p2-*.db /
+#   lnkpi-*.db / pi-probe.db / v5*.db 等，每个 ~133MB），做完未即时清理 ⇒
+#   2026-11-12 累计 ~6.7GB 撑爆 ephemeral-storage，kubelet 驱逐 pi-runtime、
+#   模型请求卡死。这些副本纯只读、命名高度特异，可安全删除；仅排除最近 30 分钟内
+#   修改的（保护正在进行的验证），其余在水线以下一律回收。
+# 同时落实「取证副本即时清」：日常档（<10GB）即回收，避免再次撑爆。
+prune_tmp_forensics() {
+  [ "$MODE" = dry-run ] && { log "DRY-RUN would prune /tmp 取证副本"; return 0; }
+  for p in p2-*.db lnkpi-*.db pi-probe.db v5*.db d2-*.db w1c-*.db '*-prod-*.db' '*-copy.db'; do
+    find /tmp -maxdepth 1 -type f -name "$p" -mmin +30 -exec rm -f {} + 2>/dev/null || true
+  done
+  log "tmp 取证副本清理完成"
+}
+
 if [ "$MODE" = verify ]; then
   # 只断言不清理：水位超标 ⇒ exit 1（供巡检/CI 门禁用）
   LIMIT_KB=${DISK_GUARD_VERIFY_LIMIT_KB:-6815744}
@@ -410,6 +425,7 @@ if [ "$AVAIL_KB" -lt 10485760 ]; then
   prune_sessions_pvc
   prune_db_backups
   prune_oversized_container_logs
+  prune_tmp_forensics
   log "日常清理完成 avail=${AVAIL_KB}KB"
 fi
 
@@ -423,7 +439,7 @@ fi
 
 # ── 水位告警：清理之后仍不够 ⇒ 通知人（清理只能止血，告警才能防复发）────
 FINAL_AVAIL_KB=$(df --output=avail -k / | tail -1)
-ALERT_LIMIT_KB=${DISK_GUARD_ALERT_LIMIT_KB:-6815744}
+ALERT_LIMIT_KB=${DISK_GUARD_ALERT_LIMIT_KB:-8388608}
 if [ "$FINAL_AVAIL_KB" -lt "$ALERT_LIMIT_KB" ]; then
   notify_alert "根分区可用空间仅 ${FINAL_AVAIL_KB}KB（${ALERT_LIMIT_KB}KB 以下），已执行清理仍不足，需人工介入"
   log "ALERT: 可用 ${FINAL_AVAIL_KB}KB 仍低于告警线"
