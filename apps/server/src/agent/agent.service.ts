@@ -120,6 +120,7 @@ import {
   type InterruptionSummary,
   type PendingInterruptionSummary,
 } from './pending-interruption.service'
+import { SubagentTaskService, type SubagentTaskSummary } from './subagent-task.service'
 import { estimateCreditsFromUsdCost, resolveFxUsdCny } from '../pricing/pricing.core'
 import { InsufficientPointsError, PointsService } from '../points/points.service'
 import { PricingService } from '../pricing/pricing.service'
@@ -413,11 +414,15 @@ export class AgentService implements OnModuleInit {
     @Optional()
     @Inject(CanvasDigestService)
     private readonly canvasDigest?: CanvasDigestService,
-    // P2 待确认门 durable（2026-11-11）：最后一个 @Optional 参数 ⇒ 既有按位置构造
-    // 的单测零破坏；缺省（未装配）= 全链路短路，旧行为逐字节不变。
+    // P2 待确认门 durable（2026-11-11）：@Optional 注入，缺省（未装配）= 全链路短路，旧行为逐字节不变。
     @Optional()
     @Inject(PendingInterruptionService)
     private readonly pendingInterruptions?: PendingInterruptionService,
+    // D2 子代理一等任务单据（2026-11-12）：最后一个 @Optional 参数 ⇒ 既有按位置构造
+    // 的单测零破坏；缺省（未装配）= 漏斗短路，旧行为逐字节不变。
+    @Optional()
+    @Inject(SubagentTaskService)
+    private readonly subagentTasks?: SubagentTaskService,
   ) {}
 
   /**
@@ -1792,6 +1797,9 @@ export class AgentService implements OnModuleInit {
    * - lastGSeq：AgentEvent 账本本线程最大 gSeq（账本空 ⇒ null，前端回落 DB 快照）。
    * - pendingInterruption：P2 待确认门 durable 摘要（PendingInterruption 表）；
    *   无仍可点的门 / 未装配 P2 service ⇒ null（旧形状兼容）。
+   * - subagentTasks：D2 子代理一等任务单据摘要（SubagentTask 表）；
+   *   在途（spawned 且未过期）+ 最近 5 条终态，字段裁剪、fail-open；
+   *   未装配 D2 service / 读失败 ⇒ []（旧形状兼容）。
    */
   async getThreadResumeState(
     threadId: string,
@@ -1800,6 +1808,7 @@ export class AgentService implements OnModuleInit {
     status: 'in_progress' | 'complete'
     lastGSeq: number | null
     pendingInterruption: PendingInterruptionSummary | null
+    subagentTasks: SubagentTaskSummary[]
     /** W1c（D1=A）：最新门（含终态），前端用它重建终态卡；无门 / 未装配 ⇒ null。 */
     interruption: InterruptionSummary | null
   }> {
@@ -1809,11 +1818,20 @@ export class AgentService implements OnModuleInit {
       .aggregate({ where: { threadId }, _max: { gSeq: true } })
       .then((r) => r._max.gSeq ?? null)
       .catch(() => null)
+    // D2：从表读 ⇒ 跨 pod 存活，与 pi-runtime 进程内存 promise 解耦（#36 T5）。
+    // 防御性 fail-open：getSummaries 内部已 catch，此处再兜一层 ⇒ 任一异常都回落 []。
+    let subagentTasks: SubagentTaskSummary[] = []
+    try {
+      subagentTasks = (await this.subagentTasks?.getSummaries(threadId, Date.now())) ?? []
+    } catch {
+      subagentTasks = []
+    }
     return {
       status: reconciled.outcome === 'active' ? 'in_progress' : 'complete',
       lastGSeq,
       // P2 durable 核心：从表读 ⇒ 进程重启后仍返回 pending（P1c-5）
       pendingInterruption: (await this.pendingInterruptions?.getPending(threadId)) ?? null,
+      subagentTasks,
       // W1c（D1=A）：终态可见摘要，与 pendingInterruption 独立并存、零迁移
       interruption: (await this.pendingInterruptions?.getLatest(threadId)) ?? null,
     }
@@ -3266,6 +3284,16 @@ export class AgentService implements OnModuleInit {
       // 返回值不变：调用点 pushTraceEvent(...).data / const settledData = … 依赖。
       // D1：判据只读这份全量内存投影，与下面「是否落 metadata」的裁剪决策无关。
       turnFactEvents.push(ev)
+      // D2：一等子任务单据与 AgentEvent 账本同一同步段驱动。
+      // ⚠️ 只读当帧 ev 本身（全量事实），不读被 P1c 裁剪过的 executionEvents，
+      //    也不反向依赖 fire-and-forget 账本读回（与 D1 §5.1 同源约束）。
+      // ⚠️ onTraceEvent 内部对非 spawn 帧立即返回 ⇒ 绝大多数回合零 prisma 触达。
+      // ⚠️ 反向依赖 fire-and-forget 账本读回会在账本写失败时丢失事实，故只信当帧 ev。
+      this.subagentTasks?.onTraceEvent(ev, {
+        threadId: threadId ?? sessionId,
+        runId: currentPiEvent?.runId ?? null,
+        parentSessionKey: threadId ?? sessionId,
+      })
       if (
         typeof ev.gSeq !== 'number' ||
         ev.type === 'waiting_user' ||

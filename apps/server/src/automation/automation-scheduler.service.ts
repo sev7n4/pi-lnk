@@ -58,6 +58,17 @@ export const AUTOMATION_DEFAULT_JOBS = [
     runOnStartup: true,
     params: '{}',
   },
+  {
+    // D2 子代理一等单据（2026-11-12）：按持久化 expiresAt 收口在途任务。
+    // 与 P2 同理由 —— 进程内 setTimeout 重启即丢 ⇒ 重启后必须有 startup 扫描。
+    id: 'job-subagent-task-sweep',
+    name: '子代理任务租约裁决',
+    description: 'D2：按 expiresAt 把过期未裁决的 spawned 单据翻 interrupted（幂等）',
+    handlerKey: 'subagent-task-sweep',
+    intervalMinutes: 1,
+    runOnStartup: true,
+    params: '{}',
+  },
 ] as const
 
 export type AutomationJobRow = Awaited<ReturnType<PrismaService['automationJob']['findUniqueOrThrow']>>
