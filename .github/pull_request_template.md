@@ -40,3 +40,4 @@
 - [ ] 未动积分 / 扣分 / 退款逻辑
 - [ ] 未动 prompt-registry 预算
 - [ ] 未向 master 直接提交
+- [ ] PR 源文件全部基于 `gh api` 权威树构建（未混入本地磁盘文件，见 delivery.md「PR 构建」）
