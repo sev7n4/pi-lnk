@@ -43,6 +43,7 @@
 | 20 | `no-gen-tools` | 禁止声称正在生成（genTools 未启用） | core（除非 genTools） | 3. 不要声称「正在生成」「马上生成」「已开始出图」；不要调用 run_*_generation… |
 | 30 | `no-template` | 侧栏参考图与芯片 key | core | 7. 已提供【侧栏参考图解析】时不得声称只能看到文件名或节点标题 |
 | 35 | `memory-scope-isolation` | 记忆归属与「记忆 ≠ 当前观察」 | core | 记忆条目带 scope/sessionId/crossCanvas |
+| 36 | `subagent-delegation` | 研究类任务优先委派子代理 | core | 调研/探索任务优先 spawn_subagent |
 | 40 | `media-tool-policy` | 写工具策略 | writeTools | 4. 用户要创建媒体节点或明确「生成一张…」时：upsert_media_node 建节点（可带 prompt）… |
 | 45 | `canvas-view-card` | 画布视图卡片策略 | writeTools | 16. 用户问「为什么/怎么/关系/结构/流程/解释/说明/分析/对比/梳理… |
 | 46 | `canvas-daily-ops` | 画布日常操作 | writeTools | 19. 整理/排版/铺开节点用 arrange_nodes（grid 无序 / along_edges 有向）… |
@@ -71,8 +72,8 @@
 |---|---|
 | 硬线 `STATIC_BUDGET_CHARS` | 3200 |
 | 预警线 `STATIC_BUDGET_WARN_CHARS` | 2720（= 3200 × 0.85） |
-| 全组合当前实测 | **3085**（已过预警线，硬线内） |
-| **余量** | **115 字符**（硬线 3200 − 实测 3085） |
+| 全组合当前实测 | **3111**（已过预警线，硬线内） |
+| **余量** | **89 字符**（硬线 3200 − 实测 3111） |
 <!-- END:budget-table -->
 
 **余量是硬事实，不是估计。** 加新规则前先跑 `pnpm prompt:lint` 看余量。

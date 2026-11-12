@@ -177,6 +177,10 @@ describe("被资产点名的工具必须常驻（延迟即不可达，回归锁�
 		assert.ok(ALWAYS_ON_TOOL_NAMES.has("propose_plan"));
 	});
 
+	it("spawn_subagent 常驻（C4 委派原语，2026-11-11 提回常驻；注释更正不动此数组）", () => {
+		assert.ok(ALWAYS_ON_TOOL_NAMES.has("spawn_subagent"), "spawn_subagent 必须在 ALWAYS_ON_TOOL_NAMES（T4 仅改注释）");
+	});
+
 	it("全部进 ALWAYS_ON 且初始即激活", () => {
 		const e = buildToolEnsemble(fakeTools(), true);
 		const active = new Set(e.activeToolNames);

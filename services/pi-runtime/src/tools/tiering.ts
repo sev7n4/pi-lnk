@@ -157,9 +157,11 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	// 按本文件准绳（被点名 ⇒ 必须常驻）；且它承载「确认前绝不执行」的解锁入口，延迟即不可达。
 	"propose_plan",
 	// C4 只读调研子代理（2026-10-10 上线，2026-11-11 提回常驻）：
-	// 此前落在延迟集 ⇒ 模型拿不到 schema 与「何时必用」description，发现通道只剩
-	// tool_search，而该通道无动机时触发率为 0（见文件头铁律）⇒ 生产 spawned 恒 0
-	//（2026-11-11 取证：tiering=true、dist 常驻集 0 命中、tool_search hit=4）。
+	// 此前落在延迟集 ⇒ 模型拿不到 schema 与「何时必用」description；但 spawned 恒 0 的**真根因**
+	// 不是「tool_search 坏/无动机触发率 0 ⇒ 不可达」——metrics 显示 tool_search 窗口**零 outcome
+	// 标签**（observeToolSearch 从未被调用 = 模型根本没去搜 ≠ 搜索坏；2026-10-06 实验证 tool_search
+	// 本身有效 hit=6）。真正缺失的是**点名**：L2 规则与 L3 技能从未点名「可派子代理」，模型无从
+	// 想起要派生。故正解 = 常驻 + 补 L2 点名（见 trigger-strategy spec §6），而非只靠延迟集兜底。
 	// 提回依据同分组三先例：官方模式 description 承担发现能力（工具自述何时必用）；
 	// 且只读深度调研是唯一入口——web_search / web_fetch 虽常驻但只能凑部分答案
 	//（仅 web、不带画布/文档上下文），按文件头「部分替代 ⇒ 幻觉」铁律反而加重提回必要性。

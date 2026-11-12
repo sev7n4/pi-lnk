@@ -22,6 +22,7 @@ import {
 	GEN_TOOLS_RULES,
 	RULE_10_WRITE_GUARD,
 	MEMORY_SCOPE_RULES,
+	SUBAGENT_DELEGATION_RULES,
 } from "./prompt-registry.fallback";
 
 
@@ -367,8 +368,8 @@ describe("assembleDynamic 焦点过滤透传（审计 P0-①）", () => {
 // W1a 字节等价护栏：期望串按「搬家前的 composeRuleText」逐段拼出来
 // （core = 前缀 + 规则 3 + 尾部；writeTools 开 → 规则 4/5；否则补第 10 条守卫；genTools 开 → 追加 11/12/13）
 // 记忆归属规则（order 35）排在 sidebar_vision.tail 之后，与磁盘 Registry 的 order 排序一致
-const CORE = `${CORE_RULES_PREFIX}\n${RULE_3_NO_GEN}\n${CORE_RULES_TAIL}\n${MEMORY_SCOPE_RULES}`;
-const CORE_GEN = `${CORE_RULES_PREFIX}\n${RULE_3_GEN}\n${CORE_RULES_TAIL}\n${MEMORY_SCOPE_RULES}`;
+const CORE = `${CORE_RULES_PREFIX}\n${RULE_3_NO_GEN}\n${CORE_RULES_TAIL}\n${MEMORY_SCOPE_RULES}\n${SUBAGENT_DELEGATION_RULES}`;
+const CORE_GEN = `${CORE_RULES_PREFIX}\n${RULE_3_GEN}\n${CORE_RULES_TAIL}\n${MEMORY_SCOPE_RULES}\n${SUBAGENT_DELEGATION_RULES}`;
 
 const GROUPS: Record<string, Array<"core" | "writeTools" | "genTools">> = {
 	core: ["core"],
@@ -412,6 +413,24 @@ describe("W1a 字节等价：Registry 渲染 == 搬家前的 composeRuleText", (
 		expect(asm.lastManifest).toContain("registry=");
 		expect(asm.lastManifest).toContain("registryHash=");
 		expect(asm.lastManifestDetail?.registryHash).toBeTruthy();
+	});
+});
+
+// ── T1：subagent-delegation 授权串（基线修复核心判据 + 变异自检）────────
+describe("T1 subagent-delegation 委派授权串（含变异自检）", () => {
+	const DELEG = "调研/探索任务优先 spawn_subagent。";
+	it("主路径静态段含委派授权串（L2 点名落地）", async () => {
+		const asm = makeAssembler({ nodes: [] });
+		const text = await asm.assembleStatic({ ruleGroups: ["core"] });
+		expect(text).toContain(DELEG);
+		expect(text).toContain("spawn_subagent");
+	});
+	it("变异自检：剔除该规则 → 授权串消失（证明源自规则而非硬编码/工具描述）", () => {
+		const base = loadRegistry(resolveRegistryRoot());
+		const without = { ...base, entries: base.entries.filter((e) => e.id !== "subagent-delegation") };
+		expect(renderStatic(without, ["core"])).not.toContain(DELEG);
+		// 反向对照：完整 registry 含它，且只来自本规则
+		expect(renderStatic(base, ["core"])).toContain(DELEG);
 	});
 });
 
@@ -484,11 +503,14 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 	 * ⚠️ 本表曾把 master 的 writeTools 段误记为 2478（实际 2473），导致 CI 红灯。
 	 * **填表前必须在目标 commit 上实测**，别用上一轮的数推算。
 	 */
+	// 2026-11-12 基线修复：新增 subagent-delegation 规则（core/order 36/25 字符），四组合各 +26，
+	// 全组合 3085→3111（余量 115→89）；todoTools 组合 3171→3197 逼近硬线，故正文压到 25 字符，
+	// 其余信号词（核对/联网查资料）移至 spawn_subagent description（L1，不占 prompt-registry 预算）。
 	const BASELINE: Record<string, number> = {
-		core: 693,
-		"core+writeTools": 2694,
-		"core+genTools": 1084,
-		"core+writeTools+genTools": 3085,
+		core: 719,
+		"core+writeTools": 2720,
+		"core+genTools": 1110,
+		"core+writeTools+genTools": 3111,
 	};
 
 	it("长度基线锁：四组合静态段长度与预算余量（规则正文改动 ⇒ 红灯）", () => {
@@ -519,7 +541,7 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 		// 3068→3085（余量 132→115），最紧组合 3154→3171（余量 46→29）。抬预算仍属人工决策，本次未抬。
 		// **本断言不做"余量必须为正"的门禁**——那是 `prompt-lint` 的 L6 职责，
 		// 且抬预算属人工决策；这里只如实锁住实测值，避免文档/基线与实跑漂移。
-		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(115);
+		expect(STATIC_BUDGET_CHARS - BASELINE["core+writeTools+genTools"]!).toBe(89);
 	});
 
 	// ── case 1：no_gen_claim.gen / .nogen 互斥（§8.1 表格 #1）──────────────

@@ -30,10 +30,9 @@ export function createSpawnSubagentTool(coordinator: SubagentCoordinator, metric
 		label: "派发子代理",
 		summary: "派发一个只读调研子代理并阻塞等待其报告",
 		description:
-			"把一项只读调研任务交给子代理执行：它带着本对话的完整上下文独立工作（可查画布/读文档/联网搜索），" +
-			"结束后把最终报告作为本工具结果返回。本回合阻塞等待（有界：并发/轮次/时长三重硬边界）。" +
-			"何时必用：需要大范围查资料/核对多文件/联网调研，且探索过程不值得占用主对话窗口时。" +
-			"子代理只能读不能写——需要改画布/生成内容时不要派发，自己做。",
+			"把一项只读调研派给子代理：它带完整上下文独立工作（查画布/读文档/联网），返回报告后阻塞本回合。" +
+			"优先用：任务含「调研/研究/探索/多源核对/联网查资料」，且探索过程不值得占主窗口。" +
+			"禁用：要改画布/生成内容时别派，自己做。",
 		parameters: Type.Object({
 			task: Type.String({ description: "任务描述（写清背景、要查什么、期望的报告形态）" }),
 		}),
@@ -60,6 +59,7 @@ export function createSpawnSubagentTool(coordinator: SubagentCoordinator, metric
 					attempt.reason === "concurrency_full"
 						? "subagent_concurrency_full"
 						: "subagent_not_available",
+				hint: "子代理暂不可用，请自行联网/读文档完成调研，不要卡死或静默放弃。",
 			});
 		}
 		metrics.observeSubagentSpawned();
