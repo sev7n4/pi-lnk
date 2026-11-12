@@ -31,6 +31,21 @@ export interface PendingInterruptionSummary {
   status: 'pending'
 }
 
+/**
+ * W1c（2026-11-12 D1=A）：与 `pendingInterruption` 互补的「终态可见」摘要。
+ * `pendingInterruption` 只返回仍可点的门（旧形状兼容，前端不改动即直通）；
+ * `interruption` 返回本线程最新一条门（不限 status，按 createdAt desc），
+ * 让前端在刷新 / 重连后能重建「已回答 / 已跳过 / 已超时」的终态卡（W1c-2）。
+ * 语义独立、互不干扰：本类型与 `PendingInterruptionSummary` 并存，零迁移。
+ */
+export interface InterruptionSummary {
+  callId: string
+  kind: string
+  questions: unknown[]
+  expiresAt: number
+  status: GateStatus
+}
+
 type GateRow = {
   id: string
   threadId: string
@@ -190,6 +205,39 @@ export class PendingInterruptionService implements OnModuleInit {
       }
     } catch (err) {
       this.logger.warn(`pending_interruption_get_pending_failed thread=${threadId}: ${errMessage(err)}`)
+      return null
+    }
+  }
+
+  /**
+   * W1c（D1=A）：返回本线程最新一条门（不限 status，按 createdAt desc）。
+   * 与 `getPending`（仅活门）互补——前端用它重建终态卡，
+   * `getPending` 保持不变以兼容旧前端形状。读失败 ⇒ null（fail-open，旧会话零回归）。
+   */
+  async getLatest(threadId: string, nowMs = Date.now()): Promise<InterruptionSummary | null> {
+    if (!this.prisma?.pendingInterruption) return null
+    try {
+      const row = (await this.prisma.pendingInterruption.findFirst({
+        where: { threadId },
+        orderBy: { createdAt: 'desc' },
+      })) as GateRow | null
+      if (!row) return null
+      let questions: unknown[] = []
+      try {
+        const parsed = row.questionsJson ? JSON.parse(row.questionsJson) : []
+        if (Array.isArray(parsed)) questions = parsed
+      } catch {
+        questions = []
+      }
+      return {
+        callId: row.callId,
+        kind: row.kind,
+        questions,
+        expiresAt: new Date(row.expiresAt).getTime(),
+        status: row.status as GateStatus,
+      }
+    } catch (err) {
+      this.logger.warn(`pending_interruption_get_latest_failed thread=${threadId}: ${errMessage(err)}`)
       return null
     }
   }

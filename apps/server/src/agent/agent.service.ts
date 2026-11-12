@@ -117,6 +117,7 @@ import { GenerationReaperService } from '../studio/generation-reaper.service'
 import {
   DEFAULT_GATE_TTL_MS,
   PendingInterruptionService,
+  type InterruptionSummary,
   type PendingInterruptionSummary,
 } from './pending-interruption.service'
 import { estimateCreditsFromUsdCost, resolveFxUsdCny } from '../pricing/pricing.core'
@@ -1799,6 +1800,8 @@ export class AgentService implements OnModuleInit {
     status: 'in_progress' | 'complete'
     lastGSeq: number | null
     pendingInterruption: PendingInterruptionSummary | null
+    /** W1c（D1=A）：最新门（含终态），前端用它重建终态卡；无门 / 未装配 ⇒ null。 */
+    interruption: InterruptionSummary | null
   }> {
     await this.assertThreadOwner(threadId, userId)
     const reconciled = await this.reconcileLatestAssistant(threadId, 0)
@@ -1811,6 +1814,8 @@ export class AgentService implements OnModuleInit {
       lastGSeq,
       // P2 durable 核心：从表读 ⇒ 进程重启后仍返回 pending（P1c-5）
       pendingInterruption: (await this.pendingInterruptions?.getPending(threadId)) ?? null,
+      // W1c（D1=A）：终态可见摘要，与 pendingInterruption 独立并存、零迁移
+      interruption: (await this.pendingInterruptions?.getLatest(threadId)) ?? null,
     }
   }
 

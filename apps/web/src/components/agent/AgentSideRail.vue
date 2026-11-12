@@ -20,6 +20,7 @@ import AgentTaskProgressCard from '@/components/agent/AgentTaskProgressCard.vue'
 import AgentCanvasOutputs from '@/components/agent/AgentCanvasOutputs.vue'
 import AgentExecutionTrace from '@/components/agent/AgentExecutionTrace.vue'
 import AgentTurnTimeline from '@/components/agent/AgentTurnTimeline.vue'
+import { fetchInterruptionState } from '@/components/agent/interruptionState'
 import { locatableNodeIds, canvasOutputsForMessage as deriveCanvasOutputs } from '@/components/agent/agentCanvasOutputs'
 import { canvasDigestEntry, digestEntryForTurn } from '@/components/agent/deliverySummary'
 // 双色品牌徽标（黑盘 + 白锚 + 外环）：2026-10-26 用户裁定「composer 定位锚用双色徽标」，
@@ -1123,6 +1124,9 @@ async function loadHistory() {
       const sanitized = sanitizeHistoryMessages(historyRows.value)
       degradedHistory.value = sanitized.degradedIds.size > 0
       agent.loadHistory(sanitized.rows)
+      // W1c（D1=A）：timeline 已重建 ⇒ 用服务端权威 `interruption` 摘要校正/补建 ask_user 卡
+      // （含终态）。fire-and-forget + 竞态护栏见 reconcileInterruptionFromState。
+      void reconcileInterruptionFromState()
       // P1#5：最后一回合若有 task 事件（plan 标记派生），恢复任务卡进度
       const msgs = json.data as Array<{ role: string; content?: string; metadata?: string }>
       // H1-d（§8④）：恢复锚点 = 最后一条非空 assistant（空行 metadata 会污染任务卡/ask_user 恢复）
@@ -2123,6 +2127,21 @@ async function reconnectStream() {
  *   旁观端传 `0`：那一轮在**另一端**已经跑完（收到 done 才走到这里），
  *   没必要再等终态，拉一次权威历史纠正漏帧即可（多端场景下一等就是几分钟的睡循环）。
  */
+/**
+ * W1c（D1=A）：刷新/重连后用服务端 `interruption` 摘要重建 ask_user 卡（含终态）。
+ * 收敛到 loadHistory / reconcileLatestAssistant 两个恢复入口（spec §4.2）。
+ * 竞态护栏：捕获调用时 threadId，apply 前若线程已切走则丢弃（旧线程状态不污染新线程）。
+ */
+async function reconcileInterruptionFromState() {
+  const threadId = agentThreadId.value
+  if (!threadId) return
+  const summary = await fetchInterruptionState(threadId)
+  if (agentThreadId.value !== threadId) return // 竞态：线程已切换，丢弃
+  if (summary) {
+    agent.applyInterruptionState(summary)
+  }
+}
+
 async function reconcileLatestAssistant(
   maxPolls = RECONCILE_MAX_POLLS,
   outOfTurnShadow: string | null = null,
@@ -2182,6 +2201,8 @@ async function reconcileLatestAssistant(
   } catch {
     // ignore
   }
+  // W1c（D1=A）：恢复收尾用服务端权威 `interruption` 摘要校正/补建 ask_user 卡（含终态）。
+  void reconcileInterruptionFromState()
 }
 
 const dockNotice = useDockNoticeStore()

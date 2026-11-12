@@ -24,6 +24,28 @@ import {
   formatDuration,
 } from '@/components/agent/executionStepLabels'
 
+/** ask_user 题面单项（与 `ask_user` 事件 data.questions 形态完全一致）。 */
+export type QuestionItem = {
+  id: string
+  question: string
+  options: { label: string; value: string }[]
+  multiSelect?: boolean
+  allowOther?: boolean
+  plan?: { summary: string; explanation?: string; steps: { content: string; activeForm?: string }[] }
+}
+
+/**
+ * W1c（D1=A）：服务端 `interruption` 摘要（PendingInterruption 表最新一条，不限 status）。
+ * 前端用它刷新 / 重连后重建 ask_user 卡，与 `pendingInterruption`（仅活门）独立并存。
+ */
+export type InterruptionSummary = {
+  callId: string
+  kind: string
+  questions: unknown[]
+  expiresAt: number
+  status: 'pending' | 'answered' | 'expired' | 'aborted'
+}
+
 export type ThinkingPart = {
   kind: 'thinking'
   id: string
@@ -129,21 +151,15 @@ export type TimelinePart =
   /**
    * 等待态单一真相（ask_user）：题面 + 选项 + 多选/其他，内联在对话流。
    * 取代组件级 `pendingAskUser` ref，成为 ask 等待的唯一来源。
+   * status 含 `expired`（W1c-2）：门已超时/终态但卡未建出时，由服务端 state 权威翻终态。
    */
   | {
       kind: 'question'
       id: string
       callId?: string
       title: string
-      status: 'pending_answer' | 'answered' | 'declined'
-      questions: Array<{
-        id: string
-        question: string
-        options: { label: string; value: string }[]
-        multiSelect?: boolean
-        allowOther?: boolean
-        plan?: { summary: string; explanation?: string; steps: { content: string; activeForm?: string }[] }
-      }>
+      status: 'pending_answer' | 'answered' | 'declined' | 'expired'
+      questions: QuestionItem[]
       startedAt: number
     }
 
@@ -1226,6 +1242,84 @@ function normalizePersistedTimelineEvent(
     }
   }
   return e
+}
+
+/**
+ * W1c（D1=A）：用服务端权威 `interruption` 摘要刷新本时间线的 question part。
+ *
+ * 语义（spec §4 / 计划 §3 Task 3，与 P0 单一真相原则一致）：
+ * - summary===null（永无门 / 老会话）⇒ 现有 `pending_answer` 一律翻 `expired`（无权威证据即不可点）；
+ *   老会话本就无 question part ⇒ 返回 false（阴性保证，零回归）。
+ * - 活门（status==='pending' 且 expiresAt>now）⇒ 保证存在 `pending_answer` 卡（刷新/重连后重建，W1c-1）；
+ *   题面以 state 为准补全（仅当 live 事件未带来题面，避免覆盖更丰富题面）。
+ * - 终态门（answered/expired/aborted 或已过期）⇒ 翻/建终态卡（W1c-2）：
+ *   answered→'answered'、aborted→'declined'、其余（含已过期 pending）→'expired'。
+ * - 单门语义：只认 `summary.callId` 这一张，其余 callId 的活卡一律翻 expired（防多卡残留）。
+ * - 幂等：同输入二次调用返回 false（首次补建除外）；不新增/删除 part（保位）。
+ *
+ * @returns 是否发生变更。
+ */
+export function reconcileTimelineInterruption(
+  timeline: TurnTimeline,
+  summary: InterruptionSummary | null,
+  now = Date.now(),
+): boolean {
+  const questionParts = timeline.parts.filter(
+    (p): p is Extract<TimelinePart, { kind: 'question' }> => p.kind === 'question',
+  )
+  if (summary === null) {
+    let changed = false
+    for (const q of questionParts) {
+      if (q.status === 'pending_answer') {
+        q.status = 'expired'
+        changed = true
+      }
+    }
+    return changed
+  }
+  const isLive = summary.status === 'pending' && summary.expiresAt > now
+  const terminalStatus: 'answered' | 'expired' | 'declined' =
+    summary.status === 'answered'
+      ? 'answered'
+      : summary.status === 'aborted'
+        ? 'declined'
+        : 'expired'
+  const qid = `question:${summary.callId}`
+  const questions = Array.isArray(summary.questions)
+    ? (summary.questions as QuestionItem[])
+    : []
+  let changed = false
+  // 单门语义：其余 callId 的活卡一律翻 expired
+  for (const q of questionParts) {
+    if (q.id !== qid && q.status === 'pending_answer') {
+      q.status = 'expired'
+      changed = true
+    }
+  }
+  const existing = questionParts.find((p) => p.id === qid)
+  if (existing) {
+    const target = isLive ? 'pending_answer' : terminalStatus
+    if (existing.status !== target) {
+      existing.status = target
+      changed = true
+    }
+    if (isLive && questions.length && (!existing.questions || !existing.questions.length)) {
+      existing.questions = questions
+      changed = true
+    }
+    return changed
+  }
+  // 安全网：state 权威说有这张卡但 replay 没建出（漏帧/历史无该事件）
+  timeline.parts.push({
+    kind: 'question',
+    id: qid,
+    callId: summary.callId,
+    title: '需要你回答',
+    status: isLive ? 'pending_answer' : terminalStatus,
+    questions,
+    startedAt: now - 1,
+  })
+  return true
 }
 
 export function replayTimelineEvents(
