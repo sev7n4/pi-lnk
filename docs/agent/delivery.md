@@ -35,6 +35,46 @@ git rev-list --count master..origin/master   # 必须 0
 - **查 check-run 数量用 `--jq '.total_count'`，不能用 `length`** —— 后者把 JSON 对象的 key 当数组元素数，`{"total_count":0,...}` 会返回 2，把「CI 从未触发」误判成「在跑」。
 - ⚠️ **CI 触发面分两个事件，别混** —— `ci.yml` 的 `paths-ignore: ["**/*.md","docs/**"]` **只挂在 `push` 事件上**；`pull_request:` 分支**没有任何 paths 过滤**。所以：push 到 master 时纯文档改动零 workflow（正确行为）；但**开 PR 时一律触发三个 required check**，纯文档 PR 也不例外。`deploy.yml` 是独立的 paths 白名单（server / web / packages / deploy / prompt-registry 等）。
 
+### ⭐ PR 构建：必须基于 `gh api` 权威 GitHub 树（禁止用本地磁盘文件）
+
+**铁律：本仓本地工作树不可信，所有 PR 的源码必须以 `gh api` 从真实 master 取权威 blob 构建，禁止把本地磁盘文件纳入 PR diff。**
+
+**背景（本会话 2026-11-12 实发两轮 CI 红的根因）**：本机 git 与 origin 长期脱节（`git status` 实测 1143 文件差异、删 17 万行），本地磁盘的源文件/测试文件多为陈旧 WIP——直接用本地文件推 PR 会把陈旧的 `agentMessage` mock、缺 `resolveUploadsFilePath` 的旧源文件等一并带进去，导致 CI 在「非本次改动」的点上红（mock 缺失 / 符号不存在），而非真实回归。本地 `git push` 在本环境亦不可达（502 / SSH denied），更不可作为构建手段。
+
+**判定「文件是否可信」只用权威树，不用本地 git：**
+- 真 HEAD = `gh api repos/<owner>/<repo>/commits/HEAD --jq '.sha'`（origin/master 不可信，fetch 不可达且陈旧）。
+- 任何要纳入 PR 的文件，先 `gh api repos/<owner>/<repo>/contents/<path>?ref=<sha> --jq '.content' | base64 -d` 取权威版本；在其上叠加改动后再推送。
+- 改完逐路径裸 blob 比对新 master，确保 diff 恰为本次改动路径、无本地 WIP 泄漏。
+
+**`gh api` 构建 PR 模板（REST 重建，不依赖本地 git push）：**
+
+```bash
+OWNER=sev7n4 REPO=pi-lnk BASE=047656a8   # 目标 master SHA（以 gh api 为准，勿信本地 ref）
+# 1) 取权威源文件并叠加改动（写入 /tmp 工作目录）
+gh api "repos/$OWNER/$REPO/contents/<path>?ref=$BASE" --jq '.content' | base64 -d > /tmp/src/<file>
+# ... 编辑 /tmp/src/<file> ...
+# 2) 逐文件算 blob 并创建（content 用 base64，避免转义）
+for f in <paths>; do
+  BLOB=$(base64 -i /tmp/src/$f)
+  SHA=$(gh api "repos/$OWNER/$REPO/git/blobs" -f "content=$BLOB" -f "encoding=base64" --jq '.sha')
+  echo "$f -> $SHA"
+done
+# 3) 建 tree（base_tree 只列本次改动路径，切忌列全树）
+TREE=$(gh api "repos/$OWNER/$REPO/git/trees" -f "base_tree=$BASE" \
+  -f "tree[][path]=<p1>" -f "tree[][mode]=100644" -f "tree[][type]=blob" -f "tree[][sha]=<sha1>" \
+  --jq '.sha')
+# 4) 建 commit（parent = BASE）
+COMMIT=$(gh api "repos/$OWNER/$REPO/git/commits" -f "message=<msg>" -f "tree=$TREE" -f "parents[]=$BASE" --jq '.sha')
+# 5) 建分支 ref + 开 PR
+gh api "repos/$OWNER/$REPO/git/refs" -f "ref=refs/heads/<type>/<slug>" -f "sha=$COMMIT"
+gh pr create --head <type>/<slug> --base master --body-file <file>
+# 6) 推后核验：compare 逐路径比对，DELTA=改动路径、ahead_by=1/behind_by=0、mergeable=true
+gh api "repos/$OWNER/$REPO/compare/$BASE...$COMMIT" --jq '{status,ahead_by,behind_by,files:([.files[].filename]|length)}'
+```
+
+> ⚠️ zsh 变量紧跟冒号必须加花括号：`${R}:apps` 而非 `$R:apps`（后者 `:a` 被当绝对路径修饰符，路径被吞、stderr 被 `2>/dev/null` 掩盖后伪装成「符号不存在」）。本会话曾因此误判 `renderStaticFallback` 失效。
+> ⚠️ 判「文件不存在 / 命令失败」先看是否报 `fatal`，别用 `2>/dev/null` 吞掉——拼错路径和真实缺失长得一模一样。
+
 ### 收尾清理（第7 步之后，别拖到下次）
 
 合并完成后**当场清掉** worktree 与分支。累积起来会导致主仓状态混乱、`gh pr create` 在主仓执行报错、
