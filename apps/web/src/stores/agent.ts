@@ -38,8 +38,10 @@ import {
   applyTimelineEvent,
   createTurnTimeline,
   finalizeTurnTimeline,
+  reconcileTimelineInterruption,
   refreshTimelineSummary,
   replayTimelineEvents,
+  type InterruptionSummary,
   type TimelineEvent,
   type TimelinePart,
   type TurnTimeline,
@@ -1182,6 +1184,22 @@ export const useAgentStore = defineStore('agent', () => {
     for (const k of Object.keys(creditTxByCategory)) delete creditTxByCategory[k]
   }
 
+  /**
+   * W1c（D1=A）：用服务端 `interruption` 摘要刷新最后一条 assistant timeline 的 question part。
+   * 收敛到 loadHistory / reconcileLatestAssistant 两个恢复入口（spec §4.2），
+   * 只作用于最后一条带 timeline 的 assistant（与 pendingQuestion 查询侧同源）。
+   * @returns 是否发生变更。
+   */
+  function applyInterruptionState(summary: InterruptionSummary | null, now = Date.now()): boolean {
+    for (let i = messages.value.length - 1; i >= 0; i -= 1) {
+      const m = messages.value[i]
+      if (m.role === 'assistant' && m.timeline) {
+        return reconcileTimelineInterruption(m.timeline, summary, now)
+      }
+    }
+    return false
+  }
+
   return {
     messages,
     isStreaming,
@@ -1239,6 +1257,7 @@ export const useAgentStore = defineStore('agent', () => {
     loadHistory,
     adoptPersistedRow,
     prependHistory,
+    applyInterruptionState,
     clear,
   }
 })

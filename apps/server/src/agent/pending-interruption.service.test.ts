@@ -75,17 +75,21 @@ class FakeGates {
     return { count }
   }
 
-  async findFirst(args: { where: Record<string, any> }) {
+  async findFirst(args: { where: Record<string, any>; orderBy?: Record<string, string> }) {
     const w = args.where
-    return (
-      this.rows.find((r) => {
-        if (w.callId !== undefined && r.callId !== w.callId) return false
-        if (w.threadId !== undefined && r.threadId !== w.threadId) return false
-        if (w.status !== undefined && r.status !== w.status) return false
-        if (w.expiresAt?.gt && !(r.expiresAt.getTime() > new Date(w.expiresAt.gt).getTime())) return false
-        return true
-      }) ?? null
-    )
+    const matches = this.rows.filter((r) => {
+      if (w.callId !== undefined && r.callId !== w.callId) return false
+      if (w.threadId !== undefined && r.threadId !== w.threadId) return false
+      if (w.status !== undefined && r.status !== w.status) return false
+      if (w.expiresAt?.gt && !(r.expiresAt.getTime() > new Date(w.expiresAt.gt).getTime())) return false
+      return true
+    })
+    if (!matches.length) return null
+    // getLatest 按 createdAt desc 取最新一条
+    if (args.orderBy?.createdAt === 'desc') {
+      return matches.reduce((a, b) => (b.createdAt.getTime() > a.createdAt.getTime() ? b : a))
+    }
+    return matches[0]!
   }
 
   async findMany(args: { where: Record<string, any> }) {
@@ -231,5 +235,50 @@ describe('P2 待确认门 durable · service 层', () => {
     expect(registerHandler).toHaveBeenCalledTimes(1)
     expect(registerHandler.mock.calls[0]![0]).toBe(PENDING_INTERRUPTION_SWEEP_KEY)
     expect(typeof registerHandler.mock.calls[0]![1]).toBe('function')
+  })
+
+  it('T9 (W1c D1=A): getLatest 返回最新门（不限 status）—— 与 getPending 互补', async () => {
+    // 先开一张已作答的门，再开一张新的活门；getLatest 应返回最新建的（活门）
+    await svc.openGate({
+      threadId: 'thread-A',
+      callId: 'call-old',
+      kind: 'ask_user',
+      questions: [{ id: 'o1', question: '旧的？' }],
+      expiresAt: NOW + 60_000,
+      startedAt: NOW,
+    })
+    await svc.settleGate({ threadId: 'thread-A', callId: 'call-old', status: 'answered' })
+    await svc.openGate({
+      threadId: 'thread-A',
+      callId: 'call-new',
+      kind: 'ask_user',
+      questions: [{ id: 'n1', question: '新的？' }],
+      expiresAt: NOW + 120_000,
+      startedAt: NOW + 10_000,
+    })
+    const latest = await svc.getLatest('thread-A', NOW + 11_000)
+    expect(latest).not.toBeNull()
+    expect(latest!.callId).toBe('call-new') // 最新建的（createdAt 更大）
+    expect(latest!.status).toBe('pending')
+    expect(latest!.questions).toEqual([{ id: 'n1', question: '新的？' }])
+
+    // 终态门也能被 getLatest 看到（getPending 看不到 ⇒ W1c-2 数据源）
+    await svc.settleGate({ threadId: 'thread-A', callId: 'call-new', status: 'expired' })
+    const terminal = await svc.getLatest('thread-A', NOW + 11_000)
+    expect(terminal).not.toBeNull()
+    expect(terminal!.callId).toBe('call-new')
+    expect(terminal!.status).toBe('expired')
+
+    // 阴性：无记录 ⇒ null（老会话零回归）
+    expect(await makeService(new FakeGates()).getLatest('thread-A', NOW)).toBeNull()
+  })
+
+  it('M7 (W1c): getLatest 漏排 createdAt desc ⇒ T9「返回最新建」断言 RED', async () => {
+    // 仅作变异锚：本测试验证 findFirst 排序逻辑存在；若实现去掉 orderBy 排序，
+    // 上面 T9 的 callId==='call-new' 仍可能因插入顺序巧合通过，故此处显式验证排序生效。
+    await svc.openGate({ threadId: 't', callId: 'first', expiresAt: NOW + 60_000, startedAt: NOW })
+    await svc.openGate({ threadId: 't', callId: 'second', expiresAt: NOW + 60_000, startedAt: NOW + 5_000 })
+    const latest = await svc.getLatest('t', NOW + 6_000)
+    expect(latest!.callId).toBe('second')
   })
 })

@@ -251,6 +251,32 @@ describe('P2 待确认门 durable · AgentService 接线层', () => {
     expect(state.pendingInterruption?.kind).toBe('propose_plan')
   })
 
+  it('T9 (W1c D1=A): state API 返回终态 interruption 摘要，且 pendingInterruption 为 null（信息双补）', async () => {
+    await p2.openGate({
+      threadId: 'thread-A',
+      callId: 'call-1',
+      kind: 'ask_user',
+      questions: [{ id: 'q1', question: '选哪个？' }],
+      expiresAt: NOW + 60_000,
+      startedAt: NOW,
+    })
+    // 门已终态（用户已答）
+    await p2.settleGate({ threadId: 'thread-A', callId: 'call-1', status: 'answered' })
+
+    const service = buildService(p2)
+    vi.spyOn(service as any, 'assertThreadOwner').mockResolvedValue(undefined)
+    vi.spyOn(service as any, 'reconcileLatestAssistant').mockResolvedValue({ outcome: 'complete' })
+
+    const state = await service.getThreadResumeState('thread-A', 'u1')
+    // W1c-2：前端能拿到终态门数据 ⇒ 重建「已回答」终态卡
+    expect(state.interruption).not.toBeNull()
+    expect(state.interruption!.callId).toBe('call-1')
+    expect(state.interruption!.status).toBe('answered')
+    expect(state.interruption!.questions).toEqual([{ id: 'q1', question: '选哪个？' }])
+    // 旧形状兼容：活门仍为 null（不破坏现有 pending 消费方）
+    expect(state.pendingInterruption).toBeNull()
+  })
+
   it('T6: 历史重放剔除终态门卡片；老行（无门记录）直通不改', async () => {
     await p2.openGate({ threadId: 'thread-A', callId: 'call-1', expiresAt: NOW + 60_000, startedAt: NOW })
     await p2.settleGate({ threadId: 'thread-A', callId: 'call-1', status: 'answered' })

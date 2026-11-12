@@ -109,7 +109,7 @@ export type ShareTurnPart =
 	| {
 			type: 'question'
 			title: string
-			status: 'pending_answer' | 'answered' | 'declined'
+			status: 'pending_answer' | 'answered' | 'declined' | 'expired'
 			questions: Array<{
 				question: string
 				options: string[]

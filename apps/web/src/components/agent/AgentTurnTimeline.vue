@@ -767,7 +767,8 @@ const rootClass = computed(() =>
         <p
           v-else
           class="text-[10px] text-[var(--lnk-text-muted)]"
-        >{{ part.status === 'answered' ? '已回答' : '已跳过' }}</p>
+          data-test="timeline-question-terminal"
+        >{{ part.status === 'answered' ? '已回答' : part.status === 'expired' ? '已超时' : '已跳过' }}</p>
       </div>
 
       <!-- plan（P1-2 spec 2026-11-11 D4）：propose_plan 方案本体在对话流的持久存档——
