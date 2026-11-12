@@ -66,7 +66,7 @@ flowchart TD
   G -. 目标 .-> J["createAssembler 缝 已部分存在"]
 ```
 
-图 1 说明：虚线为本次要补齐的缝；补齐后 `streamConversation` 的全部协作者均为可注入端口，单测零触及 `service.canvasTools` 内部。
+*图 1 · 协作层缝覆盖度：现状 vs 目标，虚线为待补齐缝；补齐后 streamConversation 全部协作者均为可注入端口*
 
 ### 5.2 出网 I/O 收口为统一 client 端口（图 2）
 
@@ -80,7 +80,7 @@ flowchart LR
   N --> O["超时 reject 调用方 fail-soft"]
 ```
 
-图 2 说明：把"超时"上提到共享 client 端口而非散落 await 点；底层已发起请求不被取消，但主流程不被挂死。
+*图 2 · 出网 I/O 收口：把超时上提到共享 client 端口而非散落 await 点，主流程不被挂死*
 
 ## 6. 主场景规格
 
