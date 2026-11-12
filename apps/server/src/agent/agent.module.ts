@@ -28,6 +28,7 @@ import {
 } from './turn-auto-resume/turn-auto-resume.service'
 import { TurnStateService } from './turn-state.service'
 import { PendingInterruptionService } from './pending-interruption.service'
+import { SubagentTaskService } from './subagent-task.service'
 import { AutomationModule } from '../automation/automation.module'
 
 @Module({
@@ -48,6 +49,8 @@ import { AutomationModule } from '../automation/automation.module'
     AgentService,
     // P2：gate 表权威层 + 1min 过期扫描 handler（onModuleInit 注册到 AutomationScheduler）
     PendingInterruptionService,
+    // D2：子代理一等任务单据 + 1min 租约扫描 handler（onModuleInit 注册到 AutomationScheduler）
+    SubagentTaskService,
     AgentCanvasToolsService,
     AgentInternalGuard,
     WorkflowRecipeService,

@@ -285,7 +285,7 @@ export class AgentController {
   // AgentEvent 账本收敛（账本空 ⇒ lastGSeq null，前端回落 DB 快照，向后兼容）。
   // 属主校验在 service（403 不区分 404，防线程存在性探测）。
 
-  /** 线程状态摘要：status / lastGSeq / pendingInterruption（P2 预留位，恒 null）。 */
+  /** 线程状态摘要：status / lastGSeq / pendingInterruption / subagentTasks（P2+D2 预留位，跨 pod 存活）。 */
   @Get('threads/:threadId/state')
   @UseGuards(AuthGuard)
   async getThreadResumeState(

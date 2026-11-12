@@ -486,6 +486,32 @@ model PendingInterruption {
   @@index([status, expiresAt])
 }
 
+/// D2：子代理一等任务单据。完成的权威状态独立于 pi-runtime 进程存活。
+/// - additive：只建表 + 索引，不改存量行；status 用 String（SQLite 无原生 enum）。
+/// - 唯一键 (threadId, callId)：tool_call 帧重放 / SSE 重投幂等。
+/// - 不建 FK：threadId 可能是前端 threadKey（不保证 AgentThread 行存在，同 P2）。
+model SubagentTask {
+  id               String    @id @default(cuid())
+  threadId         String
+  callId           String
+  requestId        String    @unique
+  runId            String?
+  parentSessionKey String?
+  taskPreview      String?
+  status           String    @default("spawned")
+  outcomeJson      String?
+  reason           String?
+  expiresAt        DateTime
+  startedAt        DateTime  @default(now())
+  endedAt          DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([threadId, callId])
+  @@index([threadId, status])
+  @@index([status, expiresAt])
+}
+
 model AgentMessage {
   id            String      @id @default(cuid())
   sessionId     String
