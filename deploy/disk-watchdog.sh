@@ -25,6 +25,7 @@
 #   6. sessions PVC 体积     —— 本次第四大来源（1.7G / 200 个目录）
 #   7. 生产库备份份数与体积  —— 本次第三大来源（7 份 × 139M）
 #   8. disk-guard 自愈有效性 —— 机制是否真的在跑（对照它的日志）
+#   9. /tmp 取证副本体积     —— 2026-11-12 爆盘根因（agent 生产验证只读副本未即时清）
 #
 # 用法：bash disk-watchdog.sh
 # 退出码：0 = 全部通过；1 = 有断言失败（CI 会红 + 可选 webhook 告警）
@@ -34,11 +35,11 @@ set -uo pipefail
 DISK_TOTAL_KB="${DISK_TOTAL_KB:-41943040}"        # 40G 分区
 AVAIL_WARN_KB="${DISK_AVAIL_WARN_KB:-10485760}"    # 10G：日常清理线
 AVAIL_FAIL_KB="${DISK_AVAIL_FAIL_KB:-6815744}"     # 6.3G：kubelet 15% 驱逐线
-USE_WARN_PCT="${DISK_USE_WARN_PCT:-85}"            # 百分比告警线（与腾讯云口径一致）
+USE_WARN_PCT="${DISK_USE_WARN_PCT:-80}"            # 百分比告警线（与腾讯云口径一致；用户要求 80% 起报）
 USE_FAIL_PCT="${DISK_USE_FAIL_PCT:-90}"            # 91% 那次就是这个水位
 REG_BLOB_WARN_MB="${DISK_REG_BLOB_WARN_MB:-3000}"  # registry blob 3G 起报
 REG_TAG_WARN="${DISK_REG_TAG_WARN:-40}"             # registry tag 数
-SESSIONS_WARN_MB="${DISK_SESSIONS_WARN_MB:-1500}"  # sessions PVC 1.5G 起报
+SESSIONS_WARN_MB="${DISK_SESSIONS_WARN_MB:-4000}"  # sessions PVC 4G 起报（常态 ~2.4G/138 目录，避免永久红）
 DB_BAK_WARN_N="${DISK_DB_BAK_WARN_N:-4}"            # DB 备份份数
 DB_BAK_WARN_MB="${DISK_DB_BAK_WARN_MB:-800}"       # DB 备份总体积
 
@@ -183,6 +184,20 @@ PYEOF
   fi
 else
   fail "disk-guard 日志不存在 $GUARD_LOG —— 自愈机制没装"
+fi
+
+# ── 断言 9：agent 生产取证只读副本（2026-11-12 爆盘根因）────────────────────
+# 根因：agent 做生产验证时 docker cp 出只读 DB 副本到 /tmp（p2-*.db /
+#   lnkpi-*.db / pi-probe.db / v5*.db / d2-*.db / w1c-*.db / *-prod-*.db /
+#   *-copy.db），做完未即时清理 ⇒ 2026-11-12 累计 ~6.7GB 撑爆 ephemeral-storage，
+#   kubelet 驱逐 pi-runtime、模型请求卡死。这些副本纯只读、命名高度特异，
+#   disk-guard.sh 缺口 5 已负责日常回收，但**巡检侧也要能看到它们的体积**，
+#   否则下一次撑爆前没人知道。阈值 2048MB（≈2G，已逼近驱逐线余量）。
+TMP_FORENSIC_MB=$(find /tmp -maxdepth 1 -type f \( -name 'p2-*.db' -o -name 'lnkpi-*.db' -o -name 'pi-probe.db' -o -name 'v5*.db' -o -name 'd2-*.db' -o -name 'w1c-*.db' -o -name '*-prod-*.db' -o -name '*-copy.db' \) -printf '%s\n' 2>/dev/null | awk '{s+=$1} END{printf "%.0f", (s+0)/1048576}')
+TMP_FORENSIC_MB=${TMP_FORENSIC_MB:-0}
+val tmp_forensic_mb "$TMP_FORENSIC_MB"
+if [ "$TMP_FORENSIC_MB" -gt 2048 ]; then
+  fail "/tmp 取证副本已达 ${TMP_FORENSIC_MB}MB（阈值 2048MB）"
 fi
 
 if [ "$FAILED" = "0" ]; then

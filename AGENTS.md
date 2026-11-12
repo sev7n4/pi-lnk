@@ -231,7 +231,7 @@ stdout 为空 → `grep -c` 输出 0 ⇒ 看起来"符号不存在"，实际是*
 - **画布 SSOT 在前端**（`saveCanvas` 整份覆盖）；`add_node` 有**两份 applier 必须同步**
 - 前端**无 CSP**（`nginx.conf` 无该头）⇒ iframe sandbox 配错没有第二道防线
 
-### 四条流水线的触发面（改哪层走哪条）
+### 流水线触发面（改哪层走哪条）
 
 | workflow | 触发条件 | 覆盖 |
 |---|---|---|
@@ -240,6 +240,7 @@ stdout 为空 → `grep -c` 输出 0 ⇒ 看起来"符号不存在"，实际是*
 | `runtime-deploy.yml` | **纯 `workflow_dispatch`，无 push 触发** | pi-runtime |
 | `prompt-lint.yml` | paths 触发：`prompt-registry/**`、`prompt-registry.*`、`prompt-lint.ts` | 提示词门禁 |
 | `observability-watchdog.yml` | **`schedule`（每 30 分钟）+ `workflow_dispatch`，无 push 触发** | 观测巡检断言（须 SSH 进 CVM 跑，Prometheus 只在 NodePort 内网可达） |
+| `disk-watchdog.yml` | **`schedule`（每 30 分钟）+ `workflow_dispatch`，无 push 触发** | 磁盘水位巡检断言（SSH 进 CVM 跑 `deploy/disk-watchdog.sh`，失败即 CI 红） |
 
 ⚠️ **最容易踩的静默失败**：改 `services/pi-runtime/**`、`skills/**`、`vendor/**` 后 push 到 master，
 `runtime-deploy.yml` **不会自动跑** —— CI 全绿但线上没有任何变化。
