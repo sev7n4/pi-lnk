@@ -65,6 +65,8 @@ const nopTool: LnkpiTool = {
 interface HarnessCapture {
 	tools: Array<{ name: string }>;
 	activeToolNames: string[];
+	/** harness 的 systemPrompt 配置（函数形态：每次 LLM 调用前求值）。用于校验子代理继承 basePrompt。 */
+	systemPrompt?: unknown;
 }
 
 /**
@@ -82,11 +84,12 @@ function makeManager(
 	const models = createModels();
 	models.setProvider(faux.provider);
 	const modelFactory = () => ({ models, model: faux.getModel(), providerId: faux.provider.id });
-	const harnessFactory = async (...args: Parameters<typeof AgentHarness.create>) => {
+		const harnessFactory = async (...args: Parameters<typeof AgentHarness.create>) => {
 		const cfg = args[0];
 		captured.push({
 			tools: (cfg as { tools: Array<{ name: string }> }).tools,
 			activeToolNames: (cfg as { activeToolNames: string[] }).activeToolNames,
+			systemPrompt: (cfg as { systemPrompt?: unknown }).systemPrompt,
 		});
 		if (opts.factory) return opts.factory(...args);
 		return AgentHarness.create(...args);
@@ -219,4 +222,37 @@ test("runSubagent: 清理铁律——子 entry 摘除但共享 env/repo 存活�
 	// 主会话仍可正常跑（env/repo 未被误关）——清理铁律的核心断言
 	await sm.prompt(threadKey, "继续");
 	await waitAgentEnd(sm, threadKey);
+});
+
+test("runSubagent: 子代理继承 source.basePrompt 中的 L2 委派规则（spec §3.3 注入路径，不递归派生）", async () => {
+	resetTodoStoreForTest();
+	const metrics = new Metrics();
+	// 对齐 apps/server prompt-registry 的 SUBAGENT_DELEGATION_RULES 正文（委派授权串）
+	const DELEGATION = "调研/探索任务优先 spawn_subagent。";
+	const { sm, captured } = makeManager(metrics, [
+		fauxAssistantMessage("主对话第一轮", { stopReason: "stop" }),
+		fauxAssistantMessage("调研结论：X", { stopReason: "stop" }),
+	]);
+	const threadKey = "s-c4-inherit";
+	// 主会话 basePrompt 注入委派规则（等价于 Nest 侧 assembled basePrompt 经 systemPrompt 下发）
+	await sm.create(threadKey, { userId: "u1", systemPrompt: DELEGATION });
+	await sm.prompt(threadKey, "开始");
+	await waitAgentEnd(sm, threadKey);
+	await waitSourceIdle(sm, threadKey);
+	const mainCalls = captured.length;
+
+	const outcome = await sm.runSubagent(threadKey, "调研任务");
+	assert.equal(outcome.status, "completed");
+
+	// 第 mainCalls 次之后的 capture = 子代理 build 的 harness 配置
+	const sub = captured[captured.length - 1]!;
+	assert.ok(captured.length >= mainCalls + 1, "fork 触发一次新的 harnessFactory");
+	const subSp =
+		typeof sub.systemPrompt === "function"
+			? (sub.systemPrompt as () => string)()
+			: String(sub.systemPrompt ?? "");
+	assert.ok(
+		subSp.includes(DELEGATION),
+		"子代理 harness systemPrompt 应继承主会话 basePrompt 中的委派规则（L2 规则随 basePrompt 注入子代理）",
+	);
 });

@@ -6,7 +6,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { Metrics } from "../metrics.js";
-import { SubagentCoordinator } from "../gate/subagent.js";
+import { SubagentCoordinator, SUBAGENT_TOOL_WHITELIST } from "../gate/subagent.js";
 import { createSpawnSubagentTool } from "./spawn-subagent.js";
 
 const noopUpdate = () => {};
@@ -138,5 +138,39 @@ describe("spawn_subagent 工具", () => {
 			{ piSessionKey: "k" } as never, invocation as never, chordCtx as never,
 		);
 		assert.match(m.render(0, "test"), /pi_runtime_subagent_outcome_total\{status="failed"\} 1/);
+	});
+
+	// —— 基线修复 T2/T3（2026-11-12）：description 关键词信号 + 禁用条件 + fallback 自行完成引导 ——
+	it("★ description 含触发关键词信号（调研/研究/探索/多源核对/联网查资料）", () => {
+		const tool = createSpawnSubagentTool(new SubagentCoordinator(), new Metrics());
+		const d = tool.description;
+		for (const kw of ["调研", "研究", "探索", "多源核对", "联网查资料"]) {
+			assert.ok(d.includes(kw), `description 应含触发关键词「${kw}」`);
+		}
+	});
+
+	it("★ description 保留禁用条件（改画布/生成内容别派/自己做）", () => {
+		const tool = createSpawnSubagentTool(new SubagentCoordinator(), new Metrics());
+		const d = tool.description;
+		for (const kw of ["改画布", "生成内容", "别派", "自己做"]) {
+			assert.ok(d.includes(kw), `description 应保留勿用条件「${kw}」`);
+		}
+	});
+
+	it("★ fallback 含自行完成引导（ok:false 时给 hint，不卡死不静默放弃）", async () => {
+		// coordinator 未 attach → tryRun 返回 {ok:false, reason:'not_attached'} → 工具回 subagent_not_available + hint
+		const tool = createSpawnSubagentTool(new SubagentCoordinator(), new Metrics());
+		const res = await tool.execute(
+			"call-fb", { task: "t" } as never, noopUpdate,
+			{ piSessionKey: "k" } as never, invocation as never, chordCtx as never,
+		);
+		const body = textOf(res);
+		assert.equal(body.ok, false);
+		assert.equal(body.error, "subagent_not_available");
+		assert.match(String(body.hint ?? ""), /自行联网\/读文档完成调研/);
+	});
+
+	it("★ 子代理白名单不含 spawn_subagent（递归封死不变量，呼应 spec §3.3）", () => {
+		assert.equal(SUBAGENT_TOOL_WHITELIST.has("spawn_subagent"), false);
 	});
 });

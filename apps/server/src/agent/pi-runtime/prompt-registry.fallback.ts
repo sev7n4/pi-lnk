@@ -73,3 +73,13 @@ export const CANVAS_DAILY_OPS = `19. 整理/排版/铺开节点用 arrange_nodes
 /** task_tool（C1 2026-10-09）：todo_write 任务计划汇报。与 rules/task_tool.md body 逐字一致（L7 校验）。
  * 正文刻意极简（63 字符）：L6 预算余量仅 89，详细约定在 todo_write 工具 schema description。 */
 export const TASK_TOOL_RULES = `多步任务开工前 todo_write 提交清单（全量覆写），完成即更新，全部完成交空数组；需先出方案时先 propose_plan 征确认再执行，确认前不写画布不调生成。`;
+
+/**
+ * subagent-delegation（2026-11-12 基线修复）：研究类任务主动委派只读子代理。
+ * 与 rules/subagent-delegation.md body 逐字一致（L7 校验）。
+ * 这是「主动委派」授权层（L2 点名）——此前 spawn_subagent 常驻但 prompt/skills 零点名，
+ * 模型只在用户显式写「请用 spawn_subagent」时才派发（B-4 取证）。本规则进 core 组恒注入，
+ * 且随 basePrompt 同时注入主会话与子代理（子代理白名单排除 spawn_subagent，故不可再派生）。
+ * order 36 排在 memory_scope.tail(35) 之后、media_tool_policy(40) 之前。
+ */
+export const SUBAGENT_DELEGATION_RULES = `调研/探索任务优先 spawn_subagent。`;

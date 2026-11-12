@@ -20,6 +20,7 @@ import {
   MEMORY_SCOPE_RULES,
   TASK_TOOL_RULES,
   WRITE_TOOLS_RULES,
+  SUBAGENT_DELEGATION_RULES,
 } from "./prompt-registry.fallback";
 
 /** L4 白名单：group / unlessGroup 出现未知值即报错。 */
@@ -110,7 +111,7 @@ export interface PromptRegistrySnapshot {
 /** L9：代码侧声明的、必须由 Registry 提供的 id 清单。 */
 export const COMPOSED_IDS = [
   "identity.opening", "no_gen_claim.nogen", "no_gen_claim.gen", "sidebar_vision.tail",
-  "memory_scope.tail", "media_tool_policy", "canvas_view_policy", "canvas_daily_ops",
+  "memory_scope.tail", "subagent-delegation", "media_tool_policy", "canvas_view_policy", "canvas_daily_ops",
   "gen_tool_policy", "task_tool", "write_guard",
 ] as const;
 
@@ -126,6 +127,7 @@ export const FALLBACK_BY_ID: Record<string, string> = {
   "canvas_daily_ops": CANVAS_DAILY_OPS,
   "gen_tool_policy": GEN_TOOLS_RULES,
   "task_tool": TASK_TOOL_RULES,
+  "subagent-delegation": SUBAGENT_DELEGATION_RULES,
   "write_guard": RULE_10_WRITE_GUARD,
 };
 
@@ -264,8 +266,8 @@ export function renderStaticFallback(groups: readonly string[]): string {
   const parts: string[] = [];
   if (coreOn) {
     parts.push(groups.includes("genTools")
-      ? `${CORE_RULES_PREFIX}\n${RULE_3_GEN}\n${CORE_RULES_TAIL}\n${MEMORY_SCOPE_RULES}`
-      : `${CORE_RULES_PREFIX}\n${RULE_3_NO_GEN}\n${CORE_RULES_TAIL}\n${MEMORY_SCOPE_RULES}`);
+      ? `${CORE_RULES_PREFIX}\n${RULE_3_GEN}\n${CORE_RULES_TAIL}\n${MEMORY_SCOPE_RULES}\n${SUBAGENT_DELEGATION_RULES}`
+      : `${CORE_RULES_PREFIX}\n${RULE_3_NO_GEN}\n${CORE_RULES_TAIL}\n${MEMORY_SCOPE_RULES}\n${SUBAGENT_DELEGATION_RULES}`);
   }
   // ⚠️ 拼装顺序必须与磁盘 order 一致：canvas_view_policy(order 45) 夹在
   // media_tool_policy(40) 与 gen_tool_policy(50) 之间。漏推任何一条 ⇒ 容器读不到

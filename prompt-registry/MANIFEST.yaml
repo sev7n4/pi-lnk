@@ -21,6 +21,10 @@ entries:
     version: 1.0.0
     order: 35
     contentHash: 8bc581f97646
+  - id: subagent-delegation
+    version: 1.0.0
+    order: 36
+    contentHash: ab0059d8c7e5
   - id: media_tool_policy
     version: 1.7.0
     order: 40
