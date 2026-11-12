@@ -5,11 +5,10 @@ import {
   VIDEO_REF_WARN_MAX_EDGE,
   type ProbedMediaFile,
 } from '@lnkpi/shared'
-import { upstreamFetch } from '@lnkpi/agent'
 import sharp from 'sharp'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
-import { withTimeout } from '../http-timeout.util'
+import { httpGet } from '../libs/http/client'
 
 const UPLOADS_ROOT = join(process.cwd(), 'uploads')
 const UPSTREAM_REF_FETCH_TIMEOUT_MS = 5000
@@ -43,7 +42,7 @@ export async function readImageBuffer(url: string): Promise<Buffer> {
     }
     let res: Response
     try {
-      res = await withTimeout(upstreamFetch(url), UPSTREAM_REF_FETCH_TIMEOUT_MS, `参考图下载 ${url}`)
+      res = await httpGet(url, { timeoutMs: UPSTREAM_REF_FETCH_TIMEOUT_MS })
     } catch (err) {
       lastErr = err
       continue

@@ -12,11 +12,10 @@
  */
 import { readFile } from 'fs/promises'
 import { join } from 'path'
-import { upstreamFetch } from '@lnkpi/agent'
 import { parseUploadRefPath } from '@lnkpi/shared'
+import { httpGet } from '../libs/http/client'
 import { downscaleImageBuffer } from '../media/upstream-ref-downscale'
 import { supportsVisionModel } from './sidebar-vision'
-import { withTimeout } from '../http-timeout.util'
 
 export interface DirectImageOut {
   /** 文件名（取 url 末段，decodeURIComponent），用于 [In=] 标记与占位恢复。 */
@@ -94,7 +93,7 @@ async function readUploadsBuffer(url: string): Promise<Buffer> {
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await new Promise((r) => setTimeout(r, 300 * attempt))
     try {
-      const res = await withTimeout(upstreamFetch(url), UPLOAD_FETCH_TIMEOUT_MS, `参考图下载 ${url}`)
+      const res = await httpGet(url, { timeoutMs: UPLOAD_FETCH_TIMEOUT_MS })
       if (!res.ok) throw new Error(`参考图下载失败 (${res.status}): ${url}`)
       return Buffer.from(await res.arrayBuffer())
     } catch (err) {
