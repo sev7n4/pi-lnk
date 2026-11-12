@@ -63,6 +63,8 @@ const VALID: Array<[string, [string | undefined, number], string | undefined, st
   ["no_gen_claim.gen", [undefined, 20], undefined, "no-gen-claim"],
   ["sidebar_vision.tail", [undefined, 30], undefined, "no-template"],
   ["memory_scope.tail", [undefined, 35], undefined, "memory-scope-isolation"],
+  // 2026-11-12：spawn_subagent 委派授权串（基线修复，L2 点名）
+  ["subagent-delegation", [undefined, 36], undefined, "subagent-delegation"],
   ["media_tool_policy", ["writeTools", 40], undefined, "media-tool-policy"],
   ["canvas_view_policy", ["writeTools", 45], undefined, "canvas-view-card"],
   // W4（2026-10-04）：画布日常操作（排版/查看/任务/资产 + tool_search 触发）
@@ -436,12 +438,12 @@ describe("L11 anchor（语义短名必填、全局唯一且字符集合规）", 
     }
   });
 
-  it("回归：磁盘上 11 条规则的 anchor 全在、互不相同且字符集合规（L11 对真实资产零 error）", () => {
+  it("回归：磁盘上 12 条规则的 anchor 全在、互不相同且字符集合规（L11 对真实资产零 error）", () => {
     const { errors } = checkRegistryIntegrity(resolveRegistryRoot());
     expect(errors.filter((e) => e.includes("L11"))).toEqual([]);
-    // 正面断言：11 条 anchor 逐条过字符集（防上面那条回归用例变成空断言）
+    // 正面断言：12 条 anchor 逐条过字符集（防上面那条回归用例变成空断言）
     const metas = toRuleMeta(loadRegistry(resolveRegistryRoot()).entries);
-    expect(metas).toHaveLength(11);
+    expect(metas).toHaveLength(12);
     for (const m of metas) expect(m.anchor).toMatch(/^[a-z][a-z0-9-]{3,}$/);
   });
 });
