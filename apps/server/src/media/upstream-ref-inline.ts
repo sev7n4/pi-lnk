@@ -1,8 +1,7 @@
 import { readFile } from 'fs/promises'
 import { extname, join } from 'path'
-import { upstreamFetch } from '@lnkpi/agent'
 import { needsUpstreamRefInline, parseUploadRefPath } from '@lnkpi/shared'
-import { withTimeout } from '../http-timeout.util'
+import { httpGet } from '../libs/http/client'
 
 const UPLOADS_ROOT = join(process.cwd(), 'uploads')
 const MAX_INLINE_BYTES = 15 * 1024 * 1024
@@ -37,7 +36,7 @@ async function readUploadAsDataUrl(userId: string, fileName: string): Promise<st
 }
 
 async function fetchAsDataUrl(url: string): Promise<string> {
-  const res = await withTimeout(upstreamFetch(url), UPSTREAM_REF_FETCH_TIMEOUT_MS, `参考图下载 ${url}`)
+  const res = await httpGet(url, { timeoutMs: UPSTREAM_REF_FETCH_TIMEOUT_MS })
   if (!res.ok) {
     throw new Error(`参考图下载失败 (${res.status}): ${url}`)
   }
