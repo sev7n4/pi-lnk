@@ -16,6 +16,7 @@ import { upstreamFetch } from '@lnkpi/agent'
 import { parseUploadRefPath } from '@lnkpi/shared'
 import { downscaleImageBuffer } from '../media/upstream-ref-downscale'
 import { supportsVisionModel } from './sidebar-vision'
+import { withTimeout } from '../http-timeout.util'
 
 export interface DirectImageOut {
   /** 文件名（取 url 末段，decodeURIComponent），用于 [In=] 标记与占位恢复。 */
@@ -48,6 +49,7 @@ export interface BuildDirectImageInput {
 
 const UPLOADS_ROOT = join(process.cwd(), 'uploads')
 const RAW_LIMIT_BYTES = 5 * 1024 * 1024
+const UPLOAD_FETCH_TIMEOUT_MS = 5000
 
 function sniffMime(buf: Buffer): string {
   if (buf.length >= 8 && buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
@@ -92,7 +94,7 @@ async function readUploadsBuffer(url: string): Promise<Buffer> {
   for (let attempt = 0; attempt < 3; attempt++) {
     if (attempt > 0) await new Promise((r) => setTimeout(r, 300 * attempt))
     try {
-      const res = await upstreamFetch(url)
+      const res = await withTimeout(upstreamFetch(url), UPLOAD_FETCH_TIMEOUT_MS, `参考图下载 ${url}`)
       if (!res.ok) throw new Error(`参考图下载失败 (${res.status}): ${url}`)
       return Buffer.from(await res.arrayBuffer())
     } catch (err) {

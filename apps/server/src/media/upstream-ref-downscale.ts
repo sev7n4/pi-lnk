@@ -9,8 +9,10 @@ import { upstreamFetch } from '@lnkpi/agent'
 import sharp from 'sharp'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
+import { withTimeout } from '../http-timeout.util'
 
 const UPLOADS_ROOT = join(process.cwd(), 'uploads')
+const UPSTREAM_REF_FETCH_TIMEOUT_MS = 5000
 
 function mimeFromBuffer(buffer: Buffer): string {
   if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
@@ -41,7 +43,7 @@ export async function readImageBuffer(url: string): Promise<Buffer> {
     }
     let res: Response
     try {
-      res = await upstreamFetch(url)
+      res = await withTimeout(upstreamFetch(url), UPSTREAM_REF_FETCH_TIMEOUT_MS, `参考图下载 ${url}`)
     } catch (err) {
       lastErr = err
       continue
