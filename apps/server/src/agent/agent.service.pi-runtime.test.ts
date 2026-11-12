@@ -18,6 +18,7 @@ import type { PiRuntimeEvent } from './pi-runtime/pi-events'
 import type { SidebarAttachment } from '@lnkpi/shared'
 import { resetSidebarParseCache } from './sidebar-vision'
 import { isSuppressed, markSuppressed } from './memory-suppression'
+import * as httpClient from '../libs/http/client'
 
 describe('AgentService pi-runtime switch (B4)', () => {
   const agentMessageCreate = vi.fn()
@@ -409,11 +410,22 @@ describe('AgentService pi-runtime switch (B4)', () => {
      * 跑一轮并返回本轮的动态上下文块（P0-①：侧栏识图结果随 turnContext.dynamicBlocks
      * 逐轮透传，不再并入 create 的 systemPrompt）。
      */
-    async function runTurnWithAttachments(attachments?: SidebarAttachment[]) {
+    async function runTurnWithAttachments(
+      attachments?: SidebarAttachment[],
+      selectedNodeIds?: string[],
+    ) {
       process.env.PI_RUNTIME_MODE = 'active'
       process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
       const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })])
       vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+      // 主线 A（协作层全缝化）：参考图/附件下载是真实出网 I/O，单测必须走注入缝，
+      // 绝不能 drain 真实 buildDirectImagePayload → httpGet 下载。返回 undefined 使其
+      // fail-soft 回落侧栏识图块（与既有断言语义一致），整轮零真实出网。
+      vi.spyOn(service, 'createDirectImagePayloadBuilder').mockReturnValue(
+        () => Promise.resolve(undefined),
+      )
+      // 气密性探针：本用例不应有任何真实 httpGet 出网（出网只应发生在被测缝内）。
+      const httpGetSpy = vi.spyOn(httpClient, 'httpGet')
       for await (const _e of service.streamConversation(
         's1',
         '这图是什么',
@@ -424,9 +436,18 @@ describe('AgentService pi-runtime switch (B4)', () => {
         'ch_x::deepseek-flash',
         undefined,
         attachments,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        selectedNodeIds,
       )) {
         // drain
       }
+      // 治本断言：出网经注入缝路由（real buildDirectImagePayload 未被调用），整轮零真实出网。
+      expect(service.createDirectImagePayloadBuilder).toHaveBeenCalled()
+      expect(httpGetSpy).not.toHaveBeenCalled()
       const promptOpts = pi.prompt.mock.calls[0]?.[3] as
         | { turnContext?: { dynamicBlocks?: string[] } }
         | undefined
@@ -493,6 +514,15 @@ describe('AgentService pi-runtime switch (B4)', () => {
       expect(runVisionQa).toHaveBeenCalledTimes(1)
       expect(first).toContain('摘要：一双白色运动鞋，侧拍')
       expect(second).toContain('摘要：一双白色运动鞋，侧拍')
+    })
+
+    it('SEL-REF 携带选中节点 → 走 selection digest 装配（气密：零真实出网）', async () => {
+      setResolver('deepseek-flash')
+      setVisionTools(async () => VISION_OK)
+      const blocks = await runTurnWithAttachments(IMAGE_ATTACHMENT, ['n1'])
+      // 气密性已由 runTurnWithAttachments 内部断言：createDirectImagePayloadBuilder 被缝路由
+      // + httpGet 零调用；此处仅确认侧栏识图块仍正常产出（未因选中节点而漏块）。
+      expect(blocks).toContain('【侧栏参考图解析】')
     })
   })
 
