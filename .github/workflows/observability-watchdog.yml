@@ -15,6 +15,9 @@ name: Observability Watchdog
 # ⚠️ 本 workflow 是全仓**第一条带 `schedule` 的流水线**：不带 `branches` 过滤
 # （schedule 只认 cron），但它也不会被 push 触发（`on` 里没有 push）⇒ 不会误触发。
 
+# 磁盘水位巡检已拆分到独立的 `disk-watchdog.yml`（2026-11-12）：本 workflow 只负责
+# pi-runtime 观测断言，不再寄生磁盘巡检 —— 否则磁盘越线会误把「观测巡检」整体标红。
+
 on:
   schedule:
     # 每 30 分钟（避开整点：整点是各类定时任务最拥挤的时刻）
@@ -73,30 +76,17 @@ jobs:
           # 用 sudo 是不必要的 —— 断言只读 /metrics 与 healthz，不改任何状态。
           ssh -T deploy-cvm 'bash -s' < deploy/observability/prometheus/observability-watchdog.sh
 
-      # ── 磁盘水位巡检（2026-11-05 加装）────────────────────────────────────
-      # why：2026-11-05 根分区 40G 用到 91%（只剩 4.0G），kubelet 已在报
-      #   FreeDiskSpaceFailed（"Attempted to free 4.3GB, but found 0 bytes eligible"）。
-      #   disk-guard.sh 是**自愈**机制（事后清理），不能替代**告警**（事前发现）。
-      #   ⇒ 必须有独立的、会在水位越线前报出来的巡检。
-      #
-      # 复用本 workflow 的 SSH 与发布机制（不新增组件、不新增 secret）。
-      # 断言在 CVM 上跑：磁盘/registry/containerd 都是宿主机上的东西，
-      #   GitHub runner 看不到；它能 SSH 进来 ⇒ 断言在机器上跑，判定回 CI。
-      - name: Run disk watermark assertions
-        run: |
-          set -euo pipefail
-          ssh -T deploy-cvm 'bash -s' < deploy/disk-watchdog.sh
-
+      
       - name: Publish result
         if: always()
         run: |
           # 把断言输出写进 job summary：workflow 失败时通知邮件只有一行，
           # 真正的原因（哪个 KEY、什么值）必须能在 UI 里直接看到。
           {
-            echo "### pi-runtime 观测巡检 + 磁盘水位巡检"
+            echo "### pi-runtime 观测巡检"
             echo
             echo "- 时间（UTC）：$(date -u +%Y-%m-%dT%H:%M:%SZ)"
             echo "- 结果：${{ job.status }}"
             echo
-            echo "PromQL 与磁盘断言原始输出见上两步日志；完整判据说明见 \`deploy/observability/prometheus/README.md\`。"
+            echo "PromQL 原始输出见上一步日志；完整判据说明见 \`deploy/observability/prometheus/README.md\`。"
           } >> "$GITHUB_STEP_SUMMARY"
