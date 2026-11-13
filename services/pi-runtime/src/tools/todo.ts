@@ -131,7 +131,13 @@ export function buildTodoTools(): LnkpiTool[] {
 			// A-2' 拍板 1：幻觉 id 硬拒绝（先于任何写入）
 			const rejection = rejectUnknownIds(params, key);
 			if (rejection !== null) {
-				return { content: [{ type: "text", text: rejection }], isError: true };
+				// details 附当前快照（0.99.2 AgentToolResult.details 必选；拒绝回执附现状 = debug 唯一真相源，零副作用）
+				const current = getTodoState(key);
+				return {
+					content: [{ type: "text", text: rejection }],
+					isError: true,
+					details: { todo: { snapshot: current, diff: { updates: [] } } },
+				};
 			}
 			const { snapshot, diff } = overwriteTodos(key, params.todos);
 			return {

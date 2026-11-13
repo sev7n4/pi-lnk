@@ -17,7 +17,7 @@ function tool() {
  * 全部必选（tiering.test.ts 同款姿势：无值处 as never）。 */
 function run(
 	t: ReturnType<typeof buildTodoTools>[number],
-	params: { todos: Array<{ content: string; status: string }> },
+	params: { todos: Array<{ content: string; status: string; id?: string }> },
 	session: LnkpiToolContext = ctx,
 ) {
 	return t.execute("call-t", params as never, () => {}, session as never, {} as never, undefined as never);
