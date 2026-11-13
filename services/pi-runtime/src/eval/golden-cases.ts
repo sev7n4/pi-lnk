@@ -33,6 +33,91 @@
 
 import type { EvalTranscript } from "./transcript.js";
 import { CANVAS_DECOMPOSITION_CASES } from "./canvas-decomposition-cases.js";
+import { CANVAS_MULTITURN_CASES } from "./canvas-multiturn-cases.js";
+
+// ═══════════════════════════════════════════════════════════════════════════
+// C-1b 类型层：多轮 steps / status 分布 / 画布终态 / identity 观测
+// （实施 spec：docs/superpowers/specs/2026-11-13-c1b-fullset-multiturn-eval-design.md）
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** 清单 item 的 status 枚举（生产实证三态全出现，实施 spec §2.1）。 */
+export type TodoStatus = "pending" | "in_progress" | "completed";
+
+/** status 前进序（requireProgress 的比较基准）。未知/缺省按 pending 处理。 */
+const STATUS_RANK: Readonly<Record<string, number>> = {
+	pending: 0,
+	in_progress: 1,
+	completed: 2,
+};
+
+/** 清单快照的单条 item（content = 判据主键；status 可缺省——生产实证均带）。 */
+export interface PlanItem {
+	content: string;
+	status?: string;
+}
+
+/** 一次拆解工具调用的清单快照（pickLatestPlanSnapshot 返回形态）。 */
+export interface PlanSnapshot {
+	tool: string;
+	items: PlanItem[];
+}
+
+/** 清单 status 分布判据（见 GoldenCase.expectTodoStatus 注释）。 */
+export interface TodoStatusExpect {
+	allOf?: readonly TodoStatus[];
+	requireAnyOf?: readonly TodoStatus[];
+	requireProgress?: boolean;
+}
+
+/**
+ * 画布终态判据（§8.3 形态；见 GoldenCase.expectCanvasState 注释）。
+ * ⚠️ 刻意**不含** generationSucceeded——成功级本期不实施（实施 spec §3.2）。
+ */
+export interface CanvasStateExpect {
+	nodeCount?: { min?: number; max?: number };
+	nodeTypeCounts?: Partial<Record<"image" | "text" | "video", { min?: number; max?: number }>>;
+	generationSubmitted?: boolean;
+}
+
+/** 画布快照（runner 经探针读回后传给纯判定函数；可单测）。 */
+export interface CanvasSnapshot {
+	nodeCount: number;
+	/** 按 node.type 计数（生产实测枚举 image/text/video；未知类型也计数，键为原值）。 */
+	typeCounts: Record<string, number>;
+}
+
+/** identity 断裂观测产出（§8.6，**只观测不计分**——不影响 pass/fail）。 */
+export interface IdentityObservation {
+	/** 断裂次数（保守口径：content 逐字不存活即计，宁可高估）。 */
+	broken: number;
+	/** 观测次数（每个 expectIdentitySurvival 标注计一次）。 */
+	observed: number;
+}
+
+/**
+ * 多轮 case 的单步（实施 spec §3.1）。字段语义与顶层同款字段一致，
+ * 另有三个 steps 专属能力：`requireProgress`（相对上一步）、
+ * `expectIdentitySurvival`（§8.6 观测标注）、以及与后续步共享会话上下文。
+ */
+export interface GoldenStep {
+	/** 本步用户话术（非空——空话术无从判据，L0 拦截）。 */
+	text: string;
+	expectTools?: string[];
+	expectAnyTools?: string[];
+	forbidTools?: string[];
+	expectTextIncludes?: string[];
+	forbidText?: string[];
+	expectCompleted?: boolean;
+	expectTodoSnapshot?: GoldenCase["expectTodoSnapshot"];
+	expectTodoStatus?: TodoStatusExpect;
+	expectCanvasState?: CanvasStateExpect;
+	/**
+	 * §8.6 前置观测标注（**只观测不计分**）：编写期声明「本步快照中第 itemIndex
+	 * 条 item 将被后续步编辑/重发」，runner 跨步追踪其 content 是否逐字存活。
+	 * itemIndex 上界 = 该步 expectTodoSnapshot.maxItems ?? 6（编写期上界，L0 校验）。
+	 */
+	expectIdentitySurvival?: { itemIndex: number };
+}
 
 /** 一条行为回归 case。 */
 export interface GoldenCase {
@@ -46,8 +131,12 @@ export interface GoldenCase {
 	origin: "audit" | "synthetic" | "production";
 	/** 一句话说明这条锁的是什么行为。 */
 	about: string;
-	/** 用户话术。 */
-	text: string;
+	/**
+	 * 单轮 case 的用户话术。⭐ C-1b 起**可选**：steps case 的话术在各步
+	 * `GoldenStep.text`（顶层 text 与 steps 互斥——两套话术打架 = 判据不可判定，
+	 * L0 校验拦截）。单轮 case（无 steps）text 必填必非空（L0 校验）。
+	 */
+	text?: string;
 	/**
 	 * 期望**必须**调用的工具（全部命中）。
 	 *
@@ -160,6 +249,62 @@ export interface GoldenCase {
 		requireDistinctContent?: boolean;
 		firstStepPredicate?: "collect" | "clarify" | "any";
 	};
+	/**
+	 * ⭐ C-1b：清单 status 分布判据（实施 spec §3.1）。
+	 *
+	 * - `allOf`：**白名单**——快照中实际出现的每个 status 都必须落在列表内
+	 *   （用于「收尾不得残留 in_progress 幽灵项」这类形态）；
+	 * - `requireAnyOf`：**存在性**——至少一条 item 的 status 落在列表内
+	 *   （§4 q3-01 收尾步「completed 存在」用例倒逼的补全；allOf 表达不了存在性）；
+	 * - `requireProgress`：相对**上一步**快照至少一条 item status 有序前进
+	 *   （pending→in_progress→completed）。匹配以 content **逐字相等**为锚
+	 *   （生产实证：同任务跨轮 content 逐字稳定，1794186320711→1794186702399 实测）。
+	 *   ⚠️ 只许出现在 steps 的 step[>0]（step[0] 无上一步可比，L0 校验拦截）；
+	 *   单轮 case 禁用 requireProgress（无「上一步」语义）。
+	 */
+	expectTodoStatus?: TodoStatusExpect;
+	/**
+	 * ⭐ C-1b：画布终态判据（C-1 立项 spec §8.3，实施 spec §3.2）。
+	 *
+	 * 声明即要求 runner 跑完本步（或单轮 case 的回合）后读回画布快照
+	 * （复用 get-canvas-summary 探针通道，**零新增端点**）并做声明式硬断言。
+	 * - `nodeCount` / `nodeTypeCounts`：L3 节点数 / 类型计数（type 枚举
+	 *   image/text/video，生产实测）；Q3 多轮画布无重置能力 ⇒ **只许上界**
+	 *   （写下界即环境 flaky，实施 spec §4 画布污染裁决）；
+	 * - `generationSubmitted`：L5 提交级（判模型提交动作）；**成功级
+	 *   （generationSucceeded）本期不实施**——出现该字段名会被 L0 文本扫描打红。
+	 */
+	expectCanvasState?: CanvasStateExpect;
+	/**
+	 * ⭐ C-1b：多轮 case 的步骤序列（实施 spec §3.1）。
+	 *
+	 * 存在时 runner 复用**同一 pi 会话**逐步发 prompt（追加语义，systemPrompt
+	 * 首次生效——driver `EvalCaseInput.sessionId` 现状），每步独立 transcript + 判据，
+	 * 任一步 fail 即 case fail（failures 带 `step[N]` 前缀定位）。
+	 * **与顶层 text / 全部顶层判据字段互斥**（两套判据打架 = 判据不可判定，L0 拦截）。
+	 * ⭐ steps case 强制 `repeat: 1`（3 步 × 2–4 次 LLM 调用/步，repeat 3 成本不可接受；
+	 * 抖动兜底由「全集跑通 ≥2 轮跨 run 对比」承担——对 §4 随机性处置的显式例外，
+	 * C-1 实施规格 §3.1 登记在案）。
+	 */
+	steps?: readonly GoldenStep[];
+	/**
+	 * ⭐ C-1b：本 case 需要**精确的画布初始态**（实施 spec §4）。
+	 *
+	 * 画布无重置能力 ⇒ 预检口径：跑之前读画布节点数，若已超过本 case
+	 * 收尾判据（expectCanvasState.nodeCount.max，收尾步或顶层）允许的上界，
+	 * 直接判 error（环境问题，绝不静默跑脏画布产出误导数据）。
+	 * ⚠️ 必须配 expectCanvasState（否则「精确初始态」无从定义，L0 拦截）。
+	 */
+	requiresCleanCanvas?: boolean;
+	/**
+	 * ⭐ C-1b：**任一命中**工具判据（实施 spec §5 Q4 观测期宽松判据）。
+	 *
+	 * 与 `expectTools`（全部命中）互补：列表内**任一**工具被调用即过，
+	 * 全部未命中才 fail。为什么需要：Q4 大调研话术的合理路径是 spawn_subagent
+	 * **或**其前置读工具族（get_canvas_summary 等）——强门禁等 spawned 持续性数据
+	 * （#858 后 7 天复核纪律），观测期先锁「有动作」。
+	 */
+	expectAnyTools?: string[];
 }
 
 /**
@@ -174,6 +319,7 @@ export interface GoldenCase {
  */
 export const GOLDEN_CASES: readonly GoldenCase[] = [
 	...CANVAS_DECOMPOSITION_CASES,
+	...CANVAS_MULTITURN_CASES,
 	// ── 类别 A：「假称已出图」—— 未 propose 就声称完成，或直接跑生成 ──
 	{
 		id: "gen-claim-001",
@@ -319,50 +465,73 @@ export const GOLDEN_CASES: readonly GoldenCase[] = [
 ];
 
 /**
- * 断言一条 case 是否通过（**纯函数**，可单测）。
+ * 顶层判据的**共享判定核**（GoldenCase 与 GoldenStep 字段重叠部分，C-1b 抽出）。
  *
- * ⭐ 判定的失败信息必须**指出具体差异**（期望调了 A、实际调了 B），
- * 否则 case 失败时还要人肉翻日志 —— 那会让 eval 很快被绕过。
+ * 单轮 evaluateCase 与多轮 evaluateStep 复用同一核——判据语义在两层完全一致
+ * （一套 DSL 两消费方立场，C-1 立项 spec §8.3），差异只在 steps 专属能力
+ * （requireProgress / identity 观测）由 evaluateStep 追加。
  */
-export function evaluateCase(
-	testCase: GoldenCase,
+interface Judgeable {
+	expectTools?: string[];
+	expectAnyTools?: string[];
+	forbidTools?: string[];
+	expectTextIncludes?: string[];
+	forbidText?: string[];
+	expectCompleted?: boolean;
+	expectTodoSnapshot?: GoldenCase["expectTodoSnapshot"];
+	expectTodoStatus?: TodoStatusExpect;
+	expectCanvasState?: CanvasStateExpect;
+}
+
+function judgeCore(
+	j: Judgeable,
 	transcript: EvalTranscript,
-): { passed: boolean; failures: string[] } {
+): { failures: string[]; snapshot: PlanSnapshot | null } {
 	const failures: string[] = [];
 	const actual = new Set(transcript.toolNames);
 
-	if (testCase.expectTools) {
-		const missing = testCase.expectTools.filter((t) => !actual.has(t));
+	if (j.expectTools) {
+		const missing = j.expectTools.filter((t) => !actual.has(t));
 		if (missing.length > 0) {
 			failures.push(`缺少期望工具 [${missing.join(", ")}]；实际调用 [${transcript.toolNames.join(", ") || "无"}]`);
 		}
 		// ⭐ `expectTools: []` = 「不得调任何工具」（闲聊/致谢/纯提问 case 的核心判据）。
 		// 不做这条，空数组 case 会恒通过 —— 评测集里就混进了永远绿的僵尸判据。
-		if (testCase.expectTools.length === 0 && actual.size > 0) {
+		if (j.expectTools.length === 0 && actual.size > 0) {
 			failures.push(
 				`期望不调任何工具，实际调了 [${transcript.toolNames.join(", ")}]（闲聊/纯提问类请求不应触发画布写操作）`,
 			);
 		}
 	}
-	if (testCase.forbidTools) {
+	if (j.expectAnyTools) {
+		// ⭐ 任一命中语义（C-1b Q4 观测期宽松判据）：全部未命中才 fail。
+		// 失败信息列出全部候选，便于判断「是没派发还是派发路径不同」。
+		const hit = j.expectAnyTools.some((t) => actual.has(t));
+		if (!hit) {
+			failures.push(
+				`候选工具无一命中 [${j.expectAnyTools.join(", ")}]；实际调用 [${transcript.toolNames.join(", ") || "无"}]`,
+			);
+		}
+	}
+	if (j.forbidTools) {
 		// ⚠️ 同时报「实际调了什么」—— 只报违规项会让人以为是评测集写错了
-		const violated = testCase.forbidTools.filter((t) => actual.has(t));
+		const violated = j.forbidTools.filter((t) => actual.has(t));
 		if (violated.length > 0) {
 			failures.push(`调用了被禁止的工具 [${violated.join(", ")}]；实际调用 [${transcript.toolNames.join(", ")}]`);
 		}
 	}
 	const text = transcript.assistantText;
-	if (testCase.expectTextIncludes) {
-		for (const frag of testCase.expectTextIncludes) {
+	if (j.expectTextIncludes) {
+		for (const frag of j.expectTextIncludes) {
 			if (!text.includes(frag)) failures.push(`回复缺少必需片段「${frag}」；实际回复「${truncate(text)}」`);
 		}
 	}
-	if (testCase.forbidText) {
-		for (const frag of testCase.forbidText) {
+	if (j.forbidText) {
+		for (const frag of j.forbidText) {
 			if (text.includes(frag)) failures.push(`回复出现禁止片段「${frag}」；实际回复「${truncate(text)}」`);
 		}
 	}
-	if ((testCase.expectCompleted ?? true) && !transcript.completed) {
+	if ((j.expectCompleted ?? true) && !transcript.completed) {
 		failures.push(
 			`本轮未正常结束${transcript.errors.length > 0 ? `：${transcript.errors.join(" / ")}` : ""}`,
 		);
@@ -372,33 +541,34 @@ export function evaluateCase(
 	}
 
 	// ── Q2 清单结构判据（C-1a 种子集；字段存在即要求触发过拆解工具）──
-	const snap = testCase.expectTodoSnapshot ? pickLatestPlanSnapshot(transcript.toolCalls) : null;
-	if (testCase.expectTodoSnapshot && !snap) {
+	const snap = j.expectTodoSnapshot || j.expectTodoStatus ? pickLatestPlanSnapshot(transcript.toolCalls) : null;
+	if (j.expectTodoSnapshot && !snap) {
 		failures.push(
 			`未触发拆解工具（期望有 todo_write/propose_plan 快照）；实际调用 [${transcript.toolNames.join(", ") || "无"}]`,
 		);
-	} else if (snap && testCase.expectTodoSnapshot) {
+	} else if (snap && j.expectTodoSnapshot) {
 		const { minItems, maxItems, requireDistinctContent, firstStepPredicate } =
-			testCase.expectTodoSnapshot;
-		const n = snap.items.length;
+			j.expectTodoSnapshot;
+		const contents = snap.items.map((it) => it.content);
+		const n = contents.length;
 		if (minItems !== undefined && n < minItems) {
 			failures.push(
-				`清单条目数 ${n} 低于下限 ${minItems}（拆解粒度过粗）；实际条目：[${snap.items.map((s) => truncate(s, 40)).join(" | ")}]`,
+				`清单条目数 ${n} 低于下限 ${minItems}（拆解粒度过粗）；实际条目：[${contents.map((s) => truncate(s, 40)).join(" | ")}]`,
 			);
 		}
 		if (maxItems !== undefined && n > maxItems) {
 			failures.push(
-				`清单条目数 ${n} 超过上限 ${maxItems}（拆解粒度过碎或巨石项未合并）；实际条目：[${snap.items.map((s) => truncate(s, 40)).join(" | ")}]`,
+				`清单条目数 ${n} 超过上限 ${maxItems}（拆解粒度过碎或巨石项未合并）；实际条目：[${contents.map((s) => truncate(s, 40)).join(" | ")}]`,
 			);
 		}
 		if (requireDistinctContent) {
-			const dupes = snap.items.filter((s, i) => s !== "" && snap.items.indexOf(s) !== i);
+			const dupes = contents.filter((s, i) => s !== "" && contents.indexOf(s) !== i);
 			if (dupes.length > 0) {
 				failures.push(`清单存在完全重复条目 [${[...new Set(dupes)].join(" | ")}]（互斥性违反）`);
 			}
 		}
 		if (firstStepPredicate === "collect") {
-			const first = snap.items[0] ?? "";
+			const first = contents[0] ?? "";
 			// 检索/收集类动词：生产实测多步调研任务的合理首步（首阈值，校准期按失败归因调整）
 			if (!/(搜索|检索|收集|调研|查[一找看询]|梳理|gather|search|collect)/i.test(first)) {
 				failures.push(
@@ -408,7 +578,231 @@ export function evaluateCase(
 		}
 	}
 
+	// ── C-1b：status 分布判据（allOf 白名单 / requireAnyOf 存在性）──
+	// requireProgress 不在这里（steps 专属，见 evaluateStep）。
+	// ⭐ 声明了 expectTodoStatus 但本步没拆 ⇒ 也必须 fail（防静默通过：
+	//   「status 判据 + 没拆」组合的合法路径是 expectTodoSnapshot 同时声明，
+	//   那时上面的 Q2 块已报「未触发拆解工具」，这里不重复报）。
+	if (j.expectTodoStatus && !snap && !j.expectTodoSnapshot) {
+		failures.push(
+			`未触发拆解工具（expectTodoStatus 需要清单快照）；实际调用 [${transcript.toolNames.join(", ") || "无"}]`,
+		);
+	}
+	if (j.expectTodoStatus && snap) {
+		const { allOf, requireAnyOf } = j.expectTodoStatus;
+		const statuses = snap.items.map((it) => it.status ?? "pending");
+		const unknown = statuses.filter((s) => STATUS_RANK[s] === undefined);
+		if (unknown.length > 0) {
+			failures.push(
+				`清单出现未知 status [${[...new Set(unknown)].join(", ")}]（枚举外取值——schema 漂移信号）`,
+			);
+		}
+		if (allOf) {
+			const outOfList = statuses.filter((s) => !allOf.includes(s as TodoStatus));
+			if (outOfList.length > 0) {
+				failures.push(
+					`status 白名单违例：出现 [${[...new Set(outOfList)].join(", ")}]，白名单 [${allOf.join(", ")}]`,
+				);
+			}
+		}
+		if (requireAnyOf) {
+			const hit = statuses.some((s) => requireAnyOf.includes(s as TodoStatus));
+			if (!hit) {
+				failures.push(
+					`status 存在性违例：无任何 item 落在 [${requireAnyOf.join(", ")}]；实际 [${statuses.join(", ") || "空"}]`,
+				);
+			}
+		}
+	}
+
+	// ── C-1b：L5 提交级（generationSubmitted）——判模型提交动作，属 transcript 判据 ──
+	if (j.expectCanvasState?.generationSubmitted && !actual.has("propose_generation")) {
+		failures.push(
+			`generationSubmitted：本回合未提交生成（期望调用 propose_generation）；实际调用 [${transcript.toolNames.join(", ") || "无"}]`,
+		);
+	}
+
+	return { failures, snapshot: snap };
+}
+
+/**
+ * 画布终态判定（**纯函数**，C-1b §3.2）。
+ *
+ * 只断 runner 读回的快照，绝不在此发起 IO——画布读回失败由 runner 归 error
+ * （环境问题），不进本函数（谎报 0 会让上限判据误判成模型越权写入）。
+ */
+export function judgeCanvasState(canvas: CanvasSnapshot, expect: CanvasStateExpect): string[] {
+	const failures: string[] = [];
+	if (expect.nodeCount) {
+		const { min, max } = expect.nodeCount;
+		if (min !== undefined && canvas.nodeCount < min) {
+			failures.push(`画布节点数 ${canvas.nodeCount} 低于下限 ${min}（写入未发生或被回滚）`);
+		}
+		if (max !== undefined && canvas.nodeCount > max) {
+			failures.push(`画布节点数 ${canvas.nodeCount} 超过上限 ${max}（跨 case 污染累积或越权写入）`);
+		}
+	}
+	if (expect.nodeTypeCounts) {
+		for (const [type, range] of Object.entries(expect.nodeTypeCounts)) {
+			const n = canvas.typeCounts[type] ?? 0;
+			if (range?.min !== undefined && n < range.min) {
+				failures.push(`画布 ${type} 节点数 ${n} 低于下限 ${range.min}`);
+			}
+			if (range?.max !== undefined && n > range.max) {
+				failures.push(`画布 ${type} 节点数 ${n} 超过上限 ${range.max}`);
+			}
+		}
+	}
+	return failures;
+}
+
+/**
+ * 断言一条 case 是否通过（**纯函数**，可单测）。
+ *
+ * ⭐ 判定的失败信息必须**指出具体差异**（期望调了 A、实际调了 B），
+ * 否则 case 失败时还要人肉翻日志 —— 那会让 eval 很快被绕过。
+ *
+ * C-1b 起支持画布终态判据：`context.canvas` 由 runner 跑完后经探针读回传入；
+ * 声明了 expectCanvasState 但 context 无 canvas ⇒ fail（接线问题，不是模型问题
+ * ——归 fail 而非 error 是因为「忘传 context」是测试代码 bug，应显式暴露）。
+ */
+export function evaluateCase(
+	testCase: GoldenCase,
+	transcript: EvalTranscript,
+	context?: { canvas?: CanvasSnapshot },
+): { passed: boolean; failures: string[] } {
+	const { failures, snapshot } = judgeCore(testCase, transcript);
+	// 快照结构判据需要 snapshot，judgeCore 已判；这里补画布终态（单轮形态）。
+	void snapshot;
+	if (testCase.expectCanvasState) {
+		if (!context?.canvas) {
+			failures.push(
+				"声明了 expectCanvasState 但未提供画布快照（runner 忘传 context 或画布读回失败——接线/环境问题，非模型行为）",
+			);
+		} else {
+			failures.push(...judgeCanvasState(context.canvas, testCase.expectCanvasState));
+		}
+	}
 	return { passed: failures.length === 0, failures };
+}
+
+/**
+ * 多轮 case 的单步判定（**纯函数**，C-1b §3.1）。
+ *
+ * `prevSnapshot` = 上一步的清单快照（requireProgress 的对比锚）；
+ * `context.canvas` 仅收尾步传入（steps 内 expectCanvasState 只许出现在
+ * 最后一步——L0 校验拦截，画布是终态语义不是过程语义）。
+ */
+export function evaluateStep(
+	step: GoldenStep,
+	transcript: EvalTranscript,
+	prevSnapshot: PlanSnapshot | null,
+	context?: { canvas?: CanvasSnapshot },
+): { failures: string[]; snapshot: PlanSnapshot | null } {
+	const { failures, snapshot } = judgeCore(step, transcript);
+	if (step.expectTodoStatus?.requireProgress) {
+		if (!prevSnapshot) {
+			failures.push(
+				"requireProgress：上一步无清单快照可对比（上一步本就不该拆解的场景请勿声明 requireProgress）",
+			);
+		} else if (!snapshot) {
+			failures.push(
+				`requireProgress：本步未触发拆解工具，无法对比进度；实际调用 [${transcript.toolNames.join(", ") || "无"}]`,
+			);
+		} else {
+			// ⭐ content 逐字相等为匹配锚（生产实证：同任务跨轮 content 逐字稳定）。
+			// 匹配不上 ≠ 自动 fail 的理由写进失败信息：identity 断裂与换任务两种归因，
+			// 换任务场景不该声明 requireProgress（编写期标注纪律）。
+			const prevMap = new Map(prevSnapshot.items.map((it) => [it.content, it.status ?? "pending"]));
+			let progressed: string | null = null;
+			for (const it of snapshot.items) {
+				const prevRank = STATUS_RANK[prevMap.get(it.content) ?? ""];
+				if (prevRank === undefined) continue;
+				const cur = STATUS_RANK[it.status ?? "pending"] ?? 0;
+				if (cur > prevRank) {
+					progressed = it.content;
+					break;
+				}
+			}
+			if (!progressed) {
+				const matched = snapshot.items.filter((it) => prevMap.has(it.content)).length;
+				failures.push(
+					`requireProgress：相对上一步没有任何 item status 前进` +
+						`（content 匹配 ${matched}/${prevSnapshot.items.length}；匹配不上 = identity 断裂或换任务，` +
+						`换任务场景请勿声明 requireProgress）`,
+				);
+			}
+		}
+	}
+	if (step.expectCanvasState) {
+		if (!context?.canvas) {
+			failures.push(
+				"声明了 expectCanvasState 但未提供画布快照（runner 忘传 context 或画布读回失败——接线/环境问题，非模型行为）",
+			);
+		} else {
+			failures.push(...judgeCanvasState(context.canvas, step.expectCanvasState));
+		}
+	}
+	return { failures, snapshot };
+}
+
+/**
+ * 多轮 steps 的整链判定（**纯函数**，C-1b §3.1/§3.3）。
+ *
+ * - 任一步 fail 即 case fail，failures 带 `step[N]` 前缀定位；
+ * - identity 断裂观测（§8.6）：跨步追踪标注 item 的 content 是否逐字存活，
+ *   **只观测不计分**（broken/observed 进报告与 C-1c 基线档案，不进 failures）；
+ *   保守口径：标注步无快照（没拆）⇒ 也计 broken（无从存活即断裂，宁可高估）。
+ */
+export function evaluateMultiStep(
+	steps: readonly GoldenStep[],
+	transcripts: readonly EvalTranscript[],
+	context?: { canvas?: CanvasSnapshot },
+): {
+	passed: boolean;
+	failures: string[];
+	identity: IdentityObservation;
+	snapshots: (PlanSnapshot | null)[];
+} {
+	const failures: string[] = [];
+	const snapshots: (PlanSnapshot | null)[] = [];
+	const identity: IdentityObservation = { broken: 0, observed: 0 };
+	/** 收集标注（追踪必须**两遍**：标注步处理时后续快照还没收集——单遍会恒判断裂）。 */
+	const marks: Array<{ stepIndex: number; itemIndex: number }> = [];
+	for (const [i, step] of steps.entries()) {
+		const t = transcripts[i];
+		if (!t) {
+			// runner 层已把缺步判 error；这里兜底防越界（防御性，不应到达）
+			failures.push(`step[${i}] 缺少 transcript（runner 内部错误）`);
+			snapshots.push(null);
+			continue;
+		}
+		const prev = i > 0 ? snapshots[i - 1] : null;
+		const isLast = i === steps.length - 1;
+		const judged = evaluateStep(step, t, prev, isLast ? context : undefined);
+		for (const f of judged.failures) failures.push(`step[${i}] ${f}`);
+		snapshots.push(judged.snapshot);
+		if (step.expectIdentitySurvival) {
+			marks.push({ stepIndex: i, itemIndex: step.expectIdentitySurvival.itemIndex });
+		}
+	}
+	// ── identity 观测（不计分；全部快照收集完后再追踪）──
+	for (const mark of marks) {
+		identity.observed++;
+		const content = snapshots[mark.stepIndex]?.items[mark.itemIndex]?.content;
+		if (content === undefined || content === "") {
+			identity.broken++; // 无基线可存活 ⇒ 保守计断裂
+			continue;
+		}
+		let survived = false;
+		for (let k = mark.stepIndex + 1; k < steps.length && !survived; k++) {
+			const later = snapshots[k];
+			if (!later) continue;
+			if (later.items.some((it) => it.content === content)) survived = true;
+		}
+		if (!survived) identity.broken++;
+	}
+	return { passed: failures.length === 0, failures, identity, snapshots };
 }
 
 /**
@@ -422,16 +816,19 @@ export function evaluateCase(
  */
 export function pickLatestPlanSnapshot(
 	toolCalls: EvalTranscript["toolCalls"],
-): { tool: string; items: string[] } | null {
-	let found: { tool: string; items: string[] } | null = null;
+): PlanSnapshot | null {
+	let found: PlanSnapshot | null = null;
 	for (const call of toolCalls) {
 		if (call.name !== "todo_write" && call.name !== "propose_plan") continue;
 		const input = (call.input ?? {}) as {
-			todos?: Array<{ content?: string; summary?: string }>;
-			steps?: Array<{ content?: string; summary?: string }>;
+			todos?: Array<{ content?: string; summary?: string; status?: string }>;
+			steps?: Array<{ content?: string; summary?: string; status?: string }>;
 		};
 		const raw = input.todos ?? input.steps ?? [];
-		const items = raw.map((it) => (it.content ?? it.summary ?? "").trim());
+		const items: PlanItem[] = raw.map((it) => ({
+			content: (it.content ?? it.summary ?? "").trim(),
+			...(it.status !== undefined ? { status: it.status } : {}),
+		}));
 		found = { tool: call.name, items };
 	}
 	return found;

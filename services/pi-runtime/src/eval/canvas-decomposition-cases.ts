@@ -114,4 +114,56 @@ export const CANVAS_DECOMPOSITION_CASES: readonly GoldenCase[] = [
 		forbidTools: ["todo_write", "propose_plan"],
 		requiresCanvasNodes: 3,
 	},
+
+	// ══ C-1b 补量（实施 spec §6：Q1 补 2 / Q2 补 4，阈值沿用 C-1a 生产锚）══
+	{
+		id: "c1b-rec-01",
+		origin: "production",
+		about:
+			"生产出处 1794373488016（「做一个关于如何使用 codex 制作教学视频」——thread cmwbnm20j004nla012dgslazs，该任务链生产实际走了方案拆解）。" +
+			"复合判据双计：Q1 召回（拆解类工具任一——显式开工请求的具体形态（todo_write vs propose_plan）取决于模型选择，观测期不写死）+ Q2 结构（minItems≥2 沿用生产锚）",
+		text: "请帮我做一个教学视频，教学视频的内容是关于如何使用 codex 制作一个教学视频",
+		expectAnyTools: ["todo_write", "propose_plan"],
+		expectTodoSnapshot: { minItems: 2, maxItems: 6 },
+	},
+	{
+		id: "c1b-rec-n4",
+		origin: "production",
+		about:
+			"生产出处 1793627108282（「请把这两个生成任务取消吧」——生产实证该回合未拆解）。原子性 ≤1 个调用（取消是单原子操作）；取消类指令不得触发拆解（过度拆解污染清单）",
+		text: "请把画布上正在执行的两个生成任务都取消掉",
+		forbidTools: ["todo_write", "propose_plan"],
+	},
+	{
+		id: "c1b-struct-01",
+		origin: "production",
+		about:
+			"生产出处 1794184233536 + 快照形态锚 1794184314232（首轮拆解实证：首项 in_progress + 其余 pending——「拆解即开工」）。" +
+			"Q2 status 维度：首轮快照应存在 in_progress（requireAnyOf——规划后即开工的生产纪律）",
+		text: "请帮我分析最近一周内最火的10部短剧，分析这些短剧火背后流量加持的底层逻辑，不轻易采信，需要论证清楚",
+		expectTools: ["todo_write"],
+		expectTodoSnapshot: { minItems: 2, maxItems: 6 },
+		expectTodoStatus: { requireAnyOf: ["in_progress"] },
+	},
+	{
+		id: "c1b-struct-02",
+		origin: "production",
+		about:
+			"生产出处 1794184233536 + 1794184314232 锚（首轮快照零 completed 实证）。" +
+			"Q2 status 维度：**首轮拆解快照不得全部 completed**（allOf 白名单禁 completed）——「假称已出图」在清单维度的同构形态：刚拆解就把所有项标完成 = 假完成",
+		text: "请帮我分析最近一周内最火的10部短剧，并输出流量逻辑分析框架",
+		expectTools: ["todo_write"],
+		expectTodoSnapshot: { minItems: 2, maxItems: 6 },
+		expectTodoStatus: { allOf: ["pending", "in_progress"] },
+	},
+	{
+		id: "c1b-struct-03",
+		origin: "production",
+		about:
+			"生产出处 1794373742234（「方案需要调整：先出大纲→TTS→声音驱动视频」，thread cmwbnm20j004nla012dgslazs，生产实证 propose_plan 3 步管线）。" +
+			"Q2：显式三段顺序约束话术的方案结构（3 项互斥，minItems=3 锚定生产实际步数）",
+		text: "这个方案需要调整：先出教学内容的大纲，然后根据大纲内容生成 tts 音频，再用声音驱动视频生成。请重新给出完整方案",
+		expectTools: ["propose_plan"],
+		expectTodoSnapshot: { minItems: 3, maxItems: 6, requireDistinctContent: true },
+	},
 ];
