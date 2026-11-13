@@ -1,6 +1,7 @@
 # spawn_subagent 调用升级预案——「点名替代」路径裁决（观测期预案刀）
 
 > 状态：**预案（PLAN_ONLY）**——本规格只裁决「若观测期判据触发，升级走哪条路」，不批准任何代码改动。
+> **⚠️ 2026-11-13 状态更新（v1.3 复审，SSOT=路标 §9.2/§17.2）**：T1∧T2 触发条件（7 天/200 run spawned 恒 0）**已被生产事实打破**——spawned_total=3 且 3/3 completed（build `16e4fc99` 存续期），「触发后升级路径（P4→P3→P5→止损）」不再适用，观测重心转为 spawned 持续性与 tool_search internal error 观察项。本文 F1–F6 取证、行业对照（§7）与三层点名模型**仍有效**（作为 A-2'/SOP 刀的设计输入保留）。
 > 前置：PR #838（spawn_subagent 提回常驻）已合并（master `49fb699d`）并部署生产（镜像同 sha）。
 > 关联：`2026-11-11-subagent-tier-promotion-design.md`（可达性刀，其 §边界 第 6 条即本规格的触发来源）、
 > `2026-11-11-task-planning-engineering-roadmap-design.md`（G3「上游原语未吃满」）。
