@@ -60,14 +60,18 @@ function caseSource(caseId: string): string {
 	// ⚠️ 不用 `new Error().stack` 定位：tsx 会转换模块，stack 里的路径不可靠
 	//（实测第一次这么写就报 `readFileSync is not defined`，因为 import 也被漏插了）。
 	// ⇒ 用 `import.meta.url`（稳定指向本测试文件）。
+	// C-1a 起种子集在 canvas-decomposition-cases.ts —— 两个源文件都搜。
 	const selfDir = dirname(fileURLToPath(import.meta.url));
-	const src = readFileSync(join(selfDir, "golden-cases.ts"), "utf8");
-	const i = src.indexOf(`id: "${caseId}"`);
-	if (i < 0) return "";
-	// 到下一个 case 或 1200 字符为止
-	const rest = src.slice(i + 1);
-	const next = rest.search(/\n\t\{\n\t\tid: "/);
-	return src.slice(i, next < 0 ? Math.min(src.length, i + 1200) : i + 1 + next);
+	for (const file of ["golden-cases.ts", "canvas-decomposition-cases.ts"]) {
+		const src = readFileSync(join(selfDir, file), "utf8");
+		const i = src.indexOf(`id: "${caseId}"`);
+		if (i < 0) continue;
+		// 到下一个 case 或 1200 字符为止
+		const rest = src.slice(i + 1);
+		const next = rest.search(/\n\t\{\n\t\tid: "/);
+		return src.slice(i, next < 0 ? Math.min(src.length, i + 1200) : i + 1 + next);
+	}
+	return "";
 }
 
 describe("L0 · 评测集自身契约", () => {
@@ -77,11 +81,62 @@ describe("L0 · 评测集自身契约", () => {
 		assert.deepEqual(dupes, [], `重复 id：${dupes.join(", ")}`);
 	});
 
-	it("⭐ 首批case 全部来自真实失败（origin 不得为 synthetic）", () => {
-		// Round 2 明确「首批 case 应直接来自线上真实失败样本，不要自造」。
-		// 自造 case 会把「我们想象的失败」当成「真实的失败」，优化方向从一开始就偏。
-		const synthetic = GOLDEN_CASES.filter((c) => c.origin === "synthetic").map((c) => c.id);
-		assert.deepEqual(synthetic, [], `这批不该有自造 case：${synthetic.join(", ")}`);
+	it("⭐ 来源纪律：production 必须可溯源，synthetic 必须自带理由（C-1a 双源纪律）", () => {
+		// C-1 立项 spec §3：不允许无标注 synthetic。三类各自的硬要求：
+		// production ⇒ about 必含 13 位时间戳出处（executionEvents 反查可溯源）；
+		//   audit 不要求——首批 12 条早于 executionEvents 取证口径，审计报告即出处；
+		// synthetic ⇒ about 必含「synthetic」字样 + 反查不到的理由段。
+		const problems: string[] = [];
+		for (const c of GOLDEN_CASES) {
+			if (c.origin === "production" && !/\d{13}/.test(c.about)) {
+				problems.push(`${c.id}: origin=production 但 about 无 13 位生产出处时间戳`);
+			}
+			if (c.origin === "synthetic" && !/synthetic/.test(c.about)) {
+				problems.push(`${c.id}: origin=synthetic 但 about 无理由标注`);
+			}
+		}
+		assert.deepEqual(problems, [], `来源标注违例：\n  ${problems.join("\n  ")}`);
+	});
+
+	it("⭐ expectTodoSnapshot 资产合法性（C-1a）", () => {
+		const problems: string[] = [];
+		for (const c of GOLDEN_CASES) {
+			const s = c.expectTodoSnapshot;
+			if (!s) continue;
+			if (
+				s.minItems !== undefined &&
+				s.maxItems !== undefined &&
+				s.minItems > s.maxItems
+			) {
+				problems.push(`${c.id}: minItems(${s.minItems}) > maxItems(${s.maxItems})——区间写错`);
+			}
+			if (
+				s.firstStepPredicate !== undefined &&
+				!["collect", "clarify", "any"].includes(s.firstStepPredicate)
+			) {
+				problems.push(`${c.id}: firstStepPredicate 非法值 ${s.firstStepPredicate}`);
+			}
+			// 快照判据不悬空：必须与工具触发判据并存（Q1 召回 + Q2 结构复合或负例禁列）
+			if (!c.expectTools && !c.forbidTools) {
+				problems.push(`${c.id}: 有 expectTodoSnapshot 但无 expectTools/forbidTools`);
+			}
+			// 负例形态：快照判据缺席时，禁拆解负例必须同时禁两个拆解工具
+			if (
+				!s &&
+				c.forbidTools?.includes("todo_write") &&
+				!c.forbidTools.includes("propose_plan")
+			) {
+				problems.push(`${c.id}: 禁 todo_write 却不禁 propose_plan——拆解禁列不完整`);
+			}
+			if (
+				!s &&
+				c.forbidTools?.includes("propose_plan") &&
+				!c.forbidTools.includes("todo_write")
+			) {
+				problems.push(`${c.id}: 禁 propose_plan 却不禁 todo_write——拆解禁列不完整`);
+			}
+		}
+		assert.deepEqual(problems, [], `expectTodoSnapshot 资产违例：\n  ${problems.join("\n  ")}`);
 	});
 
 	it("每条 case 都有 about 说明（无说明的 case 没人能维护）", () => {
@@ -151,7 +206,8 @@ describe("L0 · 评测集自身契约", () => {
 				(c.expectTools ?? undefined) === undefined &&
 				(c.forbidTools ?? undefined) === undefined &&
 				(c.expectTextIncludes ?? undefined) === undefined &&
-				(c.forbidText ?? undefined) === undefined,
+				(c.forbidText ?? undefined) === undefined &&
+				(c.expectTodoSnapshot ?? undefined) === undefined,
 		).map((c) => c.id);
 		assert.deepEqual(noAssert, [], `无可判定判据：${noAssert.join(", ")}`);
 		// 反向自检：上面那条判据本身要能识别「空数组算判据」——
@@ -270,5 +326,135 @@ describe("L0 · evaluateCase 判定语义", () => {
 		);
 		assert.equal(r.passed, false);
 		assert.ok(r.failures.length >= 3, `应报出全部 3 个问题，实际 ${r.failures.length}`);
+	});
+});
+
+describe("L0 · expectTodoSnapshot 判定语义（C-1a）", () => {
+	const base: GoldenCase = {
+		id: "t-snap",
+		origin: "audit",
+		about: "用于测试快照判定语义",
+		text: "x",
+	};
+
+	/** 造一条 todo_write 调用（input 与 SSE 侧 data.input 同构）。 */
+	function todoCall(items: Array<{ content?: string }>): EvalTranscript["toolCalls"][number] {
+		return { name: "todo_write", callId: `c${todoCallSeq++}`, input: { todos: items } };
+	}
+	let todoCallSeq = 100;
+
+	function snapCall(
+		tool: "todo_write" | "propose_plan",
+		items: Array<{ content?: string; summary?: string }>,
+	): EvalTranscript["toolCalls"][number] {
+		return {
+			name: tool,
+			callId: `c${todoCallSeq++}`,
+			input: tool === "todo_write" ? { todos: items } : { steps: items, summary: "s" },
+		};
+	}
+
+	it("字段存在但零拆解调用 ⇒ fail（「没拆」与「拆了但差」分别归因）", () => {
+		const r = evaluateCase({ ...base, expectTodoSnapshot: { minItems: 2 } }, transcriptOf({}));
+		assert.equal(r.passed, false);
+		assert.match(r.failures[0] ?? "", /未触发拆解工具/);
+	});
+
+	it("条目数低于 minItems ⇒ fail 且报实际条目", () => {
+		const r = evaluateCase(
+			{ ...base, expectTodoSnapshot: { minItems: 2 } },
+			transcriptOf({ toolCalls: [todoCall([{ content: "只有一件事" }])] }),
+		);
+		assert.equal(r.passed, false);
+		assert.match(r.failures[0] ?? "", /低于下限 2/);
+		assert.match(r.failures.join("\n"), /只有一件事/);
+	});
+
+	it("条目数超过 maxItems ⇒ fail（过碎/巨石未合并）", () => {
+		const r = evaluateCase(
+			{ ...base, expectTodoSnapshot: { maxItems: 2 } },
+			transcriptOf({
+				toolCalls: [todoCall([{ content: "a" }, { content: "b" }, { content: "c" }])],
+			}),
+		);
+		assert.equal(r.passed, false);
+		assert.match(r.failures[0] ?? "", /超过上限 2/);
+	});
+
+	it("requireDistinctContent：精确重复条目 ⇒ fail 且报重复串", () => {
+		const r = evaluateCase(
+			{ ...base, expectTodoSnapshot: { requireDistinctContent: true } },
+			transcriptOf({
+				toolCalls: [todoCall([{ content: "生成封面" }, { content: "生成封面" }])],
+			}),
+		);
+		assert.equal(r.passed, false);
+		assert.match(r.failures.join("\n"), /生成封面/);
+	});
+
+	it("firstStepPredicate=collect：首步非检索类 ⇒ fail 且报首项原文", () => {
+		const r = evaluateCase(
+			{ ...base, expectTodoSnapshot: { firstStepPredicate: "collect" } },
+			transcriptOf({
+				toolCalls: [todoCall([{ content: "直接写报告" }, { content: "输出结论" }])],
+			}),
+		);
+		assert.equal(r.passed, false);
+		assert.match(r.failures.join("\n"), /首步不是检索/);
+		// 对照：检索类首步 ⇒ 该断言不触发
+		const ok = evaluateCase(
+			{ ...base, expectTodoSnapshot: { firstStepPredicate: "collect" } },
+			transcriptOf({
+				toolCalls: [todoCall([{ content: "搜索最新一周热点数据" }, { content: "输出结论" }])],
+			}),
+		);
+		assert.equal(ok.passed, true);
+	});
+
+	it("⭐ 多次 todo_write 取最后一次（终态语义，与 pickLatestSnapshot 播种精神一致）", () => {
+		const r = evaluateCase(
+			{ ...base, expectTodoSnapshot: { minItems: 2 } },
+			transcriptOf({
+				toolCalls: [
+					todoCall([{ content: "首稿单项" }]),
+					todoCall([{ content: "修订一项" }, { content: "修订二项" }]),
+				],
+			}),
+		);
+		assert.equal(r.passed, true);
+	});
+
+	it("⭐ propose_plan 的 steps schema 同构解析（content 缺失时兜底 summary）", () => {
+		const r = evaluateCase(
+			{ ...base, expectTodoSnapshot: { minItems: 2, maxItems: 3 } },
+			transcriptOf({
+				toolCalls: [
+					snapCall("propose_plan", [{ summary: "第一步" }, { content: "第二步" }]),
+				],
+			}),
+		);
+		assert.equal(r.passed, true);
+		// 无 todos 也无 steps（畸形 input）⇒ items 为空 ⇒ 低于下限
+		const bad = evaluateCase(
+			{ ...base, expectTodoSnapshot: { minItems: 1 } },
+			transcriptOf({ toolCalls: [{ name: "todo_write", callId: "c9", input: {} }] }),
+		);
+		assert.equal(bad.passed, false);
+		assert.match(bad.failures[0] ?? "", /低于下限 1/);
+	});
+
+	it("合规快照 + 工具判据同回合 ⇒ 双判据全过", () => {
+		const r = evaluateCase(
+			{
+				...base,
+				expectTools: ["todo_write"],
+				expectTodoSnapshot: { minItems: 2, maxItems: 4, requireDistinctContent: true },
+			},
+			transcriptOf({
+				toolNames: ["todo_write"],
+				toolCalls: [todoCall([{ content: "分析" }, { content: "创作" }])],
+			}),
+		);
+		assert.equal(r.passed, true);
 	});
 });

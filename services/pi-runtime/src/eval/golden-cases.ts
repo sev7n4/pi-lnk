@@ -32,12 +32,18 @@
  */
 
 import type { EvalTranscript } from "./transcript.js";
+import { CANVAS_DECOMPOSITION_CASES } from "./canvas-decomposition-cases.js";
 
 /** 一条行为回归 case。 */
 export interface GoldenCase {
 	id: string;
-	/** 来源：`audit` = 审计报告点名的真实失败；`synthetic` = 自造（首批应为空）。 */
-	origin: "audit" | "synthetic";
+	/**
+	 * 来源：`audit` = 审计报告点名的真实失败；`production` = 生产 executionEvents
+	 * 反查的真实话术（⭐ about 必含 13 位时间戳出处，供溯源与再取证）；
+	 * `synthetic` = 自造（⭐ 必须在 about 写明「synthetic 理由：…」——
+	 * C-1 立项 spec §3 双源纪律：不允许无标注 synthetic，自造必须说明为何反查不到）。
+	 */
+	origin: "audit" | "synthetic" | "production";
 	/** 一句话说明这条锁的是什么行为。 */
 	about: string;
 	/** 用户话术。 */
@@ -132,6 +138,28 @@ export interface GoldenCase {
 	 * 那类 case 不该标true —— 标了等于白丢一个可跑的判据。
 	 */
 	requiresConfirm?: boolean;
+	/**
+	 * ⭐ Q2 清单结构判据（C-1a 种子集引入，C-1 立项 spec §8.3 字段形态）：
+	 * 对本回合**最后一次** `todo_write` / `propose_plan` 快照做声明式硬断言。
+	 *
+	 * - 全部字段可选；字段存在即要求「本回合触发过拆解工具」——无任何
+	 *   `todo_write`/`propose_plan` 调用 ⇒ fail（与 expectTools 独立再判一次，
+	 *   失败信息区分「没拆」与「拆了但结构差」两种归因）；
+	 * - `items` 取 `input.todos ?? input.steps`，逐项 `content = item.content ?? item.summary`
+	 *   （todo 与 propose 双 schema 同构解析，C-1 spec §8.4）；
+	 * - `requireDistinctContent` 只做精确串判重，语义重叠不做（判据可判定性优先）；
+	 * - `firstStepPredicate: "collect"` = 首项 content 匹配检索/收集类动词；
+	 *   `"clarify"` 枚举保留但种子集不使用（生产首步澄清形态为 ask_user 或方案
+	 *   assumptions，硬断言形态未定，待 C-1b 与 identity 观测共同校准）；
+	 * - 生产阈值锚：真实清单规模实测 2–4 项（2026-11-13 反查 4 条代表任务），
+	 *   种子集 minItems ≥2、maxItems ≤6，校准期按失败归因调整（C-1 spec §8.5）。
+	 */
+	expectTodoSnapshot?: {
+		minItems?: number;
+		maxItems?: number;
+		requireDistinctContent?: boolean;
+		firstStepPredicate?: "collect" | "clarify" | "any";
+	};
 }
 
 /**
@@ -145,6 +173,7 @@ export interface GoldenCase {
  * 后续 case 应在真实失败发生时**增量补**（每次线上事故 → 一条 case）。
  */
 export const GOLDEN_CASES: readonly GoldenCase[] = [
+	...CANVAS_DECOMPOSITION_CASES,
 	// ── 类别 A：「假称已出图」—— 未 propose 就声称完成，或直接跑生成 ──
 	{
 		id: "gen-claim-001",
@@ -342,7 +371,70 @@ export function evaluateCase(
 		failures.push(`运行期错误：${transcript.errors.join(" / ")}`);
 	}
 
+	// ── Q2 清单结构判据（C-1a 种子集；字段存在即要求触发过拆解工具）──
+	const snap = testCase.expectTodoSnapshot ? pickLatestPlanSnapshot(transcript.toolCalls) : null;
+	if (testCase.expectTodoSnapshot && !snap) {
+		failures.push(
+			`未触发拆解工具（期望有 todo_write/propose_plan 快照）；实际调用 [${transcript.toolNames.join(", ") || "无"}]`,
+		);
+	} else if (snap && testCase.expectTodoSnapshot) {
+		const { minItems, maxItems, requireDistinctContent, firstStepPredicate } =
+			testCase.expectTodoSnapshot;
+		const n = snap.items.length;
+		if (minItems !== undefined && n < minItems) {
+			failures.push(
+				`清单条目数 ${n} 低于下限 ${minItems}（拆解粒度过粗）；实际条目：[${snap.items.map((s) => truncate(s, 40)).join(" | ")}]`,
+			);
+		}
+		if (maxItems !== undefined && n > maxItems) {
+			failures.push(
+				`清单条目数 ${n} 超过上限 ${maxItems}（拆解粒度过碎或巨石项未合并）；实际条目：[${snap.items.map((s) => truncate(s, 40)).join(" | ")}]`,
+			);
+		}
+		if (requireDistinctContent) {
+			const dupes = snap.items.filter((s, i) => s !== "" && snap.items.indexOf(s) !== i);
+			if (dupes.length > 0) {
+				failures.push(`清单存在完全重复条目 [${[...new Set(dupes)].join(" | ")}]（互斥性违反）`);
+			}
+		}
+		if (firstStepPredicate === "collect") {
+			const first = snap.items[0] ?? "";
+			// 检索/收集类动词：生产实测多步调研任务的合理首步（首阈值，校准期按失败归因调整）
+			if (!/(搜索|检索|收集|调研|查[一找看询]|梳理|gather|search|collect)/i.test(first)) {
+				failures.push(
+					`首步不是检索/收集类（期望信息收集先行）；实际首项：「${truncate(first)}」`,
+				);
+			}
+		}
+	}
+
 	return { passed: failures.length === 0, failures };
+}
+
+/**
+ * 取本回合**最后一次** `todo_write` / `propose_plan` 的清单快照（C-1a Q2 判据）。
+ *
+ * 「最后一次」= 终态语义，与运行时 `pickLatestSnapshot` 播种精神一致：
+ * 模型可能先写一版再修订，判结构应判最终落定的清单，不是首稿。
+ * 双 schema 同构：`todo_write` 为 `todos:[{content,…}]`、`propose_plan` 为
+ * `{steps:[…]}`，逐项 content 兜底 `summary`（生产实测两种 schema 皆有命中）。
+ * 无任何拆解调用 ⇒ 返回 null（由调用方区分「没拆」失败）。
+ */
+export function pickLatestPlanSnapshot(
+	toolCalls: EvalTranscript["toolCalls"],
+): { tool: string; items: string[] } | null {
+	let found: { tool: string; items: string[] } | null = null;
+	for (const call of toolCalls) {
+		if (call.name !== "todo_write" && call.name !== "propose_plan") continue;
+		const input = (call.input ?? {}) as {
+			todos?: Array<{ content?: string; summary?: string }>;
+			steps?: Array<{ content?: string; summary?: string }>;
+		};
+		const raw = input.todos ?? input.steps ?? [];
+		const items = raw.map((it) => (it.content ?? it.summary ?? "").trim());
+		found = { tool: call.name, items };
+	}
+	return found;
 }
 
 function truncate(text: string, max = 120): string {
