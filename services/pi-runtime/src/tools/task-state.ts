@@ -15,6 +15,11 @@ export interface TodoItemWithId extends TodoItem {
 	id: string;
 }
 
+/** A-2' 模型侧输入形态（spec 2026-11-13-a2-model-side-id-contract-design.md §3.1）：
+ * id 可选——带 id 且存在于当前快照 ⇒ 身份锁定（content 变 = 重命名，identity 存活）；
+ * 未带 id 走 content 兜底（裁决 4，现行不变）。输出侧 TodoItemWithId 形态零变化。 */
+export type TodoItemInput = TodoItem & { id?: string };
+
 /** diff：结构变化（增/删）→ 全量 list；仅状态变化 → updates。二者互斥。
  * 纯重排（内容集合不变、仅顺序变）**不产生任何事件**（spec §3.2：防前端卡片抖动），
  * 内存态保持既有顺序——渲染顺序与模型提交顺序的漂移是可接受的表象代价。 */
@@ -28,11 +33,14 @@ function idNumber(id: string): number {
 	return Number.isFinite(n) ? n : 0;
 }
 
-export function reduce(prev: readonly TodoItemWithId[], next: readonly TodoItem[]): TodoDiff {
+export function reduce(prev: readonly TodoItemWithId[], next: readonly TodoItemInput[]): TodoDiff {
 	// 计数器：历史最大 n + 1（不回收，防删除后新项复用旧 id 造成前端对账错乱）
 	let counter = prev.reduce((m, it) => Math.max(m, idNumber(it.id)), 0) + 1;
 	const prevByContent = new Map<string, TodoItemWithId>();
 	for (const it of prev) if (!prevByContent.has(it.content)) prevByContent.set(it.content, it);
+	// A-2'：id 优先索引（裁决 2：id 优先于 content）
+	const prevById = new Map<string, TodoItemWithId>();
+	for (const it of prev) prevById.set(it.id, it);
 
 	const out: TodoItemWithId[] = [];
 	const usedIds = new Set<string>();
@@ -40,6 +48,21 @@ export function reduce(prev: readonly TodoItemWithId[], next: readonly TodoItem[
 	let structureChanged = false;
 
 	for (const item of next) {
+		if (item.id !== undefined) {
+			// A-2' id 通道：带 id 且存在 ⇒ 身份锁定（幻觉 id 已在 todo_write execute 层硬拒；
+			// 此处 else 分支为防御兜底：不存在的 id 按新项处理，不抛错）
+			const matched = prevById.get(item.id);
+			if (matched && !usedIds.has(matched.id)) {
+				usedIds.add(matched.id);
+				out.push({ content: item.content, status: item.status, ...(item.activeForm !== undefined ? { activeForm: item.activeForm } : {}), id: matched.id });
+				if (matched.content !== item.content) structureChanged = true; // 重命名 = content 集合变化 ⇒ list
+				if (matched.status !== item.status) updates.push({ id: matched.id, status: item.status });
+				continue;
+			}
+			structureChanged = true;
+			out.push({ content: item.content, status: item.status, ...(item.activeForm !== undefined ? { activeForm: item.activeForm } : {}), id: `plan-${counter++}` });
+			continue;
+		}
 		const matched = prevByContent.get(item.content);
 		if (matched && !usedIds.has(matched.id)) {
 			usedIds.add(matched.id);
@@ -51,7 +74,8 @@ export function reduce(prev: readonly TodoItemWithId[], next: readonly TodoItem[
 		}
 	}
 
-	// 删除检测：prev 中有 content 不在 next
+	// 删除检测：prev 中有 content 不在 next（重命名场景旧 content 消失——structureChanged
+	// 已由重命名路径置位，此检测仅兜底纯删除形态，行为一致）
 	const nextContents = new Set(next.map((i) => i.content));
 	if (prev.some((p) => !nextContents.has(p.content))) structureChanged = true;
 
@@ -120,11 +144,12 @@ export function summarize(items: readonly TodoItemWithId[]): string {
 	return `任务清单已更新：共 ${items.length} 项${focus}；已完成 ${done} 项${multi}`;
 }
 
-/** 跨压缩动态块渲染（spec §3.4）。 */
+/** 跨压缩动态块渲染（spec §3.4；A-2' 拍板 3：行格式加 id——模型可见 id 视图的唯一来源，
+ * 每轮 LLM 请求经 assembleDynamicBlocks 重新求值注入）。 */
 export function renderTodoBlock(items: readonly TodoItemWithId[]): string {
 	const lines = items.map((i) => {
 		const mark = i.status === "completed" ? "[x]" : i.status === "in_progress" ? "[~]" : "[ ]";
-		return `- ${mark} ${i.content}`;
+		return `- ${mark} ${i.id} ${i.content}`;
 	});
 	return ["## 当前任务清单（todo_write 维护，跨压缩保留）", ...lines].join("\n");
 }

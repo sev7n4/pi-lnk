@@ -142,9 +142,10 @@ test("renderTodoBlock: 三态标记渲染", () => {
 		{ id: "plan-3", content: "导出", status: "pending" },
 	]);
 	assert.ok(block.startsWith("## 当前任务清单"));
-	assert.ok(block.includes("[x] 起稿"));
-	assert.ok(block.includes("[~] 配图"));
-	assert.ok(block.includes("[ ] 导出"));
+	// A-2' 拍板 3：行格式加 id（- [x] plan-1 content）——模型可见 id 视图
+	assert.ok(block.includes("[x] plan-1 起稿"));
+	assert.ok(block.includes("[~] plan-2 配图"));
+	assert.ok(block.includes("[ ] plan-3 导出"));
 });
 
 // ---- P1-2（spec 2026-11-11-propose-plan-visibility-design.md §8）：pickLatestSnapshot 识别 propose_plan ----
@@ -203,4 +204,88 @@ test("pickLatestSnapshot: propose_plan 垃圾 details ⇒ 不崩、继续向前�
 	]);
 	assert.equal(snap.length, 1);
 	assert.equal(snap[0].content, "有效");
+});
+
+// ===== A-2' 模型侧 id 契约（spec 2026-11-13-a2-model-side-id-contract-design.md §7）=====
+
+test("A-2' ①: 带 id 重命名——content 变、id 存活、发 list（identity 断裂消解）", () => {
+	const prev: TodoItemWithId[] = [
+		{ id: "plan-1", content: "补全2张核心图表（CAPEX对比图、DeepSeek影响力图）", status: "in_progress" },
+	];
+	const diff = reduce(prev, [{ id: "plan-1", content: "补全2张核心图表（CAPEX对比图✓、DeepSeek影响力图⏳）", status: "in_progress" }]);
+	assert.ok(diff.list, "重命名 = content 集合变化 ⇒ list 事件");
+	assert.equal(diff.list![0].id, "plan-1", "identity 存活");
+	assert.equal(diff.updates.length, 0, "status 未变 ⇒ 无 updates（互斥三分法）");
+});
+
+test("A-2' ③: 部分 id + content 兜底混合——id 通道与兜底通道并存", () => {
+	const prev: TodoItemWithId[] = [
+		{ id: "plan-1", content: "任务甲", status: "pending" },
+		{ id: "plan-2", content: "任务乙", status: "pending" },
+	];
+	const diff = reduce(prev, [
+		{ id: "plan-1", content: "任务甲（修订版）", status: "in_progress" }, // id 通道：重命名 + status 变
+		{ content: "任务乙", status: "completed" }, // content 兜底：续 plan-2
+	]);
+	assert.ok(diff.list);
+	assert.equal(diff.list![0].id, "plan-1");
+	assert.equal(diff.list![0].content, "任务甲（修订版）");
+	assert.equal(diff.list![1].id, "plan-2", "未带 id 项按 content 兜底续 id");
+	assert.equal(diff.list![1].status, "completed");
+});
+
+test("A-2' ④: 带 id 项 content 撞另一 item——id 为准，另一项走新项路径（裁决 2）", () => {
+	const prev: TodoItemWithId[] = [
+		{ id: "plan-1", content: "甲", status: "pending" },
+		{ id: "plan-2", content: "乙", status: "pending" },
+	];
+	// 提交：{id:plan-2, content:甲}（乙的 id + 甲的 content）+ {content:乙}（未带 id）
+	const diff = reduce(prev, [
+		{ id: "plan-2", content: "甲", status: "pending" }, // id 为准：plan-2 身份锁定、content 重命名为甲
+		{ content: "乙", status: "pending" }, // content 兜底：plan-2 已被占用 ⇒ 新项
+	]);
+	assert.ok(diff.list);
+	assert.equal(diff.list![0].id, "plan-2");
+	assert.equal(diff.list![0].content, "甲");
+	assert.notEqual(diff.list![1].id, "plan-2", "旧乙的 id 被占用，第二项走新项");
+	assert.notEqual(diff.list![1].id, "plan-1");
+	assert.equal(diff.list![1].content, "乙");
+});
+
+test("A-2' ⑤: 同调用重复 id——usedIds 防双用，第二项判新项（非拒绝，裁决 2 原文）", () => {
+	const prev: TodoItemWithId[] = [{ id: "plan-1", content: "甲", status: "pending" }];
+	const diff = reduce(prev, [
+		{ id: "plan-1", content: "甲改", status: "pending" },
+		{ id: "plan-1", content: "乙", status: "pending" },
+	]);
+	assert.ok(diff.list);
+	assert.equal(diff.list![0].id, "plan-1");
+	assert.equal(diff.list![0].content, "甲改");
+	assert.notEqual(diff.list![1].id, "plan-1", "plan-1 双用被防，第二项新 id");
+	assert.equal(diff.list![1].content, "乙");
+});
+
+test("A-2' ⑥a: renderTodoBlock 渲染 id（拍板 3：模型可见 id 视图）", () => {
+	const block = renderTodoBlock([
+		{ id: "plan-1", content: "甲", status: "completed" },
+		{ id: "plan-2", content: "乙", status: "in_progress" },
+	]);
+	assert.ok(block.includes("[x] plan-1 甲"), `实际：${block.split("\n")[2]}`);
+	assert.ok(block.includes("[~] plan-2 乙"));
+});
+
+test("A-2' ⑦: 双项交换重命名（都带 id）——删除检测不触发，仍必须发 list（变异自检补口）", () => {
+	const prev: TodoItemWithId[] = [
+		{ id: "plan-1", content: "甲", status: "pending" },
+		{ id: "plan-2", content: "乙", status: "pending" },
+	];
+	const diff = reduce(prev, [
+		{ id: "plan-1", content: "乙", status: "pending" }, // 甲→乙
+		{ id: "plan-2", content: "甲", status: "pending" }, // 乙→甲（content 集合不变）
+	]);
+	assert.ok(diff.list, "content 双向交换 = 结构变化 ⇒ list（updates 会让前端漏刷 content）");
+	assert.equal(diff.list![0].id, "plan-1");
+	assert.equal(diff.list![0].content, "乙");
+	assert.equal(diff.list![1].id, "plan-2");
+	assert.equal(diff.list![1].content, "甲");
 });

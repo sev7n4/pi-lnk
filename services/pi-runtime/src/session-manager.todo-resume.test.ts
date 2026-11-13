@@ -94,10 +94,10 @@ test("todo resume：磁盘 resume 后播种快照 + dynamicBlock 注入", async 
 	assert.equal(seeded[0]?.content, "起稿");
 	assert.equal(seeded[0]?.status, "in_progress");
 
-	// 注入：system prompt 含任务清单块（in_progress 标记 = [~]）
+	// 注入：system prompt 含任务清单块（A-2' 拍板 3：行格式 = [~] plan-N content，id 可引用）
 	const sp = sm2.resolveSystemPromptForTest(threadKey);
 	assert.ok(sp.includes("## 当前任务清单"), "system prompt 必须含任务清单块");
-	assert.ok(sp.includes("[~] 起稿"), "in_progress 项必须以 [~] 标记渲染");
+	assert.ok(sp.includes("[~] plan-1 起稿"), "in_progress 项必须以 [~] + id + content 渲染");
 });
 
 test("todo 零快照不注入（spec §3.4）", async () => {

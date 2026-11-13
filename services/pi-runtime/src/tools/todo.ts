@@ -8,7 +8,7 @@
 import { Type } from "typebox";
 import type { AgentToolResult, AgentHarnessToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { LnkpiTool, LnkpiToolContext } from "./types.js";
-import { reduce, summarize, type TodoDiff, type TodoItem, type TodoItemWithId } from "./task-state.js";
+import { reduce, summarize, type TodoDiff, type TodoItemInput, type TodoItemWithId } from "./task-state.js";
 
 export function isTodoToolEnabled(): boolean {
 	return process.env.PI_RUNTIME_TODO_TOOL !== "off";
@@ -53,7 +53,10 @@ export function resetTodoStoreForTest(): void {
 const todoSchema = Type.Object({
 	todos: Type.Array(
 		Type.Object({
-			content: Type.String({ description: "任务项内容（祈使句，字面精确匹配用于状态追踪）" }),
+			id: Type.Optional(
+				Type.String({ description: "任务项 id（当前清单已存在的 plan-N）。变更已有任务时带上对应 id：身份保留，content 可改写（重命名）。新增任务省略 id。" }),
+			),
+			content: Type.String({ description: "任务项内容（祈使句）" }),
 			activeForm: Type.Optional(Type.String({ description: "进行时文案，执行中卡片主文案（如「正在配图」）" })),
 			status: Type.Union(
 				[Type.Literal("pending"), Type.Literal("in_progress"), Type.Literal("completed")],
@@ -65,11 +68,15 @@ const todoSchema = Type.Object({
 });
 
 /** 全量覆写唯一入口（C3：propose_plan 复用同一条写管道，spec §3.2「不做两步组合」）。 */
-export function overwriteTodos(sessionId: string, todos: TodoItem[]): { snapshot: TodoItemWithId[]; diff: TodoDiff } {
+export function overwriteTodos(sessionId: string, todos: TodoItemInput[]): { snapshot: TodoItemWithId[]; diff: TodoDiff } {
 	const state = stateFor(sessionId);
-	// 漏发告警（Review Focus #3）：prev 未完成项从 next 消失
+	// 漏发告警（Review Focus #3）：prev 未完成项从 next 消失——A-2' 后按 id 或 content 双通道
+	// 对账：id 存活（重命名）或 content 逐字匹配任一成立即不算 dropped（重命名不误报）。
+	const nextIds = new Set(todos.filter((t) => t.id !== undefined).map((t) => t.id as string));
 	const nextContents = new Set(todos.map((t) => t.content));
-	const dropped = state.items.filter((i) => i.status !== "completed" && !nextContents.has(i.content));
+	const dropped = state.items.filter(
+		(i) => i.status !== "completed" && !nextIds.has(i.id) && !nextContents.has(i.content),
+	);
 	if (dropped.length > 0) {
 		console.warn(
 			`[todo_write] dropped-incomplete session=${sessionId} items=${JSON.stringify(dropped.map((d) => d.content))}`,
@@ -84,6 +91,20 @@ export function overwriteTodos(sessionId: string, todos: TodoItem[]): { snapshot
 	return { snapshot: nextItems, diff };
 }
 
+/** A-2' 拍板 1：幻觉/已删除 id ⇒ 工具级硬拒绝（非软容错）。校验键与 overwriteTodos
+ * 同源（storeScopeKey ?? sessionId，C4 取键约定）；拒绝零副作用、无快照事件；
+ * 回执附完整合法 id 清单（防误伤设计）+ 单次自纠回路。 */
+function rejectUnknownIds(params: { todos: TodoItemInput[] }, key: string): string | null {
+	const legal = getTodoState(key);
+	const legalIds = new Set(legal.map((i) => i.id));
+	const offending = params.todos.filter((t) => t.id !== undefined && !legalIds.has(t.id));
+	if (offending.length === 0) return null;
+	const listing = legal.length
+		? legal.map((i) => `- ${i.id} ${i.content}（${i.status}）`).join("\n")
+		: "（当前清单为空）";
+	return `调用被拒绝：id 不存在于当前任务清单（${offending.map((o) => o.id).join("、")}）。当前合法 id：\n${listing}\n请带正确 id 重发（变更已有任务），或对新增任务省略 id。`;
+}
+
 export function buildTodoTools(): LnkpiTool[] {
 	if (!isTodoToolEnabled()) return [];
 	const tool: LnkpiTool = {
@@ -92,13 +113,13 @@ export function buildTodoTools(): LnkpiTool[] {
 		tier: "write_light",
 		summary: "维护多步任务清单（全量覆写）",
 		description:
-			"维护当前会话的任务清单，用于多步任务（≥3 步）执行透明化。约定：1) 全量覆写——每次调用必须包含全部任务项，漏发历史项等同删除；2) 任意时刻至多一项 in_progress；3) 全部完成时提交空数组清空清单；4) 内容一经提交请勿改写（字面匹配用于追踪状态）。",
+			"维护当前会话的任务清单，用于多步任务（≥3 步）执行透明化。约定：1) 全量覆写——每次调用必须包含全部任务项，漏发历史项等同删除；2) 任意时刻至多一项 in_progress；3) 全部完成时提交空数组清空清单；4) 变更已有任务时带上其 id（content 可改写=重命名），新增任务省略 id。",
 		parameters: todoSchema,
 		executionMode: "sequential",
 		replay: "safe",
 		async execute(
 			_toolCallId: string,
-			params: { todos: TodoItem[] },
+			params: { todos: TodoItemInput[] },
 			_onUpdate: AgentHarnessToolUpdateCallback<{ todo: { snapshot: TodoItemWithId[]; diff: TodoDiff } }>,
 			toolContext: LnkpiToolContext,
 			_invocation: unknown,
@@ -106,7 +127,13 @@ export function buildTodoTools(): LnkpiTool[] {
 		): Promise<AgentToolResult<{ todo: { snapshot: TodoItemWithId[]; diff: TodoDiff } }>> {
 			// C4（评审 C1）：store 键走 storeScopeKey（子会话=自身键）——直接用 sessionId 时
 			// 子 run 的 todo_write 会覆写主会话（同画布 id）的 C1 清单，fork 隔离被击穿。
-			const { snapshot, diff } = overwriteTodos(toolContext.storeScopeKey ?? toolContext.sessionId, params.todos);
+			const key = toolContext.storeScopeKey ?? toolContext.sessionId;
+			// A-2' 拍板 1：幻觉 id 硬拒绝（先于任何写入）
+			const rejection = rejectUnknownIds(params, key);
+			if (rejection !== null) {
+				return { content: [{ type: "text", text: rejection }], isError: true };
+			}
+			const { snapshot, diff } = overwriteTodos(key, params.todos);
 			return {
 				content: [{ type: "text", text: summarize(snapshot) }],
 				details: { todo: { snapshot, diff } },
