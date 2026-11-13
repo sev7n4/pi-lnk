@@ -35,6 +35,13 @@ export interface RuntimeRunResult {
 	events: RuntimeEvent[];
 	usage?: EvalTranscript["usage"];
 	errors: string[];
+	/**
+	 * ⭐ C-1b（§8.7 model id 记录）：/sessions 响应透传的实际模型 id。
+	 * 报告必须展示——模型被平台侧静默升级时，跨 run 基线对比要先核这个值
+	 * 一致才能比（否则「行为漂移」与「模型换了」混为一谈）。
+	 */
+	model?: string;
+	provider?: string;
 }
 
 /**
@@ -73,6 +80,18 @@ export async function runEvalCase(
 	});
 	if (created.status >= 400) {
 		return failure(`createSession failed: HTTP ${created.status} ${created.body}`);
+	}
+	// ⭐ C-1b：解析 /sessions 响应的 provider/model（生产实测响应体：
+	// {"sessionId","provider":"agnes","model":"agnes-2.5-flash","status":"created"}）。
+	// 解析失败不致命（model 记录是报告元信息，不是判据）——静默缺省即可。
+	let createdModel: string | undefined;
+	let createdProvider: string | undefined;
+	try {
+		const info = JSON.parse(created.body) as { model?: unknown; provider?: unknown };
+		if (typeof info.model === "string") createdModel = info.model;
+		if (typeof info.provider === "string") createdProvider = info.provider;
+	} catch {
+		// 响应不是 JSON（理论不可达）：model 缺省，报告里可见
 	}
 
 	// ② 订阅 live（from=now：只要未来事件，不要上一轮的全量重放）。
@@ -173,9 +192,18 @@ export async function runEvalCase(
 			events: collected,
 			usage: transcript.usage,
 			errors: [...transcript.errors, "stream ended without agent_end"],
+			...(createdModel ? { model: createdModel } : {}),
+			...(createdProvider ? { provider: createdProvider } : {}),
 		};
 	}
-	return { transcript, events: collected, usage: transcript.usage, errors: transcript.errors };
+	return {
+		transcript,
+		events: collected,
+		usage: transcript.usage,
+		errors: transcript.errors,
+		...(createdModel ? { model: createdModel } : {}),
+		...(createdProvider ? { provider: createdProvider } : {}),
+	};
 }
 
 function failure(message: string): RuntimeRunResult {
@@ -225,41 +253,53 @@ export async function fetchCanvasNodeCount(
 	nest: { baseUrl: string; token: string },
 	input: { canvasSessionId: string },
 ): Promise<{ nodeCount: number } | { error: string }> {
-	// ⭐⭐ 必须把 fetch 自身的异常也兜住：`fetch` 在连不上时会**抛**
-	//（`TypeError: fetch failed`），而不是返回 4xx/5xx。
-	// 漏了这层 ⇒ 「Nest 不可达」会以裸 `fetch failed` 冒到调用方，
-	// 丢掉「这是环境问题、不是模型问题」这个关键信息 ——
-	// 而这正是本预检存在的意义（实测踩过：改前就是这条）。
+	const probe = await fetchCanvasState(nest, input);
+	if ("error" in probe) return probe;
+	return { nodeCount: probe.nodeCount };
+}
+
+/**
+ * 查画布终态快照：节点数 + 按 `type` 计数（C-1b §3.2，L3 nodeTypeCounts 数据面）。
+ *
+ * 契约与 `fetchCanvasNodeCount` 完全同源（同端点/同头/同信封——三条坑见上），
+ * 只是解析走全量 node.type。**node.type 是生产实测枚举 image/text/video**
+ * （layout-smoke 画布实证，2026-11-13）⇒ 判据零新增探针。
+ * 未知 type 也计数（键为原值）——schema 漂移（新类型出现）时计数可见而不是丢进黑洞。
+ */
+export async function fetchCanvasState(
+	nest: { baseUrl: string; token: string },
+	input: { canvasSessionId: string },
+): Promise<{ nodeCount: number; typeCounts: Record<string, number> } | { error: string }> {
 	let res: { status: number; body: string };
 	try {
 		res = await postJson(`${nest.baseUrl}/agent/internal/get-canvas-summary`, {
 			sessionId: input.canvasSessionId,
 		}, { "x-lnkpi-service-token": nest.token });
 	} catch (err) {
-		// 网络层失败（Nest 不可达 / DNS / 超时）⇒ 同样是「环境问题」
 		return { error: `Nest 不可达（${nest.baseUrl}）：${err instanceof Error ? err.message : String(err)}` };
 	}
 	if (res.status >= 400) {
-		// ⭐ 4xx 与 5xx 必须分开：前者是「画布不存在/参数错（换画布或改参数能解）」，
-		// 后者是「服务端故障（重试能解）」—— 合并成一句会让排查无从下手。
 		const kind = res.status >= 500 ? "Nest 服务端故障" : "画布不存在或参数错";
 		return { error: `${kind}（HTTP ${res.status}）：${res.body.slice(0, 200)}` };
 	}
 	try {
-		// ⚠️ Nest 的成功响应是**信封格式** `{ code, message, data: {...} }`
-		// （实测：`{"code":0,"message":"ok","data":{"nodes":[...]}}`），
-		// **不是**裸 `{ nodes }`。两种都兼容——工具层未来若改成裸对象也不至于失效。
 		const parsed = JSON.parse(res.body) as {
-			data?: { nodes?: unknown[] };
-			nodes?: unknown[];
+			data?: { nodes?: Array<unknown> };
+			nodes?: Array<unknown>;
 		};
 		const nodes = parsed.data?.nodes ?? parsed.nodes;
 		if (!Array.isArray(nodes)) {
-			// ⚠️ 探针失效（响应结构变了）⇒ 报 error，**绝不谎报 0**——
-			// 谎报 0 会让所有 requiresCanvasNodes 检查误判成「环境不足」。
 			return { error: `探针失效：响应里没有 nodes 数组（${res.body.slice(0, 200)}）` };
 		}
-		return { nodeCount: nodes.length };
+		const typeCounts: Record<string, number> = {};
+		for (const n of nodes) {
+			const t =
+				n && typeof n === "object" && typeof (n as { type?: unknown }).type === "string"
+					? (n as { type: string }).type
+					: "unknown";
+			typeCounts[t] = (typeCounts[t] ?? 0) + 1;
+		}
+		return { nodeCount: nodes.length, typeCounts };
 	} catch (err) {
 		return { error: `探针响应不是 JSON：${err instanceof Error ? err.message : String(err)}` };
 	}

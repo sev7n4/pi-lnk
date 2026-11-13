@@ -33,8 +33,24 @@
  * 首批更重要的是「先能跑出可信的单次结果」，故本模块只产出结构化报告，
  * baseline/candidate 的对比留给下一层（判据与报告形态已为此预留：`usage` 汇总 + 可 diff 报告）。
  */
-import { runEvalCase, fetchCanvasNodeCount, type RuntimeDriverOptions } from "./driver.js";
-import { GOLDEN_CASES, evaluateCase, type GoldenCase } from "./golden-cases.js";
+import {
+	runEvalCase,
+	fetchCanvasNodeCount,
+	fetchCanvasState,
+	type RuntimeDriverOptions,
+	type RuntimeRunResult,
+} from "./driver.js";
+import {
+	GOLDEN_CASES,
+	evaluateCase,
+	evaluateStep,
+	evaluateMultiStep,
+	type GoldenCase,
+	type GoldenStep,
+	type CanvasSnapshot,
+	type IdentityObservation,
+	type PlanSnapshot,
+} from "./golden-cases.js";
 import { loadStaticPromptForEval, PLAN_CONVENTION_TAIL, type StaticPromptResult } from "./registry.js";
 import type { EvalTranscript } from "./transcript.js";
 
@@ -85,6 +101,19 @@ export interface CaseResult {
 	 */
 	errorAttempts?: number;
 	usage?: EvalTranscript["usage"];
+	/**
+	 * ⭐ C-1b（§8.7）：本条 case 实际使用的模型 id（/sessions 响应透传）。
+	 * 报告固定展示——跨 run 基线对比前先核一致，模型静默升级 otherwise 不可见。
+	 */
+	model?: string;
+	/** C-1b：identity 断裂观测——断裂次数（§8.6，只观测不计分）。 */
+	identityBroken?: number;
+	/** C-1b：identity 断裂观测——观测次数（每个标注计一次）。 */
+	identityObserved?: number;
+	/** C-1b：多轮 case 的步数（单轮 case 无此字段）。 */
+	stepCount?: number;
+	/** C-1b：各步 verdict 序列（多轮 case；与 attemptVerdicts 语义区分——这是步内维度）。 */
+	stepVerdicts?: Verdict[];
 }
 
 export interface RunSummary {
@@ -120,6 +149,8 @@ export interface RunSummary {
 	coverageNote?: string;
 	/** 本轮用的真实画布 id（方案 B）。 */
 	canvasSessionId?: string;
+	/** C-1b：identity 断裂观测汇总（broken/observed——§8.6 只观测不计分）。 */
+	identity?: IdentityObservation;
 }
 
 /**
@@ -136,12 +167,67 @@ export interface RunSummary {
 export function verdictOf(
 	testCase: GoldenCase,
 	transcript: EvalTranscript,
+	canvas?: CanvasSnapshot,
 ): { verdict: Verdict; failures: string[] } {
 	if (transcript.errors.length > 0) {
 		return { verdict: "error", failures: [...transcript.errors] };
 	}
-	const { passed, failures } = evaluateCase(testCase, transcript);
+	const { passed, failures } = evaluateCase(testCase, transcript, canvas ? { canvas } : undefined);
 	return { verdict: passed ? "pass" : "fail", failures: passed ? [] : [...failures] };
+}
+
+/**
+ * 多轮 steps case 的整链判定（C-1b §3.1）。
+ *
+ * ⭐ error 优先红线与单轮同构：**任一步** transcript.errors 非空 ⇒ 整条 error
+ * （3 步跑到第 2 步限流，第 3 步的「没拆」是环境连带，不是行为问题——
+ * 把它读成 fail 会诱导改提示词，正是三红线要防的事）。
+ * error 时 identity 观测不计（没跑成就没有观测意义）。
+ */
+export function verdictOfSteps(
+	steps: readonly GoldenStep[],
+	transcripts: readonly EvalTranscript[],
+	canvas?: CanvasSnapshot,
+): {
+	verdict: Verdict;
+	failures: string[];
+	identity: IdentityObservation;
+	stepVerdicts: Verdict[];
+} {
+	// ① error 优先：逐步检查运行错误
+	const stepErrors: string[] = [];
+	for (const [i, t] of transcripts.entries()) {
+		if (t && t.errors.length > 0) for (const e of t.errors) stepErrors.push(`step[${i}] ${e}`);
+	}
+	if (stepErrors.length > 0) {
+		// 任一步运行错误 ⇒ 全链 error（未跑到的步连带 error——它们不是行为问题）
+		const errs: Verdict[] = transcripts.map(() => "error");
+		return {
+			verdict: "error",
+			failures: stepErrors,
+			identity: { broken: 0, observed: 0 },
+			stepVerdicts: errs,
+		};
+	}
+	// ② 行为判定（evaluateMultiStep：failures 带 step[N] 前缀 + identity 观测）
+	const r = evaluateMultiStep(steps, transcripts, canvas ? { canvas } : undefined);
+	// ③ per-step verdict（报告粒度；用 evaluateStep 重算一次——纯函数零成本）
+	const stepVerdicts: Verdict[] = [];
+	const snapshots: (PlanSnapshot | null)[] = [];
+	for (const [i, step] of steps.entries()) {
+		const t = transcripts[i];
+		const prev = i > 0 ? snapshots[i - 1] : null;
+		const isLast = i === steps.length - 1;
+		const j = evaluateStep(step, t, prev, isLast && canvas ? { canvas } : undefined);
+		snapshots.push(j.snapshot);
+		stepVerdicts[i] = j.failures.length === 0 ? "pass" : "fail";
+	}
+	return {
+		verdict: r.passed ? "pass" : "fail",
+		failures: r.passed ? [] : r.failures,
+		identity: r.identity,
+		stepVerdicts,
+	};
 }
 
 /**
@@ -212,6 +298,29 @@ export function summarize(
 		repeatedSection.length > 0
 			? [`多数表决明细（行为有随机性，单次 pass/fail 不构成结论）：`, ...repeatedSection]
 			: [];
+	// ⭐ C-1b：identity 断裂观测区块（§8.6，只观测不计分）。
+	// 口径必须在报告里写明：content 逐字不存活即计断裂（保守口径，宁可高估——
+	// 措辞变但意图同也会计入；数字含义是「断裂率上界」）。
+	const identityAgg = results.reduce(
+		(acc, r) => ({
+			broken: acc.broken + (r.identityBroken ?? 0),
+			observed: acc.observed + (r.identityObserved ?? 0),
+		}),
+		{ broken: 0, observed: 0 },
+	);
+	const identitySection =
+		identityAgg.observed > 0
+			? [
+					`identity 断裂观测（§8.6，**只观测不计分**；保守口径=content 逐字不存活即计，数字是断裂率上界）：` +
+						`${identityAgg.broken}/${identityAgg.observed} 断裂`,
+					...results
+						.filter((r) => (r.identityObserved ?? 0) > 0)
+						.map((r) => `  - ${r.caseId}：${r.identityBroken}/${r.identityObserved}`),
+				]
+			: [];
+	// ⭐ C-1b（§8.7）：本轮实际模型 id 集合——跨 run 基线对比前先核一致。
+	const modelsUsed = [...new Set(results.map((r) => r.model).filter(Boolean))] as string[];
+	const modelLine = modelsUsed.length > 0 ? [`模型：${modelsUsed.join(", ")}（§8.7 跨 run 对比前先核一致）`] : [];
 	const lines = [
 		header,
 		`L1 行为回归：${pass}/${judged} 通过（${(passRate * 100).toFixed(1)}%）· fail ${fail} · error ${error} · skip ${skipped}`,
@@ -227,6 +336,8 @@ export function summarize(
 			...(meta?.canvasSessionId
 			? [`画布：canvasSessionId=${meta.canvasSessionId}（真实 Nest 画布，工具可回查）`]
 			: []),
+		...modelLine,
+		...identitySection,
 		...(meta?.coverageNote ? [`⚠️ 覆盖盲区：${meta.coverageNote}`] : []),
 		...skipSection,
 		...repeatSection,
@@ -234,7 +345,7 @@ export function summarize(
 			.filter((r) => r.verdict === "fail" || r.verdict === "error")
 			.map(
 				(r) =>
-					`  [${r.verdict}] ${r.caseId} (${r.durationMs}ms${(r.attempts ?? 1) > 1 ? `, ${r.attempts} 次` : ""})：${r.failures.join("; ")}`,
+					`  [${r.verdict}] ${r.caseId} (${r.durationMs}ms${(r.attempts ?? 1) > 1 ? `, ${r.attempts} 次` : ""}${r.model ? `, model=${r.model}` : ""}${r.stepVerdicts ? `, steps=${r.stepVerdicts.join("/")}` : ""})：${r.failures.join("; ")}`,
 			),
 	]
 		.filter(Boolean)
@@ -253,6 +364,7 @@ export function summarize(
 		report: lines.join("\n"),
 		results,
 		failures,
+		...(identityAgg.observed > 0 ? { identity: identityAgg } : {}),
 		...(meta?.staticPrompt ? { staticPrompt: meta.staticPrompt } : {}),
 		...(meta?.coverageNote ? { coverageNote: meta.coverageNote } : {}),
 		...(meta?.canvasSessionId ? { canvasSessionId: meta.canvasSessionId } : {}),
@@ -419,12 +531,34 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 
 	for (const [i, testCase] of cases.entries()) {
 		const started = Date.now();
+		// ── C-1b：requiresCleanCanvas 预检（实施 spec §4 画布污染裁决）──
+		// 画布无重置能力 ⇒ 需要「精确初始态」的 case 在跑之前核画布当前规模：
+		// 已超过收尾判据允许的上界 ⇒ 直接 error（环境问题），绝不静默跑脏画布
+		// 产出误导数据。预检失败同样归 error（探针失效 ≠ 画布超限）。
+		if (testCase.requiresCleanCanvas) {
+			const cleanErr = await precheckCleanCanvas(testCase, options);
+			if (cleanErr) {
+				const pre: CaseResult = {
+					caseId: testCase.id,
+					verdict: "error",
+					failures: [cleanErr],
+					durationMs: Date.now() - started,
+					toolNames: [],
+				};
+				results.push(pre);
+				options.onProgress?.(i + 1, cases.length, pre);
+				continue;
+			}
+		}
 		// ⭐⭐ 行为类 case 的「抽签」问题：同一 prompt 同一话术，模型行为本身随机。
 		// A/B 实测（arrange_nodes）：改过 desc 7/10、现状 3/11⇒ B 组不是 0%，
 		// 说明**单次 pass/fail 表达的是「抽中没抽中」而不是「行为对不对」**。
 		// ⇒ 跑 `repeat` 次按多数表决；`error` 不参与投票（环境问题不是行为问题，
 		// 理由同verdictOf 的 error 优先原则）。
-		const repeat = Math.max(1, testCase.repeat ?? 1);
+		// ⭐ C-1b：steps case 强制 repeat=1（3 步 × 2–4 次 LLM 调用/步，repeat 3
+		// 成本不可接受；抖动兜底改由「全集跑通 ≥2 轮跨 run 对比」——实施 spec §3.1
+		// 显式例外，登记在案；L0 校验同时锁结构，这里兜底防程序化构造绕过）。
+		const repeat = testCase.steps ? 1 : Math.max(1, testCase.repeat ?? 1);
 		// ⭐ skipped 必须**在重复之前**判定：requiresConfirm 的 case 跑 N 次
 		// 毫无意义（每次都会立刻返回 skipped），却要白等 N 个 interval。
 		if (testCase.requiresConfirm) {
@@ -496,6 +630,12 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 			verdict = "fail";
 			failures = [`多次执行结果不一致（${attemptVerdicts.join(" / ")}），保守判 fail`];
 		}
+		// C-1b：model（任一 attempt 记录到的实际模型）与 identity 观测透传进最终结果
+		const modelSeen = attemptResults.find((r) => r.model)?.model ?? errorResults.find((r) => r.model)?.model;
+		const idSource =
+			attemptResults.find((r) => (r.identityObserved ?? 0) > 0) ??
+			attemptResults[0] ??
+			errorResults[0];
 		const result: CaseResult = {
 			caseId: testCase.id,
 			verdict,
@@ -513,6 +653,20 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 			attempts: attemptVerdicts.length,
 			attemptVerdicts,
 			...(errorAttempts > 0 ? { errorAttempts } : {}),
+			...(modelSeen ? { model: modelSeen } : {}),
+			...(idSource && (idSource.identityObserved ?? 0) > 0
+				? {
+						identityBroken: idSource.identityBroken ?? 0,
+						identityObserved: idSource.identityObserved ?? 0,
+						...(idSource.stepCount !== undefined ? { stepCount: idSource.stepCount } : {}),
+						...(idSource.stepVerdicts ? { stepVerdicts: idSource.stepVerdicts } : {}),
+					}
+				: idSource && idSource.stepCount !== undefined
+					? {
+							...(idSource.stepCount !== undefined ? { stepCount: idSource.stepCount } : {}),
+							...(idSource.stepVerdicts ? { stepVerdicts: idSource.stepVerdicts } : {}),
+						}
+					: {}),
 		};
 		results.push(result);
 		options.onProgress?.(i + 1, cases.length, result);
@@ -555,7 +709,11 @@ async function runOneAttempt(
 			toolNames: [],
 		};
 	}
+	// ⭐ C-1b：多轮 steps case 走独立路径（同 sessionId 逐步发 prompt）。
 	try {
+		if (testCase.steps) {
+			return await runStepsAttempt(testCase, options, staticPrompt);
+		}
 		const run = await runEvalCase(
 			{
 				baseUrl: options.baseUrl,
@@ -564,13 +722,35 @@ async function runOneAttempt(
 					: {}),
 			},
 			{
-				text: testCase.text,
+				// ⭐ L0 契约保证：单轮 case（无 steps）text 必非空（L0「case 文本」校验）
+				text: testCase.text as string,
 				systemPrompt: staticPrompt,
 				...(options.userId ? { userId: options.userId } : {}),
 				...(options.canvasSessionId ? { canvasSessionId: options.canvasSessionId } : {}),
 			},
 		);
-		const v = verdictOf(testCase, run.transcript);
+		if (process.env.PI_EVAL_DEBUG) {
+			process.stderr.write(`[debug] ${testCase.id} errors=${JSON.stringify(run.errors)} events=${run.events.length} evTypes=${run.events.slice(0,6).map((e) => e.type).join(",")}\n`);
+		}
+		// ⭐ C-1b：单轮 case 声明了 expectCanvasState ⇒ 回合结束后读回画布终态。
+		// 读回失败归 error（环境问题）——绝不把「读不到画布」伪装成「画布不符」
+		//（谎报会让 nodeCount 上限判据误判成模型越权写入）。
+		let canvas: CanvasSnapshot | undefined;
+		if (testCase.expectCanvasState) {
+			const probe = await readCanvasOrError(options);
+			if ("error" in probe) {
+				return {
+					caseId: testCase.id,
+					verdict: "error",
+					failures: [probe.error],
+					durationMs: Date.now() - started,
+					toolNames: run.transcript.toolNames,
+					...(run.model ? { model: run.model } : {}),
+				};
+			}
+			canvas = probe;
+		}
+		const v = verdictOf(testCase, run.transcript, canvas);
 		return {
 			caseId: testCase.id,
 			verdict: v.verdict,
@@ -578,6 +758,7 @@ async function runOneAttempt(
 			durationMs: Date.now() - started,
 			toolNames: run.transcript.toolNames,
 			usage: run.transcript.usage,
+			...(run.model ? { model: run.model } : {}),
 		};
 	} catch (err) {
 		// driver 自身抛异常（连接失败等）⇒ 归error，**不**归fail。
@@ -590,6 +771,162 @@ async function runOneAttempt(
 			toolNames: [],
 		};
 	}
+}
+
+/**
+ * ⭐ C-1b：多轮 steps attempt（实施 spec §3.1）。
+ *
+ * 每步独立 `runEvalCase`（同 sessionId 复用追加语义——`/sessions` 幂等 upsert，
+ * systemPrompt 只在首次生效），每步独立 transcript + 判据；任一步 fail 即 case fail
+ *（failures 带 `step[N]` 前缀）。收尾步声明 expectCanvasState ⇒ 全部步跑完后
+ * 读回画布终态（画布是**终态**语义，中间步声明属编写期错误，L0 拦截）。
+ *
+ * ⚠️ driver 的 SSE 订阅按步独立（每步 from=now）——上一步的事件不会混进本步，
+ * 这是「同会话多轮」与「事件流隔离」能同时成立的原因（driver 现状实证）。
+ */
+async function runStepsAttempt(
+	testCase: GoldenCase,
+	options: L1RunOptions,
+	staticPrompt: string,
+): Promise<CaseResult> {
+	const started = Date.now();
+	const steps = testCase.steps as readonly GoldenStep[];
+	const sessionId = `eval-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+	const transcripts: EvalTranscript[] = [];
+	let model: string | undefined;
+	try {
+		for (const [i, step] of steps.entries()) {
+			const run = await runEvalCase(
+				{
+					baseUrl: options.baseUrl,
+					...(options.caseTimeoutMs !== undefined ? { timeoutMs: options.caseTimeoutMs } : {}),
+				},
+				{
+					text: step.text,
+					systemPrompt: staticPrompt,
+					...(options.userId ? { userId: options.userId } : {}),
+					...(options.canvasSessionId ? { canvasSessionId: options.canvasSessionId } : {}),
+					sessionId,
+				},
+			);
+			if (!model && run.model) model = run.model;
+			transcripts.push(run.transcript);
+			if (process.env.PI_EVAL_DEBUG) {
+				process.stderr.write(
+					`[debug] ${testCase.id} step[${i}] errors=${JSON.stringify(run.errors)} tools=[${run.transcript.toolNames.join(",")}]\n`,
+				);
+			}
+		}
+	} catch (err) {
+		return {
+			caseId: testCase.id,
+			verdict: "error",
+			failures: [err instanceof Error ? err.message : String(err)],
+			durationMs: Date.now() - started,
+			toolNames: [],
+			...(model ? { model } : {}),
+		};
+	}
+	// 画布终态读回：收尾步声明了 expectCanvasState 才读（零判据步不烧探针）。
+	const lastStep = steps[steps.length - 1];
+	let canvas: CanvasSnapshot | undefined;
+	if (lastStep?.expectCanvasState) {
+		const probe = await readCanvasOrError(options);
+		if ("error" in probe) {
+			return {
+				caseId: testCase.id,
+				verdict: "error",
+				failures: [probe.error],
+				durationMs: Date.now() - started,
+				toolNames: transcripts.flatMap((t) => t.toolNames),
+				...(model ? { model } : {}),
+			};
+		}
+		canvas = probe;
+	}
+	const v = verdictOfSteps(steps, transcripts, canvas);
+	return {
+		caseId: testCase.id,
+		verdict: v.verdict,
+		failures: v.failures,
+		durationMs: Date.now() - started,
+		toolNames: transcripts.flatMap((t) => t.toolNames),
+		usage: sumUsage(transcripts),
+		...(model ? { model } : {}),
+		identityBroken: v.identity.broken,
+		identityObserved: v.identity.observed,
+		stepCount: steps.length,
+		stepVerdicts: v.stepVerdicts,
+	};
+}
+
+/** 多步 usage 求和（各步独立 transcript，报告要的是整条 case 的总成本）。 */
+function sumUsage(transcripts: readonly EvalTranscript[]): EvalTranscript["usage"] | undefined {
+	const withUsage = transcripts.filter((t) => t.usage);
+	if (withUsage.length === 0) return undefined;
+	return withUsage.reduce(
+		(acc, t) => ({
+			input: (acc.input ?? 0) + (t.usage?.input ?? 0),
+			output: (acc.output ?? 0) + (t.usage?.output ?? 0),
+			total: (acc.total ?? 0) + (t.usage?.total ?? 0),
+		}),
+		{} as NonNullable<EvalTranscript["usage"]>,
+	);
+}
+
+/**
+ * 画布快照读回（eval 测试侧统一入口）。
+ *
+ * 失败返回 `{error}` 且**绝不谎报快照**——「读不到」与「读到了但不符」
+ * 必须分开（后者是模型问题，前者是环境问题；混了会误导改提示词）。
+ * 需要 `options.nest` + `options.canvasSessionId`（缺 ⇒ 显式 error，不静默）。
+ */
+async function readCanvasOrError(
+	options: L1RunOptions,
+): Promise<CanvasSnapshot | { error: string }> {
+	if (!options.nest || !options.canvasSessionId) {
+		return {
+			error:
+				"画布终态读回需要 nest 连接信息与 canvasSessionId（未传 ⇒ 无法读回，这是接线问题不是模型问题）：" +
+				"传 { nest: { baseUrl: process.env.NEST_BASE_URL, token: process.env.NEST_SERVICE_TOKEN }, canvasSessionId }",
+		};
+	}
+	const probe = await fetchCanvasState(options.nest, {
+		canvasSessionId: options.canvasSessionId,
+	});
+	if ("error" in probe) return { error: `画布终态读回失败：${probe.error}` };
+	return { nodeCount: probe.nodeCount, typeCounts: probe.typeCounts };
+}
+
+/**
+ * ⭐ C-1b：requiresCleanCanvas 预检（实施 spec §4）。
+ *
+ * 口径：画布当前节点数已超过本 case 收尾判据允许的上界 ⇒ 环境问题（error），
+ * 不跑——画布无重置能力，跑完必然超限，产出的是污染数据不是行为数据。
+ * 返回 null = 预检通过（或无可判上界，只声明了 requiresCleanCanvas 没写 max——
+ * L0 允许但预检无事可做）；返回 string = error 信息。
+ */
+async function precheckCleanCanvas(
+	testCase: GoldenCase,
+	options: L1RunOptions,
+): Promise<string | null> {
+	// 上界来源：steps 收尾步（L0 锁只许收尾步）或顶层（单轮形态）
+	const expect =
+		(testCase.steps
+			? (testCase.steps[testCase.steps.length - 1]?.expectCanvasState ?? undefined)
+			: undefined) ?? testCase.expectCanvasState;
+	const max = expect?.nodeCount?.max;
+	if (max === undefined) return null; // 无上界可拦（L0 已要求配 expectCanvasState，但不强制 max）
+	const probe = await readCanvasOrError(options);
+	if ("error" in probe) return probe.error; // 读不到 = 预检失败 = 环境问题
+	if (probe.nodeCount > max) {
+		return (
+			`requiresCleanCanvas 预检失败：画布当前 ${probe.nodeCount} 个节点，已超过本 case 收尾判据上界 ${max}。` +
+			`画布无重置能力 ⇒ 本 case 无法获得精确初始态（跨 case 污染累积）。` +
+			`⚠️ 这是**环境问题**，不是模型问题——换画布或清理后重跑，不要据此改判据。`
+		);
+	}
+	return null;
 }
 
 function sleep(ms: number): Promise<void> {
