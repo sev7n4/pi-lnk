@@ -427,7 +427,7 @@ export function pickLatestPlanSnapshot(
 	for (const call of toolCalls) {
 		if (call.name !== "todo_write" && call.name !== "propose_plan") continue;
 		const input = (call.input ?? {}) as {
-			todos?: Array<{ content?: string }>;
+			todos?: Array<{ content?: string; summary?: string }>;
 			steps?: Array<{ content?: string; summary?: string }>;
 		};
 		const raw = input.todos ?? input.steps ?? [];
