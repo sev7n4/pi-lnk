@@ -195,25 +195,24 @@ export function verdictOfSteps(
 	stepVerdicts: Verdict[];
 } {
 	// ① error 优先：逐步检查运行错误
-	const stepVerdicts: Verdict[] = [];
-	for (const [i, t] of transcripts.entries()) {
-		stepVerdicts.push(!t || t.errors.length > 0 ? "error" : "pending");
-	}
 	const stepErrors: string[] = [];
 	for (const [i, t] of transcripts.entries()) {
 		if (t && t.errors.length > 0) for (const e of t.errors) stepErrors.push(`step[${i}] ${e}`);
 	}
 	if (stepErrors.length > 0) {
+		// 任一步运行错误 ⇒ 全链 error（未跑到的步连带 error——它们不是行为问题）
+		const errs: Verdict[] = transcripts.map(() => "error");
 		return {
 			verdict: "error",
 			failures: stepErrors,
 			identity: { broken: 0, observed: 0 },
-			stepVerdicts: stepVerdicts.map((v) => (v === "pending" ? "error" : v)),
+			stepVerdicts: errs,
 		};
 	}
 	// ② 行为判定（evaluateMultiStep：failures 带 step[N] 前缀 + identity 观测）
 	const r = evaluateMultiStep(steps, transcripts, canvas ? { canvas } : undefined);
 	// ③ per-step verdict（报告粒度；用 evaluateStep 重算一次——纯函数零成本）
+	const stepVerdicts: Verdict[] = [];
 	const snapshots: (PlanSnapshot | null)[] = [];
 	for (const [i, step] of steps.entries()) {
 		const t = transcripts[i];
