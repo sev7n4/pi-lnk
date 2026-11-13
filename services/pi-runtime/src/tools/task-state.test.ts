@@ -289,3 +289,27 @@ test("A-2' ⑦: 双项交换重命名（都带 id）——删除检测不触发�
 	assert.equal(diff.list![1].id, "plan-2");
 	assert.equal(diff.list![1].content, "甲");
 });
+
+test("A-2' ⑧: 重复 content 按 id 删其一——身份判定删除检测（review Important #1）", () => {
+	const prev: TodoItemWithId[] = [
+		{ id: "plan-1", content: "X", status: "pending" },
+		{ id: "plan-2", content: "X", status: "pending" },
+	];
+	// 全量覆写意图：只保留 plan-1，删除 plan-2
+	const diff = reduce(prev, [{ id: "plan-1", content: "X", status: "pending" }]);
+	assert.ok(diff.list, "按 id 删其一 = 结构变化 ⇒ list（旧 content 启发式静默吞掉）");
+	assert.equal(diff.list!.length, 1);
+	assert.equal(diff.list![0].id, "plan-1");
+});
+
+test("A-2' ⑧b: content 兜底也能认领重复项其一（删除检测对兜底通道同样生效）", () => {
+	const prev: TodoItemWithId[] = [
+		{ id: "plan-1", content: "X", status: "pending" },
+		{ id: "plan-2", content: "X", status: "pending" },
+	];
+	// 不带 id 提交 1 项 ⇒ 兜底认领 plan-1（首个），plan-2 被删 ⇒ list
+	const diff = reduce(prev, [{ content: "X", status: "in_progress" }]);
+	assert.ok(diff.list, "兜底通道认领 plan-1 后 plan-2 未被认领 ⇒ list");
+	assert.equal(diff.list![0].id, "plan-1");
+	assert.equal(diff.list![0].status, "in_progress");
+});

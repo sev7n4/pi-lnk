@@ -139,3 +139,10 @@ id 不跨工具（子代理派发引用、assumptions 引用属后续刀 A-3）�
 | 合并 | CI 全绿 + 停合并前等授权 |
 | 上线 | 合并树==CI head 树 + 手工 dispatch runtime-deploy + reviewer 审批 |
 | 闭环 | 生产复测 §4 两项观测数据落 C-1c 基线档案前，勿宣告 ALL_PASS |
+
+## 9. 审核补遗（2026-11-13，PR #863 review Important #1 修复）
+
+- **删除检测升级为身份判定**：`reduce()` 删除检测由「content 集合启发式」改为 `prev.some((p) => !usedIds.has(p.id))`——prev 项存活当且仅当被某 next 项认领（id 通道或 content 兜底均写入 usedIds）。动机：重复 content 场景「按 id 删其一」（id 契约新使能的模型表达）在旧启发式下被静默吞掉（无 list 无 updates，store 保留全部项，回执与提交自相矛盾）。非重复场景与旧启发式逐场景等价（重命名/纯删/混合，审核代理逐场景核对）。
+- 补测试 ⑧（按 id 删其一发 list）+ ⑧b（content 兜底认领重复项其一后另一项发 list）；变异自检「删除检测退回 content 启发式」RED（2 fail）→ 恢复 GREEN。全量 1814/1814 绿。
+- Minor 留观测：拒绝回执「清单为空」分支无测试（路径平凡）；renderTodoBlock 行内 id 与 content 视觉粘连（content 以 plan-N 开头时，概率低，自纠回路兜底）。
+- 审核裁定 Declined-to-judge 清单（均先于本 PR 存在或 spec 明文排除，executor 认可不动）：propose_plan 取键一致性（tc.sessionId vs storeScopeKey）、播种侧 pickLatestSnapshot 丢弃无 id 快照（§2 明文）、TodoSessionState.counter 死字段、content 兜底新项路径透传附加属性、todos 无 min/max 约束、行内 id token 成本（§4 观测）、硬拒绝自纠成功率（部署后建档）。

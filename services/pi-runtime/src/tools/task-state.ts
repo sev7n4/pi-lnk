@@ -74,10 +74,11 @@ export function reduce(prev: readonly TodoItemWithId[], next: readonly TodoItemI
 		}
 	}
 
-	// 删除检测：prev 中有 content 不在 next（重命名场景旧 content 消失——structureChanged
-	// 已由重命名路径置位，此检测仅兜底纯删除形态，行为一致）
-	const nextContents = new Set(next.map((i) => i.content));
-	if (prev.some((p) => !nextContents.has(p.content))) structureChanged = true;
+	// 删除检测：身份判定——prev 项存活当且仅当被某 next 项认领（id 通道或 content 兜底
+	// 均写入 usedIds）。旧启发式按 content 集合判定，重复 content 场景「按 id 删其一」
+	// 会被静默吞掉（review Important #1：无 list、无 updates，store 保留全部项）；
+	// 身份判定在非重复场景与旧启发式逐场景等价（重命名/纯删/混合）。
+	if (prev.some((p) => !usedIds.has(p.id))) structureChanged = true;
 
 	if (structureChanged) return { list: out, updates: [] };
 	return { updates };
