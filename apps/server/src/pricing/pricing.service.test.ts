@@ -1,7 +1,13 @@
 import 'reflect-metadata'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PricingService } from './pricing.service'
-import { RULE_VERSION_CONSTANTS_FALLBACK, buildMatchKey, legacyPriceOf } from './pricing.core'
+import { PricingController } from './pricing.controller'
+import {
+  RULE_VERSION_CONSTANTS_FALLBACK,
+  TEXT_TOKEN_MODELS,
+  buildMatchKey,
+  legacyPriceOf,
+} from './pricing.core'
 import { enumeratePricingSpace } from './pricing.space'
 import type { PrismaService } from '../prisma/prisma.service'
 
@@ -15,6 +21,8 @@ function fakePrisma(
     grayRelease?: Record<string, unknown> | null
     grayThrows?: boolean
     marginBp?: number
+    /** Task 7：pricingSubject 主体行（isKnownTokenModel 数据化白名单查此表）。 */
+    pricingSubjects?: Array<{ modelKey: string; spec: string; status?: string }>
   } = {},
 ) {
   const findFirst = vi.fn(async () => {
@@ -37,11 +45,30 @@ function fakePrisma(
     if (opts.grayThrows) throw new Error('gray db down')
     return opts.grayRelease ?? null
   })
+  // Task 7：isKnownTokenModel 查 pricingSubject 中 in/out 双行。默认池回灌 8 个
+  // TEXT_TOKEN_MODELS（各带 in/out、status 'priced'），使既有 token 测试在无显式
+  // pricingSubjects 时仍认作已知模型；AC7 用 opts.pricingSubjects 覆盖（只含新模型）。
+  const subjectPool: Array<{ modelKey: string; spec: string; status: string }> =
+    opts.pricingSubjects ??
+    TEXT_TOKEN_MODELS.flatMap((m) => [
+      { modelKey: m, spec: 'in', status: 'priced' },
+      { modelKey: m, spec: 'out', status: 'priced' },
+    ])
+  const pricingSubject = {
+    findMany: vi.fn(async (args: { where?: { modelKey?: string; status?: { not?: string } } }) => {
+      const model = args?.where?.modelKey
+      const statusNot = args?.where?.status?.not
+      return subjectPool.filter(
+        (r) => r.modelKey === model && (statusNot ? r.status !== statusNot : true),
+      )
+    }),
+  }
   return {
     prisma: {
       priceListVersion: { findFirst },
       priceListEntry: { count },
       pricingGrayRelease: { findFirst: grayFindFirst },
+      pricingSubject,
       // P2 T4：marginBp 防御读桩（quoteTextTokens degraded 路径）；不传则 mock 缺
       // marginPolicy —— 与 agent.service 手写局部 mock 同形态，走缺省 11000bp。
       ...(opts.marginBp !== undefined
@@ -91,6 +118,7 @@ describe('PricingService.quote', () => {
     await expect(svc.quote({ capability: 'video', modelKey: 'seedance-2.0', duration: 5 })).resolves.toEqual({
       credits: 30,
       ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK,
+      degraded: true,
     })
     expect(warn).toHaveBeenCalled()
   })
@@ -102,6 +130,7 @@ describe('PricingService.quote', () => {
     await expect(svc.quote({ capability: 'text' })).resolves.toEqual({
       credits: 5,
       ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK,
+      degraded: true,
     })
     expect(warn).toHaveBeenCalled()
   })
@@ -112,6 +141,7 @@ describe('PricingService.quote', () => {
     await expect(svc.quote({ capability: 'audio', audioKind: 'music' })).resolves.toEqual({
       credits: 15,
       ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK,
+      degraded: true,
     })
   })
 
@@ -122,6 +152,7 @@ describe('PricingService.quote', () => {
     await expect(svc.quote({ capability: 'text' })).resolves.toEqual({
       credits: 5,
       ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK,
+      degraded: true,
     })
     expect(findFirst).not.toHaveBeenCalled()
   })
@@ -230,6 +261,33 @@ describe('PricingService.quoteTextTokens（P2 T4）', () => {
     expect(q.credits).toBe(9) // ceil(0.01 × 7.2 × 120)
   })
 
+  it('AC12：新增 model 级策略后 readCurrentMarginBp 仍 pin 到 global（11000，不被 3000 污染）', async () => {
+    // R4：pricing.service.test.ts 用 fakePrisma，无真实 marginPolicy.create；此处用 scope-aware 桩
+    // 模拟「存在一条 model 级策略（3000bp）」与「global 缺省（11000bp）」，断言全局 read 只捞 global。
+    const marginFindFirst = vi.fn(async (args?: { where?: { scope?: string } }) => {
+      if (args?.where?.scope === 'model') return { marginBp: 3000 }
+      if (args?.where?.scope === 'global') return { marginBp: 11000 }
+      return null
+    })
+    const prisma = {
+      marginPolicy: { findFirst: marginFindFirst },
+      priceListVersion: { findFirst: vi.fn(async () => null) },
+    } as unknown as PrismaService
+    const svc = new PricingService(prisma)
+    const q = await svc.quoteTextTokens(undefined, 'gpt-unknown-x', {
+      inputTokens: 0,
+      cacheReadTokens: 0,
+      outputTokens: 0,
+      costUsd: 0.01,
+    })
+    expect(q.ruleVersion).toBe(RULE_VERSION_CONSTANTS_FALLBACK)
+    // 11000bp 推导：ceil(0.01 × 7.2 × 110) = 8；若 model 级 3000bp 泄漏则应为 3。
+    expect(q.credits).toBe(8)
+    // 真正可证伪点：防御读必须以 scope:'global' 查询，绝不捞到 model 级策略
+    // （old 代码 orderBy createdAt desc 不传 where ⇒ 此断言 RED）。
+    expect(marginFindFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { scope: 'global', status: 'active' } }))
+  })
+
   it('④min 1：零用量走价目口径仍得 1 分', async () => {
     const { prisma } = fakePrisma(entryMap({ ...TOKEN_RATIOS }))
     const svc = new PricingService(prisma)
@@ -325,6 +383,30 @@ describe('PricingService.quoteTextTokens（P2 T4）', () => {
     expect(q.credits).toBe(8)
     expect(q.ruleVersion).toBe(RULE_VERSION_CONSTANTS_FALLBACK)
   })
+
+  it('AC7/AC11④：新登记模型（不在 8 白名单）走精确反比率，且预估 === 结算', async () => {
+    // 数据化白名单：pricingSubject 中登记 new-model 的 in/out 双行即可认作已知 token 模型，
+    // 不再依赖硬编码 TEXT_TOKEN_MODELS.includes（覆盖新上架模型零代码改动）。
+    const { prisma } = fakePrisma(
+      entryMap({
+        'text:new-model:in': 5000,
+        'text:new-model:out': 1000,
+      }),
+      {
+        pricingSubjects: [
+          { modelKey: 'new-model', spec: 'in', status: 'priced' },
+          { modelKey: 'new-model', spec: 'out', status: 'priced' },
+        ],
+      },
+    )
+    const svc = new PricingService(prisma)
+    const usage = { inputTokens: 10000, cacheReadTokens: 0, outputTokens: 2000 }
+    const settle = await svc.quoteTextTokens(undefined, 'new-model', usage)
+    expect(settle.ruleVersion).toBe(V)
+    expect(settle.credits).toBe(Math.ceil(10000 / 5000) + Math.ceil(2000 / 1000))
+    const plan = await svc.prepareTextTokenQuote(undefined, 'new-model')
+    expect(plan?.compute(usage)).toBe(settle.credits)
+  })
 })
 
 describe('PricingService.onModuleInit 启动自检', () => {
@@ -353,6 +435,7 @@ describe('PricingService.onModuleInit 启动自检', () => {
     await expect(svc.quote({ capability: 'text' })).resolves.toEqual({
       credits: 5,
       ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK,
+      degraded: true,
     })
     expect(err).toHaveBeenCalled()
   })
@@ -486,6 +569,7 @@ describe('PricingService.onModuleInit 自检条件化（P1-a）', () => {
     await expect(svc.quote({ capability: 'audio', audioKind: 'music' })).resolves.toEqual({
       credits: 15,
       ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK,
+      degraded: true,
     })
   })
 
@@ -509,6 +593,7 @@ describe('PricingService.onModuleInit 自检条件化（P1-a）', () => {
     await expect(svc.quote({ capability: 'text' })).resolves.toEqual({
       credits: 5,
       ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK,
+      degraded: true,
     })
 
     // 运维事后经发布流装上一个 active 版本。degraded 曾是永久闩锁，必须重启进程；
@@ -549,6 +634,7 @@ describe('PricingService.onModuleInit 自检条件化（P1-a）', () => {
     await expect(svc.quote({ capability: 'text' })).resolves.toEqual({
       credits: 5,
       ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK,
+      degraded: true,
     })
 
     //绕过发布流直接改库（无invalidate）：仍在 30s 探测窗口内 ⇒ 本笔仍兜底。
@@ -558,6 +644,7 @@ describe('PricingService.onModuleInit 自检条件化（P1-a）', () => {
     await expect(svc.quote({ capability: 'text' })).resolves.toEqual({
       credits: 5,
       ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK,
+      degraded: true,
     })
     expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('已从降级恢复'))
     err.mockRestore()
@@ -574,6 +661,7 @@ describe('PricingService.onModuleInit 自检条件化（P1-a）', () => {
     await expect(svc.quote({ capability: 'text' })).resolves.toEqual({
       credits: 5,
       ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK,
+      degraded: true,
     })
     expect(findFirst).toHaveBeenCalledTimes(1) // 不为自愈额外查库
     expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('已从降级恢复'))
@@ -665,5 +753,31 @@ describe('PricingService.prepareTextTokenQuote（v2 单一真相源：流式预�
     // 回合级预读逐 turn 触发，降级态是合法常态（degradedTextTokenQuote 已在上游 warn）⇒
     // 这里刻意静默：不刷日志（fail-soft 纪律）
     expect(warn).not.toHaveBeenCalled()
+  })
+})
+
+describe('PricingController.active 端点防污染（Task 7 AC11③）', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    delete process.env.PRICING_SOURCE
+  })
+
+  it('subjectKey 六段键与带 | 的异常 text 键不混入 GET /api/pricing/active 的 textTokenRatios', async () => {
+    // getActiveTextTokenRatios 只返回正常 `text:<model>:<spec>` 键；subject 六段键
+    // （image|x|1K:1|p|u 与 text|model|in|... 形态）及任何含 | 的异常键都不应污染 ratios。
+    // `text:polluted|key:in` 这一项专门证伪 `if (key.includes('|')) continue` 守卫——
+    // 移除该守卫会被误解析成带 | 的 model 键导致 ratios 出现脏键（移除即红）。
+    const { prisma } = fakePrisma(
+      entryMap({
+        'text:agnes-2.5-flash:in': 2000,
+        'text:agnes-2.5-flash:out': 500,
+        'image|x|1K:1|p|u': 9,
+        'text:polluted|key:in': 111,
+      }),
+    )
+    const c = new PricingController(new PricingService(prisma))
+    const ratios = (await c.active()).data.textTokenRatios
+    expect(Object.keys(ratios).every((k) => !k.includes('|'))).toBe(true)
+    expect(ratios['agnes-2.5-flash']).toEqual({ in: 2000, out: 500 })
   })
 })

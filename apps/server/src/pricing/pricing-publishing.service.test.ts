@@ -434,7 +434,8 @@ describe('PricingPublishingService.publish', () => {
     const err = await svc.publish(draft.id).catch((e) => e)
     expect(err).toBeInstanceOf(BadRequestException)
     expect(err.message).toContain('text:step-2-16k:out')
-    expect(err.message).toContain('ceiling')
+    // 反比率行越上限：validatePublish 统一门禁消息以「上限」标注 max 型违规
+    expect(err.message).toContain('上限')
 
     // 状态零变化
     expect(db.versions.find((v) => v.version === 'v2')!.status).toBe('draft')

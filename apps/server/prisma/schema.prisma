@@ -868,6 +868,7 @@ model PriceListVersion {
   publishedAt DateTime?
   entries     PriceListEntry[]
   grayReleases PricingGrayRelease[]
+  revision    Int              @default(0)
 }
 
 model PriceListEntry {
@@ -880,6 +881,12 @@ model PriceListEntry {
   basis      String           @default("legacy-equivalent")
   costRateId String?
   costRate   CostRate?        @relation(fields: [costRateId], references: [id])
+  subjectKey       String?
+  costSnapshotYuan Float?
+  unitSnapshot     String?
+  profitBpSnapshot Int?
+  marginPolicyId   String?
+  reason           String?
   @@unique([versionId, matchKey])
   @@index([versionId, capability])
 }
@@ -893,6 +900,13 @@ model CostRate {
   costYuan  Float
   source    String          @default("official_list")
   note      String?
+  provider    String?
+  upstream    String?
+  unitQuantity Float        @default(1)
+  effectiveFrom DateTime?
+  effectiveTo   DateTime?
+  sourceRef   String?
+  provisional Boolean      @default(false)
   createdAt DateTime        @default(now())
   entries   PriceListEntry[]
   @@unique([channel, modelKey, spec])
@@ -904,7 +918,35 @@ model MarginPolicy {
   anchorCents         Int      @default(1)
   marginBp            Int      @default(11000)
   capabilityOverrides String? // JSON，如 {"video":11000}；P1 重定价消费
+  scope         String?
+  scopeKey      String?
+  profitBp      Int?
+  priceFloorBp  Int?
+  effectiveFrom DateTime?
+  effectiveTo   DateTime?
+  status        String?
   createdAt           DateTime @default(now())
+}
+
+// ── S1 定价主体（2026-11-14-pricing-profit-billing-e2e-design §6.1）──
+model PricingSubject {
+  id                String   @id @default(cuid())
+  subjectKey        String   @unique
+  capability        String
+  modelKey          String
+  spec              String
+  provider          String
+  upstream          String
+  channelId         String   @default("platform")
+  status            String   @default("draft") // draft | cost_missing | priced | published | offboarded
+  billableUnit      String
+  unitsPerRequest   Float?
+  defaultSubjectKey String?
+  source            String   @default("auto") // auto | manual
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  @@index([modelKey, capability])
+  @@index([upstream, status])
 }
 
 // ── 白名单灰度发布（P1-a · 2026-10-14-p1a-pricing-publishing-gray-release）──

@@ -6,6 +6,10 @@ import { ModelHealthAdminController } from './model-health.controller'
 import { ModelOpsAdminController } from './model-ops.controller'
 import { PlatformChannelAdminController } from './platform-channel.controller'
 import { PricingPublishingController } from './pricing-publishing.controller'
+import { PricingSubjectController } from './pricing-subject.controller'
+import { PricingCostController } from './pricing-cost.controller'
+import { PricingMarginController } from './pricing-margin.controller'
+import { PricingMaterializeController } from './pricing-materialize.controller'
 import { PricingGrayController } from './pricing-gray.controller'
 import { UpstreamProbeAdminController } from './upstream-probe-admin.controller'
 import { UpstreamRoutesAdminController } from './upstream-routes.controller'
@@ -37,6 +41,10 @@ import { PricingModule } from '../pricing/pricing.module'
     UpstreamRoutesAdminController,
     PlatformChannelAdminController,
     PricingPublishingController,
+    PricingSubjectController,
+    PricingCostController,
+    PricingMarginController,
+    PricingMaterializeController,
     PricingGrayController,
     AutomationAdminController,
   ],

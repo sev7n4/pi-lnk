@@ -3764,7 +3764,8 @@ export class AgentService implements OnModuleInit {
     // marginPolicy 时是同步 TypeError，.catch 挂不上（#415 CI 78 例失败实证）。
     const readMarginBp = async (): Promise<number> => {
       try {
-        const row = await this.prisma?.marginPolicy?.findFirst?.({ orderBy: { createdAt: 'desc' } })
+        // T4：pin 到 global 档（phase='launch'），与 pricing.service readCurrentMarginBp 同源同口径。
+        const row = await this.prisma?.marginPolicy?.findFirst?.({ where: { scope: 'global', status: 'active' } })
         return typeof row?.marginBp === 'number' && row.marginBp > 0 ? row.marginBp : 11000
       } catch {
         return 11000
