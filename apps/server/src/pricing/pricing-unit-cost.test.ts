@@ -46,6 +46,29 @@ describe('audio 按模型精确匹配（修复跨模型误用成本）', () => {
   })
 })
 
+describe('视频 per_second 粗化行按 模型+分辨率 精确匹配（D-2，修复跨模型/跨分辨率误用）', () => {
+  const subject = { capability: 'video', modelKey: 'agnes-video-2.5-flash', spec: '2k:10s', upstream: 'u', billableUnit: 'video_call', unitsPerRequest: 1 }
+  it('同模型同分辨率 per_second 精确命中并按 duration 展开', () => {
+    const row = rate({ id: 'ps2k', modelKey: 'agnes-video-2.5-flash', spec: '2k', unit: 'per_second', unitQuantity: 1, costYuan: 0.93 })
+    const c = resolveUnitCost(subject, [row], new Date())
+    expect(c?.costYuanPerRequest).toBeCloseTo(9.3)
+  })
+  it('跨模型 per_second 不得命中（default family 也不行）', () => {
+    const seedance = rate({ id: 'sd', modelKey: 'seedance-2.0-fast', spec: '2k', unit: 'per_second', unitQuantity: 1, costYuan: 0.5 })
+    expect(resolveUnitCost(subject, [seedance], new Date())).toBeNull()
+  })
+  it('同模型跨分辨率 per_second 不得命中（480p 行不供 2k 主体）', () => {
+    const row = rate({ id: 'ps480', modelKey: 'agnes-video-2.5-flash', spec: '480p', unit: 'per_second', unitQuantity: 1, costYuan: 0.3 })
+    expect(resolveUnitCost(subject, [row], new Date())).toBeNull()
+  })
+  it('等价金标准：per_video(768p:5s=2.86) 与 per_second(768p=0.572)×5 逐元相等', () => {
+    const s = { capability: 'video', modelKey: 'minimax-h3', spec: '768p:5s', upstream: 'minimax', billableUnit: 'video_call', unitsPerRequest: 1 }
+    const pv = resolveUnitCost(s, [rate({ id: 'pv', modelKey: 'minimax-h3', spec: '768p:5s', unit: 'per_video', costYuan: 2.86 })], new Date())
+    const ps = resolveUnitCost(s, [rate({ id: 'ps', modelKey: 'minimax-h3', spec: '768p', unit: 'per_second', costYuan: 0.572 })], new Date())
+    expect(pv?.costYuanPerRequest).toBeCloseTo(ps!.costYuanPerRequest, 10)
+  })
+})
+
 describe('image_edit / image_variant 复用图像 per_image 锚点（spec="*" 暂按 1K）', () => {
   it('image_edit 命中 1K 锚点', () => {
     const anchor = rate({ id: 'a1k', modelKey: 'seedream-5.0-flash', spec: '1K', unit: 'per_image', costYuan: 0.12 })
