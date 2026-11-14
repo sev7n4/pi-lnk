@@ -73,21 +73,29 @@ export function resolveUnitCost(subject: SubjectInput, rates: UnitCostRateRow[],
 
   const family = videoPriceFamily(subject.modelKey)
   const [res, dur] = subject.spec.split(':')
+  // 图像家族（image / image_edit / image_variant）一律按 per_image 锚点计价；
+  // edit/variant 主体 spec 为 "*" 无分辨率，暂按 1K 锚点（与 image 共用真实成本，不编造）。
+  const isImageFamily = subject.capability === 'image' || subject.capability === 'image_edit' || subject.capability === 'image_variant'
+  const imageRes = subject.capability === 'image' ? res : '1K'
   const candidates = rates
     .filter((r) => {
       if (!affordable(r, at) || r.unitQuantity <= 0 || r.costYuan <= 0 || r.provisional) return false
       if (subject.capability === 'text') return r.unit === 'per_1m_tokens' && r.spec.endsWith(subject.spec)
-      if (subject.capability === 'image') return r.unit === 'per_image' && r.spec === res
+      if (isImageFamily) return r.unit === 'per_image' && r.spec === imageRes
       if (subject.capability === 'video') {
         // U6：按 family + (res, duration) 归一，不直等 modelKey
         if (videoPriceFamily(r.modelKey) !== family) return false
         return (r.unit === 'per_video' && r.spec === `${res}:${dur}`) || r.unit === 'per_second'
       }
-      return r.unit === 'per_call'
+      // 音频（及任何 per_call 能力）：必须按模型精确匹配，禁止跨模型误用成本。
+      // 例：stepaudio-3-gen-preview 不应套用 step-tts-mini 的字符成本。
+      return r.unit === 'per_call' && r.modelKey === subject.modelKey
     })
     .sort((a, b) =>
       (SOURCE_RANK[b.source] ?? 0) - (SOURCE_RANK[a.source] ?? 0) ||
       (b.effectiveFrom?.getTime() ?? 0) - (a.effectiveFrom?.getTime() ?? 0) ||
+      // 同档成本优先命中与主体同 modelKey 的行（让用户按模型导入的成本生效，而非误套锚点行）
+      (a.modelKey === subject.modelKey ? 0 : 1) - (b.modelKey === subject.modelKey ? 0 : 1) ||
       (a.unit === 'per_second' ? 1 : 0) - (b.unit === 'per_second' ? 1 : 0),
     )
 

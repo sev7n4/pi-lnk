@@ -30,3 +30,31 @@ describe('unit normalization', () => {
     expect(c?.costRateId).toBe('r2')
   })
 })
+
+describe('audio 按模型精确匹配（修复跨模型误用成本）', () => {
+  it('stepaudio-3-tts 不得套用 step-tts-mini 的字符成本', () => {
+    const mini = rate({ id: 'mini', modelKey: 'step-tts-mini', spec: 'per_100_chars', unit: 'per_call', unitQuantity: 100, costYuan: 0.009 })
+    const c = resolveUnitCost({ capability: 'audio', modelKey: 'stepaudio-3-tts', spec: 'voice', upstream: 'stepfun', billableUnit: 'chars_100', unitsPerRequest: 100 }, [mini], new Date())
+    expect(c).toBeNull()
+  })
+  it('存在同模型成本时精确命中并生效', () => {
+    const tts = rate({ id: 'tts', modelKey: 'stepaudio-3-tts', spec: 'per_100_chars', unit: 'per_call', unitQuantity: 100, costYuan: 0.025 })
+    const mini = rate({ id: 'mini', modelKey: 'step-tts-mini', spec: 'per_100_chars', unit: 'per_call', unitQuantity: 100, costYuan: 0.009 })
+    const c = resolveUnitCost({ capability: 'audio', modelKey: 'stepaudio-3-tts', spec: 'voice', upstream: 'stepfun', billableUnit: 'chars_100', unitsPerRequest: 100 }, [tts, mini], new Date())
+    expect(c?.costRateId).toBe('tts')
+    expect(c?.costYuanPerRequest).toBeCloseTo(0.025)
+  })
+})
+
+describe('image_edit / image_variant 复用图像 per_image 锚点（spec="*" 暂按 1K）', () => {
+  it('image_edit 命中 1K 锚点', () => {
+    const anchor = rate({ id: 'a1k', modelKey: 'seedream-5.0-flash', spec: '1K', unit: 'per_image', costYuan: 0.12 })
+    const c = resolveUnitCost({ capability: 'image_edit', modelKey: 'agnes-image-2.5-flash', spec: '*', upstream: 'apimart', billableUnit: 'image_count', unitsPerRequest: 1 }, [anchor], new Date())
+    expect(c?.costYuanPerRequest).toBeCloseTo(0.12)
+  })
+  it('image_variant 命中 1K 锚点', () => {
+    const anchor = rate({ id: 'a1k', modelKey: 'seedream-5.0-pro', spec: '1K', unit: 'per_image', costYuan: 0.3 })
+    const c = resolveUnitCost({ capability: 'image_variant', modelKey: 'agnes-image-2.0-flash', spec: '*', upstream: 'apimart', billableUnit: 'image_count', unitsPerRequest: 1 }, [anchor], new Date())
+    expect(c?.costYuanPerRequest).toBeCloseTo(0.3)
+  })
+})

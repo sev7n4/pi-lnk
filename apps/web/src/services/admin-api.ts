@@ -312,6 +312,21 @@ export type CostRateRow = {
   createdAt: string
 }
 
+/** 极简导入：运维只填 模型 + 档位 + 人民币金额，unit/unitQuantity 由服务端按主体推断。 */
+export type CostRateImportRow = {
+  modelKey: string
+  spec: string
+  costYuan: number
+  provisional?: boolean
+  source?: 'official_list' | 'negotiated' | 'channel_actual' | 'provisional'
+}
+
+export type CostRateImportResult = {
+  imported: number
+  failed: number
+  results: Array<{ modelKey: string; spec: string; ok: boolean; message?: string }>
+}
+
 /** 利润策略录入：phase 由服务端 phaseOf(scope, scopeKey) 生成。 */
 export type MarginPolicyInput = {
   scope: string
@@ -511,6 +526,10 @@ export const adminApi = {
       unwrap(adminHttp.put('/admin/pricing/cost-rates', input)),
 
     listCostRates: (): Promise<CostRateRow[]> => unwrap(adminHttp.get('/admin/pricing/cost-rates')),
+
+    /** 极简导入成本：仅传 模型/档位/金额，服务端按主体推断 unit。 */
+    importCostRates: (rows: CostRateImportRow[]): Promise<CostRateImportResult> =>
+      unwrap(adminHttp.post('/admin/pricing/cost-rates/import', { rows })),
 
     putMarginPolicy: (input: MarginPolicyInput): Promise<{ phase: string }> =>
       unwrap(adminHttp.put('/admin/pricing/margin-policies', input)),
