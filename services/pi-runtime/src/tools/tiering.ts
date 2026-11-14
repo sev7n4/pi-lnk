@@ -168,6 +168,13 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	// 资产点名恒 0 ⇒ 守卫 A1 不受影响；「可下沉候选」提示列表会列出它，
 	// 裁决即不下沉（docs/superpowers/specs/2026-11-11-subagent-tier-promotion-design.md §3）。
 	"spawn_subagent",
+	// 刀A（2026-11-14 D2 non-block）：collect_subagent_result 由 L3 skill
+	// research-delegate/SKILL.md 按名字点名（「派完用 collect 收结果」），按本文件
+	// 「被点名 ⇒ 必须常驻」准绳：进延迟集会吃 vendor "Tool ... is unavailable"
+	// 且无恢复路径（tool_search 触发率实测 0）。且它是 background 模式唯一的
+	// 结果回收入口，spawn 已常驻 ⇒ 按「常驻不得给延迟工具的领域凑部分答案」铁律
+	// 必须同处常驻。由 verify-tool-tiering A1 守住。
+	"collect_subagent_result",
 	// gen（用户确认后当轮即用）
 	"run_image_generation",
 	"run_video_generation",

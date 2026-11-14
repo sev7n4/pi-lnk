@@ -104,6 +104,10 @@ const ALL_NAMES = [
 	"group_nodes",
 	"ungroup_group",
 	"set_group_color",
+	// C4 子代理（2026-11-11 提回常驻）与刀A 结果回收（2026-11-14 D2）：
+	// 两者都被 skill research-delegate 点名，必须常驻；collect 是 background 唯一回收入口。
+	"spawn_subagent",
+	"collect_subagent_result",
 ];
 const fakeTools = () =>
 	ALL_NAMES.map((n) => fakeTool(n, n === "undo" ? "撤销上一步画布操作" : undefined));
@@ -137,6 +141,8 @@ describe("buildToolEnsemble（官方 Dynamic Tool Loading：全注册 + 初始�
 			"cancel_generation",
 			"ask_user",
 			"load_skill",
+			"spawn_subagent",
+			"collect_subagent_result",
 		]) {
 			assert.ok(names.has(n), `${n} 必须常驻`);
 		}

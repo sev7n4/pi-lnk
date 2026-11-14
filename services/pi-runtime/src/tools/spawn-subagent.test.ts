@@ -7,7 +7,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { Metrics } from "../metrics.js";
 import { SubagentCoordinator, SUBAGENT_TOOL_WHITELIST } from "../gate/subagent.js";
-import { createSpawnSubagentTool } from "./spawn-subagent.js";
+import { createSpawnSubagentTool, createCollectSubagentTool, composeSubagentPrompt, DEFAULT_REPORT_FORMAT } from "./spawn-subagent.js";
 
 const noopUpdate = () => {};
 /** vendor AgentHarnessTool.execute 尾参 stub（invocation + chord Context）。 */
@@ -170,7 +170,127 @@ describe("spawn_subagent 工具", () => {
 		assert.match(String(body.hint ?? ""), /自行联网\/读文档完成调研/);
 	});
 
+	// —— 刀B（2026-11-14）：报告截断标记（G6 前半，spec §4.3）——
+	// 契约：runSubagent（session-manager）负责调 applyReportTruncation 置 truncated；
+	// 工具层只透传 outcome.truncated。边界本身在 gate/subagent.test.ts 钉。
+	it("★ outcome.truncated=true 时透传到结果", async () => {
+		const c = new SubagentCoordinator();
+		c.attach({
+			runSubagent: async () => ({ report: "x".repeat(20_000), turns: 1, durationMs: 1, status: "completed", truncated: true }),
+		});
+		const res = await createSpawnSubagentTool(c, new Metrics()).execute(
+			"call-trunc", { task: "t" } as never, noopUpdate,
+			{ piSessionKey: "k" } as never, invocation as never, chordCtx as never,
+		);
+		const body = textOf(res);
+		assert.equal(body.ok, true);
+		assert.equal(body.truncated, true);
+	});
+	it("★ outcome 无 truncated 字段时结果亦无（additive 边界）", async () => {
+		const c = new SubagentCoordinator();
+		c.attach({
+			runSubagent: async () => ({ report: "y".repeat(20_000), turns: 1, durationMs: 1, status: "completed" }),
+		});
+		const res = await createSpawnSubagentTool(c, new Metrics()).execute(
+			"call-exact", { task: "t" } as never, noopUpdate,
+			{ piSessionKey: "k" } as never, invocation as never, chordCtx as never,
+		);
+		const body = textOf(res);
+		assert.equal(body.ok, true);
+		assert.equal("truncated" in body, false);
+	});
+
 	it("★ 子代理白名单不含 spawn_subagent（递归封死不变量，呼应 spec §3.3）", () => {
 		assert.equal(SUBAGENT_TOOL_WHITELIST.has("spawn_subagent"), false);
+	});
+});
+
+// —— 刀B（2026-11-14，spec 2026-11-14-subagent-contract-d2-nonblock-design.md §4.1）——
+describe("composeSubagentPrompt（task 结构化 + 默认报告骨架）", () => {
+	it("无 background/reportFormat 时只追加默认骨架", () => {
+		const p = composeSubagentPrompt("调研 A vs B");
+		assert.equal(p, "调研 A vs B\n【期望报告形态】" + DEFAULT_REPORT_FORMAT);
+	});
+	it("background 与自定义 reportFormat 都生效（自定义时不含默认骨架）", () => {
+		const p = composeSubagentPrompt("查 X", "已读过官方文档", "只要对比表");
+		assert.ok(p.includes("【背景】已读过官方文档"));
+		assert.ok(p.includes("【期望报告形态】只要对比表"));
+		assert.ok(!p.includes(DEFAULT_REPORT_FORMAT));
+	});
+	it("空串/纯空白字段跳过", () => {
+		const p = composeSubagentPrompt("查 X", "  ", "");
+		assert.ok(!p.includes("【背景】"));
+		assert.ok(p.includes("【期望报告形态】" + DEFAULT_REPORT_FORMAT));
+	});
+	it("DEFAULT_REPORT_FORMAT 含结论先行与来源清单要求", () => {
+		assert.ok(DEFAULT_REPORT_FORMAT.includes("结论先行"));
+		assert.ok(DEFAULT_REPORT_FORMAT.includes("来源"));
+		assert.ok(DEFAULT_REPORT_FORMAT.includes("未核实"));
+	});
+});
+
+// —— 刀A（2026-11-14）：mode 双分支 + collect 工具（spec 2026-11-14-subagent-contract-d2-nonblock-design.md §6.3）——
+describe("spawn_subagent mode 分支 + collect_subagent_result", () => {
+	it("block 默认：结果含 callId（additive）", async () => {
+		const c = new SubagentCoordinator();
+		c.attach({ runSubagent: async () => ({ report: "R", turns: 1, durationMs: 1, status: "completed" }) });
+		const res = await createSpawnSubagentTool(c, new Metrics()).execute(
+			"c-b", { task: "t" } as never, noopUpdate,
+			{ piSessionKey: "k" } as never, invocation as never, chordCtx as never,
+		);
+		const body = textOf(res);
+		assert.equal(body.ok, true);
+		assert.ok(typeof body.callId === "string" && (body.callId as string).length > 10);
+	});
+
+	it("background：立即返回 callId+running+hint；spawned 照打；随后 collect 拿到报告", async () => {
+		const c = new SubagentCoordinator();
+		c.attach({ runSubagent: async () => ({ report: "后台报告", turns: 2, durationMs: 5, status: "completed" }) });
+		const m = new Metrics();
+		const spawn = createSpawnSubagentTool(c, m);
+		const collect = createCollectSubagentTool(c, m);
+		const res = await spawn.execute(
+			"c-bg", { task: "t", mode: "background" } as never, noopUpdate,
+			{ piSessionKey: "k" } as never, invocation as never, chordCtx as never,
+		);
+		const body = textOf(res);
+		assert.equal(body.ok, true);
+		assert.equal(body.status, "running");
+		const callId = body.callId as string;
+		assert.match(String(body.hint), /collect_subagent_result/);
+		assert.match(m.render(0, "test"), /pi_runtime_subagent_spawned_total 1/);
+		// collect：running → 终态
+		const r1 = await collect.execute("cc1", { callId } as never, noopUpdate, {} as never, invocation as never, chordCtx as never);
+		// 后台 runner 是 async 立即 resolve——microtask 后应已 settle；若恰 running 也合法（不硬断言）
+		const b1 = textOf(r1);
+		assert.ok(["running", "completed"].includes(b1.status as string));
+		await new Promise((r) => setTimeout(r, 10));
+		const r2 = await collect.execute("cc2", { callId } as never, noopUpdate, {} as never, invocation as never, chordCtx as never);
+		const b2 = textOf(r2);
+		assert.equal(b2.ok, true);
+		assert.equal(b2.status, "completed");
+		assert.equal(b2.report, "后台报告");
+		// collect metrics
+		assert.match(m.render(0, "test"), /pi_runtime_subagent_collect_total\{status="completed"\} 1/);
+	});
+
+	it("collect unknown：ok:false + 重新派发 hint", async () => {
+		const c = new SubagentCoordinator();
+		const collect = createCollectSubagentTool(c, new Metrics());
+		const res = await collect.execute("cc3", { callId: "nope" } as never, noopUpdate, {} as never, invocation as never, chordCtx as never);
+		const body = textOf(res);
+		assert.equal(body.ok, false);
+		assert.equal(body.error, "subagent_unknown");
+		assert.match(String(body.hint), /重新派发/);
+	});
+
+	it("collect 注册形状：tier=read（不在 plan-gate 拦截面）", () => {
+		const tool = createCollectSubagentTool(new SubagentCoordinator(), new Metrics());
+		assert.equal(tool.name, "collect_subagent_result");
+		assert.equal(tool.tier, "read");
+	});
+
+	it("★ collect 不在子代理白名单（嵌套/越权双封）", () => {
+		assert.equal(SUBAGENT_TOOL_WHITELIST.has("collect_subagent_result"), false);
 	});
 });

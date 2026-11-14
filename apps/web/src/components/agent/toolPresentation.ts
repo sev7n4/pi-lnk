@@ -73,6 +73,9 @@ export const TOOL_PRESENTATION: Record<string, ToolPresentation> = {
   delete_memory: { icon: '🧹', verb: '删除记忆' },
   propose_plan: { icon: '📐', verb: '拟定计划' },
   spawn_subagent: { icon: '🤖', verb: '派生子代理' },
+  // 刀A（2026-11-14 D2 non-block）：background 派生的结果回收入口，与 spawn 对望。
+  // 漏登会落 ⚙「调用 collect_subagent_result」自曝兜底（verify-tool-tiering A5）。
+  collect_subagent_result: { icon: '📥', verb: '收取子代理结果' },
   view_canvas_media: { icon: '🎞️', verb: '查看画布素材' },
   // VISP S-7（2026-11-05）：read_media 取用户上传附件原图，与 view_canvas_media（画布节点）对望
   read_media: { icon: '📎', verb: '查看上传附件' },

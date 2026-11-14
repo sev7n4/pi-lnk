@@ -68,7 +68,9 @@ export function resetPlanState(key: string): void {
 /** 拦截判定：planPending 且 tier ∈ gated 且未豁免。tier 未知（注册表外工具）放行——
  * 收紧未知面属二线防线，plan-gate 只管「已注册的写类工具」。 */
 export const PLAN_GATED_TIERS: ReadonlySet<string> = new Set(["gen", "destructive", "graph_batch", "write_light"]);
-export const PLAN_EXEMPT_TOOLS: ReadonlySet<string> = new Set(["todo_write"]);
+// P4 豁免（#841 F5，2026-11-14 落地）：调研是 plan 的输入而非写操作——子代理白名单
+// 物理只读（gate/subagent.ts SUBAGENT_TOOL_WHITELIST），plan 期豁免无副作用面。
+export const PLAN_EXEMPT_TOOLS: ReadonlySet<string> = new Set(["todo_write", "spawn_subagent"]);
 
 export function shouldBlockForPlan(toolName: string, tier: string | undefined, key: string): boolean {
 	if (!isPlanPending(key)) return false;

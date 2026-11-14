@@ -5,7 +5,7 @@ import type { LnkpiTool } from "./types.js";
 import { buildTodoTools, isTodoToolEnabled } from "./todo.js";
 import { createNestGenerationOracle } from "./acceptance.js";
 import { createProposePlanTool } from "./propose-plan.js";
-import { createSpawnSubagentTool } from "./spawn-subagent.js";
+import { createSpawnSubagentTool, createCollectSubagentTool } from "./spawn-subagent.js";
 import { planGateEnabled } from "../runtime-config.js";
 import type { Metrics } from "../metrics.js";
 import type { PendingToolRegistry } from "../pending-registry.js";
@@ -55,7 +55,9 @@ export function resolveToolsWithClient(
 		// C4：spawn_subagent 只依赖 coordinator（attach SessionManager 后），纯文本模式同样可用
 		// （子会话工具表 = 白名单 ∩ 本进程已注册工具，纯文本模式下自然缩为 todo/plan/spawn）。
 		const planTools = deps.registry && planGateEnabled() ? [createProposePlanTool(deps.registry, metrics)] : [];
-		const spawnTools = deps.coordinator ? [createSpawnSubagentTool(deps.coordinator, metrics)] : [];
+		const spawnTools = deps.coordinator
+			? [createSpawnSubagentTool(deps.coordinator, metrics), createCollectSubagentTool(deps.coordinator, metrics)]
+			: [];
 		return {
 			tools: [...(isTodoToolEnabled() ? buildTodoTools() : []), ...planTools, ...spawnTools],
 			client: null,
@@ -89,7 +91,8 @@ export function resolveToolsWithClient(
 		// C3：propose_plan 同上——不依赖 client，registry 存在即可注册（kill switch PI_RUNTIME_PLAN_GATE）。
 		...(deps.registry && planGateEnabled() ? [createProposePlanTool(deps.registry, metrics)] : []),
 		// C4：spawn_subagent 同上——不依赖 client，coordinator 存在即可注册（spec 2026-10-10-c4-subagent-design.md §3.1）。
-		...(deps.coordinator ? [createSpawnSubagentTool(deps.coordinator, metrics)] : []),
+		// 刀A（spec 2026-11-14 §6.3）：collect_subagent_result 与 spawn 同条件注册（coordinator 存在即可，tier=read）。
+		...(deps.coordinator ? [createSpawnSubagentTool(deps.coordinator, metrics), createCollectSubagentTool(deps.coordinator, metrics)] : []),
 		...buildCanvasReadTools(client),
 		// P0 感知闭环（2026-10-14）：view_canvas_media——画布/侧栏图片像素按需回流 tool result。
 		...buildViewCanvasMediaTools(client),
