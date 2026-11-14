@@ -163,3 +163,29 @@ flowchart LR
 - V3 令牌守卫：`design-token.test.ts` **99/99** 全绿；仅 `--lnk-*`、零 `--neo-*` 新增、neoUsageRatchet 计数不增。
 - V4（部署后人工）待生产复测：单选/多选题前缀分别显示 ○/□，且多选「其他」打字后答案数组同时含选项值与自定义文本。
 - V5 PR #830 CI 全绿（`Build monorepo` / `Verify spec figures` / `Build API Docker image` 均 success）。
+
+## 12. 修订：增强版方案A——去选项前缀 ○/□，选中徽标形状随题型（2026-11-14）
+
+### 12.1 走查发现（生产真机 + 截图复核）
+§11 落地的「选项前缀恒定 ○/□」触发新的可用性缺陷：
+- 前缀 ○/□ 是**恒空心**的题型指示，选中时仅把描边变紫、形状不变；用户天然期待"控件选中应填充"，结果"前缀没填上"，而**末尾又弹出实心勾** → 两层都在说"选了"，前缀那层还说不清，用户感知为"重复且怪"。
+- 根因：把"题型（单选/多选）"与"选中（未选/已选）"两个语义挤进了同一个前缀图标，前缀既不像控件、又不像纯装饰。
+- 追加确认：多选末尾徽标为**统一圆形勾**，与顶部类型标签的方形 ☑ 形状错位——同类"形状不一致"瑕疵。
+
+### 12.2 决策（PM 视角，三方案对比 + 用户拍板）
+- **方案 A（采用·增强版）**：去掉选项前缀的空心 ○/□，只留序号 1..n；选中态由卡片紫色描边 + 末尾 accent 徽标承载；单/多类型信号已由 §10 题级 `.ask-cardinality` 标签常驻，**零信息损失**；并顺手让末尾徽标形状随题型对齐（单选=圆形勾 / 多选=圆角方形☑），使"圆=单选族、方=多选族"在题级标签与末尾徽标两层彻底自洽。
+- 方案 B（弃）：去末尾勾、让前缀圈真正填充（原生 radio/checkbox 隐喻）——与卡既有"末尾勾"视觉语言不一致、控件更挤、改动更大。
+- 极小改动原则：仅删前缀 type 圈 + 一个条件 class + 一条 CSS；纯 `--lnk-*` 令牌，零 `--neo-*` 新增。
+
+### 12.3 改动
+| 文件 | 改动 |
+|---|---|
+| `apps/web/src/components/agent/AskUserCard.vue` | 删选项前缀 `.ask-chip-marker`（○/□ SVG），`.ask-chip-lead` 仅留 `.ask-chip-index` 序号；末尾 `.ask-chip-check` 加 `:class="{ 'is-multi': current.multiSelect }"`；新增 `.ask-chip-check.is-multi { border-radius: var(--lnk-radius-lg) }`（多选=圆角方形）；「其他…」(+) 与自定义(✎) 行的 `.ask-chip-marker` 保留（功能性图标，非 type 指示） |
+| `apps/web/src/components/agent/AskUserCard.test.ts` | 改写 D2 更强版用例：题级标签形状（单○/多☑）+ 末尾徽标 class（单无 `is-multi`/多有 `is-multi`）+ 预设项前缀 `ask-chip-marker` 计数=1（仅「其他…」+ 图标，证明 ○/□ 已移除）；D3 序号用例保留 |
+| `docs/superpowers/specs/2026-10-28-askuser-card-visual-refinement.md` | 新增本 §12 |
+
+### 12.4 验收
+- V1 `AskUserCard.test.ts` **21/21** 全绿（§11 的 20 + 改写 D2 用例）；`AgentSideRail.askInline.test.ts` 4/4 全绿；node24 `--maxWorkers=1 --no-file-parallelism`。
+- V2 `vue-tsc -b` 本组件零类型错误。
+- V3 令牌守卫：`design-token.test.ts` **99/99** 全绿；仅 `--lnk-*`、零 `--neo-*` 新增、neoUsageRatchet 计数不增。
+- V4（部署后人工）待生产复测：单选/多选题前缀仅显示序号、无 ○/□；多选选中项末尾徽标为圆角方形☑，单选为圆形勾。

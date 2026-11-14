@@ -10,8 +10,9 @@ import { computed, nextTick, ref } from 'vue'
  * - 行为增强：单选答后自动推进到下一未答题（修改已答题不推进，防误跳）；
  *   multiSelect 的「其他」文本进已选集合（修复旧实现写入单选暂存位被静默丢弃的缺陷）。
  * - 样式只消费 --lnk-* L2/L3 令牌（暗/亮主题自适应；design-token.test.ts 成对性守卫）。
- * - D2 更强版 + D3（本回合）：选项前缀恒定类型指示（单选用 ○ / 多选用 □）+ 序号 1..n；
- *   选中态沿用右侧 accent 对勾徽标，「单选/多选」与「未选/已选」两层语义在选项层分离。
+ * - D2 更强版 + D3（本回合）：增强版方案A——选项前缀去掉冗余的空心 ○/□，只留序号 1..n；
+ *   单/多类型信号由题干 .ask-cardinality 标签承载，选中态由卡片描边 + 末尾 accent 徽标承载，
+ *   且末尾徽标形状随题型对齐（单选=圆形勾 / 多选=圆角方形☑），「圆=单选族、方=多选族」三层自洽。
  *   6 态契约齐备：hover/active/focus-visible(2px border-focus 外环)/disabled（显式 text-disabled，不用 opacity）。
  *   动效只动 transform/opacity，prefers-reduced-motion 强制静止。
  *   零第三方图标：对勾为内联 SVG（24 网格）。
@@ -285,14 +286,10 @@ function submitOther(q: AskUserQuestion) {
 					@click="pick(current, opt.value)"
 				>
 					<span class="ask-chip-lead" aria-hidden="true">
-						<span class="ask-chip-marker">
-							<svg v-if="current.multiSelect" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="3" /></svg>
-							<svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="7" /></svg>
-						</span>
 						<span class="ask-chip-index">{{ i + 1 }}</span>
 					</span>
 					<span class="ask-chip-label">{{ opt.label }}</span>
-					<span class="ask-chip-check" aria-hidden="true">
+					<span class="ask-chip-check" :class="{ 'is-multi': current.multiSelect }" aria-hidden="true">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m5 13 4 4L19 7" /></svg>
 					</span>
 				</button>
@@ -623,6 +620,10 @@ function submitOther(q: AskUserQuestion) {
 	opacity: 1;
 	transform: scale(1);
 }
+/* 增强版方案A：末尾选中徽标形状随题型——多选为圆角方形☑，单选保持圆形（与题级 .ask-cardinality 标签同族） */
+.ask-chip-check.is-multi {
+	border-radius: var(--lnk-radius-lg);
+}
 .ask-chip-check svg {
 	width: var(--lnk-space-3);
 	height: var(--lnk-space-3);
@@ -646,7 +647,7 @@ function submitOther(q: AskUserQuestion) {
 	flex: none;
 }
 
-/* ── D3 序号 + D2 更强版：选项前缀簇（左）── 单选用 ○ / 多选用 □ 为恒定类型指示；序号 1..n ── */
+/* ── D3 序号（左前缀簇）：增强版方案A 去 ○/□ 类型圈，仅留序号 1..n；类型由题级标签承载 ── */
 .ask-chip-lead {
 	display: inline-flex;
 	align-items: center;
