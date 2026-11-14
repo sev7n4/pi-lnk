@@ -59,7 +59,7 @@ const fakeWriteTool: LnkpiTool = {
 	},
 };
 
-const metricsStub = { observePlanProposed() {}, observePlanDecision() {}, observePlanGateBlocked() {} } as unknown as Metrics;
+const metricsStub = { observePlanProposed() {}, observePlanDecision() {}, observePlanGateBlocked() {}, observePlanAssumptions() {} } as unknown as Metrics;
 const registryStub = {
 	waitForUser: async () => ({ status: "answered", answers: { plan_confirm: ["execute"] } }),
 } as unknown as PendingToolRegistry;
