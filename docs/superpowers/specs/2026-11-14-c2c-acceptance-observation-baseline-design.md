@@ -33,7 +33,7 @@ C-2a（生成 oracle）与 C-2b（canvas_state + 多 kind 聚合 + isError 语�
 | 7 | `pass / fail_closed / fail_open` 均在调用级打；`checkedAny=false` ⇒ `skip`（不打 pass） | `tools/todo.ts:200-250` |
 | 8 | 两族指标是**进程内 Map**，无持久化、无落盘；pod 重建即清零 | `metrics.ts:142-144`, `:482-489`, `:805-816` |
 | 9 | `todo` 状态作用域键 `storeScopeKey = canvasSessionId ?? sessionId` ⇒ **清单按画布共享，非按会话隔离**；探针复用同一画布会跨会话累积清单 | `session-manager.ts:1347`, `tools/todo.ts:276` |
-| 10 | `/data/sessions/sessions/*/events.jsonl`（DATA_DIR=`/data/sessions` + session-retention 再拼 `sessions` 子目录，见事实 12）是 append-only 结构性事件 journal，含 `tool_execution_start/end` 完整事件：`start` 带工具参数（含 `todos[].status/acceptance`），`end` 带结果（含 `isError` 与 `details.todo.rejected` 补正标记）⇒ 可离线读取、精确分出分母/分子。**注意**：`/data/sessions` 是 pod PVC（§4 访问机制），CVM 不能直接读；事件 schema 由采集器单测钉死（§4 AC2–AC5）。 | `events-journal.ts:19-36,36,68-91`、`session-retention.ts:71` |
+| 10 | events.jsonl 真实路径为**两级嵌套**（2026-11-14 生产取证实证，原稿 `/data/sessions/sessions/*` 误判会零命中）：顶层会话 `/data/sessions/<session-id>/events.jsonl` + 画布子会话 `/data/sessions/<session-id>/sessions/<canvas-session-id>/events.jsonl`（因 `storeScopeKey = canvasSessionId ?? sessionId` 按画布共享，画布会话为 session 内 `sessions` 子目录）。是 append-only 结构性事件 journal，含 `tool_execution_start/end` 完整事件：`start` 带工具参数（含 `todos[].status/acceptance`），`end` 带结果（含 `isError` 与 `details.todo.rejected` 补正标记）⇒ 可离线读取、精确分出分母/分子。**注意**：`/data/sessions` 是 pod PVC（§4 访问机制），CVM 不能直接读；采集器须递归 `find /data/sessions -name events.jsonl`（depth≤5）；事件 schema 由采集器单测钉死（§4 AC2–AC5）。 | `events-journal.ts:19-36,36,68-91`、`session-manager.ts:1347`、`session-retention.ts:71` |
 | 11 | `pi_runtime_tool_calls_total{tool="todo_write"}` 由事件层渲染，**含 schema 校验失败调用**；C-2a 的写入率分母口径因此有偏（§3 D2） | `metrics.ts:164`, 生产 `/metrics` 实测 |
 | 12 | 会话目录受 TTL 驱逐：**`sessionTtlMs=1_800_000`（30 min）**，sweep 每 `300_000`（5 min）跑一次；count 上限 200、bytes 上限 ~3.2 GB（`runtime-config.ts:148-149`、`values.yaml:63-66`）。⇒ 采集周期必须 **≤ TTL/4 = 7.5 min**（取保守默认 **≤7 min**），否则事件被 sweep 前未被采样 ⇒ 分母不可回溯。 | `runtime-config.ts:148-149,192-193`、`charts/pi-lnk-runtime/values.yaml:57,63-66` |
 
@@ -135,10 +135,10 @@ pi_runtime_tool_calls_total{tool="todo_write",result="error",error_class="intern
 | 源 | 真实位置 | CVM 如何取 | 只读性 |
 |---|---|---|---|
 | 计数器 | `:30100/metrics`（NodePort，宿主可达） | `curl --noproxy '*' localhost:30100/metrics` | ✅ GET |
-| 事件 journal | `/data/sessions/sessions/*/events.jsonl`（**pod PVC，非 CVM 文件系统**） | `kubectl exec deploy/pi-lnk-runtime -n pi-lnk-runtime -- sh -c 'cat /data/sessions/sessions/*/events.jsonl'`（`KUBECONFIG=/etc/rancher/k3s/k3s.yaml`，与 RUNBOOK 取证同手法） | ✅ 仅 `cat`，不写 |
+| 事件 journal | `/data/sessions/<sid>/events.jsonl` + `/data/sessions/<sid>/sessions/<csid>/events.jsonl`（**两级嵌套，pod PVC，非 CVM 文件系统**；采集器递归 `find /data/sessions -name events.jsonl`） | `kubectl exec deploy/pi-lnk-runtime -n pi-lnk-runtime -- sh -c 'find /data/sessions -name events.jsonl -exec cat {} +'`（`KUBECONFIG=/etc/rancher/k3s/k3s.yaml`，与 RUNBOOK 取证同手法） | ✅ 仅 `cat`，不写 |
 | pod / 版本 | 部署元数据 | `kubectl get deploy -n pi-lnk-runtime` + `/metrics` 的 `build_info` 标签（版本须等于镜像 tag，RUNBOOK:55） | ✅ GET |
 
-⚠️ **致命误设**：把 events 当成「CVM 本地盘路径」直接 `fs.readdir` ⇒ 必然 `ENOENT`。`/data/sessions` 经 PVC 挂进 pod，CVM 侧无此挂载；必须 `kubectl exec`（或改为 in-cluster CronJob 挂同 PVC）。本刀采 CVM `kubectl exec` 路线，复用既有取证范式、零新部署单元。
+⚠️ **致命误设（两类，2026-11-14 生产取证补全）**：(a) 把 events 当成「CVM 本地盘路径」直接 `fs.readdir` ⇒ 必然 `ENOENT`——`/data/sessions` 经 PVC 挂进 pod，CVM 侧无此挂载；必须 `kubectl exec`（或改为 in-cluster CronJob 挂同 PVC）。(b) 写成单层 glob `/data/sessions/sessions/*/events.jsonl` ⇒ 生产**零命中**（真实没有顶层 `sessions/` 目录，`sessions` 是 session 内的画布子会话目录）；必须用两级递归 `find /data/sessions -name events.jsonl`，覆盖 `<sid>/events.jsonl` 与 `<sid>/sessions/<csid>/events.jsonl`。本刀采 CVM `kubectl exec` 路线，复用既有取证范式、零新部署单元。
 
 **输出**：append-only `acceptance-samples.jsonl`，每行一个窗口：
 
