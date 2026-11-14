@@ -217,6 +217,62 @@ describe("runEvalCase（pi-runtime HTTP 驱动）", () => {
 	});
 });
 
+describe("⭐ BYOK：llmOverride 必须透传进 /sessions body（绕开 AGNES 429 的关键链路）", () => {
+	it("传了 llmOverride ⇒ /sessions body 含 llm 且字段完整", async () => {
+		const fake = await startFakeRuntime({ events: [] });
+		try {
+			await runEvalCase(
+				{
+					baseUrl: fake.url,
+					llmOverride: {
+						model: "deepseek-v4-flash",
+						apiKey: "sk-test-only-not-real",
+						baseUrl: "https://api.deepseek.com/v1",
+						providerRef: "eval-byok",
+						source: "user",
+						reasoning: false,
+					},
+				},
+				{ text: "hi" },
+			);
+			const createCall = fake.calls.find((c) => c.path === "/sessions" && c.method === "POST");
+			assert.ok(createCall, "/sessions POST 必须发出");
+			const body = createCall!.body as Record<string, unknown>;
+			assert.ok(body.llm, "body 必须含 llm 覆盖");
+			assert.deepEqual(
+				body.llm,
+				{
+					model: "deepseek-v4-flash",
+					apiKey: "sk-test-only-not-real",
+					baseUrl: "https://api.deepseek.com/v1",
+					providerRef: "eval-byok",
+					source: "user",
+					reasoning: false,
+				},
+				"llm 字段必须原样透传（含 apiKey，供服务端 BYOK 装配）",
+			);
+		} finally {
+			await fake.close();
+		}
+	});
+
+	it("未传 llmOverride ⇒ body 不含 llm（回落 AGNES，既有行为不变）", async () => {
+		const fake = await startFakeRuntime({ events: [] });
+		try {
+			await runEvalCase({ baseUrl: fake.url }, { text: "hi" });
+			const createCall = fake.calls.find((c) => c.path === "/sessions" && c.method === "POST");
+			assert.ok(createCall, "/sessions POST 必须发出");
+			const body = createCall!.body as Record<string, unknown>;
+			assert.equal(
+				body.llm,
+				undefined,
+				"未配置 BYOK 时不得带 llm，否则会误改生产凭据走向",
+			);
+		} finally {
+			await fake.close();
+		}
+	});
+});
 
 describe("⭐ streamEvents：见 agent_end 立即收手（不等流结束）", () => {
 	/**

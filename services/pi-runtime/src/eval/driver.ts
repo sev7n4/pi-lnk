@@ -19,13 +19,21 @@
  * 这样 `harness.ts` 里的 `createHarness(...)` 适配层是唯一接触该包的地方，
  * 依赖面收敛到一文件；且本模块可独立单测（不需要跑 eval 框架）。
  */
-import { foldRuntimeEvents, type EvalCaseInput, type EvalTranscript, type RuntimeEvent } from "./transcript.js";
+import { foldRuntimeEvents, type EvalCaseInput, type EvalLlmOverride, type EvalTranscript, type RuntimeEvent } from "./transcript.js";
 
 export interface RuntimeDriverOptions {
 	/** pi-runtime 基址，如 `http://127.0.0.1:8100`。 */
 	baseUrl: string;
 	/** 单轮超时（ms）。超时按「失败」记，不静默挂住。 */
 	timeoutMs?: number;
+	/**
+	 * ⭐ BYOK 覆盖（可选，默认不传 ⇒ 走部署 env 的 AGNES）。
+	 *
+	 * 让该轮评测会话走你**自己的**模型渠道（DeepSeek 等 OpenAI 兼容端点），
+	 * 绕开生产 AGNES 账号 rpm 限流（429）。密钥由 `byok.ts` 从环境变量读，
+	 * **本模块不持有、不打印明文 key**（apiKey 红线，见 `llm-override.ts:13`）。
+	 */
+	llmOverride?: EvalLlmOverride;
 }
 
 /** 一轮的执行结果（adapter 交给 vitest-evals 的形状）。 */
@@ -77,6 +85,10 @@ export async function runEvalCase(
 		// ⭐ `canvasSessionId` 缺省**不能**回落到 pi 会话键：那是个不存在的 id，
 		// 查画布必然 404/401。缺省时留空并由调用方显式传。
 		...(input.canvasSessionId ? { canvasSessionId: input.canvasSessionId } : {}),
+		// ⭐ BYOK 覆盖：存在时透传给 `/sessions` body 的 `llm`，服务端 `parseLlmOverride`
+		// 校验后装配（见 `app.ts:158`）。不传则缺省 ⇒ 会话走 env AGNES（既有行为不变）。
+		// ⚠️ apiKey 经网络发给 pi-runtime，但**绝不**写进本仓库/日志（密钥红线）。
+		...(options.llmOverride ? { llm: options.llmOverride } : {}),
 	});
 	if (created.status >= 400) {
 		return failure(`createSession failed: HTTP ${created.status} ${created.body}`);
