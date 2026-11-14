@@ -8,7 +8,15 @@ import AskUserCard from './AskUserCard.vue'
  * 键不出现纪律的 DOM 面：未传 assumptions/scope ⇒ 区块不渲染（旧卡形态不变）。
  */
 
-function mountCard(plan: Record<string, unknown>) {
+type PlanShape = {
+  summary: string
+  explanation?: string
+  steps: { content: string; activeForm?: string }[]
+  assumptions?: string[]
+  scope?: { inScope: string[]; outOfScope: string[] }
+}
+
+function mountCard(plan: PlanShape) {
   return mount(AskUserCard, {
     props: {
       questions: [
