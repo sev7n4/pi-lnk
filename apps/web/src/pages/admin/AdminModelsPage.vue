@@ -298,7 +298,7 @@ const PRICING_TIERS: Record<string, { spec: string; label: string; hint: string 
     { spec: 'cache', label: '缓存（元/百万 token）', hint: '如 0.02' },
   ],
 }
-const pricingTierList = computed(() => PRICING_TIERS[form.value.modality] ?? [])
+const pricingTierList = computed(() => (form.value.modality ? PRICING_TIERS[form.value.modality] : undefined) ?? [])
 
 function resetPricingCard(): void {
   pricingEnabled.value = true
