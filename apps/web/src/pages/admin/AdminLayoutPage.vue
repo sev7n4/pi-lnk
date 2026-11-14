@@ -56,9 +56,10 @@ async function submitToken() {
         <el-menu-item index="/admin/health">健康探活</el-menu-item>
         <el-sub-menu index="/admin/pricing-engine">
           <template #title>渠道定价</template>
-          <el-menu-item index="/admin/pricing-subjects">定价主体</el-menu-item>
-          <el-menu-item index="/admin/pricing-cost">成本配置</el-menu-item>
-          <el-menu-item index="/admin/pricing-margin">利润配置</el-menu-item>
+          <el-menu-item index="/admin/pricing-simple">极简定价台</el-menu-item>
+          <el-menu-item index="/admin/pricing-subjects">定价主体（高级）</el-menu-item>
+          <el-menu-item index="/admin/pricing-cost">成本配置（高级）</el-menu-item>
+          <el-menu-item index="/admin/pricing-margin">利润配置（高级）</el-menu-item>
         </el-sub-menu>
         <el-menu-item index="/admin/pricing">平台渠道定价</el-menu-item>
         <el-menu-item index="/admin/pricing-versions">价目发布流</el-menu-item>

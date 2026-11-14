@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   adminApi,
@@ -25,9 +25,17 @@ const rows = ref<MarginPolicyRow[]>([])
 const form = ref<MarginPolicyInput>({
   scope: 'global',
   scopeKey: null,
-  profitBp: 1500,
+  profitBp: 1000,
   priceFloorBp: 500,
   status: 'active',
+})
+
+/** 人话：利润率以「加价 %」录入（底层仍是 bp，×100）。 */
+const profitPct = computed<number>({
+  get: () => Math.round((form.value.profitBp ?? 0) / 100),
+  set: (v: number) => {
+    form.value.profitBp = Math.round(v * 100)
+  },
 })
 
 function errMsg(err: unknown, fallback: string): string {
@@ -47,7 +55,7 @@ async function reload() {
 }
 
 function resetForm() {
-  form.value = { scope: 'global', scopeKey: null, profitBp: 1500, priceFloorBp: 500, status: 'active' }
+  form.value = { scope: 'global', scopeKey: null, profitBp: 1000, priceFloorBp: 500, status: 'active' }
 }
 
 async function save() {
@@ -89,8 +97,8 @@ defineExpose({ reload, save, form, rows, actionError })
 <template>
   <section class="p-2">
     <header class="mb-3 flex items-center gap-3">
-      <h1 class="text-base font-semibold text-fg">利润配置</h1>
-      <span class="text-sm text-fg-3">平台利润率（按 scope 取生效策略；global 为兜底）</span>
+      <h1 class="text-base font-semibold text-fg">利润配置（高级）</h1>
+      <span class="text-sm text-fg-3">平台利润率（加价 %）；global 为兜底</span>
       <el-button :loading="loading" @click="reload">刷新</el-button>
     </header>
     <p v-if="actionError" class="mb-2 rounded border border-danger-border bg-danger-bg p-2 text-sm text-danger">{{ actionError }}</p>
@@ -99,8 +107,8 @@ defineExpose({ reload, save, form, rows, actionError })
     <div class="mb-3 grid grid-cols-2 gap-2 rounded border border-line-subtle bg-surface-base p-3 md:grid-cols-5">
       <el-input v-model="form.scope" placeholder="scope（如 global / model / provider）" />
       <el-input v-model="form.scopeKey" placeholder="scopeKey（global 留空）" />
-      <el-input-number v-model="form.profitBp" :step="100" label="利润率 bp（万分之）" class="w-full" />
-      <el-input-number v-model="form.priceFloorBp" :step="100" label="地板 bp" class="w-full" />
+      <el-input-number v-model="profitPct" :min="0" :max="500" :step="1" label="平台利润率（加价 %）" class="w-full" />
+      <el-input-number v-model="form.priceFloorBp" :step="100" label="地板 bp（×100，500=5%）" class="w-full" />
       <el-select v-model="form.status" placeholder="状态">
         <el-option v-for="s in STATUSES" :key="s" :label="s" :value="s" />
       </el-select>
@@ -110,8 +118,10 @@ defineExpose({ reload, save, form, rows, actionError })
     <el-table :data="rows" v-loading="loading" size="small" border max-height="520">
       <el-table-column prop="scope" label="scope" width="120" />
       <el-table-column prop="scopeKey" label="scopeKey" min-width="140" />
-      <el-table-column prop="profitBp" label="利润率 bp" width="110" />
-      <el-table-column prop="priceFloorBp" label="地板 bp" width="100" />
+      <el-table-column label="利润率（加价 %）" width="120">
+        <template #default="{ row }">{{ Math.round(row.profitBp / 100) }}%</template>
+      </el-table-column>
+      <el-table-column prop="priceFloorBp" label="地板 bp（×100）" width="110" />
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
           <el-tag :type="row.status === 'active' ? 'success' : row.status === 'disabled' ? 'info' : 'warning'" size="small">{{ row.status }}</el-tag>
