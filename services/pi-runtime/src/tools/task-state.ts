@@ -3,12 +3,17 @@
  * B 期在此加 applyIncremental(snapshot, op)（fold 进全量后走同一管道），
  * todo_write 保留不删。全量快照 = SSOT（B→A 不可逆红线，勿加旁路）。 */
 
+import type { TodoAcceptance } from "./acceptance.js";
+
 export type TodoStatus = "pending" | "in_progress" | "completed";
 
+/** C-2a：验收声明挂在任务项上（spec 2026-11-14-c2a-acceptance-generation-oracle-design.md §4.1）。
+ * 类型定义单点在 acceptance.ts；本模块只引用，避免 schema 与运行态两处漂移。 */
 export interface TodoItem {
 	content: string;
 	activeForm?: string;
 	status: TodoStatus;
+	acceptance?: TodoAcceptance;
 }
 
 export interface TodoItemWithId extends TodoItem {
@@ -48,29 +53,37 @@ export function reduce(prev: readonly TodoItemWithId[], next: readonly TodoItemI
 	let structureChanged = false;
 
 	for (const item of next) {
+		// C-2a：acceptance 是「调用级验收声明」，不进入快照 SSOT——所有分支显式列字段，
+		// 不用 {...item} 展开，避免「id 通道丢字段 / content 兜底带字段」的分支不一致，
+		// 也避免收尾阶段因 acceptance 变化触发全量 list 造成前端卡片抖动（spec §3.2）。
+		const fields = {
+			content: item.content,
+			status: item.status,
+			...(item.activeForm !== undefined ? { activeForm: item.activeForm } : {}),
+		};
 		if (item.id !== undefined) {
 			// A-2' id 通道：带 id 且存在 ⇒ 身份锁定（幻觉 id 已在 todo_write execute 层硬拒；
 			// 此处 else 分支为防御兜底：不存在的 id 按新项处理，不抛错）
 			const matched = prevById.get(item.id);
 			if (matched && !usedIds.has(matched.id)) {
 				usedIds.add(matched.id);
-				out.push({ content: item.content, status: item.status, ...(item.activeForm !== undefined ? { activeForm: item.activeForm } : {}), id: matched.id });
+				out.push({ ...fields, id: matched.id });
 				if (matched.content !== item.content) structureChanged = true; // 重命名 = content 集合变化 ⇒ list
 				if (matched.status !== item.status) updates.push({ id: matched.id, status: item.status });
 				continue;
 			}
 			structureChanged = true;
-			out.push({ content: item.content, status: item.status, ...(item.activeForm !== undefined ? { activeForm: item.activeForm } : {}), id: `plan-${counter++}` });
+			out.push({ ...fields, id: `plan-${counter++}` });
 			continue;
 		}
 		const matched = prevByContent.get(item.content);
 		if (matched && !usedIds.has(matched.id)) {
 			usedIds.add(matched.id);
-			out.push({ ...item, id: matched.id });
+			out.push({ ...fields, id: matched.id });
 			if (matched.status !== item.status) updates.push({ id: matched.id, status: item.status });
 		} else {
 			structureChanged = true;
-			out.push({ ...item, id: `plan-${counter++}` });
+			out.push({ ...fields, id: `plan-${counter++}` });
 		}
 	}
 

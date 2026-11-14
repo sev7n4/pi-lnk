@@ -421,6 +421,8 @@ schema 层最低强度约束（不靠 prompt）：generation 二选一——显�
 
 立项证据三指标：**写入率**（模型声明意愿——A-2' 同款风险，SOP 教写、判据入 C-1 Q3）/ **fail-closed 拦截率**（真问题发现率）/ **fail-open 率**（机制健康度）。分期按信号硬度：C-2a 生成 oracle 子域（最硬）→ C-2b canvas_state 扩展（探针复用 C-1 已扩展两处）→ C-2c 基线建档 + 阈值提案（人工拍板）。诚实边界：① oracle 子域覆盖面有限（美学/语义任务永不覆盖）——acceptance 是「收尾机检」非「全部验收」，用户满意度永远在机检之外；② 模型不写则机制空转——写入率趋零则止损（同 §13.5 SOP 激活率条款）；③ acceptance 判「生成成功」不判「用户满意」，两者不矛盾。
 
+> **状态回填（2026-11-14，仅此一行；v1.3 冻结后正文不改）**：C-2a 生成 oracle 子域立项 spec/plan 落档并实施（`docs/superpowers/{specs,plans}/2026-11-14-c2a-acceptance-generation-oracle-*`）。三项裁决见立项 spec §3：D1 校验在 `todo.ts` execute 内（**after_tool 执行后触发，做不到 §14.3 零副作用拒绝**）、D2 oracle = 会话级最新生成任务且 DSL 不新增锚点、D3 只注册已实现校验的 `generation` 枚举（C-2b 再扩 canvas_state）。§14.1 的 `session-manager.ts:616/1704` 为陈旧行号，实证锚点见立项 spec §2。
+
 ---
 
 ## 15. 五方向产物一致性核对（2026-11-13，方向 5 收尾时执行；用户裁决「核对一致性但不推 PR，继续讨论」）

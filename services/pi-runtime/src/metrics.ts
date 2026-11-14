@@ -137,6 +137,8 @@ export class Metrics {
 	private toolSearchActivated = 0; // 命中激活的工具个数累计（配合 calls 可算平均激活数）
 	private memorySuppressed = 0; // M6b：被反哺抑制的记忆条数累计（幂等计数）
 	private skillLoads = new Map<string, number>(); // key: `${skill}|${outcome}`（ok|unknown|read_error）
+	/** C-2a acceptance 收尾校验（spec §5 三指标）：declared/pass/fail_closed/fail_open。 */
+	private acceptance = new Map<string, number>(); // key: outcome
 	private transformContextRuns = new Map<string, number>(); // key: goal (on|off)——是否注入了目标复述
 	private transformAnnotated = 0; // 信任标注覆盖的 toolResult 条数累计
 	private dynamicBudgetDrops = new Map<string, number>(); // key: kind (canvas|vision|sidebar|general)——发生截断的块数
@@ -468,6 +470,11 @@ export class Metrics {
 		this.skillLoads.set(key, (this.skillLoads.get(key) ?? 0) + 1);
 	}
 
+	/** C-2a 收尾验收观测：declared=写入率分子 / pass / fail_closed=拦截率 / fail_open=健康度。 */
+	observeAcceptance(outcome: "declared" | "pass" | "fail_closed" | "fail_open"): void {
+		this.acceptance.set(outcome, (this.acceptance.get(outcome) ?? 0) + 1);
+	}
+
 	/** dynamicBlocks 预算观测（T3）：kind=发生截断的块类别；unknownKind=块首标记未识别（约定漂移）。 */
 	observeDynamicBudgetDrop(kind: string): void {
 		this.dynamicBudgetDrops.set(kind, (this.dynamicBudgetDrops.get(kind) ?? 0) + 1);
@@ -773,6 +780,13 @@ export class Metrics {
 	for (const [key, count] of [...this.skillLoads.entries()].sort()) {
 		const [skill, outcome] = key.split("|");
 		lines.push(`pi_runtime_skill_loads_total{skill="${esc(skill ?? "")}",outcome="${esc(outcome ?? "")}"} ${count}`);
+	}
+
+	// C-2a acceptance（§14.5 三指标）：Map 为空不渲染数据行——「从未触发」与「触发过但 0」可区分。
+	lines.push("# HELP pi_runtime_acceptance_total todo_write acceptance verdicts by outcome.");
+	lines.push("# TYPE pi_runtime_acceptance_total counter");
+	for (const [outcome, count] of [...this.acceptance.entries()].sort()) {
+		lines.push(`pi_runtime_acceptance_total{outcome="${esc(outcome)}"} ${count}`);
 	}
 
 	lines.push("# HELP pi_runtime_dynamic_budget_drops_total dynamicBlocks truncated by kind budget (cumulative count).");

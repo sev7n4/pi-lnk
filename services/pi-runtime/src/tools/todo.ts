@@ -9,6 +9,15 @@ import { Type } from "typebox";
 import type { AgentToolResult, AgentHarnessToolUpdateCallback } from "@earendil-works/pi-agent-core";
 import type { LnkpiTool, LnkpiToolContext } from "./types.js";
 import { reduce, summarize, type TodoDiff, type TodoItemInput, type TodoItemWithId } from "./task-state.js";
+import {
+	acceptanceSchema,
+	isAcceptanceEnabled,
+	judgeGenerationAcceptance,
+	parseAcceptance,
+	type AcceptanceOutcome,
+	type AcceptanceRequirement,
+	type GenerationOracle,
+} from "./acceptance.js";
 
 export function isTodoToolEnabled(): boolean {
 	return process.env.PI_RUNTIME_TODO_TOOL !== "off";
@@ -62,6 +71,7 @@ const todoSchema = Type.Object({
 				[Type.Literal("pending"), Type.Literal("in_progress"), Type.Literal("completed")],
 				{ description: "任务状态" },
 			),
+			acceptance: Type.Optional(acceptanceSchema),
 		}),
 		{ description: "完整任务清单（全量覆写：每次必须包含全部任务，漏发即删；至多一个 in_progress；全部完成时提交空数组清空）" },
 	),
@@ -105,7 +115,87 @@ function rejectUnknownIds(params: { todos: TodoItemInput[] }, key: string): stri
 	return `调用被拒绝：id 不存在于当前任务清单（${offending.map((o) => o.id).join("、")}）。当前合法 id：\n${listing}\n请带正确 id 重发（变更已有任务），或对新增任务省略 id。`;
 }
 
-export function buildTodoTools(): LnkpiTool[] {
+type TodoResult = AgentToolResult<{ todo: { snapshot: TodoItemWithId[]; diff: TodoDiff } }>;
+
+/** C-2a 依赖注入（工具层不持 Metrics / 不持 NestClient 实例；零参 = 逐字节旧行为）。 */
+export interface TodoToolDeps {
+	oracle?: GenerationOracle;
+	onAcceptanceOutcome?: (outcome: AcceptanceOutcome) => void;
+}
+
+/** 零副作用硬拒的**唯一**构造点（A-2' 幻觉 id / C-2a 判据非法 / C-2a 证据不足共用）：
+ * isError + 当前快照 + diff.updates=[] ⇒ 前端零事件、store 零写入。 */
+function rejectionResult(key: string, text: string): TodoResult {
+	return {
+		content: [{ type: "text", text }],
+		isError: true,
+		details: { todo: { snapshot: getTodoState(key), diff: { updates: [] } } },
+	};
+}
+
+type AcceptanceVerdict =
+	| { kind: "skip" }
+	| { kind: "reject"; text: string }
+	| { kind: "fail_open"; reminder: string }
+	| { kind: "pass" };
+
+/** §14.3 fail-closed / fail-open 二分：模型把带 acceptance 的项标 completed 时查证。
+ *  「依赖缺失」与「查询失败」是两种 fail-open：前者逐字节旧行为（静默），后者软提醒+计数。
+ *  ⚠️ acceptance 是**调用级声明**，不进入快照 SSOT（见 task-state.reduce 显式字段构造）。 */
+async function verifyAcceptance(
+	todos: TodoItemInput[],
+	toolContext: LnkpiToolContext,
+	deps: TodoToolDeps,
+): Promise<AcceptanceVerdict> {
+	const declared = todos.filter((t) => t.status === "completed" && t.acceptance !== undefined);
+	if (declared.length === 0) return { kind: "skip" };
+	deps.onAcceptanceOutcome?.("declared");
+	const requirements: Array<{ content: string; requirement: AcceptanceRequirement }> = [];
+	for (const item of declared) {
+		const parsed = parseAcceptance(item.acceptance);
+		if (!parsed.ok) {
+			return {
+				kind: "reject",
+				text: `调用被拒绝：任务项「${item.content}」的 acceptance 字段非法：${parsed.reason}。当前清单保持不变。请改对判据后重发，或省略 acceptance（探索/澄清类任务无需声明）。`,
+			};
+		}
+		requirements.push({ content: item.content, requirement: parsed.requirement });
+	}
+	// 依赖缺失（kill switch / 未注入 oracle / 缺 userId）：不查、不改回执、不计数
+	if (!isAcceptanceEnabled() || deps.oracle === undefined || toolContext.userId === undefined) {
+		return { kind: "skip" };
+	}
+	const result = await deps.oracle.inspect({
+		sessionId: toolContext.sessionId,
+		userId: toolContext.userId,
+	});
+	if (!result.ok) {
+		deps.onAcceptanceOutcome?.("fail_open");
+		console.warn(`[todo_write] acceptance oracle 查询失败（fail-open）：${result.reason}`);
+		return {
+			kind: "fail_open",
+			reminder: `\n\n[acceptance] 生成证据查询失败（${result.reason}），本次收尾校验已放行；请勿据此视为验收通过。`,
+		};
+	}
+	for (const req of requirements) {
+		const judged = judgeGenerationAcceptance(result.latest, req.requirement);
+		if (!judged.ok) {
+			deps.onAcceptanceOutcome?.("fail_closed");
+			const expected =
+				req.requirement.requireSucceeded === true
+					? "最近生成 status=succeeded"
+					: "本会话存在生成记录";
+			return {
+				kind: "reject",
+				text: `调用被拒绝：任务项「${req.content}」声明了验收判据，但生成证据不支持。期望：${expected}；实际：${judged.evidence}。当前清单保持不变。请继续干活（重试生成）或如实降级（分项说明哪些真完成），不要标 completed。`,
+			};
+		}
+	}
+	deps.onAcceptanceOutcome?.("pass");
+	return { kind: "pass" };
+}
+
+export function buildTodoTools(deps: TodoToolDeps = {}): LnkpiTool[] {
 	if (!isTodoToolEnabled()) return [];
 	const tool: LnkpiTool = {
 		name: "todo_write",
@@ -130,18 +220,14 @@ export function buildTodoTools(): LnkpiTool[] {
 			const key = toolContext.storeScopeKey ?? toolContext.sessionId;
 			// A-2' 拍板 1：幻觉 id 硬拒绝（先于任何写入）
 			const rejection = rejectUnknownIds(params, key);
-			if (rejection !== null) {
-				// details 附当前快照（0.99.2 AgentToolResult.details 必选；拒绝回执附现状 = debug 唯一真相源，零副作用）
-				const current = getTodoState(key);
-				return {
-					content: [{ type: "text", text: rejection }],
-					isError: true,
-					details: { todo: { snapshot: current, diff: { updates: [] } } },
-				};
-			}
+			if (rejection !== null) return rejectionResult(key, rejection);
+			// C-2a：收尾验收判据（先于 overwriteTodos ⇒ 拒绝零副作用；§14.3 同 A-2' 哲学）
+			const verdict = await verifyAcceptance(params.todos, toolContext, deps);
+			if (verdict.kind === "reject") return rejectionResult(key, verdict.text);
 			const { snapshot, diff } = overwriteTodos(key, params.todos);
+			const reminder = verdict.kind === "fail_open" ? verdict.reminder : "";
 			return {
-				content: [{ type: "text", text: summarize(snapshot) }],
+				content: [{ type: "text", text: summarize(snapshot) + reminder }],
 				details: { todo: { snapshot, diff } },
 			};
 		},

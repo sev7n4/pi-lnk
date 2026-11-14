@@ -46,4 +46,13 @@ describe("task-decomposition skill wiring", () => {
 			assert.ok(body.includes(needle), `SKILL.md 缺判据映射纪律: ${needle}`);
 		}
 	});
+	it("C-2a 最小教学：纪律 6 含 acceptance 声明关键句（防写入率趋零）", () => {
+		const body = readFileSync(
+			new URL("../../../../skills/task-decomposition/SKILL.md", import.meta.url),
+			"utf8",
+		);
+		for (const needle of ["acceptance", 'kind:"generation"', "requireSucceeded", "证据不足会被工具拒绝"]) {
+			assert.ok(body.includes(needle), `SKILL.md 缺 C-2a 教学关键句: ${needle}`);
+		}
+	});
 });
