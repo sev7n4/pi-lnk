@@ -421,9 +421,15 @@ schema 层最低强度约束（不靠 prompt）：generation 二选一——显�
 
 立项证据三指标：**写入率**（模型声明意愿——A-2' 同款风险，SOP 教写、判据入 C-1 Q3）/ **fail-closed 拦截率**（真问题发现率）/ **fail-open 率**（机制健康度）。分期按信号硬度：C-2a 生成 oracle 子域（最硬）→ C-2b canvas_state 扩展（探针复用 C-1 已扩展两处）→ C-2c 基线建档 + 阈值提案（人工拍板）。诚实边界：① oracle 子域覆盖面有限（美学/语义任务永不覆盖）——acceptance 是「收尾机检」非「全部验收」，用户满意度永远在机检之外；② 模型不写则机制空转——写入率趋零则止损（同 §13.5 SOP 激活率条款）；③ acceptance 判「生成成功」不判「用户满意」，两者不矛盾。
 
-> **状态回填（2026-11-14，仅此一行；v1.3 冻结后正文不改）**：C-2a 生成 oracle 子域立项 spec/plan 落档并实施（`docs/superpowers/{specs,plans}/2026-11-14-c2a-acceptance-generation-oracle-*`）。三项裁决见立项 spec §3：D1 校验在 `todo.ts` execute 内（**after_tool 执行后触发，做不到 §14.3 零副作用拒绝**）、D2 oracle = 会话级最新生成任务且 DSL 不新增锚点、D3 只注册已实现校验的 `generation` 枚举（C-2b 再扩 canvas_state）。§14.1 的 `session-manager.ts:616/1704` 为陈旧行号，实证锚点见立项 spec §2。
+### 14.6 C-2 分期状态回填（v1.3 冻结：仅追加状态行，不重述设计）
 
-> **状态回填（2026-11-14 追加行；v1.3 冻结后正文不改）**：C-2b canvas_state 子域立项 spec/plan 落档并实施（`docs/superpowers/{specs,plans}/2026-11-14-c2b-acceptance-canvas-state-*`、双刀 plan `2026-11-14-c2b-and-iserror-implementation-plan.md`）。五项裁决见立项 spec §3：D1 判据真共享（抽 `src/canvas-judge.ts`，eval 与生产同源）、D2 只注册已校验的 `nodeCount`/`nodeTypeCounts`（`noOverlap` 代码零实现不承诺）、D3 oracle 用 `get-canvas-summary` 且不传 focus（全量 SSOT）、D4 多 kind 聚合 `reject > fail_open > pass`、D5 纯新增 `pi_runtime_acceptance_kind_total{kind}`。同批另立 isError 语义补正 spec（`2026-11-14-iserror-rejection-flag-design.md`）：实证 vendor 0.99.2 `executeToolCall` 恒 `isError:false`、生产 `openai-completions` 丢弃该标志 ⇒ 补正收益仅在 transcript/事件/前端，**不改善模型行为**；方案 = `after_tool` patch + `details.todo.rejected` 显式标记。
+| 子域 | 状态 | 证据锚 |
+| --- | --- | --- |
+| C-2a 生成 oracle | ✅ 已合并上线 | PR #866 → squash `685bdb49` → pi-runtime 上线；工具级生产复测通过（声明即校验、会话级判据、三门禁、变异 6/6 RED） |
+| C-2b canvas_state 扩展 | ✅ 已合并上线 | PR #868 → squash `b5088ed6` → 双单元取证 + 生产复测（pass 边界 / 同组 reject 优先 / 跨 kind 聚合）；指标 `declared=4/pass=1/fail_closed=3/fail_open=0` |
+| C-2c 基线建档 + 阈值提案 | 🟡 立项规格已落档，未闭环 | PR #869 合并（`93a87efb`）；规格 `2026-11-14-c2c-acceptance-observation-baseline-design.md`；四 gate（G1 写入率基准 / G2 拦截率 / G3 健康度 / G4 真实流量分级）未达，只读采集器 + 阈值拍板待 429 墙解封后人为执行 |
+
+> 注：C-2c 规格经 PM/架构师对抗审核，修订三处事实引用（events.jsonl 真实路径 `/data/sessions/sessions/*`、会话 TTL=30min⇒采样≤7min、`/data/sessions` 为 pod PVC 须 `kubectl exec`）+ 补流量分级与人工拍板 playbook；含 33% 写入率失真（活指标 `tool_calls_total` 作分母误用）已登记为独立小刀，不在本刀范围。
 
 ---
 
