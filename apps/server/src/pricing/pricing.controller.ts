@@ -40,6 +40,11 @@ export class PricingController {
       videoMode: q.videoMode,
       referenceImageCount: q.referenceImageCount != null ? Number(q.referenceImageCount) : undefined,
       referenceVideoCount: q.referenceVideoCount != null ? Number(q.referenceVideoCount) : undefined,
+      // S1 subjectKey 六级解析扩展入参（缺省回落 legacy matchKey，向后兼容）。
+      provider: q.provider,
+      upstream: q.upstream,
+      spec: q.spec,
+      subjectKey: q.subjectKey,
     }
     const r = await this.pricing.quote(query, undefined)
     return {
@@ -48,7 +53,9 @@ export class PricingController {
       data: {
         credits: r.credits,
         ruleVersion: r.ruleVersion,
-        degraded: r.ruleVersion === 'constants-fallback',
+        // S1：degraded 由服务内部条件写入（仅 constants-fallback 路径为 true），
+        // 与 `ruleVersion === 'constants-fallback'` 推导逐值一致；非兜底路径不出该键。
+        degraded: r.degraded === true,
       },
     }
   }

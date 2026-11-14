@@ -29,14 +29,14 @@ function requireNonEmptyString(value: unknown, field: string): string {
   return value
 }
 
-function parseDraftBody(body: Record<string, unknown>): { version: string; note: string } {
+export function parseDraftBody(body: Record<string, unknown>): { version: string; note: string } {
   return {
     version: requireNonEmptyString(body['version'], 'version'),
     note: requireNonEmptyString(body['note'], 'note'),
   }
 }
 
-function parseEntriesBody(body: Record<string, unknown>): PublishEntryInput[] {
+export function parseEntriesBody(body: Record<string, unknown>): PublishEntryInput[] {
   const raw = body['entries']
   if (!Array.isArray(raw)) {
     throw new BadRequestException('entries 必须是数组')
@@ -62,6 +62,37 @@ function parseEntriesBody(body: Record<string, unknown>): PublishEntryInput[] {
         throw new BadRequestException(`entries[${i}].costRateId 必须是字符串或 null`)
       }
       entry.costRateId = e['costRateId']
+    }
+    // S1 六字段：发布流显式透传（这是字段丢失的真实位置——必须逐字段落库，不能静默丢）。
+    const str = (key: string): string | undefined => {
+      const v = e[key]
+      if (v === undefined) return undefined
+      if (typeof v !== 'string') throw new BadRequestException(`entries[${i}].${key} 必须是字符串`)
+      return v
+    }
+    const num = (key: string): number | undefined => {
+      const v = e[key]
+      if (v === undefined) return undefined
+      if (typeof v !== 'number' || !Number.isFinite(v)) {
+        throw new BadRequestException(`entries[${i}].${key} 必须是有限数`)
+      }
+      return v
+    }
+    const subjectKey = str('subjectKey')
+    if (subjectKey !== undefined) entry.subjectKey = subjectKey
+    const costSnapshotYuan = num('costSnapshotYuan')
+    if (costSnapshotYuan !== undefined) entry.costSnapshotYuan = costSnapshotYuan
+    const unitSnapshot = str('unitSnapshot')
+    if (unitSnapshot !== undefined) entry.unitSnapshot = unitSnapshot
+    const profitBpSnapshot = num('profitBpSnapshot')
+    if (profitBpSnapshot !== undefined) entry.profitBpSnapshot = profitBpSnapshot
+    const marginPolicyId = str('marginPolicyId')
+    if (marginPolicyId !== undefined) entry.marginPolicyId = marginPolicyId
+    const reason = str('reason')
+    if (reason !== undefined) entry.reason = reason
+    // AC13：运营覆写（basis=ops-modified）必须带 reason，否则 400——理由真源不可静默丢。
+    if (entry.basis === 'ops-modified' && reason === undefined) {
+      throw new BadRequestException(`entries[${i}] basis=ops-modified 必须带 reason（运营覆写理由）`)
     }
     return entry
   })

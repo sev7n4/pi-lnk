@@ -30,6 +30,13 @@ export interface PricingQuery {
   videoMode?: string
   referenceImageCount?: number
   referenceVideoCount?: number
+  // S1 物化/计价链路扩展（条件字段，S1 仅补类型契约占位）：
+  provider?: string
+  upstream?: string
+  spec?: string
+  subjectKey?: string
+  // D11：音频按字符精确计费的运行时闭环归 S3；S1 只补类型占位，计价链不消费它。
+  chars?: number
 }
 
 export interface PricingQuote {
@@ -37,6 +44,17 @@ export interface PricingQuote {
   ruleVersion: string
   /** 灰度命中时的 release id；global/兜底路径为 undefined（条件写入账本，避免破坏既有断言） */
   grayReleaseId?: string
+  // S1 价格锁契约（全部条件写入：键不出现纪律，非兜底路径不得出现 degraded 键）：
+  subjectKey?: string
+  costYuanPerRequest?: number
+  billableUnit?: string
+  unitSnapshot?: string
+  profitBp?: number
+  priceListVersionId?: string
+  costSource?: string
+  marginPolicyId?: string
+  /** 仅在 constants-fallback 路径出现且恒为 true；非兜底路径不出现该键 */
+  degraded?: true
 }
 
 /** 走常量兜底时落账的 ruleVersion 字面量（与表版本区分，便于审计「这笔钱哪来的」）。 */
@@ -166,32 +184,35 @@ export interface FloorViolation {
 }
 
 /** 地板毛利系数（×1.05，spec §10）。价格行下限与反比率行上限同源同一因子。 */
-const FLOOR_MULTIPLIER = 105
-
 /**
  * 统一地板校验（价格行 + 反比率行同源），发布流与种子两处共用。
  *
- * 价格行（非 `text:<model>:<spec>`）：售价 credits ≥ ceil(costYuan × 1.05) ⇒ kind='min'。
+ * priceFloorBp 缺省 500 ⇔ 旧 `FLOOR_MULTIPLIER=105`（×1.05）：任意 2 参调用数值逐字等价
+ * （R5 / Global Constraints 等价金标准生命线）。放开为参数后，运营可在 MarginPolicy 调利润时
+ * 同步收紧/放宽地板（priceFloorBp 通常 = marginBp，但允许解耦）。
+ *
+ * 价格行（非 `text:<model>:<spec>`）：售价 credits ≥ ceil(costYuan × (10000+priceFloorBp)/100) ⇒ kind='min'。
  *
  * 反比率行（`text:<model>:<spec>`）：credits=r（每 credit=r tokens）。计费 charge=ceil(tokens/r)
- * credit，每 credit 成本 = r × costYuan / 1e6 元；收入=0.01 元/credit。「收入 ≥ 成本×1.05」
- * 在 T=r 取等 ⇒ r × costYuan × 1.05 ≤ 1e4 ⇔ r ≤ floor(1e6/(costYuan×105)) ⇒ kind='max'。
- * 种子按 marginBp=11000（×1.10）现算 r ⇒ 110>105 ⇒ 任何种子行必过；本函数防的是未来映射
- * 改动（折扣/封顶/换锚）把带病条目混进草案/发布。
+ * credit，每 credit 成本 = r × costYuan / 1e6 元；收入=0.01 元/credit。「收入 ≥ 成本×(1+priceFloorBp/10000)」
+ * 在 T=r 取等 ⇒ r × costYuan × (1+priceFloorBp/10000) ≤ 1e4 ⇔ r ≤ floor(1e8/(costYuan×(10000+priceFloorBp)))
+ * ⇒ kind='max'。种子按 marginBp=11000（×1.10）现算 r ⇒ 110>105 ⇒ 任何种子行必过；本函数防的是
+ * 未来映射改动（折扣/封顶/换锚）把带病条目混进草案/发布。
  *
  * costRateId 缺失或 costYuan 未知 ⇒ 返回 null（缺失成本不在地板判定内，由 missingCost 另行报告）。
  */
 export function checkCostFloor(
   e: { matchKey: string; credits: number; costRateId: string | null },
   costYuan: number | undefined,
+  priceFloorBp: number = 500,
 ): FloorViolation | null {
   if (!e.costRateId) return null
   if (costYuan === undefined) return null
   if (isTextTokenMatchKey(e.matchKey)) {
-    const limit = Math.floor(1_000_000 / (costYuan * FLOOR_MULTIPLIER))
+    const limit = Math.floor(1e8 / (costYuan * (10000 + priceFloorBp)))
     return e.credits > limit ? { matchKey: e.matchKey, credits: e.credits, limit, kind: 'max' } : null
   }
-  const limit = Math.ceil(costYuan * FLOOR_MULTIPLIER)
+  const limit = Math.ceil((costYuan * (10000 + priceFloorBp)) / 100)
   return e.credits < limit ? { matchKey: e.matchKey, credits: e.credits, limit, kind: 'min' } : null
 }
 

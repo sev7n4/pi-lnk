@@ -15,7 +15,7 @@
  */
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
-import { checkCostFloor, type FloorViolation } from './pricing.core'
+import { checkCostFloor, isTextTokenMatchKey, type FloorViolation } from './pricing.core'
 import { PricingService } from './pricing.service'
 
 /**
@@ -43,6 +43,12 @@ export interface DiffSummary {
    * 审批人只看到「地板违规 0 条」，看不到任何无成本覆盖提示，易被误当成已校验。
    */
   noCostCoverage: string[]
+  /** S1 发布门禁：subject 主体条目缺成本快照（costSnapshotYuan） */
+  missingSubject: string[]
+  /** S1 发布门禁：非 token 的 subject 条目缺计量单位快照（unitSnapshot） */
+  unitMismatch: string[]
+  /** S1 发布门禁：条目引用的 marginPolicy 不存在 */
+  marginMismatch: string[]
 }
 
 /**
@@ -65,6 +71,13 @@ export interface PublishEntryInput {
   credits: number
   basis?: string
   costRateId?: string | null
+  /** S1 六字段：subject 成本主体快照（运营定价真源，发布流显式透传，绝不静默丢） */
+  subjectKey?: string | null
+  costSnapshotYuan?: number | null
+  unitSnapshot?: string | null
+  profitBpSnapshot?: number | null
+  marginPolicyId?: string | null
+  reason?: string | null
 }
 
 interface EntryLike {
@@ -73,6 +86,12 @@ interface EntryLike {
   credits: number
   basis: string
   costRateId: string | null
+  subjectKey: string | null
+  costSnapshotYuan: number | null
+  unitSnapshot: string | null
+  profitBpSnapshot: number | null
+  marginPolicyId: string | null
+  reason: string | null
 }
 
 @Injectable()
@@ -112,6 +131,12 @@ export class PricingPublishingService {
               credits: e.credits,
               basis: e.basis,
               costRateId: e.costRateId,
+              subjectKey: e.subjectKey,
+              costSnapshotYuan: e.costSnapshotYuan,
+              unitSnapshot: e.unitSnapshot,
+              profitBpSnapshot: e.profitBpSnapshot,
+              marginPolicyId: e.marginPolicyId,
+              reason: e.reason,
             })),
           },
         },
@@ -172,6 +197,12 @@ export class PricingPublishingService {
         credits: e.credits,
         basis: e.basis,
         costRateId: e.costRateId,
+        subjectKey: e.subjectKey,
+        costSnapshotYuan: e.costSnapshotYuan,
+        unitSnapshot: e.unitSnapshot,
+        profitBpSnapshot: e.profitBpSnapshot,
+        marginPolicyId: e.marginPolicyId,
+        reason: e.reason,
       })),
     }
   }
@@ -199,6 +230,12 @@ export class PricingPublishingService {
           credits: e.credits,
           basis: e.basis ?? DEFAULT_OPS_BASIS,
           costRateId: e.costRateId ?? null,
+          subjectKey: e.subjectKey ?? null,
+          costSnapshotYuan: e.costSnapshotYuan ?? null,
+          unitSnapshot: e.unitSnapshot ?? null,
+          profitBpSnapshot: e.profitBpSnapshot ?? null,
+          marginPolicyId: e.marginPolicyId ?? null,
+          reason: e.reason ?? null,
         },
         create: {
           versionId: draftId,
@@ -207,6 +244,12 @@ export class PricingPublishingService {
           credits: e.credits,
           basis: e.basis ?? DEFAULT_OPS_BASIS,
           costRateId: e.costRateId ?? null,
+          subjectKey: e.subjectKey ?? null,
+          costSnapshotYuan: e.costSnapshotYuan ?? null,
+          unitSnapshot: e.unitSnapshot ?? null,
+          profitBpSnapshot: e.profitBpSnapshot ?? null,
+          marginPolicyId: e.marginPolicyId ?? null,
+          reason: e.reason ?? null,
         },
       })
     }
@@ -262,9 +305,23 @@ export class PricingPublishingService {
       }
     }
 
-    const { floorViolations, missingCost } = await this.checkFloors(draft.entries as EntryLike[], (m) =>
-      this.prisma.costRate.findMany({ where: { id: { in: m } } }),
+    const { floorViolations, missingCost, unitMismatch } = await this.checkFloors(
+      draft.entries as EntryLike[],
+      (m) => this.prisma.costRate.findMany({ where: { id: { in: m } } }),
     )
+
+    // S1 门禁只读汇总：subject 主体缺成本快照 / marginPolicy 引用缺失。
+    const missingSubject: string[] = []
+    const marginMismatch: string[] = []
+    for (const e of draft.entries as EntryLike[]) {
+      if (e.subjectKey && (e.costSnapshotYuan === null || e.costSnapshotYuan === undefined)) {
+        missingSubject.push(e.matchKey)
+      }
+      if (e.marginPolicyId) {
+        const mp = await this.prisma.marginPolicy.findUnique({ where: { id: e.marginPolicyId } })
+        if (!mp) marginMismatch.push(e.matchKey)
+      }
+    }
 
     return {
       draftVersion: draft.version,
@@ -277,6 +334,9 @@ export class PricingPublishingService {
       floorViolations,
       missingCost,
       noCostCoverage,
+      missingSubject,
+      unitMismatch,
+      marginMismatch,
     }
   }
 
@@ -286,6 +346,14 @@ export class PricingPublishingService {
    * 旧 active→archived → audit。任一步 throw ⇒ 整个事务回滚，状态零变化。
    */
   async publish(draftId: string): Promise<{ version: string }> {
+    // 发布前门禁（spec §6.8 七条硬拒：空集/非 draft/缺成本主体/计量未对齐/地板违规/
+    // 成本引用缺失/marginPolicy 引用缺失）：不通过即带结构化违规清单 400，绝不静默发布。
+    const verdict = await this.validatePublish(draftId)
+    if (!verdict.ok) {
+      throw new BadRequestException(
+        `发布校验未通过 ${verdict.violations.length} 条: ${verdict.violations.join('; ')}`,
+      )
+    }
     const out = await this.prisma.$transaction(async (tx) => {
       // 单一 active 不变量的观察点与写入点同处一个事务首行（终审 Minor M3：
       // 查在事务外、建在事务内，并发 publish 可建出两个 active，而 loadActiveTable
@@ -303,15 +371,6 @@ export class PricingPublishingService {
         throw new BadRequestException('draft 条目为空，拒绝发布（空集假绿防线）')
       }
 
-      const { floorViolations, missingCost } = await this.checkFloors(
-        draft.entries as EntryLike[],
-        (ids) => tx.costRate.findMany({ where: { id: { in: ids } } }),
-      )
-      if (missingCost.length > 0) {
-        console.warn(
-          `[pricing-publishing] publish ${draft.version}: ${missingCost.length} 条 costRate 引用缺失，已跳过地板校验: ${missingCost.join(',')}`,
-        )
-      }
       // 无成本覆盖（全表口径）：不阻断发布，但必须留痕——否则「无地板违规」这条
       // console/UI 提示会被读成「全部条目都过了地板校验」。
       const uncovered = (draft.entries as EntryLike[]).filter((e) => !e.costRateId)
@@ -320,23 +379,15 @@ export class PricingPublishingService {
           `[pricing-publishing] publish ${draft.version}: ${uncovered.length}/${draft.entries.length} 条无成本覆盖（未做地板校验）`,
         )
       }
-      if (floorViolations.length > 0) {
-        const detail = floorViolations
-          .map(
-            (v) =>
-              `${v.matchKey} credits=${v.credits} ${v.kind === 'max' ? '>' : '<'} ${v.kind === 'max' ? 'ceiling' : 'floor'}=${v.limit}`,
-          )
-          .join('; ')
-        throw new BadRequestException(`地板校验失败 ${floorViolations.length} 条: ${detail}`)
-      }
 
       await tx.priceListVersion.updateMany({
         where: { status: 'active', id: { not: draft.id } },
         data: { status: 'archived' },
       })
+      // revision + 1：每次发布递增，供调用方/审计识别版本演进（门禁已保证地板/成本主体合规）。
       const published = await tx.priceListVersion.update({
         where: { id: draft.id },
-        data: { status: 'active', publishedAt: new Date() },
+        data: { status: 'active', publishedAt: new Date(), revision: { increment: 1 } },
       })
 
       await tx.adminAuditLog.create({
@@ -387,7 +438,7 @@ export class PricingPublishingService {
       // 重新激活时刷新 publishedAt（使链式回滚的「最新 archived」判定始终成立）
       const restored = await tx.priceListVersion.update({
         where: { id: target.id },
-        data: { status: 'active', publishedAt: new Date() },
+        data: { status: 'active', publishedAt: new Date(), revision: { increment: 1 } },
       })
       await tx.adminAuditLog.create({
         data: {
@@ -406,9 +457,69 @@ export class PricingPublishingService {
   }
 
   /**
+   * 发布门禁（spec §6.8 七条硬拒）：在 publish 前集中校验，返回结构化违规清单。
+   * 任一不满足 → ok=false，publish 据此带清单 400（绝不静默发布、绝不丢弃运营改价）。
+   *   1. 版本非 draft 态
+   *   2. draft 条目为空（空集假绿防线）
+   *   3. subject 主体条目缺成本快照 costSnapshotYuan（缺成本主体）
+   *   4. 非 token 的 subject 条目缺计量单位快照 unitSnapshot（计量未对齐）
+   *   5. 地板违规（价格行低于下限 / token 反比率高于上限，按归一后成本判）
+   *   6. costRateId 引用缺失（成本来源不可解析）
+   *   7. marginPolicyId 引用缺失（利润策略不可解析）
+   */
+  async validatePublish(draftId: string): Promise<{ ok: boolean; violations: string[] }> {
+    const draft = await this.prisma.priceListVersion.findUnique({
+      where: { id: draftId },
+      include: { entries: true },
+    })
+    if (!draft) throw new NotFoundException(`价目表版本不存在: ${draftId}`)
+    const violations: string[] = []
+    if (draft.status !== 'draft') {
+      violations.push(`版本非 draft 态（当前 ${draft.status}）`)
+    }
+    if (draft.entries.length === 0) {
+      violations.push('draft 条目为空，拒绝发布（空集假绿防线）')
+    }
+    const entries = draft.entries as EntryLike[]
+    // ③ 缺成本主体：subject 行必须有成本快照（否则报价/计费无成本口径）。
+    for (const e of entries) {
+      if (e.subjectKey && (e.costSnapshotYuan === null || e.costSnapshotYuan === undefined)) {
+        violations.push(`条目 ${e.matchKey} 为 subject 主体但缺少成本快照（costSnapshotYuan）`)
+      }
+    }
+    // ④ 计量未对齐：非 token 的 subject 行缺 unitSnapshot。
+    for (const e of entries) {
+      if (e.subjectKey && !isTextTokenMatchKey(e.matchKey) && (e.unitSnapshot === null || e.unitSnapshot === undefined)) {
+        violations.push(`条目 ${e.matchKey} 缺少计量单位快照（unitSnapshot）`)
+      }
+    }
+    // ⑤⑥⑦ 地板 / 成本引用 / marginPolicy 引用。
+    const { floorViolations, missingCost } = await this.checkFloors(entries, (ids) =>
+      this.prisma.costRate.findMany({ where: { id: { in: ids } } }),
+    )
+    for (const v of floorViolations) {
+      violations.push(
+        `地板违规 ${v.matchKey}: credits=${v.credits} ${v.kind === 'max' ? '>' : '<'} ${v.kind === 'max' ? '上限' : '下限'}=${v.limit}`,
+      )
+    }
+    for (const m of missingCost) violations.push(`costRate 引用缺失: ${m}`)
+    for (const e of entries) {
+      if (e.marginPolicyId) {
+        const mp = await this.prisma.marginPolicy.findUnique({ where: { id: e.marginPolicyId } })
+        if (!mp) violations.push(`marginPolicy 引用缺失: ${e.marginPolicyId}（条目 ${e.matchKey}）`)
+      }
+    }
+    return { ok: violations.length === 0, violations }
+  }
+
+  /**
    * 地板校验：仅对有 costRateId 的条目；CostRate 行缺失 → missingCost（跳过地板，
    * 由上层告警）；其余委托 pricing.core.checkCostFloor——价格行判下限、token 反比率
    * 行判上限（同一条「收入 ≥ 成本 × 1.05」的两种量纲展开）。
+   *
+   * AC14：subject 主体行用「成本快照 costSnapshotYuan」（归一后成本）判地板，而非
+   * CostRate 渠道单价——运营定价真源的成本口径以此为准；token 反比率行仍用
+   * rate.costYuan 判上限。priceFloorBp 取自条目 marginPolicyId 指向的策略，缺省 500。
    */
   private async checkFloors(
     entries: EntryLike[],
@@ -416,9 +527,11 @@ export class PricingPublishingService {
   ): Promise<{
     floorViolations: FloorViolation[]
     missingCost: string[]
+    unitMismatch: string[]
   }> {
     const floorViolations: FloorViolation[] = []
     const missingCost: string[] = []
+    const unitMismatch: string[] = []
     const rateIds = [...new Set(entries.filter((e) => e.costRateId).map((e) => e.costRateId as string))]
     const rates = rateIds.length > 0 ? await findRates(rateIds) : []
     const rateMap = new Map(rates.map((r) => [r.id, r]))
@@ -429,9 +542,19 @@ export class PricingPublishingService {
         missingCost.push(e.matchKey)
         continue
       }
-      const v = checkCostFloor(e, rate.costYuan)
+      const isToken = isTextTokenMatchKey(e.matchKey)
+      // AC14：subject 主体行用成本快照（归一后成本）判地板；token 反比率行用渠道单价判上限。
+      const costForFloor = isToken ? rate.costYuan : e.costSnapshotYuan ?? rate.costYuan
+      const policy = e.marginPolicyId
+        ? await this.prisma.marginPolicy.findUnique({ where: { id: e.marginPolicyId } })
+        : null
+      const v = checkCostFloor(e, costForFloor, policy?.priceFloorBp ?? 500)
       if (v) floorViolations.push(v)
+      // 非 token 的 subject 主体行缺计量单位快照 ⇒ 计量未对齐（spec §6.8 硬拒之一）。
+      if (e.subjectKey && !isToken && (e.unitSnapshot === null || e.unitSnapshot === undefined)) {
+        unitMismatch.push(e.matchKey)
+      }
     }
-    return { floorViolations, missingCost }
+    return { floorViolations, missingCost, unitMismatch }
   }
 }

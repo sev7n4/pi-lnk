@@ -111,7 +111,9 @@ describe('PricingPublishingController（P1-a T4）', () => {
       const v1 = await seedActiveVersion(prisma, 'v1', [{ matchKey: 'm-a', capability: 'text', credits: 100 }])
       const res = await controller.show(v1.id)
       expect(res.data).toMatchObject({ id: v1.id, version: 'v1', status: 'active' })
-      expect(res.data.entries).toEqual([
+      // AC13 六字段透传后 entry 序列化新增 costSnapshotYuan/marginPolicyId/profitBpSnapshot/
+      // reason/subjectKey/unitSnapshot（legacy 项为 null）；此处只校验核心字段，容忍加法字段
+      expect(res.data.entries).toMatchObject([
         { matchKey: 'm-a', capability: 'text', credits: 100, basis: 'legacy-equivalent', costRateId: null },
       ])
       await expect(controller.show('nope')).rejects.toThrow(NotFoundException)

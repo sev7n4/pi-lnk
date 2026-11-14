@@ -32,6 +32,8 @@ import {
   type PricingQuote,
   type TextTokenSpec,
 } from './pricing.core'
+import { subjectKeyOf } from './pricing-subject.service'
+import { incResolution } from './pricing-metrics'
 import { enumeratePricingSpace } from './pricing.space'
 
 const CACHE_TTL_MS = 30_000
@@ -81,6 +83,10 @@ interface PriceTable {
   id: string
   version: string
   entries: Map<string, number>
+  /** 第六级解析：subjectKey（六段归一） → credits。运营定价真源索引。 */
+  subjectEntries: Map<string, number>
+  /** 命中 subjectKey 行的价格锁快照（成本/利润/来源），供展示与对账。 */
+  subjectMeta: Map<string, Partial<PricingQuote>>
   loadedAt: number
 }
 
@@ -89,6 +95,7 @@ interface GrayTable {
   releaseId: string
   version: string
   entries: Map<string, number>
+  subjectEntries: Map<string, number>
   whitelist: Set<string>
   startsAt: number
   endsAt: number
@@ -189,7 +196,8 @@ export class PricingService implements OnModuleInit {
   async quote(q: PricingQuery, userId?: string): Promise<PricingQuote> {
     const legacy = legacyPriceOf(q)
     if (process.env.PRICING_SOURCE === 'constants') {
-      return { credits: legacy, ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK }
+      incResolution('fallback')
+      return { credits: legacy, ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK, degraded: true }
     }
     if (this.degraded) {
       // 短路前先试一次自愈探测：degraded 因「boot 无 active 版本」而设时，
@@ -198,17 +206,30 @@ export class PricingService implements OnModuleInit {
       // loadActiveTable 会顺带把 degraded 清掉）。
       await this.trySelfHeal()
       if (this.degraded) {
-        return { credits: legacy, ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK }
+        incResolution('fallback')
+        return { credits: legacy, ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK, degraded: true }
       }
     }
+    // S1：subjectKey 六级解析。PRICING_SUBJECT_KEYS==='off' 时跳过前三级（灰度/全局/模型默认 subjectKey 行）。
+    const useSubjectKey = process.env.PRICING_SUBJECT_KEYS !== 'off'
+    const subjectKey = useSubjectKey ? this.resolveSubjectKey(q) : undefined
+    const normModel = modelOptionName(q.modelKey ?? '').trim().toLowerCase()
     try {
       const key = buildMatchKey(q)
       // ① 灰度优先：userId 存在、灰度表可用且名单命中才走灰度。
       if (userId) {
         const gray = await this.loadGrayTable()
         if (gray && gray.whitelist.has(userId)) {
+          if (subjectKey) {
+            const gHit = gray.subjectEntries.get(subjectKey)
+            if (gHit !== undefined) {
+              incResolution('gray_subject')
+              return { credits: gHit, ruleVersion: gray.version, grayReleaseId: gray.releaseId }
+            }
+          }
           const hit = gray.entries.get(key) ?? gray.entries.get(`${q.capability}:*`)
           if (hit !== undefined) {
+            incResolution('exact')
             return { credits: hit, ruleVersion: gray.version, grayReleaseId: gray.releaseId }
           }
           // 灰度表缺行 → 落 global 继续解析（灰度版本必须全量枚举，缺行视为数据事故）。
@@ -218,16 +239,60 @@ export class PricingService implements OnModuleInit {
       // ② global（无灰度路径，返回对象不含 grayReleaseId 键）。
       const table = await this.loadActiveTable()
       if (!table) throw new Error('no active price list version')
+      if (subjectKey) {
+        const sHit = table.subjectEntries.get(subjectKey)
+        if (sHit !== undefined) {
+          incResolution('global_subject')
+          return this.withSubjectMeta({ credits: sHit, ruleVersion: table.version }, subjectKey, table)
+        }
+        // ③ 模型默认：capability|modelKey|*|*|*（缺省兜底，不污染精确行）。
+        if (normModel) {
+          const mHit = table.subjectEntries.get(`${q.capability}|${normModel}|*|*|*`)
+          if (mHit !== undefined) {
+            incResolution('model_default')
+            return this.withSubjectMeta(
+              { credits: mHit, ruleVersion: table.version },
+              `${q.capability}|${normModel}|*|*|*`,
+              table,
+            )
+          }
+        }
+      }
+      // ④/⑤ 精确行 / capability 默认行（向后兼容 legacy matchKey）。
       const hit = table.entries.get(key) ?? table.entries.get(`${q.capability}:*`)
       if (hit === undefined) throw new Error(`no entry for ${key}`)
+      incResolution('exact')
       return { credits: hit, ruleVersion: table.version }
     } catch (err) {
       console.warn(
         `[pricing] 查询落常量兜底（${buildMatchKey(q)}）：`,
         err instanceof Error ? err.message : err,
       )
-      return { credits: legacy, ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK }
+      incResolution('fallback')
+      return { credits: legacy, ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK, degraded: true }
     }
+  }
+
+  /** 由 PricingQuery 推导 subjectKey：q.subjectKey 直接取；否则五段归一；五段缺任一返回 undefined（跳过前三级）。 */
+  private resolveSubjectKey(q: PricingQuery): string | undefined {
+    if (q.subjectKey) return q.subjectKey
+    const modelKey = modelOptionName(q.modelKey ?? '').trim().toLowerCase()
+    const spec = q.spec
+    const provider = q.provider
+    const upstream = q.upstream
+    if (!modelKey || !spec || !provider || !upstream) return undefined
+    return subjectKeyOf({ capability: q.capability, modelKey, spec, provider, upstream })
+  }
+
+  /** 命中 subjectKey 行时附加价格锁快照（成本/利润/来源等），条件写入（非命中路径不出现该键）。 */
+  private withSubjectMeta(
+    quote: PricingQuote,
+    subjectKey: string,
+    table: PriceTable,
+  ): PricingQuote {
+    const meta = table.subjectMeta.get(subjectKey)
+    if (!meta) return quote
+    return { ...quote, ...meta }
   }
 
   // —— P2 T4：文本 token 反比率计价（Task 6 回合结算消费）——
@@ -256,7 +321,7 @@ export class PricingService implements OnModuleInit {
       // modelOptionName 对无前缀裸 key 是恒等，不影响既有调用方。
       const model = modelOptionName(String(modelKey || '')).trim().toLowerCase()
       // token 行无 legacy 常量可兜（constants 旁路/未知模型都直接落 USD 成本兜底）
-      if (process.env.PRICING_SOURCE === 'constants' || !TEXT_TOKEN_MODELS.includes(model)) {
+      if (process.env.PRICING_SOURCE === 'constants' || !(await this.isKnownTokenModel(model))) {
         return await this.degradedTextTokenQuote(usage)
       }
       // 与 quote() 同构的 degraded 短路 + 自愈探测
@@ -359,7 +424,7 @@ export class PricingService implements OnModuleInit {
   } | null> {
     try {
       const model = modelOptionName(String(modelKey || '')).trim().toLowerCase()
-      if (process.env.PRICING_SOURCE === 'constants' || !TEXT_TOKEN_MODELS.includes(model)) {
+      if (process.env.PRICING_SOURCE === 'constants' || !(await this.isKnownTokenModel(model))) {
         return null
       }
       if (this.degraded) {
@@ -420,6 +485,9 @@ export class PricingService implements OnModuleInit {
       const rows: Record<string, { in?: number; cache?: number; out?: number }> = {}
       for (const [key, credits] of table.entries) {
         if (!key.startsWith('text:')) continue
+        // subject 六段键（text|model|spec|provider|upstream）不混入公开反比率端点：
+        // 即便未来某行 matchKey 误带 '|' 且前缀为 text:，也直接跳过，避免脏键污染 ratios。
+        if (key.includes('|')) continue
         const rest = key.slice('text:'.length)
         const sep = rest.lastIndexOf(':')
         if (sep <= 0) continue
@@ -477,10 +545,31 @@ export class PricingService implements OnModuleInit {
   /** MarginPolicy 当前生效系数（防御读，缺省 11000bp——与 agent.service readMarginBp 同源同缺省）。 */
   private async readCurrentMarginBp(): Promise<number> {
     try {
-      const row = await this.prisma?.marginPolicy?.findFirst?.({ orderBy: { createdAt: 'desc' } })
+      // T4：pin 到 global 档（phase='launch'），杜绝 model/upstream 等细分策略污染全局 read。
+      // 细分档的生效由 resolveMargin 在物化/计价链路按 subject 解析，不在此处全局 read 生效。
+      const row = await this.prisma?.marginPolicy?.findFirst?.({ where: { scope: 'global', status: 'active' } })
       return typeof row?.marginBp === 'number' && row.marginBp > 0 ? row.marginBp : 11000
     } catch {
       return 11000
+    }
+  }
+
+  /**
+   * 数据化 token 模型白名单（Task 7）：不再硬编码 `TEXT_TOKEN_MODELS.includes`，
+   * 改为查 `pricingSubject` 中该模型是否具备 in/out 双反比率主体行（且未 offboarded）。
+   * 表读失败时退回旧 8 白名单常量，保证永不 throw、且不改变「未知模型落 USD 兜底」语义。
+   * 要求 in 与 out 两行齐备才认作已知 token 模型——与 quoteTextTokens「in/out 齐才走
+   * 价目口径」同源（缺一行即数据事故，仍落兜底）。
+   */
+  private async isKnownTokenModel(model: string): Promise<boolean> {
+    try {
+      const rows = await this.prisma.pricingSubject.findMany({
+        where: { modelKey: model, capability: 'text', spec: { in: ['in', 'out'] }, status: { not: 'offboarded' } },
+        select: { spec: true },
+      })
+      return rows.some((r) => r.spec === 'in') && rows.some((r) => r.spec === 'out')
+    } catch {
+      return TEXT_TOKEN_MODELS.includes(model)
     }
   }
 
@@ -512,8 +601,30 @@ export class PricingService implements OnModuleInit {
       return null
     }
     const entries = new Map<string, number>()
-    for (const e of version.entries) entries.set(e.matchKey, e.credits)
-    this.cache = { id: version.id, version: version.version, entries, loadedAt: Date.now() }
+    const subjectEntries = new Map<string, number>()
+    const subjectMeta = new Map<string, Partial<PricingQuote>>()
+    for (const e of version.entries) {
+      entries.set(e.matchKey, e.credits)
+      if (e.subjectKey) {
+        subjectEntries.set(e.subjectKey, e.credits)
+        subjectMeta.set(e.subjectKey, {
+          subjectKey: e.subjectKey,
+          costYuanPerRequest: e.costSnapshotYuan ?? undefined,
+          profitBp: e.profitBpSnapshot ?? undefined,
+          unitSnapshot: e.unitSnapshot ?? undefined,
+          marginPolicyId: e.marginPolicyId ?? undefined,
+          priceListVersionId: version.id,
+        })
+      }
+    }
+    this.cache = {
+      id: version.id,
+      version: version.version,
+      entries,
+      subjectEntries,
+      subjectMeta,
+      loadedAt: Date.now(),
+    }
     // 自愈：boot 时因「无 active 版本」降级的进程，运行中经发布流建出版本后
     // 到这里就能恢复——不必重启（终审 Critical C2：degraded 曾是永久闩锁，
     // 使「改价不发版」在运行中的进程失效，而发布成功/审计有记录/价格不生效
@@ -550,9 +661,22 @@ export class PricingService implements OnModuleInit {
         return null
       }
       const entries = new Map<string, number>()
-      for (const e of rel.version.entries) entries.set(e.matchKey, e.credits)
+      const subjectEntries = new Map<string, number>()
+      for (const e of rel.version.entries) {
+        entries.set(e.matchKey, e.credits)
+        if (e.subjectKey) subjectEntries.set(e.subjectKey, e.credits)
+      }
       const whitelist = new Set(rel.whitelist.map((w) => w.userId))
-      this.grayCache = { releaseId: rel.id, version: rel.version.version, entries, whitelist, startsAt, endsAt, loadedAt: now }
+      this.grayCache = {
+        releaseId: rel.id,
+        version: rel.version.version,
+        entries,
+        subjectEntries,
+        whitelist,
+        startsAt,
+        endsAt,
+        loadedAt: now,
+      }
       return this.grayCache
     } catch (err) {
       console.warn('[pricing] 灰度表加载失败 — 本轮按无灰度处理：', err instanceof Error ? err.message : err)

@@ -275,6 +275,111 @@ export type AutomationJobSummary = {
   } | null
 }
 
+// ---- S1 定价利润引擎运维端点（与 pricing-cost/margin/subject/materialize controller 对齐）----
+
+/** 成本行录入（单一人民币 D9：无 currency/fxRate 等字段）。 */
+export type CostRateInput = {
+  channel: string
+  modelKey: string
+  spec: string
+  unit: 'per_image' | 'per_video' | 'per_call' | 'per_1m_tokens' | 'per_second'
+  costYuan: number
+  unitQuantity?: number
+  source?: 'official_list' | 'negotiated' | 'channel_actual' | 'provisional'
+  provider?: string | null
+  upstream?: string | null
+  sourceRef?: string | null
+  provisional?: boolean
+  effectiveFrom?: string | null
+  effectiveTo?: string | null
+}
+
+export type CostRateRow = {
+  id: string
+  channel: string
+  modelKey: string
+  spec: string
+  unit: string
+  costYuan: number
+  source: string
+  provider: string | null
+  upstream: string | null
+  unitQuantity: number
+  effectiveFrom: string | null
+  effectiveTo: string | null
+  sourceRef: string | null
+  provisional: boolean
+  createdAt: string
+}
+
+/** 利润策略录入：phase 由服务端 phaseOf(scope, scopeKey) 生成。 */
+export type MarginPolicyInput = {
+  scope: string
+  scopeKey?: string | null
+  profitBp: number
+  priceFloorBp?: number
+  status?: 'active' | 'draft' | 'disabled'
+  effectiveFrom?: string | null
+  effectiveTo?: string | null
+}
+
+export type MarginPolicyRow = {
+  id: string
+  scope: string | null
+  scopeKey: string | null
+  profitBp: number
+  priceFloorBp: number
+  status: string | null
+  effectiveFrom: string | null
+  effectiveTo: string | null
+}
+
+export type PricingSubjectRow = {
+  id: string
+  subjectKey: string
+  capability: string
+  modelKey: string
+  spec: string
+  provider: string
+  upstream: string
+  channelId: string
+  status: string
+  billableUnit: string
+  unitsPerRequest: number | null
+  defaultSubjectKey: string | null
+  source: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type SubjectRebuildResult = {
+  added: number
+  unchanged: number
+  missingInCatalog: string[]
+}
+
+export type MaterializeFloorViolation = {
+  matchKey: string
+  credits: number
+  limit: number
+  kind: 'min' | 'max'
+}
+
+export type MaterializeResult = {
+  added: number
+  changed: number
+  unchanged: number
+  missingCost: string[]
+  unitMismatch: string[]
+  floorViolations: MaterializeFloorViolation[]
+  noCostCoverage: string[]
+}
+
+export type VersionReadiness = {
+  ok: boolean
+  violations: string[]
+}
+
 export const adminApi = {
   /**
    * token 验真：复用目录 GET（最轻的鉴权读端点）。
@@ -393,5 +498,31 @@ export const adminApi = {
 
     rollback: (id: string): Promise<void> =>
       unwrap(adminHttp.post(`/admin/pricing/gray/${encodeURIComponent(id)}/rollback`)),
+  },
+
+  // ---- S1：定价利润引擎运维（成本 / 利润 / 主体 / 物化 / 就绪）----
+  pricingS1: {
+    listSubjects: (): Promise<PricingSubjectRow[]> => unwrap(adminHttp.get('/admin/pricing/subjects')),
+
+    rebuildSubjects: (): Promise<SubjectRebuildResult> =>
+      unwrap(adminHttp.post('/admin/pricing/subjects/rebuild', {})),
+
+    putCostRate: (input: CostRateInput): Promise<{ channel: string; modelKey: string; spec: string }> =>
+      unwrap(adminHttp.put('/admin/pricing/cost-rates', input)),
+
+    listCostRates: (): Promise<CostRateRow[]> => unwrap(adminHttp.get('/admin/pricing/cost-rates')),
+
+    putMarginPolicy: (input: MarginPolicyInput): Promise<{ phase: string }> =>
+      unwrap(adminHttp.put('/admin/pricing/margin-policies', input)),
+
+    listMarginPolicies: (): Promise<MarginPolicyRow[]> => unwrap(adminHttp.get('/admin/pricing/margin-policies')),
+
+    /** 以主体为遍历真源，拉成本 + 利润后物化落草案价目表。 */
+    materializeDraft: (id: string): Promise<MaterializeResult> =>
+      unwrap(adminHttp.post(`/admin/pricing/versions/${encodeURIComponent(id)}/materialize`)),
+
+    /** 发布门禁七条硬拒预览（validatePublish 结构化 verdict）。 */
+    getReadiness: (id: string): Promise<VersionReadiness> =>
+      unwrap(adminHttp.get(`/admin/pricing/versions/${encodeURIComponent(id)}/readiness`)),
   },
 }

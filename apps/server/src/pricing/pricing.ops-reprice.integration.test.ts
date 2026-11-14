@@ -141,6 +141,7 @@ describe('运营改价全链：建草案 → 改 credits → publish → 重启�
     await expect(pricing.quote({ capability: 'text' })).resolves.toEqual({
       credits: legacyPriceOf({ capability: 'text' }),
       ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK,
+      degraded: true,
     })
     err.mockRestore()
   }, 120_000)
@@ -155,6 +156,7 @@ describe('运营改价全链：建草案 → 改 credits → publish → 重启�
     await expect(first.pricing.quote({ capability: 'text' })).resolves.toEqual({
       credits: 5,
       ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK,
+      degraded: true,
     })
 
     // 同一个仍在运行的进程（同一 PricingService 单例，未重启、未再 onModuleInit）
@@ -200,6 +202,7 @@ describe('运营改价全链：建草案 → 改 credits → publish → 重启�
     await expect(pricing.quote({ capability: 'text' })).resolves.toEqual({
       credits: 5,
       ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK,
+      degraded: true,
     })
     expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('已从降级恢复'))
     err.mockRestore()
