@@ -788,6 +788,30 @@ describe("extractTaskEvents（C1：todo_write diff → task_list/task_update 派
 	it("空 diff（无变化）→ 空（不打扰前端）", () => {
 		expect(extractTaskEvents(mkEnd({ todo: { snapshot: [], diff: { updates: [] } } }))).toEqual([]);
 	});
+
+	// C-2b / isError 语义补正（spec 2026-11-14-iserror-rejection-flag-design.md E5）：
+	// rejectionResult 的 details.todo 新增 rejected:true；前端 TaskDiffSchema 是 z.object
+	// （默认 strip），additive 字段不得让解析失败、也不得改变硬拒时的零事件语义。
+	it("⭐ details.todo.rejected 是 additive 字段，不破坏 TaskDiffSchema 解析", () => {
+		const events = extractTaskEvents(
+			mkEnd({
+				todo: {
+					snapshot: [],
+					diff: { list: [{ id: "plan-1", content: "起稿", status: "pending" }], updates: [] },
+					rejected: true,
+				},
+			}),
+		);
+		expect(events).toEqual([
+			{ type: "task_list", data: { items: [{ id: "plan-1", title: "起稿", status: "pending" }] } },
+		]);
+	});
+
+	it("⭐ 硬拒载荷（diff.updates=[]）+ isError=true 仍无 task 事件（补正不造成证据断流）", () => {
+		const hardReject = { todo: { snapshot: [], diff: { updates: [] }, rejected: true } };
+		expect(extractTaskEvents(mkEnd(hardReject, true))).toEqual([]);
+		expect(extractTaskEvents(mkEnd(hardReject, false))).toEqual([]);
+	});
 });
 
 describe("2026-10-18 上游对齐：generation_progress 派生 / snapshot 透传", () => {

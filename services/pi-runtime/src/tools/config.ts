@@ -3,7 +3,7 @@ import { NestClient, loadNestConfig } from "./nest-client.js";
 import { buildCanvasReadTools, buildCanvasWriteTools, buildUiCommandTools, buildAskUserTools, buildArrangeNodesTools, buildCanvasGroupTools, buildGenerationTools, buildWebTools, buildDeleteNodesTools, buildReadDocumentTools, buildMemoryTools, buildRemoveEdgesTools, buildRenderCanvasViewTools, buildViewCanvasMediaTools, buildReadMediaTools, buildValidateCanvasLayoutTools } from "./registry.js";
 import type { LnkpiTool } from "./types.js";
 import { buildTodoTools, isTodoToolEnabled } from "./todo.js";
-import { createNestGenerationOracle } from "./acceptance.js";
+import { createNestCanvasOracle, createNestGenerationOracle } from "./acceptance.js";
 import { createProposePlanTool } from "./propose-plan.js";
 import { createSpawnSubagentTool, createCollectSubagentTool } from "./spawn-subagent.js";
 import { planGateEnabled } from "../runtime-config.js";
@@ -80,12 +80,14 @@ export function resolveToolsWithClient(
 	const hasTavily = !!process.env.TAVILY_API_KEY && process.env.TAVILY_API_KEY !== "REPLACE_ME";
 	const tools: LnkpiTool[] = [
 		// C1：todo_write 纯本地工具，不依赖 client（spec 2026-10-09-task-tool-design.md §3.1）。
-		// C-2a：生产注入生成 oracle（client 存在才注入；纯文本模式走零参 ⇒ 逐字节旧行为）。
+		// C-2a/C-2b：生产注入两类 oracle（client 存在才注入；纯文本模式走零参 ⇒ 逐字节旧行为）。
 		// 工具层不持 Metrics——经回调接线（与 propose_outcome 同款纪律）。
 		...(isTodoToolEnabled()
 			? buildTodoTools({
 					oracle: createNestGenerationOracle(client),
+					canvasOracle: createNestCanvasOracle(client),
 					onAcceptanceOutcome: (outcome) => metrics.observeAcceptance(outcome),
+					onAcceptanceKind: (kind) => metrics.observeAcceptanceKind(kind),
 				})
 			: []),
 		// C3：propose_plan 同上——不依赖 client，registry 存在即可注册（kill switch PI_RUNTIME_PLAN_GATE）。

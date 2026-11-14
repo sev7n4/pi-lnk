@@ -45,5 +45,9 @@ description: >-
    `acceptance:{kind:"generation"}`（要求确认生成成功时加
    `generation:{requireSucceeded:true}`）——证据不足会被工具拒绝并附证据差，
    按回执继续干活或如实降级，不要因此放弃清单维护。
+   画布类任务收尾写 `acceptance:{kind:"canvas_state",canvasState:{nodeCount:{min:1}}}`
+   （按类型数节点用 `nodeTypeCounts:{image:{min:1}}`）——工具读回画布快照核对，
+   证据不足同样会被工具拒绝并附证据差。⚠️ 只有批量建节点接口建的节点会被读到，
+   分镜 shot 类节点不计入，别据此谎报完成。
 7. **大调研可派发**：独立性强的大规模调研（多源搜集、逐项深挖）可派发子代理并行；
    派发前先建好清单占位，派发后由主会话整合结果再更新清单。

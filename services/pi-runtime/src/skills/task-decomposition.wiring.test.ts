@@ -55,4 +55,13 @@ describe("task-decomposition skill wiring", () => {
 			assert.ok(body.includes(needle), `SKILL.md 缺 C-2a 教学关键句: ${needle}`);
 		}
 	});
+	it("C-2b 最小教学：纪律 6 含 canvas_state 声明句与两类节点边界", () => {
+		const body = readFileSync(
+			new URL("../../../../skills/task-decomposition/SKILL.md", import.meta.url),
+			"utf8",
+		);
+		for (const needle of ['kind:"canvas_state"', "nodeCount", "nodeTypeCounts", "分镜 shot 类节点不计入"]) {
+			assert.ok(body.includes(needle), `SKILL.md 缺 C-2b 教学关键句: ${needle}`);
+		}
+	});
 });

@@ -34,6 +34,10 @@
 import type { EvalTranscript } from "./transcript.js";
 import { CANVAS_DECOMPOSITION_CASES } from "./canvas-decomposition-cases.js";
 import { CANVAS_MULTITURN_CASES } from "./canvas-multiturn-cases.js";
+// C-2b：画布计数判据下沉到 src 根层共享模块——生产 acceptance.canvasState 与 eval 同源，
+// 杜绝「eval 绿、生产拦」分裂。eval 侧不反向 import 生产 tools，反之亦然。
+import { judgeCanvasCounts, type CanvasSnapshot, type CanvasCountsExpect } from "../canvas-judge.js";
+export type { CanvasSnapshot } from "../canvas-judge.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // C-1b 类型层：多轮 steps / status 分布 / 画布终态 / identity 观测
@@ -72,19 +76,14 @@ export interface TodoStatusExpect {
 /**
  * 画布终态判据（§8.3 形态；见 GoldenCase.expectCanvasState 注释）。
  * ⚠️ 刻意**不含** generationSucceeded——成功级本期不实施（实施 spec §3.2）。
+ * C-2b：画布计数字段继承共享模块（生产 acceptance.canvasState 同源）；
+ * generationSubmitted 是 transcript 判据、不属画布快照 ⇒ 留在 eval 侧。
  */
-export interface CanvasStateExpect {
-	nodeCount?: { min?: number; max?: number };
-	nodeTypeCounts?: Partial<Record<"image" | "text" | "video", { min?: number; max?: number }>>;
+export interface CanvasStateExpect extends CanvasCountsExpect {
 	generationSubmitted?: boolean;
 }
 
-/** 画布快照（runner 经探针读回后传给纯判定函数；可单测）。 */
-export interface CanvasSnapshot {
-	nodeCount: number;
-	/** 按 node.type 计数（生产实测枚举 image/text/video；未知类型也计数，键为原值）。 */
-	typeCounts: Record<string, number>;
-}
+/** 画布快照由共享模块定义并 re-export（既有 import 路径不变）。 */
 
 /** identity 断裂观测产出（§8.6，**只观测不计分**——不影响 pass/fail）。 */
 export interface IdentityObservation {
@@ -631,29 +630,10 @@ function judgeCore(
  * 只断 runner 读回的快照，绝不在此发起 IO——画布读回失败由 runner 归 error
  * （环境问题），不进本函数（谎报 0 会让上限判据误判成模型越权写入）。
  */
+/** C-2b：判据实现单点在 `canvas-judge.ts`（eval 与生产 acceptance 共用同一函数）。
+ *  本薄封装保留既有公开签名 ⇒ 4 处调用与 golden-cases.test.ts 的 import 逐字节不变。 */
 export function judgeCanvasState(canvas: CanvasSnapshot, expect: CanvasStateExpect): string[] {
-	const failures: string[] = [];
-	if (expect.nodeCount) {
-		const { min, max } = expect.nodeCount;
-		if (min !== undefined && canvas.nodeCount < min) {
-			failures.push(`画布节点数 ${canvas.nodeCount} 低于下限 ${min}（写入未发生或被回滚）`);
-		}
-		if (max !== undefined && canvas.nodeCount > max) {
-			failures.push(`画布节点数 ${canvas.nodeCount} 超过上限 ${max}（跨 case 污染累积或越权写入）`);
-		}
-	}
-	if (expect.nodeTypeCounts) {
-		for (const [type, range] of Object.entries(expect.nodeTypeCounts)) {
-			const n = canvas.typeCounts[type] ?? 0;
-			if (range?.min !== undefined && n < range.min) {
-				failures.push(`画布 ${type} 节点数 ${n} 低于下限 ${range.min}`);
-			}
-			if (range?.max !== undefined && n > range.max) {
-				failures.push(`画布 ${type} 节点数 ${n} 超过上限 ${range.max}`);
-			}
-		}
-	}
-	return failures;
+	return judgeCanvasCounts(canvas, expect);
 }
 
 /**

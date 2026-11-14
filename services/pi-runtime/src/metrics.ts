@@ -140,6 +140,8 @@ export class Metrics {
 	private skillLoads = new Map<string, number>(); // key: `${skill}|${outcome}`（ok|unknown|read_error）
 	/** C-2a acceptance 收尾校验（spec §5 三指标）：declared/pass/fail_closed/fail_open。 */
 	private acceptance = new Map<string, number>(); // key: outcome
+	/** C-2b：按 kind 统计声明项数（写入率子维度；模型不写 canvas_state ⇒ 机制空转可被观测）。 */
+	private acceptanceKinds = new Map<string, number>(); // key: generation|canvas_state
 	private transformContextRuns = new Map<string, number>(); // key: goal (on|off)——是否注入了目标复述
 	private transformAnnotated = 0; // 信任标注覆盖的 toolResult 条数累计
 	private dynamicBudgetDrops = new Map<string, number>(); // key: kind (canvas|vision|sidebar|general)——发生截断的块数
@@ -481,6 +483,11 @@ export class Metrics {
 		this.acceptance.set(outcome, (this.acceptance.get(outcome) ?? 0) + 1);
 	}
 
+	/** C-2b 按 kind 观测声明项数（一次 todo_write 有 N 个声明项就记 N 次）。 */
+	observeAcceptanceKind(kind: "generation" | "canvas_state"): void {
+		this.acceptanceKinds.set(kind, (this.acceptanceKinds.get(kind) ?? 0) + 1);
+	}
+
 	/** dynamicBlocks 预算观测（T3）：kind=发生截断的块类别；unknownKind=块首标记未识别（约定漂移）。 */
 	observeDynamicBudgetDrop(kind: string): void {
 		this.dynamicBudgetDrops.set(kind, (this.dynamicBudgetDrops.get(kind) ?? 0) + 1);
@@ -799,6 +806,13 @@ export class Metrics {
 	lines.push("# TYPE pi_runtime_acceptance_total counter");
 	for (const [outcome, count] of [...this.acceptance.entries()].sort()) {
 		lines.push(`pi_runtime_acceptance_total{outcome="${esc(outcome)}"} ${count}`);
+	}
+
+	// C-2b acceptance 按 kind 的声明项数（纯新增系列，不改既有四 outcome）。
+	lines.push("# HELP pi_runtime_acceptance_kind_total todo_write acceptance declarations by kind.");
+	lines.push("# TYPE pi_runtime_acceptance_kind_total counter");
+	for (const [kind, count] of [...this.acceptanceKinds.entries()].sort()) {
+		lines.push(`pi_runtime_acceptance_kind_total{kind="${esc(kind)}"} ${count}`);
 	}
 
 	lines.push("# HELP pi_runtime_dynamic_budget_drops_total dynamicBlocks truncated by kind budget (cumulative count).");

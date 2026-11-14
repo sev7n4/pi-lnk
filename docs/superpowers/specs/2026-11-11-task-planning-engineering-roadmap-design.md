@@ -423,6 +423,8 @@ schema 层最低强度约束（不靠 prompt）：generation 二选一——显�
 
 > **状态回填（2026-11-14，仅此一行；v1.3 冻结后正文不改）**：C-2a 生成 oracle 子域立项 spec/plan 落档并实施（`docs/superpowers/{specs,plans}/2026-11-14-c2a-acceptance-generation-oracle-*`）。三项裁决见立项 spec §3：D1 校验在 `todo.ts` execute 内（**after_tool 执行后触发，做不到 §14.3 零副作用拒绝**）、D2 oracle = 会话级最新生成任务且 DSL 不新增锚点、D3 只注册已实现校验的 `generation` 枚举（C-2b 再扩 canvas_state）。§14.1 的 `session-manager.ts:616/1704` 为陈旧行号，实证锚点见立项 spec §2。
 
+> **状态回填（2026-11-14 追加行；v1.3 冻结后正文不改）**：C-2b canvas_state 子域立项 spec/plan 落档并实施（`docs/superpowers/{specs,plans}/2026-11-14-c2b-acceptance-canvas-state-*`、双刀 plan `2026-11-14-c2b-and-iserror-implementation-plan.md`）。五项裁决见立项 spec §3：D1 判据真共享（抽 `src/canvas-judge.ts`，eval 与生产同源）、D2 只注册已校验的 `nodeCount`/`nodeTypeCounts`（`noOverlap` 代码零实现不承诺）、D3 oracle 用 `get-canvas-summary` 且不传 focus（全量 SSOT）、D4 多 kind 聚合 `reject > fail_open > pass`、D5 纯新增 `pi_runtime_acceptance_kind_total{kind}`。同批另立 isError 语义补正 spec（`2026-11-14-iserror-rejection-flag-design.md`）：实证 vendor 0.99.2 `executeToolCall` 恒 `isError:false`、生产 `openai-completions` 丢弃该标志 ⇒ 补正收益仅在 transcript/事件/前端，**不改善模型行为**；方案 = `after_tool` patch + `details.todo.rejected` 显式标记。
+
 ---
 
 ## 15. 五方向产物一致性核对（2026-11-13，方向 5 收尾时执行；用户裁决「核对一致性但不推 PR，继续讨论」）

@@ -12,10 +12,12 @@ import { reduce, summarize, type TodoDiff, type TodoItemInput, type TodoItemWith
 import {
 	acceptanceSchema,
 	isAcceptanceEnabled,
+	judgeCanvasAcceptance,
 	judgeGenerationAcceptance,
 	parseAcceptance,
 	type AcceptanceOutcome,
 	type AcceptanceRequirement,
+	type CanvasOracle,
 	type GenerationOracle,
 } from "./acceptance.js";
 
@@ -115,21 +117,33 @@ function rejectUnknownIds(params: { todos: TodoItemInput[] }, key: string): stri
 	return `调用被拒绝：id 不存在于当前任务清单（${offending.map((o) => o.id).join("、")}）。当前合法 id：\n${listing}\n请带正确 id 重发（变更已有任务），或对新增任务省略 id。`;
 }
 
-type TodoResult = AgentToolResult<{ todo: { snapshot: TodoItemWithId[]; diff: TodoDiff } }>;
+/** details 契约：`rejected` 是 isError 语义补正刀（spec 2026-11-14-iserror-rejection-flag-design.md）
+ *  的显式标记——after_tool listener 据此 patch `isError:true`，不靠「调用被拒绝」文本匹配。
+ *  additive 字段：前端 `TaskDiffSchema` 是 z.object（默认 strip），多字段不破坏解析。 */
+interface TodoDetails {
+	todo: { snapshot: TodoItemWithId[]; diff: TodoDiff; rejected?: boolean };
+}
+type TodoResult = AgentToolResult<TodoDetails>;
 
 /** C-2a 依赖注入（工具层不持 Metrics / 不持 NestClient 实例；零参 = 逐字节旧行为）。 */
 export interface TodoToolDeps {
 	oracle?: GenerationOracle;
+	canvasOracle?: CanvasOracle;
 	onAcceptanceOutcome?: (outcome: AcceptanceOutcome) => void;
+	/** C-2b：按 kind 记录「声明项数」（写入率子维度，防机制空转观测不到）。 */
+	onAcceptanceKind?: (kind: "generation" | "canvas_state") => void;
 }
 
-/** 零副作用硬拒的**唯一**构造点（A-2' 幻觉 id / C-2a 判据非法 / C-2a 证据不足共用）：
- * isError + 当前快照 + diff.updates=[] ⇒ 前端零事件、store 零写入。 */
+/** 零副作用硬拒的**唯一**构造点（A-2' 幻觉 id / C-2a 判据非法 / C-2b 证据不足共用）：
+ * isError + 当前快照 + diff.updates=[] ⇒ 前端零事件、store 零写入。
+ * ⚠️ vendor 0.99.2 `executeToolCall` 恒返回 isError:false、不消费 AgentToolResult.isError
+ * （harness/execution/tools.ts:148）⇒ `rejected:true` 是给 after_tool listener 的补正锚点；
+ * 拒绝文案本身一个字都不改（A-2' 生产自纠 1/1 建立在文本上）。 */
 function rejectionResult(key: string, text: string): TodoResult {
 	return {
 		content: [{ type: "text", text }],
 		isError: true,
-		details: { todo: { snapshot: getTodoState(key), diff: { updates: [] } } },
+		details: { todo: { snapshot: getTodoState(key), diff: { updates: [] }, rejected: true } },
 	};
 }
 
@@ -140,6 +154,7 @@ type AcceptanceVerdict =
 	| { kind: "pass" };
 
 /** §14.3 fail-closed / fail-open 二分：模型把带 acceptance 的项标 completed 时查证。
+ *  C-2b 多 kind 聚合（立项 spec D4）：优先级 **结构非法 / reject > fail_open > pass**。
  *  「依赖缺失」与「查询失败」是两种 fail-open：前者逐字节旧行为（静默），后者软提醒+计数。
  *  ⚠️ acceptance 是**调用级声明**，不进入快照 SSOT（见 task-state.reduce 显式字段构造）。 */
 async function verifyAcceptance(
@@ -150,7 +165,12 @@ async function verifyAcceptance(
 	const declared = todos.filter((t) => t.status === "completed" && t.acceptance !== undefined);
 	if (declared.length === 0) return { kind: "skip" };
 	deps.onAcceptanceOutcome?.("declared");
-	const requirements: Array<{ content: string; requirement: AcceptanceRequirement }> = [];
+	// ① 结构校验全部先做：任一非法立即硬拒，且优先于任何 IO（不查 oracle）
+	const requirements: Array<{
+		content: string;
+		kind: "generation" | "canvas_state";
+		requirement: AcceptanceRequirement;
+	}> = [];
 	for (const item of declared) {
 		const parsed = parseAcceptance(item.acceptance);
 		if (!parsed.ok) {
@@ -159,38 +179,74 @@ async function verifyAcceptance(
 				text: `调用被拒绝：任务项「${item.content}」的 acceptance 字段非法：${parsed.reason}。当前清单保持不变。请改对判据后重发，或省略 acceptance（探索/澄清类任务无需声明）。`,
 			};
 		}
-		requirements.push({ content: item.content, requirement: parsed.requirement });
+		const kind = parsed.requirement.kind ?? "generation";
+		requirements.push({ content: item.content, kind, requirement: parsed.requirement });
+		deps.onAcceptanceKind?.(kind);
 	}
-	// 依赖缺失（kill switch / 未注入 oracle / 缺 userId）：不查、不改回执、不计数
-	if (!isAcceptanceEnabled() || deps.oracle === undefined || toolContext.userId === undefined) {
-		return { kind: "skip" };
-	}
-	const result = await deps.oracle.inspect({
-		sessionId: toolContext.sessionId,
-		userId: toolContext.userId,
-	});
-	if (!result.ok) {
-		deps.onAcceptanceOutcome?.("fail_open");
-		console.warn(`[todo_write] acceptance oracle 查询失败（fail-open）：${result.reason}`);
-		return {
-			kind: "fail_open",
-			reminder: `\n\n[acceptance] 生成证据查询失败（${result.reason}），本次收尾校验已放行；请勿据此视为验收通过。`,
-		};
-	}
-	for (const req of requirements) {
-		const judged = judgeGenerationAcceptance(result.latest, req.requirement);
-		if (!judged.ok) {
-			deps.onAcceptanceOutcome?.("fail_closed");
-			const expected =
-				req.requirement.requireSucceeded === true
-					? "最近生成 status=succeeded"
-					: "本会话存在生成记录";
-			return {
-				kind: "reject",
-				text: `调用被拒绝：任务项「${req.content}」声明了验收判据，但生成证据不支持。期望：${expected}；实际：${judged.evidence}。当前清单保持不变。请继续干活（重试生成）或如实降级（分项说明哪些真完成），不要标 completed。`,
-			};
+	const enabled = isAcceptanceEnabled();
+	const generationReqs = requirements.filter((r) => r.kind === "generation");
+	const canvasReqs = requirements.filter((r) => r.kind === "canvas_state");
+	const reminders: string[] = [];
+	// 依赖缺失（kill switch / 未注入 oracle / 缺 userId）⇒ 该组不查、不改回执、不计数。
+	// checkedAny=false 时整体返回 skip（C-2a 逐字节旧行为）。
+	let checkedAny = false;
+
+	// ② generation 组：同组多项复用一次查询结果（C-2a 语义不变）
+	if (generationReqs.length > 0 && enabled && deps.oracle !== undefined && toolContext.userId !== undefined) {
+		checkedAny = true;
+		const result = await deps.oracle.inspect({
+			sessionId: toolContext.sessionId,
+			userId: toolContext.userId,
+		});
+		if (!result.ok) {
+			deps.onAcceptanceOutcome?.("fail_open");
+			console.warn(`[todo_write] acceptance oracle 查询失败（fail-open）：${result.reason}`);
+			reminders.push(`\n\n[acceptance] 生成证据查询失败（${result.reason}），本次收尾校验已放行；请勿据此视为验收通过。`);
+		} else {
+			for (const req of generationReqs) {
+				const judged = judgeGenerationAcceptance(result.latest, req.requirement);
+				if (!judged.ok) {
+					deps.onAcceptanceOutcome?.("fail_closed");
+					const expected =
+						req.requirement.requireSucceeded === true
+							? "最近生成 status=succeeded"
+							: "本会话存在生成记录";
+					return {
+						kind: "reject",
+						text: `调用被拒绝：任务项「${req.content}」声明了验收判据，但生成证据不支持。期望：${expected}；实际：${judged.evidence}。当前清单保持不变。请继续干活（重试生成）或如实降级（分项说明哪些真完成），不要标 completed。`,
+					};
+				}
+			}
 		}
 	}
+
+	// ③ canvas_state 组：只需 sessionId（画布 oracle 不依赖 userId），同组复用一次快照
+	if (canvasReqs.length > 0 && enabled && deps.canvasOracle !== undefined) {
+		checkedAny = true;
+		const result = await deps.canvasOracle.inspect({ sessionId: toolContext.sessionId });
+		if (!result.ok) {
+			deps.onAcceptanceOutcome?.("fail_open");
+			console.warn(`[todo_write] canvas oracle 查询失败（fail-open）：${result.reason}`);
+			reminders.push(`\n\n[acceptance] 画布证据查询失败（${result.reason}），本次收尾校验已放行；请勿据此视为验收通过。`);
+		} else {
+			for (const req of canvasReqs) {
+				const expect = req.requirement.canvasState;
+				if (expect === undefined) continue; // parse 已保证存在，防御兜底
+				const judged = judgeCanvasAcceptance(result.canvas, expect);
+				if (!judged.ok) {
+					deps.onAcceptanceOutcome?.("fail_closed");
+					return {
+						kind: "reject",
+						text: `调用被拒绝：任务项「${req.content}」声明了验收判据，但画布证据不支持。实际：${judged.evidence}。当前清单保持不变。请继续干活（补齐画布节点）或如实降级（分项说明哪些真完成），不要标 completed。`,
+					};
+				}
+			}
+		}
+	}
+
+	// ④ 聚合：reject 已在遇到时立即返回（优先级最高），此处只剩 fail_open / pass / skip
+	if (!checkedAny) return { kind: "skip" };
+	if (reminders.length > 0) return { kind: "fail_open", reminder: reminders.join("") };
 	deps.onAcceptanceOutcome?.("pass");
 	return { kind: "pass" };
 }
@@ -210,11 +266,11 @@ export function buildTodoTools(deps: TodoToolDeps = {}): LnkpiTool[] {
 		async execute(
 			_toolCallId: string,
 			params: { todos: TodoItemInput[] },
-			_onUpdate: AgentHarnessToolUpdateCallback<{ todo: { snapshot: TodoItemWithId[]; diff: TodoDiff } }>,
+			_onUpdate: AgentHarnessToolUpdateCallback<TodoDetails>,
 			toolContext: LnkpiToolContext,
 			_invocation: unknown,
 			_context: unknown,
-		): Promise<AgentToolResult<{ todo: { snapshot: TodoItemWithId[]; diff: TodoDiff } }>> {
+		): Promise<TodoResult> {
 			// C4（评审 C1）：store 键走 storeScopeKey（子会话=自身键）——直接用 sessionId 时
 			// 子 run 的 todo_write 会覆写主会话（同画布 id）的 C1 清单，fork 隔离被击穿。
 			const key = toolContext.storeScopeKey ?? toolContext.sessionId;

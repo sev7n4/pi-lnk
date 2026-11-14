@@ -15,6 +15,7 @@ import { GenerationGateStore, checkGenerationGate } from "./gate/generation-gate
 import { clearPlanRunFlag } from "./gate/plan-gate.js";
 import { registerPlanGateHooks } from "./gate/plan-gate-wiring.js";
 import { registerProposeGateHooks } from "./gate/propose-gate.js";
+import { registerToolRejectionFlag } from "./tool-rejection-flag.js";
 import { registerCanvasIdBindingHooks } from "./tools/canvas-id-binding.js";
 import { SubagentCoordinator } from "./gate/subagent.js";
 import { SubtaskLedger } from "./gate/subtask-ledger.js";
@@ -100,6 +101,10 @@ const manager = new SessionManager(
 			gateStore.resetSession(sessionId);
 			// hook 层共用的运行时开关：一次解析，避免每个 hook / 每次工具调用重复读 env。
 			const hookCfg = loadRuntimeConfig(process.env);
+			// ⓪ isError 语义补正（spec 2026-11-14-iserror-rejection-flag-design.md）：
+			//    必须排在**所有** after_tool listener 之前——hooks.ts 链式 replace 下，
+			//    后注册者才看得到 event.isError=true 并让自身 !event.isError 分支正确短路。
+			registerToolRejectionFlag(harness.hooks);
 			// Canvas 写链 id 结构性绑定（spec 2026-10-16 §4.1 P1b，事故 cmv95a7sd000fqh01k1za6w1g）。
 			// ⭐ 注册序即正确性（HookMap 多 listener 链式 replace，后注册者看到前者的 patch）：
 			// ① after_tool 先于下方既有 after_tool —— 捕获要看到未截断全文；
