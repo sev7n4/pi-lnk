@@ -126,13 +126,14 @@ export class PricingCostRecordController {
       const status: CostRecordDto['status'] =
         modelSubjects.length > 0 ? (missingSpecs.length === 0 ? 'ready' : missingSpecs.length === modelSubjects.length ? 'missing' : 'partial') : filled === tiers.length ? 'ready' : 'missing'
       const margin = marginByModel.get(e.modelKey)
+      const marginProfitBp = margin?.profitBp
       data.push({
         modelKey: e.modelKey,
         displayName: e.displayName,
         modality: e.modality,
         audioKind: e.audioKind,
         channel: e.providerBinding,
-        profitPct: margin ? margin.profitBp / 100 : null,
+        profitPct: marginProfitBp != null ? marginProfitBp / 100 : null,
         tiers,
         subjectsTotal: modelSubjects.length,
         missingSpecs,
