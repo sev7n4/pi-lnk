@@ -717,6 +717,8 @@ async function runOneAttempt(
 		const run = await runEvalCase(
 			{
 				baseUrl: options.baseUrl,
+				// ⭐ BYOK 覆盖（如有）：让该轮走你自己的渠道，绕开 AGNES 429。
+				...(options.llmOverride ? { llmOverride: options.llmOverride } : {}),
 				...(options.caseTimeoutMs !== undefined
 					? { timeoutMs: options.caseTimeoutMs }
 					: {}),

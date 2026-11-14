@@ -29,6 +29,7 @@
  * 而正确的处置是重跑或修环境。
  */
 import { runL1 } from "./runner.js";
+import { loadEvalByokOverride } from "./byok.js";
 
 function parseArgs(argv: string[]): {
 	only?: string[];
@@ -79,8 +80,12 @@ async function main(): Promise<void> {
 	// 用不同前缀是为了不与pi-runtime 自身的运行时配置混淆。
 	const nestBaseUrl = process.env.PI_EVAL_NEST_BASE_URL ?? process.env.NEST_BASE_URL;
 	const nestToken = process.env.PI_EVAL_NEST_TOKEN ?? process.env.NEST_SERVICE_TOKEN;
+	// ⭐ BYOK（可选）：设了 EVAL_BYOK_* 即让跑批走你自己的渠道，绕开 AGNES 429。
+	// 密钥只在环境变量里，本文件不持有明文。未设则回落 AGNES（既有行为不变）。
+	const byok = loadEvalByokOverride();
 	const summary = await runL1({
 		baseUrl,
+		...(byok ? { llmOverride: byok } : {}),
 		...(canvasSessionId ? { canvasSessionId } : {}),
 		...(userId ? { userId } : {}),
 		...(nestBaseUrl && nestToken ? { nest: { baseUrl: nestBaseUrl, token: nestToken } } : {}),

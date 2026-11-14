@@ -69,6 +69,27 @@ export interface EvalCaseInput {
 	canvasData?: string;
 }
 
+/**
+ * eval driver 透传给 `/sessions` body `llm` 字段的 BYOK 覆盖。
+ *
+ * ⭐ **密钥从环境变量读（见 `byok.ts`），本类型与 driver 代码里永远不出现明文 key。**
+ * 形状对齐 `SessionLlmOverride` 的必填子集 + 可选 `reasoning`：
+ * 五必填 `model/apiKey/baseUrl/providerRef/source` 由 `llm-override.ts` 校验，
+ * `source` 仅接受 `"user"` | `"platform"`。
+ *
+ * 用途：让 eval 跑批走你**自己的**模型渠道（DeepSeek 等 OpenAI 兼容端点），
+ * 从而绕开生产 AGNES 账号的 rpm 限流（429），而不是把验证卡死在墙上。
+ * 不传 ⇒ 会话走部署 env 的 AGNES（既有行为不变）。
+ */
+export interface EvalLlmOverride {
+	model: string;
+	apiKey: string;
+	baseUrl: string;
+	providerRef: string;
+	source: "user" | "platform";
+	reasoning?: boolean;
+}
+
 export interface EvalTranscript {
 	/** 归一化后的助手文本（`message_end` 累积）。 */
 	assistantText: string;
