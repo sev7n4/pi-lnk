@@ -67,7 +67,7 @@ describe('AskUserCard（spec 2026-10-28 分页单题推进 / T0-T2 + 视觉重�
 		expect(multi.find('.ask-cardinality svg').exists()).toBe(true)
 	})
 
-		// ---- D3 序号 + D2 更强版（选项前缀 ○/□ + 序号）----
+		// ---- D3 序号 + D2 更强版（增强版方案A：前缀仅序号，类型由题级标签 + 末尾徽标形状承载）----
 	it('D3：每个选项前缀渲染序号 1..n；「其他…」行不编号（非预设选项）', () => {
 		const w = mount(AskUserCard, {
 			props: { questions: [{ id: 'q', question: '?', options: [{ label: 'A', value: 'a' }, { label: 'B', value: 'b' }, { label: 'C', value: 'c' }] }] },
@@ -75,20 +75,31 @@ describe('AskUserCard（spec 2026-10-28 分页单题推进 / T0-T2 + 视觉重�
 		expect(w.findAll('.ask-chip-index').map((e) => e.text())).toEqual(['1', '2', '3'])
 		expect(w.find('.ask-chip-other').find('.ask-chip-index').exists()).toBe(false)
 	})
-	it('D2 更强版：单选项前缀为 ○(circle)、多选项前缀为 □(rect)，两类 shape 不混', () => {
+	it('D2 更强版（方案A）：单/多类型由题级标签 + 末尾徽标形状承载；预设项前缀无冗余 ○/□', () => {
+		// 单选：题级标签 ○ 单选；选中后末尾徽标为圆形（无 is-multi）
 		const single = mount(AskUserCard, {
-			props: { questions: [{ id: 's', question: '?', options: [{ label: 'A', value: 'a' }] }] },
+			props: { questions: [{ id: 's', question: '?', options: [{ label: 'A', value: 'a' }, { label: 'B', value: 'b' }] }] },
 		})
-		const sSvg = single.find('.ask-chip-marker svg').element as SVGElement
-		expect(sSvg.querySelector('circle')).not.toBeNull()
-		expect(sSvg.querySelector('rect')).toBeNull()
+		const sLabel = single.find('.ask-cardinality svg').element as SVGElement
+		expect(sLabel.querySelector('circle')).not.toBeNull()
+		expect(sLabel.querySelector('rect')).toBeNull()
+		// 预设项前缀不再渲染 ○/□：ask-chip-marker 仅用于「其他…」的 + 图标（2 预设 + 1 其他 ⇒ 1 个 marker）
+		expect(single.findAll('.ask-chip-marker')).toHaveLength(1)
+		const sBadge = single.find('.ask-chip .ask-chip-check')
+		expect(sBadge.exists()).toBe(true)
+		expect(sBadge.classes()).not.toContain('is-multi')
 
+		// 多选：题级标签 ☑ 可多选（rect）；末尾徽标携带 is-multi（圆角方形☑）
 		const multi = mount(AskUserCard, {
-			props: { questions: [{ id: 'm', question: '?', multiSelect: true, options: [{ label: 'A', value: 'a' }] }] },
+			props: { questions: [{ id: 'm', question: '?', multiSelect: true, options: [{ label: 'A', value: 'a' }, { label: 'B', value: 'b' }] }] },
 		})
-		const mSvg = multi.find('.ask-chip-marker svg').element as SVGElement
-		expect(mSvg.querySelector('rect')).not.toBeNull()
-		expect(mSvg.querySelector('circle')).toBeNull()
+		const mLabel = multi.find('.ask-cardinality svg').element as SVGElement
+		expect(mLabel.querySelector('rect')).not.toBeNull()
+		expect(mLabel.querySelector('circle')).toBeNull()
+		expect(multi.findAll('.ask-chip-marker')).toHaveLength(1) // 仅「其他…」的 + 图标
+		const mBadge = multi.find('.ask-chip .ask-chip-check')
+		expect(mBadge.exists()).toBe(true)
+		expect(mBadge.classes()).toContain('is-multi')
 	})
 
 	// ---- 加固：multiSelect 勾选预设项 + 「其他」补充文字 → wire 契约把两者都交给 agent ----
