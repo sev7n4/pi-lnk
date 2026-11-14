@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import { adminApi, AdminApiError, type PricingSubjectRow, type MaterializeResult, type MarginPolicyRow } from '@/services/admin-api'
 
 /**
@@ -107,20 +107,23 @@ async function refreshPricing() {
     await adminApi.pricingS1.rebuildSubjects()
     // 确保有一个 draft 草案可物化
     const versions = await adminApi.pricingVersions.list()
-    let draft = versions.find((v) => v.status === 'draft')
-    if (!draft) {
+    const existing = versions.find((v) => v.status === 'draft')
+    let draftId: string
+    if (existing) {
+      draftId = existing.id
+    } else {
       let created
       try {
         created = await adminApi.pricingVersions.createDraft('v-simple', '极简台一键更新价目')
       } catch {
         created = await adminApi.pricingVersions.createDraft(`v-simple-${Date.now()}`, '极简台一键更新价目')
       }
-      draft = { id: created.id, version: created.version, status: 'draft' }
+      draftId = created.id
     }
-    const mat = await adminApi.pricingS1.materializeDraft(draft.id)
+    const mat = await adminApi.pricingS1.materializeDraft(draftId)
     lastMaterialize.value = mat
     try {
-      const r = await adminApi.pricingS1.getReadiness(draft.id)
+      const r = await adminApi.pricingS1.getReadiness(draftId)
       lastReadinessOk.value = r.ok
       if (!r.ok) actionError.value = `发布门禁未通过：${r.violations.join('；')}`
     } catch {
