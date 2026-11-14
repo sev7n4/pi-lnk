@@ -116,6 +116,7 @@ export class Metrics {
 	private subagentSpawned = 0; // C4 spawn_subagent 成功受理次数
 	private subagentRejected = new Map<string, number>(); // C4 key: reason (concurrency_full|not_attached)
 	private subagentOutcome = new Map<string, number>(); // C4 key: status (completed|failed|timeout|budget_exceeded)
+	private subagentCollected = new Map<string, number>(); // 刀A（2026-11-14）key: status（running|completed|failed|timeout|budget_exceeded|interrupted|unknown）
 	private skillsLoaded = 0;
 	private skillsPromptTokens = 0;
 	/**
@@ -421,6 +422,11 @@ export class Metrics {
 
 	observeSubagentOutcome(status: "completed" | "failed" | "timeout" | "budget_exceeded"): void {
 		this.subagentOutcome.set(status, (this.subagentOutcome.get(status) ?? 0) + 1);
+	}
+
+	/** 刀A（spec 2026-11-14 §6.3）：collect_subagent_result 查询结果分布——running 占比高说明模型派了不收。 */
+	observeSubagentCollected(status: string): void {
+		this.subagentCollected.set(status, (this.subagentCollected.get(status) ?? 0) + 1);
 	}
 
 	/** usage 事件累计（审计 P0-③）：tokens 按 kind；cost 按 kind 落账。
@@ -733,6 +739,12 @@ export class Metrics {
 	lines.push("# TYPE pi_runtime_subagent_outcome_total counter");
 	for (const [status, count] of [...this.subagentOutcome.entries()].sort()) {
 		lines.push(`pi_runtime_subagent_outcome_total{status="${status}"} ${count}`);
+	}
+
+	lines.push("# HELP pi_runtime_subagent_collect_total collect_subagent_result queries, by returned status (D2 non-block).");
+	lines.push("# TYPE pi_runtime_subagent_collect_total counter");
+	for (const [status, count] of [...this.subagentCollected.entries()].sort()) {
+		lines.push(`pi_runtime_subagent_collect_total{status="${status}"} ${count}`);
 	}
 
 		lines.push("# HELP pi_runtime_skills_loaded Skills discovered at startup.");

@@ -17,6 +17,7 @@ import { registerPlanGateHooks } from "./gate/plan-gate-wiring.js";
 import { registerProposeGateHooks } from "./gate/propose-gate.js";
 import { registerCanvasIdBindingHooks } from "./tools/canvas-id-binding.js";
 import { SubagentCoordinator } from "./gate/subagent.js";
+import { SubtaskLedger } from "./gate/subtask-ledger.js";
 import { PendingToolRegistry } from "./pending-registry.js";
 import { applyTrustBoundary, countTrustBoundaryActions } from "./trust-boundary.js";
 import { registerResultSignalListener } from "./result-signal-wiring.js";
@@ -61,7 +62,10 @@ const registry = new PendingToolRegistry({
 });
 // C4：spawn_subagent ↔ SessionManager 的解耦中转（PendingToolRegistry 同款装配顺序）：
 // 同一实例两处共享——工具域（spawn 工具 tryRun）、manager 构造后 attach(runSubagent 实现)。
-const subagentCoordinator = new SubagentCoordinator();
+// 刀A（spec 2026-11-14-subagent-contract-d2-nonblock-design.md §6.4）：D2 子任务账本——
+// dataRoot 复用 loadRuntimeConfig 真源（生产 PI_RUNTIME_DATA_DIR 落在 PVC，pod 重启可取证）。
+const subtaskLedger = new SubtaskLedger(loadRuntimeConfig(process.env).dataRoot);
+const subagentCoordinator = new SubagentCoordinator(subtaskLedger);
 // P1-B job 化（2026-11-01）：onNodeStatus/onRegisterGenerationWait 接线随等待臂退役——
 // 生成终态写者收归 Nest（结算点直发 notify-generation），runtime 工具域即返 job handle，
 // 不再持有终态等待、不再广播 node_status、不再登记等待。

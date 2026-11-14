@@ -64,8 +64,8 @@ import { seedTodoState, getTodoState } from "./tools/todo.js";
 import { pickLatestSnapshot, renderTodoBlock } from "./tools/task-state.js";
 import { pickLatestPlanDecision, seedPlanState } from "./gate/plan-gate.js";
 import {
+	applyReportTruncation,
 	isSubagentTool,
-	SUBAGENT_REPORT_MAX_CHARS,
 	SUBAGENT_TIMEOUT_MS,
 	SUBAGENT_TURN_BUDGET,
 	type SubagentOutcome,
@@ -3305,19 +3305,21 @@ export class SessionManager {
 				: { status: "failed", error: result.error };
 			const turns = sub.turnBudget.count;
 			const durationMs = Date.now() - t0;
-			const report = (await this.extractSubagentReport(lane)).slice(0, SUBAGENT_REPORT_MAX_CHARS);
+			// 刀B（spec 2026-11-14-subagent-contract-d2-nonblock-design.md §4.3）：截断不再静默——
+			// applyReportTruncation（gate/subagent.ts）唯一实现点：原文超限置 truncated（additive）。
+			const { report, truncated } = applyReportTruncation(await this.extractSubagentReport(lane));
 			// 状态判定优先级：预算超限（settled 闸是权威信号——forceSettle 会把 run 折叠成
 			// 正常结算的 completed，run status 不可信）> 超时（我们 cancel）> run 终态 > 其他失败。
 			if (sub.turnBudget.settled) {
-				return { report, turns, durationMs, status: "budget_exceeded" };
+				return { report, turns, durationMs, status: "budget_exceeded", truncated };
 			}
 			if (timedOut) {
-				return { report, turns, durationMs, status: "timeout" };
+				return { report, turns, durationMs, status: "timeout", truncated };
 			}
 			if (outcome.status === "completed") {
-				return { report, turns, durationMs, status: "completed" };
+				return { report, turns, durationMs, status: "completed", truncated };
 			}
-			return { report, turns, durationMs, status: "failed" };
+			return { report, turns, durationMs, status: "failed", truncated };
 		} finally {
 			clearTimeout(timer);
 			opts?.signal?.removeEventListener("abort", onAbort);

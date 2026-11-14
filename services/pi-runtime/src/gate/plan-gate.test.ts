@@ -41,7 +41,15 @@ describe("plan-gate 状态机", () => {
 		assert.equal(shouldBlockForPlan("ask_user", "ui_command", "s1"), false);
 		assert.equal(shouldBlockForPlan("propose_plan", "ui_command", "s1"), false); // re-propose 合法
 		assert.equal(shouldBlockForPlan("todo_write", "write_light", "s1"), false); // 豁免
+		assert.equal(shouldBlockForPlan("spawn_subagent", "write_light", "s1"), false); // P4 豁免（#841 F5：调研是 plan 输入）
 		assert.equal(shouldBlockForPlan("unknown_tool", undefined, "s1"), false);
+	});
+
+	it("P4 双向：豁免只放 spawn_subagent，同 tier 写类工具仍拦（防豁免面误扩）", () => {
+		markPlanDecision("s1", "keep");
+		assert.equal(shouldBlockForPlan("spawn_subagent", "write_light", "s1"), false);
+		assert.equal(shouldBlockForPlan("set_node_text", "write_light", "s1"), true);
+		assert.equal(shouldBlockForPlan("arrange_nodes", "graph_batch", "s1"), true);
 	});
 
 	it("run 信号：consume 一次即清；clearPlanRunFlag 只清信号不动 pending", () => {
