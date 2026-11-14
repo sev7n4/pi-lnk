@@ -22,7 +22,7 @@ interface AskUserQuestion {
 	id: string
 	question: string
 	options: { label: string; value: string }[]
-	plan?: { summary: string; explanation?: string; steps: { content: string; activeForm?: string }[] }
+	plan?: { summary: string; explanation?: string; steps: { content: string; activeForm?: string }[]; assumptions?: string[]; scope?: { inScope: string[]; outOfScope: string[] } }
 	multiSelect?: boolean
 	allowOther?: boolean
 }
@@ -260,13 +260,31 @@ function submitOther(q: AskUserQuestion) {
 					<span class="ask-plan-title">{{ current.plan.summary }}</span>
 					<span v-if="current.plan.explanation" class="ask-plan-explanation">{{ current.plan.explanation }}</span>
 				</div>
-				<ol class="ask-plan-steps">
-					<li v-for="(step, i) in current.plan.steps" :key="i" class="ask-plan-step">
-						<span class="ask-plan-step-index">{{ i + 1 }}</span>
-						<span class="ask-plan-step-text">{{ step.content }}</span>
-						<span v-if="step.activeForm" class="ask-plan-step-active">{{ step.activeForm }}</span>
-					</li>
-				</ol>
+			<ol class="ask-plan-steps">
+				<li v-for="(step, i) in current.plan.steps" :key="i" class="ask-plan-step">
+					<span class="ask-plan-step-index">{{ i + 1 }}</span>
+					<span class="ask-plan-step-text">{{ step.content }}</span>
+					<span v-if="step.activeForm" class="ask-plan-step-active">{{ step.activeForm }}</span>
+				</li>
+			</ol>
+			<!-- A-3（2026-11-15）：声明式假设/范围区块 —— 缺省键不出现，旧方案卡形态不变 -->
+			<div v-if="current.plan.assumptions?.length" class="ask-plan-meta">
+				<span class="ask-plan-meta-label">假设</span>
+				<ul class="ask-plan-assumptions">
+					<li v-for="(a, i) in current.plan.assumptions" :key="i" class="ask-plan-assumption">{{ a }}</li>
+				</ul>
+			</div>
+			<div v-if="current.plan.scope" class="ask-plan-meta">
+				<span class="ask-plan-meta-label">范围</span>
+				<div class="ask-plan-scope">
+					<p v-if="current.plan.scope.inScope?.length" class="ask-plan-scope-row">
+						<span class="ask-plan-scope-tag">覆盖</span>{{ current.plan.scope.inScope.join("；") }}
+					</p>
+					<p v-if="current.plan.scope.outOfScope?.length" class="ask-plan-scope-row">
+						<span class="ask-plan-scope-tag">排除</span>{{ current.plan.scope.outOfScope.join("；") }}
+					</p>
+				</div>
+			</div>
 			</div>
 			<!-- D2 基数信号：单选用 ○ / 多选用 ☑，稳定标签，不随选项增减变化 -->
 			<div class="ask-cardinality" :aria-label="current.multiSelect ? '本题可多选' : '本题单选'">
@@ -526,6 +544,52 @@ function submitOther(q: AskUserQuestion) {
 }
 .ask-plan-step-active {
 	color: var(--lnk-text-muted);
+	font-size: var(--lnk-text-xs);
+}
+/* ── A-3（2026-11-15）：假设/范围区块（缺省不渲染，旧卡形态不变）── */
+.ask-plan-meta {
+	display: flex;
+	flex-direction: column;
+	gap: var(--lnk-space-1);
+}
+.ask-plan-meta-label {
+	font-size: var(--lnk-text-xs);
+	font-weight: var(--lnk-weight-semibold);
+	color: var(--lnk-text-secondary);
+}
+.ask-plan-assumptions {
+	display: flex;
+	flex-direction: column;
+	gap: var(--lnk-space-1);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+.ask-plan-assumption {
+	font-size: var(--lnk-text-xs);
+	color: var(--lnk-text-secondary);
+	line-height: var(--lnk-lh-xs);
+	padding-left: var(--lnk-space-2);
+	border-left: 2px solid var(--lnk-border-subtle);
+}
+.ask-plan-scope {
+	display: flex;
+	flex-direction: column;
+	gap: var(--lnk-space-1);
+}
+.ask-plan-scope-row {
+	margin: 0;
+	font-size: var(--lnk-text-xs);
+	color: var(--lnk-text-secondary);
+	line-height: var(--lnk-lh-xs);
+}
+.ask-plan-scope-tag {
+	display: inline-block;
+	margin-right: var(--lnk-space-2);
+	padding: 0 var(--lnk-space-1);
+	border-radius: var(--lnk-radius-sm);
+	background: var(--lnk-accent-subtle);
+	color: var(--lnk-accent-text);
 	font-size: var(--lnk-text-xs);
 }
 .ask-skip {

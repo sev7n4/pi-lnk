@@ -111,6 +111,7 @@ export class Metrics {
 	private planProposed = 0; // C3 propose_plan 调用数
 	private planDecisions = new Map<string, number>(); // key: decision (execute|refine|keep|timeout|aborted)
 	private planGateBlocked = new Map<string, number>(); // key: tool——planPending 期间被拦的写工具
+	private planAssumptions = new Map<string, number>(); // A-3：key: present|absent —— assumptions 显式化观测
 	private turnBudgetWarned = 0; // C2 预算将尽 steer 提醒次数
 	private turnBudgetExceeded = 0; // C2 超限硬停次数
 	private subagentSpawned = 0; // C4 spawn_subagent 成功受理次数
@@ -387,6 +388,12 @@ export class Metrics {
 	/** C3 Plan 确认门观测（spec §3.7）：proposed/decision 在工具层，blocked 在 before_tool 层。 */
 	observePlanProposed(): void {
 		this.planProposed += 1;
+	}
+
+	/** A-3（spec 2026-11-15-a3-propose-plan-assumptions-design.md）：assumptions 显式化观测——G2 拆解质量一阶信号。 */
+	observePlanAssumptions(present: boolean): void {
+		const key = present ? "present" : "absent";
+		this.planAssumptions.set(key, (this.planAssumptions.get(key) ?? 0) + 1);
 	}
 
 	/** A1 propose 单飞门观测（2026-11-02 死循环护栏）：key = 拦截原因（latch/pending/in_flight/ssot_unavailable）。 */
@@ -705,6 +712,12 @@ export class Metrics {
 	lines.push("# HELP pi_runtime_plan_proposed_total propose_plan invocations (C3 plan gate).");
 	lines.push("# TYPE pi_runtime_plan_proposed_total counter");
 	lines.push(`pi_runtime_plan_proposed_total ${this.planProposed}`);
+
+	lines.push("# HELP pi_runtime_plan_assumptions_total propose_plan assumptions explicitness by present/absent (A-3).");
+	lines.push("# TYPE pi_runtime_plan_assumptions_total counter");
+	for (const [present, count] of [...this.planAssumptions.entries()].sort()) {
+		lines.push(`pi_runtime_plan_assumptions_total{present="${esc(present)}"} ${count}`);
+	}
 
 	lines.push("# HELP pi_runtime_plan_decisions_total Plan confirmation outcomes by decision.");
 	lines.push("# TYPE pi_runtime_plan_decisions_total counter");

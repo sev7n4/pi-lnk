@@ -35,6 +35,9 @@ description: >-
    各项互斥不重复；禁止「整体做完」类巨石项，也禁止把一个动作拆成三个微步骤。
 3. **方案先行**：多步任务先 propose_plan（步骤与后续清单保持同一结构），确认后
    用 todo_write 逐项执行；执行中发现方案变化，两者一起更新。
+   方案依赖的前提写 `assumptions`（每条一句显式假设，如「目标画布为空」「素材已
+   上传」），边界写 `scope:{inScope,outOfScope}`；思路概述仍走 `explanation`——
+   假设入 assumptions、思路入 explanation，不混用（确认卡分区展示且打点观测）。
 4. **全量覆写**：todo_write 每次提交完整清单（漏发历史项等同删除）；任意时刻
    至多一项 in_progress。
 5. **带 id 增量维护**：变更已有任务带上其 id（content 可改写=重命名，身份不变），
