@@ -3,7 +3,8 @@ import { Injectable } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import { resolveUnitCost, UnitCostRateRow } from './pricing-unit-cost'
 import { resolveMargin, MarginRow } from './pricing-margin.service'
-import { checkCostFloor, FloorViolation } from './pricing.core'
+import { modelOptionName } from '@lnkpi/shared'
+import { checkCostFloor, buildTextTokenMatchKey, TEXT_TOKEN_SPECS, FloorViolation } from './pricing.core'
 import type { SubjectRow } from './pricing-subject.service'
 import { incMaterialize, incCostSource, incUnitMismatch } from './pricing-metrics'
 
@@ -68,6 +69,12 @@ export class PricingMaterializerService {
 
     const existing = await this.prisma.priceListEntry.findMany({ where: { versionId: draftId } })
     const bySubjectKey = new Map(existing.map((e) => [e.subjectKey ?? e.matchKey, e]))
+    // T1：三段 text:<model>:<spec> 反比率行索引（文本扣费的真相源，见下方 upsert 块）。
+    const textByKey = new Map(
+      existing
+        .filter((e) => e.matchKey.startsWith('text:') && !e.matchKey.includes('|'))
+        .map((e) => [e.matchKey, e]),
+    )
 
     for (const s of subjects) {
       const unit = resolveUnitCost(
@@ -116,6 +123,35 @@ export class PricingMaterializerService {
         incMaterialize('floorViolation')
       }
 
+      // T1 文本扣费真相源（spec 2026-11-15-text-token-reprice-link-design §4.1）：
+      // 物化同步刷三段 text:<model>:<spec> 反比率行。六段文本主体行是零消费副产物
+      // （deprecated：禁止消费，退役计划见 spec §3.1）。三段行跟随门禁既有 token 行语义
+      // （pricing-publishing.service.ts 豁免 unitSnapshot、地板判上限用 rate.costYuan）——
+      // 不要求 subjectKey/快照，costRateId 必带供地板校验。
+      // 模型键归一与 quoteTextTokens 同源（modelOptionName+trim+toLowerCase），
+      // 生产带渠道前缀（platform::x）也剥净同形。计数不并入 added/changed/unchanged
+      // （摘要是主体数视角，镜像行不重复计）。位置在六段 upsert 之前：六段 ops-modified
+      // 的 continue 不得阻断三段刷新——三段的手改保护独立判断。
+      if (isToken && (TEXT_TOKEN_SPECS as readonly string[]).includes(s.spec)) {
+        const textKey = buildTextTokenMatchKey(
+          modelOptionName(s.modelKey).trim().toLowerCase(),
+          s.spec as Parameters<typeof buildTextTokenMatchKey>[1],
+        )
+        const prevText = textByKey.get(textKey)
+        if (prevText?.basis !== 'ops-modified') {
+          if (!prevText) {
+            await this.prisma.priceListEntry.create({
+              data: { versionId: draftId, capability: s.capability, matchKey: textKey, ...this.buildEntryData(s, unit, margin, credits), subjectKey: null },
+            })
+          } else if (prevText.credits !== credits) {
+            await this.prisma.priceListEntry.update({
+              where: { id: prevText.id },
+              data: { ...this.buildEntryData(s, unit, margin, credits), subjectKey: null },
+            })
+          }
+        }
+      }
+
       const prev = bySubjectKey.get(s.subjectKey)
       if (prev) {
         if (prev.basis === 'ops-modified') continue // 运营手改行保护：不覆盖
@@ -141,6 +177,12 @@ export class PricingMaterializerService {
     return result
   }
 
+  /**
+   * ⚠️ deprecated（T1，2026-11-15）：capability=text 的六段主体行是零消费副产物——
+   * deriveSubjectSpec('text') 恒 undefined，扣费/卡片/公开端点全读三段 text: 行
+   * （见 materialize 循环内三段 upsert 块）。禁止任何新代码消费六段文本行；退役计划见
+   * spec 2026-11-15-text-token-reprice-link-design §3.1。
+   */
   private buildEntryData(
     s: SubjectRow,
     unit: { costYuanPerRequest: number; costRateId: string },

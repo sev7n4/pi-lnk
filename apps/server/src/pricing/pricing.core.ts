@@ -161,6 +161,9 @@ export function buildMatchKey(q: PricingQuery): string {
  * credits 存反比率整数 `r = floor(1e6 / (costYuan × marginBp / 100))（等价于 floor(1e6 × 100 / (costYuan × marginBp))；勿写成 costYuan × 100 × marginBp——会差 100×）`。
  */
 const TEXT_TOKEN_SPECS = ['in', 'cache', 'out'] as const
+// T1（2026-11-15）：物化器需按同源 spec 全集刷三段 text: 行（spec
+// 2026-11-15-text-token-reprice-link-design §4.1），导出常量保持单一来源；新增 spec 只改本行。
+export { TEXT_TOKEN_SPECS }
 
 /**
  * 反比率行的 spec 全集。类型（本别名）与判据正则（TEXT_TOKEN_KEY_PATTERN）同源于
