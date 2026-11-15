@@ -18,6 +18,7 @@ import {
 	SubagentSlots,
 	SubagentCoordinator,
 	type SubagentOutcome,
+	type SubagentStatus,
 } from "./subagent.js";
 import { SubtaskLedger } from "./subtask-ledger.js";
 import { buildCanvasReadTools, buildWebTools } from "../tools/registry.js";
@@ -266,5 +267,89 @@ describe("SubagentCoordinator D2 + non-block", () => {
 		const got = fresh.collect(r.callId);
 		assert.equal(got.status, "completed");
 		assert.ok("report" in got && got.report === "可恢复报告");
+	});
+
+	it("P3：partial + stream_interrupted 透传进账本与 collect", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "coord-partial-"));
+		const ledger = new SubtaskLedger(dir);
+		const c = new SubagentCoordinator(ledger);
+		c.attach({
+			runSubagent: async () => ({ report: "半截", turns: 1, durationMs: 1, status: "stream_interrupted", partial: true }),
+		});
+		const r = c.tryRun("k", "t");
+		assert.ok(r.ok);
+		await r.promise;
+		const text = readFileSync(ledger.filePath, "utf8");
+		assert.match(text, /"status":"stream_interrupted"/);
+		assert.match(text, /"partial":true/);
+		const got = c.collect(r.callId);
+		assert.equal(got.status, "stream_interrupted");
+		assert.ok("partial" in got && got.partial === true);
+		// 重启 replay 也保留 partial
+		const fresh = new SubagentCoordinator(ledger);
+		const recovered = fresh.collect(r.callId);
+		assert.ok("partial" in recovered && recovered.partial === true, "账本 replay 应保留 partial");
+	});
+});
+
+describe("P1 pending-work：per-session 未收口索引", () => {
+	it("background 登记 pending，settle 后清空；block 不登记", async () => {
+		const { runner, releaseAll } = (() => {
+			const releases: Array<() => void> = [];
+			return {
+				runner: {
+					runSubagent: (): Promise<SubagentOutcome> =>
+						new Promise((resolve) => {
+							releases.push(() => resolve({ report: "R", turns: 1, durationMs: 1, status: "completed" }));
+						}),
+				},
+				releaseAll: () => releases.forEach((r) => r()),
+			};
+		})();
+		const c = new SubagentCoordinator();
+		c.attach(runner);
+		const bg = c.tryRun("s1", "bg-task", { mode: "background" });
+		assert.ok(bg.ok);
+		assert.deepEqual(c.pendingFor("s1"), [bg.callId], "background 应登记 pending");
+		assert.deepEqual(c.pendingFor("s2"), [], "别的会话无 pending");
+		// block 模式同步跑一个立即完成的
+		c.attach({ runSubagent: async () => ({ report: "B", turns: 1, durationMs: 1, status: "completed" }) });
+		const blk = c.tryRun("s1", "block-task");
+		assert.ok(blk.ok);
+		await blk.promise;
+		assert.deepEqual(c.pendingFor("s1"), [bg.callId], "block 不应登记 pending");
+		releaseAll();
+		await (bg.ok && bg.promise);
+		assert.deepEqual(c.pendingFor("s1"), [], "settle 后 pending 清空");
+	});
+
+	it("awaitSettled：等到终态返回值；deadline 到仍未 settle 则 interrupted", async () => {
+		const { runner, releases, releaseAll } = (() => {
+			const releases: Array<(s: SubagentStatus) => void> = [];
+			return {
+				runner: {
+					runSubagent: (): Promise<SubagentOutcome> =>
+						new Promise((resolve) => {
+							releases.push((s) => resolve({ report: "DONE", turns: 1, durationMs: 1, status: s }));
+						}),
+				},
+				releases,
+				releaseAll: (s: SubagentStatus) => releases.forEach((r) => r(s)),
+			};
+		})();
+		const c = new SubagentCoordinator();
+		c.attach(runner);
+		const a = c.tryRun("s", "a", { mode: "background" });
+		const b = c.tryRun("s", "b", { mode: "background" });
+		assert.ok(a.ok && b.ok);
+		// 先只放行 a，b 留到 deadline
+		releases[0]!("completed");
+		const results = await c.awaitSettled([a.callId, b.callId], { deadlineMs: 60 });
+		const byId = new Map(results.map((r) => [r.callId, r]));
+		assert.equal(byId.get(a.callId)?.status, "completed");
+		assert.equal(byId.get(a.callId)?.report, "DONE");
+		assert.equal(byId.get(b.callId)?.status, "interrupted", "deadline 未 settle → interrupted");
+		releaseAll("completed"); // 清理挂起的 b，避免测试进程悬挂
+		await (b.ok && b.promise);
 	});
 });

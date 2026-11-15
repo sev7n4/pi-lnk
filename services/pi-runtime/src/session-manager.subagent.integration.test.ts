@@ -50,6 +50,8 @@ const todoTools = (): LnkpiTool[] => buildTodoTools();
 interface HarnessCapture {
 	tools: Array<{ name: string }>;
 	activeToolNames: string[];
+	/** P2 B7：harness 收到的 systemPrompt（函数形态需求值）——用于断言子会话未继承主 run 编排纪律。 */
+	systemPrompt: string;
 }
 
 /**
@@ -71,9 +73,13 @@ function makeE2e(
 	const modelFactory = () => ({ models, model: faux.getModel(), providerId: faux.provider.id });
 	const harnessFactory = async (...args: Parameters<typeof AgentHarness.create>) => {
 		const cfg = args[0];
+		// systemPrompt 是惰性函数（() => composeEntryAndObserve(entry)），此处求值快照。
+		const sp = (cfg as { systemPrompt?: string | (() => string) }).systemPrompt;
+		const systemPrompt = typeof sp === "function" ? sp() : (sp ?? "");
 		captured.push({
 			tools: (cfg as { tools: Array<{ name: string }> }).tools,
 			activeToolNames: (cfg as { activeToolNames: string[] }).activeToolNames,
+			systemPrompt,
 		});
 		return AgentHarness.create(...args);
 	};
@@ -155,7 +161,7 @@ test("端到端 fork 正确性：主 run 第一轮 spawn → 子 run 报告回�
 test("端到端白名单硬边界：子 harness 工具表 ⊆ 白名单，web 双工具在表（裁决 8 可审计面）", async () => {
 	resetTodoStoreForTest();
 	const metrics = new Metrics();
-	// 子 run 响应用工厂形态捕获请求上下文——内容级 fork 断言（评审 M4）：子 prompt 必须真见到主对话历史
+	// P2（2026-11-15）：子 run 响应用工厂捕获请求上下文——内容级隔离断言：子会话不得见到主对话历史
 	let subRequestMessages: Array<unknown> = [];
 	const { sm, captured } = makeE2e(metrics, [
 		fauxAssistantMessage("主对话第一轮", { stopReason: "stop" }),
@@ -172,10 +178,14 @@ test("端到端白名单硬边界：子 harness 工具表 ⊆ 白名单，web �
 
 	const outcome = await sm.runSubagent(threadKey, "调研任务");
 	assert.equal(outcome.status, "completed");
-	// fork 正确性内容级：子 run 的 LLM 请求上下文里能看到主对话第一轮的 assistant 文本
+	// P2 上下文隔离：子 run 请求上下文不含主对话历史（干净会话隔离）；结构化 task 可见。
 	assert.ok(
-		JSON.stringify(subRequestMessages).includes("主对话第一轮"),
-		"子 run 请求上下文未包含主对话历史（fork 失效）",
+		!JSON.stringify(subRequestMessages).includes("主对话第一轮"),
+		"P2：子 run 请求上下文不应包含主对话历史（干净会话隔离）",
+	);
+	assert.ok(
+		JSON.stringify(subRequestMessages).includes("调研任务"),
+		"子 run 请求上下文应包含结构化 task",
 	);
 	const sub = captured[captured.length - 1]!;
 	assert.ok(sub.tools.length > 0, "子工具表非空（有效性断言）");
@@ -308,14 +318,14 @@ test("端到端异常隔离：子 run LLM 失败 → spawn fail-soft 返回 suba
 	const metrics = new Metrics();
 	// 故障注入（faux 工厂形态，按请求上下文判别）：
 	//   call1 主 t1：1 条 user 消息                                → 返回 toolUse 响应
-	//   call2 子 run：fork 历史（user+assistant）+ task user = ≥2 条 user 且无 toolResult → throw = LLM 故障
+	//   call2 子 run（P2 干净会话）：只有结构化 task 1 条 user（含「调研X」）、无 toolResult → throw = LLM 故障
 	//   call3 主 t2：含 toolResult（即便错位命中本条也安全返回静态文本）
 	const responses: unknown[] = [
 		fauxAssistantMessage([fauxToolCall("spawn_subagent", { task: "调研X" })], { stopReason: "toolUse" }),
-		(context: { messages: Array<{ role?: string }> }) => {
-			const userCount = context.messages.filter((m) => m.role === "user").length;
+		(context: { messages: Array<{ role?: string; content?: unknown }> }) => {
 			const hasToolResult = context.messages.some((m) => m.role === "toolResult");
-			if (userCount >= 2 && !hasToolResult) throw new Error("子代理 LLM 故障注入");
+			const isSubRun = !hasToolResult && JSON.stringify(context.messages).includes("调研X");
+			if (isSubRun) throw new Error("子代理 LLM 故障注入");
 			return fauxAssistantMessage("收尾：子代理失败但不影响主对话", { stopReason: "stop" });
 		},
 		fauxAssistantMessage("收尾：子代理失败但不影响主对话", { stopReason: "stop" }),
@@ -399,4 +409,91 @@ test("评审 I1 配套：isSubagentSessionKey 键形状判别", () => {
 	assert.ok(isSubagentSessionKey("s-foo-12345678__sub_01a1-7145-73bf-1199ef13"));
 	assert.ok(!isSubagentSessionKey("s-foo-12345678"));
 	assert.ok(!isSubagentSessionKey(""));
+});
+
+test("P2 B7：子会话 systemPrompt 不含主 run 的 collect/spawn 编排纪律（fail-closed 非提示词级）", async () => {
+	resetTodoStoreForTest();
+	const metrics = new Metrics();
+	// 正例锚：主会话 systemPrompt 注入可识别编排纪律标记——否则子会话「不含标记」会恒绿（伪判据）。
+	// 变异时把 runSubagent 的 systemPrompt 改回 source.basePrompt ⇒ 子会话继承本标记 ⇒ B7 RED。
+	const MAIN_DISCIPLINE =
+		"【主代理编排纪律】请加载 research-delegate skill；回合结束前必须调用 collect_subagent_result 收集后台结果。";
+	const { sm, captured } = makeE2e(metrics, [
+		fauxAssistantMessage("主对话第一轮", { stopReason: "stop" }),
+		fauxAssistantMessage("调研结论", { stopReason: "stop" }),
+	]);
+	const threadKey = "s-e2e-cleanprompt";
+	await sm.create(threadKey, { userId: "u1", systemPrompt: MAIN_DISCIPLINE });
+	await sm.prompt(threadKey, "开始");
+	await waitAgentEnd(sm, threadKey);
+	await waitSourceIdle(sm, threadKey);
+	const outcome = await sm.runSubagent(threadKey, "调研任务");
+	assert.equal(outcome.status, "completed");
+
+	// 正例守卫：主会话确实带着纪律文本（证明 fixture 生效，排除假 0）。
+	const main = captured[0]!;
+	assert.ok(main.systemPrompt.includes("research-delegate"), "fixture 失效：主会话 systemPrompt 缺 research-delegate 标记");
+	assert.ok(main.systemPrompt.includes("collect_subagent_result"), "fixture 失效：主会话 systemPrompt 缺 collect 标记");
+
+	// B7 核心：干净子会话 systemPrompt 不含主 run 编排纪律，且使用专用子代理提示。
+	const sub = captured[captured.length - 1]!;
+	assert.ok(!sub.systemPrompt.includes("collect_subagent_result"), "子会话配置不应含 collect 纪律文本");
+	assert.ok(!sub.systemPrompt.includes("research-delegate"), "子会话不应继承主 run skill 纪律");
+	assert.ok(sub.systemPrompt.includes("只读调研子代理"), "子会话应使用 SUBAGENT_SYSTEM_PROMPT");
+});
+
+// P3 报告提取判据：按真实 newestFirst 顺序（最新在前）构造 transcript——钉住"取最新 assistant 文本"。
+function reportExtractor(sm: SessionManager) {
+	return (findEntries: () => Promise<Array<Record<string, unknown>>>) =>
+		(
+			sm as unknown as {
+				extractSubagentReport: (l: { findEntries: typeof findEntries }) => Promise<{ report: string; partial: boolean }>;
+			}
+		).extractSubagentReport({ findEntries });
+}
+
+test("P3 B8：断流 transcript（尾部 toolResult + 开场白无 synthesis）→ 报告不取开场白、partial=true", async () => {
+	const { sm } = makeE2e(new Metrics(), []);
+	// 真实 newestFirst：最新在前——[toolResult, assistant(toolCall), assistant(开场白)]。
+	const lane = {
+		findEntries: async () => [
+			{ role: "toolResult", content: "tool result" },
+			{ role: "assistant", content: [{ type: "toolCall", name: "web_search" }] },
+			{ role: "assistant", content: "我来先检查已派发的子代理状态，再决定后续路径。" },
+		],
+	};
+	const out = await reportExtractor(sm)(lane.findEntries);
+	assert.equal(out.partial, true, "断流应标 partial");
+	assert.ok(!out.report.includes("我来先检查"), "开场白不应被当最终报告");
+});
+
+test("P3：完整 synthesis（开场白→工具→最终结论）→ report 取最新结论、partial=false（防 order 被改回 oldestFirst）", async () => {
+	const { sm } = makeE2e(new Metrics(), []);
+	const conclusion = "结论：X 方案优于 Y 方案，理由有三：数据一致性更强、运维成本更低、社区支持更广，详见附录。";
+	// 真实 newestFirst：最新结论在前，开场白在末尾（oldest）。
+	const findEntries = async () => [
+		{ role: "assistant", content: conclusion },
+		{ role: "assistant", content: [{ type: "toolCall", name: "web_search" }] },
+		{ role: "assistant", content: "我来先检查已有资料，再决定后续路径。" },
+	];
+	const out = await reportExtractor(sm)(findEntries);
+	assert.equal(out.partial, false, "有最终 synthesis 不应标 partial");
+	assert.equal(out.report, conclusion, "报告应取最新的最终结论，而非开场白");
+});
+
+test("P3 D3：子 run 仅有开场白无 synthesis → status=stream_interrupted + partial=true（spec §7.2 真实产出）", async () => {
+	resetTodoStoreForTest();
+	const metrics = new Metrics();
+	const { sm } = makeE2e(metrics, [
+		fauxAssistantMessage("主对话第一轮", { stopReason: "stop" }),
+		fauxAssistantMessage("我来先检查已派发的子代理状态。", { stopReason: "stop" }), // 子 run 只有开场白，无 synthesis
+	]);
+	const threadKey = "s-e2e-stream-interrupted";
+	await sm.create(threadKey, { userId: "u1" });
+	await sm.prompt(threadKey, "开始");
+	await waitAgentEnd(sm, threadKey);
+	await waitSourceIdle(sm, threadKey);
+	const outcome = await sm.runSubagent(threadKey, "调研任务");
+	assert.equal(outcome.partial, true, "断流报告应标 partial");
+	assert.equal(outcome.status, "stream_interrupted", "断流应产出 stream_interrupted 状态（非伪装成 completed/failed）");
 });

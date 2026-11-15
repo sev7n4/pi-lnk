@@ -14,6 +14,7 @@ import { resolveToolsWithClient } from "./tools/config.js";
 import { GenerationGateStore, checkGenerationGate } from "./gate/generation-gate.js";
 import { clearPlanRunFlag } from "./gate/plan-gate.js";
 import { registerPlanGateHooks } from "./gate/plan-gate-wiring.js";
+import { registerRunEndHooks } from "./gate/subagent-barrier.js";
 import { registerProposeGateHooks } from "./gate/propose-gate.js";
 import { registerToolRejectionFlag } from "./tool-rejection-flag.js";
 import { registerCanvasIdBindingHooks } from "./tools/canvas-id-binding.js";
@@ -218,6 +219,16 @@ const manager = new SessionManager(
 					metrics,
 				});
 			}
+			// P1（spec 2026-11-15）：唯一 before_run_end handler——合成 plan-gate 续跑 + 后台子任务结果回注。
+			// registerPlanGateHooks 内部的 before_run_end 已移除，只留 before_tool 拦写；
+			// followUp 注入统一由 registerRunEndHooks 承担，避开上游 last-write-wins。
+			// 必须挂在 if (!nestClient) 之前——纯文本模式同样可能需要 barrier 收口。
+			registerRunEndHooks(harness, {
+				sessionId,
+				coordinator: subagentCoordinator,
+				resolvePlanKey: () => manager.getCanvasSessionId(sessionId) ?? sessionId,
+				metrics,
+			});
 			if (!nestClient) return undefined; // 纯文本模式无工具，Gate 无用武之地
 			const gateClient = nestClient;
 			// A1 propose 单飞门（2026-11-02 老黄牛死循环护栏，RCA v2 §4-A1）：同节点同时刻

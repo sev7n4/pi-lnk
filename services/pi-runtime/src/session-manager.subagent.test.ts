@@ -224,10 +224,12 @@ test("runSubagent: 清理铁律——子 entry 摘除但共享 env/repo 存活�
 	await waitAgentEnd(sm, threadKey);
 });
 
-test("runSubagent: 子代理继承 source.basePrompt 中的 L2 委派规则（spec §3.3 注入路径，不递归派生）", async () => {
+test("runSubagent: 子代理不继承 source.basePrompt 的 spawn 委派规则（P2 干净会话隔离，spec §6.2）", async () => {
 	resetTodoStoreForTest();
 	const metrics = new Metrics();
-	// 对齐 apps/server prompt-registry 的 SUBAGENT_DELEGATION_RULES 正文（委派授权串）
+	// 对齐 apps/server prompt-registry 的旧 SUBAGENT_DELEGATION_RULES 正文（委派授权串）。
+	// P2 后此规则不再注入子代理：子代理白名单本就没有 spawn_subagent，继承只会诱导它去调
+	// unavailable 工具（L2 根因，spec 2026-11-15 §6.1/§6.2）——工具集层面 fail-closed。
 	const DELEGATION = "调研/探索任务优先 spawn_subagent。";
 	const { sm, captured } = makeManager(metrics, [
 		fauxAssistantMessage("主对话第一轮", { stopReason: "stop" }),
@@ -244,15 +246,24 @@ test("runSubagent: 子代理继承 source.basePrompt 中的 L2 委派规则（sp
 	const outcome = await sm.runSubagent(threadKey, "调研任务");
 	assert.equal(outcome.status, "completed");
 
+	// 正例锚：主会话确实带着委派规则，排除「子会话不含」恒绿（假 0）。
+	const main = captured[0]!;
+	const mainSp =
+		typeof main.systemPrompt === "function"
+			? (main.systemPrompt as () => string)()
+			: String(main.systemPrompt ?? "");
+	assert.ok(mainSp.includes(DELEGATION), "fixture 失效：主会话 systemPrompt 缺 spawn 委派规则");
+
 	// 第 mainCalls 次之后的 capture = 子代理 build 的 harness 配置
 	const sub = captured[captured.length - 1]!;
-	assert.ok(captured.length >= mainCalls + 1, "fork 触发一次新的 harnessFactory");
+	assert.ok(captured.length >= mainCalls + 1, "build 触发一次新的 harnessFactory");
 	const subSp =
 		typeof sub.systemPrompt === "function"
 			? (sub.systemPrompt as () => string)()
 			: String(sub.systemPrompt ?? "");
 	assert.ok(
-		subSp.includes(DELEGATION),
-		"子代理 harness systemPrompt 应继承主会话 basePrompt 中的委派规则（L2 规则随 basePrompt 注入子代理）",
+		!subSp.includes(DELEGATION),
+		"子代理 harness systemPrompt 不应继承主会话 spawn 委派规则（P2 工具集已 fail-closed，注入只会诱导 unavailable）",
 	);
+	assert.ok(subSp.includes("只读调研子代理"), "子代理应使用专门的 SUBAGENT_SYSTEM_PROMPT");
 });

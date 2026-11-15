@@ -15,6 +15,8 @@ import { SessionManager, toSessionKey, type EventListener } from "./session-mana
 import { buildTodoTools, getTodoState, resetTodoStoreForTest } from "./tools/todo.js";
 import { createProposePlanTool } from "./tools/propose-plan.js";
 import { registerPlanGateHooks } from "./gate/plan-gate-wiring.js";
+import { registerRunEndHooks } from "./gate/subagent-barrier.js";
+import { SubagentCoordinator } from "./gate/subagent.js";
 import { resetPlanState } from "./gate/plan-gate.js";
 import { Metrics } from "./metrics.js";
 import type { LnkpiTool } from "./tools/types.js";
@@ -200,6 +202,13 @@ test("集成: C3 followUp 续轮共享同一预算窗口（Review Focus 2）", a
 	const sm = new SessionManager(tools, "", modelFactory, undefined, {
 		onSessionCreated(sessionId, harness) {
 			registerPlanGateHooks(harness, { planKey: sessionId, tiers, metrics });
+			// P1：与 index.ts 同步注册唯一 before_run_end handler（plan-gate followUp 合成）。
+			registerRunEndHooks(harness, {
+				sessionId,
+				coordinator: new SubagentCoordinator(),
+				resolvePlanKey: () => sessionId,
+				metrics,
+			});
 		},
 	}, undefined, sharedConfig(3), undefined, metrics);
 	const threadKey = "s-tb-int-followup";

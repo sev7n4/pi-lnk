@@ -438,3 +438,15 @@ test("P2 notify_generation_terminal：零样本仍渲染 HELP/TYPE（0 也出样
 	assert.ok(out.includes("# TYPE pi_runtime_notify_generation_terminal_total counter"));
 	assert.doesNotMatch(out, /pi_runtime_notify_generation_terminal_total\{outcome=/);
 });
+
+test("P3 subagent report kind：synthesis/partial/empty 分键累加渲染", () => {
+	const m = new Metrics();
+	m.observeSubagentReport("synthesis");
+	m.observeSubagentReport("partial");
+	m.observeSubagentReport("partial");
+	m.observeSubagentReport("empty");
+	const out = m.render(0, "test");
+	assert.match(out, /pi_runtime_subagent_report_total\{kind="synthesis"\} 1/);
+	assert.match(out, /pi_runtime_subagent_report_total\{kind="partial"\} 2/);
+	assert.match(out, /pi_runtime_subagent_report_total\{kind="empty"\} 1/);
+});

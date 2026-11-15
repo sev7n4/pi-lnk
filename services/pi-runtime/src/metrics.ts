@@ -118,6 +118,8 @@ export class Metrics {
 	private subagentRejected = new Map<string, number>(); // C4 key: reason (concurrency_full|not_attached)
 	private subagentOutcome = new Map<string, number>(); // C4 key: status (completed|failed|timeout|budget_exceeded)
 	private subagentCollected = new Map<string, number>(); // 刀A（2026-11-14）key: status（running|completed|failed|timeout|budget_exceeded|interrupted|unknown）
+	private subagentBarrier = new Map<string, number>(); // P1 key: outcome (waited|deadline|cancelled|none)
+	private subagentReport = new Map<string, number>(); // P3 key: kind (synthesis|partial|empty)
 	private skillsLoaded = 0;
 	private skillsPromptTokens = 0;
 	/**
@@ -429,13 +431,23 @@ export class Metrics {
 		this.subagentRejected.set(reason, (this.subagentRejected.get(reason) ?? 0) + 1);
 	}
 
-	observeSubagentOutcome(status: "completed" | "failed" | "timeout" | "budget_exceeded"): void {
+	observeSubagentOutcome(status: "completed" | "failed" | "timeout" | "budget_exceeded" | "stream_interrupted"): void {
 		this.subagentOutcome.set(status, (this.subagentOutcome.get(status) ?? 0) + 1);
 	}
 
 	/** 刀A（spec 2026-11-14 §6.3）：collect_subagent_result 查询结果分布——running 占比高说明模型派了不收。 */
 	observeSubagentCollected(status: string): void {
 		this.subagentCollected.set(status, (this.subagentCollected.get(status) ?? 0) + 1);
+	}
+
+	/** P1（spec 2026-11-15 §7.3）：barrier 收尾结果分布。 */
+	observeBarrier(outcome: "waited" | "deadline" | "cancelled" | "none"): void {
+		this.subagentBarrier.set(outcome, (this.subagentBarrier.get(outcome) ?? 0) + 1);
+	}
+
+	/** P3（spec 2026-11-15 §7.3）：报告提取形态分布——synthesis/partial/empty，回答"报告是不是真的"。 */
+	observeSubagentReport(kind: "synthesis" | "partial" | "empty"): void {
+		this.subagentReport.set(kind, (this.subagentReport.get(kind) ?? 0) + 1);
 	}
 
 	/** usage 事件累计（审计 P0-③）：tokens 按 kind；cost 按 kind 落账。
@@ -765,6 +777,18 @@ export class Metrics {
 	lines.push("# TYPE pi_runtime_subagent_collect_total counter");
 	for (const [status, count] of [...this.subagentCollected.entries()].sort()) {
 		lines.push(`pi_runtime_subagent_collect_total{status="${status}"} ${count}`);
+	}
+
+	lines.push("# HELP pi_runtime_subagent_barrier_total before_run_end pending barrier outcomes (2026-11-15).");
+	lines.push("# TYPE pi_runtime_subagent_barrier_total counter");
+	for (const [outcome, count] of [...this.subagentBarrier.entries()].sort()) {
+		lines.push(`pi_runtime_subagent_barrier_total{outcome="${outcome}"} ${count}`);
+	}
+
+	lines.push("# HELP pi_runtime_subagent_report_total Subagent report extraction shape (2026-11-15).");
+	lines.push("# TYPE pi_runtime_subagent_report_total counter");
+	for (const [kind, count] of [...this.subagentReport.entries()].sort()) {
+		lines.push(`pi_runtime_subagent_report_total{kind="${kind}"} ${count}`);
 	}
 
 		lines.push("# HELP pi_runtime_skills_loaded Skills discovered at startup.");
