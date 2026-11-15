@@ -215,6 +215,10 @@ export type AdminDiffSummary = {
   unchanged: number
   maxIncrease: { matchKey: string; from: number; to: number; pct: number } | null
   maxDecrease: { matchKey: string; from: number; to: number; pct: number } | null
+  /** 发布确认弹窗公告预告（2026-11-15 公告设计 §6）：涨价/降价/新增档数 */
+  increaseCount: number
+  decreaseCount: number
+  newCount: number
   /** kind='min'：价格行跌破下限（limit=floor）；kind='max'：token 反比率行超过上限（limit=ceiling）。 */
   floorViolations: { matchKey: string; credits: number; limit: number; kind: 'min' | 'max' }[]
   missingCost: string[]
@@ -547,8 +551,13 @@ export const adminApi = {
     diff: (id: string): Promise<AdminDiffSummary> =>
       unwrap(adminHttp.get(`/admin/pricing/versions/${encodeURIComponent(id)}/diff`)),
 
-    publish: (id: string): Promise<{ version: string }> =>
-      unwrap(adminHttp.post(`/admin/pricing/versions/${encodeURIComponent(id)}/publish`)),
+    publish: (id: string, notifyUsers?: boolean): Promise<{ version: string; announcementId: string | null }> =>
+      unwrap(
+        adminHttp.post(`/admin/pricing/versions/${encodeURIComponent(id)}/publish`, {
+          // notifyUsers 胶囊开关（2026-11-15 用户拍板默认 false）：显式传值才透传，undefined 不发键
+          ...(notifyUsers === undefined ? {} : { notifyUsers }),
+        }),
+      ),
 
     rollback: (): Promise<{ version: string }> =>
       unwrap(adminHttp.post('/admin/pricing/versions/rollback')),

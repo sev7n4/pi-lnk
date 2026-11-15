@@ -4,6 +4,7 @@ import { useRoute, useRouter }  from 'vue-router'
 import BrandLogo from '@/components/brand/BrandLogo.vue'
 import AccountChrome from '@/components/account/AccountChrome.vue'
 import ThemeToggle from '@/components/layout/ThemeToggle.vue'
+import AnnouncementBell from '@/components/notice/AnnouncementBell.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
 import { ElMessage } from 'element-plus'
@@ -154,6 +155,7 @@ async function createProject() {
         <!-- 主题切换提到全站：此前只有画布页有入口，其余 16 条路由进不去。
              ⛔ 品牌页（/workflow）例外：签名画面恒为墨色，不随主题翻转 -->
         <ThemeToggle v-if="!isBrandPage" class="h-8 w-8 rounded-lg text-fg-2 hover:bg-surface-elevated hover:text-fg" />
+        <AnnouncementBell />
         <AccountChrome :hide-points="isBrandPage" />
       </div>
     </div>

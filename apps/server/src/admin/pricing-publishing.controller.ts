@@ -141,8 +141,17 @@ export class PricingPublishingController {
 
   @Post(':id/publish')
   @UseGuards(AdminTokenGuard)
-  async publish(@Param('id') id: string) {
-    return { code: 0, message: 'ok', data: await this.publishing.publish(id) }
+  async publish(@Param('id') id: string, @Body() body?: Record<string, unknown>) {
+    // notifyUsers 胶囊开关（2026-11-15 用户拍板）：默认 false 不推公告；显式 true 才生成
+    // 调价公告。选择落审计日志（publish service 事务内 audit after.notifyUsers）。
+    let notifyUsers: boolean | undefined
+    if (body && body['notifyUsers'] !== undefined) {
+      if (typeof body['notifyUsers'] !== 'boolean') {
+        throw new BadRequestException('notifyUsers 必须是布尔值')
+      }
+      notifyUsers = body['notifyUsers']
+    }
+    return { code: 0, message: 'ok', data: await this.publishing.publish(id, { notifyUsers }) }
   }
 
   @Post('rollback')

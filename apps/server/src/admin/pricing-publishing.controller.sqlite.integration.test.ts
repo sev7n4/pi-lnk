@@ -10,6 +10,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { BadRequestException, NotFoundException, UnauthorizedException } from '@nestjs/common'
 import { PricingPublishingController } from './pricing-publishing.controller'
 import { PricingPublishingService } from '../pricing/pricing-publishing.service'
+import { PricingAnnouncementService } from '../pricing/pricing-announcement.service'
 import { PricingService } from '../pricing/pricing.service'
 import { AdminTokenGuard } from './admin-token.guard'
 
@@ -48,7 +49,11 @@ describe('PricingPublishingController（P1-a T4）', () => {
       stdio: 'pipe',
     })
     prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } })
-    service = new PricingPublishingService(prisma as never, new PricingService(prisma as never))
+    service = new PricingPublishingService(
+      prisma as never,
+      new PricingService(prisma as never),
+      new PricingAnnouncementService(prisma as never),
+    )
     controller = new PricingPublishingController(service)
   }, 180_000) // 集成 harness 高负载下 beforeAll 超 vitest 默认 10s，本文件局部放宽
 
@@ -58,6 +63,8 @@ describe('PricingPublishingController（P1-a T4）', () => {
   })
 
   beforeEach(async () => {
+    await prisma.announcementRead.deleteMany()
+    await prisma.announcement.deleteMany()
     await prisma.pricingGrayWhitelist.deleteMany()
     await prisma.pricingGrayRelease.deleteMany()
     await prisma.adminAuditLog.deleteMany()
@@ -204,7 +211,8 @@ describe('PricingPublishingController（P1-a T4）', () => {
 
       const res = await controller.publish(draft.id)
       expect(res.code).toBe(0)
-      expect(res.data).toEqual({ version: 'v2' })
+      // notifyUsers 缺省 false（2026-11-15 用户拍板）：不生成公告，announcementId=null
+      expect(res.data).toEqual({ version: 'v2', announcementId: null })
 
       const v1 = await prisma.priceListVersion.findUniqueOrThrow({ where: { version: 'v1' } })
       const v2 = await prisma.priceListVersion.findUniqueOrThrow({ where: { version: 'v2' } })
@@ -217,6 +225,49 @@ describe('PricingPublishingController（P1-a T4）', () => {
       expect(audit.resource).toBe('price-list-version:v2')
       expect(JSON.parse(audit.before!)).toMatchObject({ version: 'v1', status: 'active' })
       expect(JSON.parse(audit.after!)).toMatchObject({ version: 'v2', status: 'active', entryCount: 1 })
+    })
+
+    it('notifyUsers=true：发布成功后生成聚合公告（可感知行入明细、legacy 行过滤、审计带 notifyUsers）', async () => {
+      await seedActiveVersion(prisma, 'v1', [{ matchKey: 'm-a', capability: 'text', credits: 100 }])
+      const v1 = await prisma.priceListVersion.findUniqueOrThrow({ where: { version: 'v1' } })
+      await prisma.priceListEntry.createMany({
+        data: [
+          { versionId: v1.id, matchKey: 'image|h3-max|768p|p|u', capability: 'image', credits: 45, basis: 'auto-derived', subjectKey: 'image|h3-max|768p|p|u' },
+          { versionId: v1.id, matchKey: 'text:agnes-2.5-flash:in', capability: 'text', credits: 3636, basis: 'auto-derived' },
+          { versionId: v1.id, matchKey: 'image|legacy-x|1K|p|u', capability: 'image', credits: 10 }, // legacy-equivalent
+        ],
+      })
+      const draft = await service.createDraftFromActive('v2', '调价')
+      await service.upsertEntries(draft.id, [
+        { matchKey: 'm-a', capability: 'text', credits: 100 }, // 不变行
+        { matchKey: 'image|h3-max|768p|p|u', capability: 'image', credits: 315, subjectKey: 'image|h3-max|768p|p|u', costSnapshotYuan: 0.288, unitSnapshot: '{"billableUnit":"image","unitQuantity":1}', profitBpSnapshot: 1000 },
+        { matchKey: 'text:agnes-2.5-flash:in', capability: 'text', credits: 181818 },
+        { matchKey: 'image|legacy-x|1K|p|u', capability: 'image', credits: 999 }, // legacy 变更也不公告
+      ])
+      const res = await controller.publish(draft.id, { notifyUsers: true })
+      expect(res.code).toBe(0)
+      const annId = (res.data as { announcementId: string | null }).announcementId
+      expect(annId).toBeTypeOf('string')
+      const ann = await prisma.announcement.findUniqueOrThrow({ where: { id: annId! } })
+      expect(ann.type).toBe('pricing-change')
+      expect(ann.versionFrom).toBe(v1.id)
+      const items = JSON.parse(ann.payload) as Array<{ modelKey: string; from: number; to: number; kind: string }>
+      expect(items.map((i) => i.modelKey).sort()).toEqual(['agnes-2.5-flash', 'h3-max'])
+      expect(items.find((i) => i.modelKey === 'h3-max')).toMatchObject({ from: 45, to: 315, kind: 'increase' })
+      expect(ann.summary).toContain('涨价')
+      // audit 落 notifyUsers 选择
+      const audit = await prisma.adminAuditLog.findFirstOrThrow({ where: { action: 'pricing-version.publish' } })
+      expect(JSON.parse(audit.after!)).toMatchObject({ notifyUsers: true })
+    })
+
+    it('credits 全不变 + notifyUsers=true ⇒ 不生成公告（利润抵消场景）', async () => {
+      await seedActiveVersion(prisma, 'v1', [{ matchKey: 'm-a', capability: 'text', credits: 100 }])
+      const draft = await service.createDraftFromActive('v2', '无变化')
+      await service.upsertEntries(draft.id, [{ matchKey: 'm-a', capability: 'text', credits: 100 }])
+      const res = await controller.publish(draft.id, { notifyUsers: true })
+      expect(res.code).toBe(0)
+      expect((res.data as { announcementId: string | null }).announcementId).toBeNull()
+      expect(await prisma.announcement.count()).toBe(0)
     })
 
     it('400 穿透①：空 draft → 400，状态零变化，audit 不留痕', async () => {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { computed, h, onMounted, reactive, ref } from 'vue'
+import { ElMessage, ElMessageBox, ElSwitch } from 'element-plus'
 import {
   adminApi,
   AdminApiError,
@@ -136,8 +136,28 @@ async function publish() {
   const incText = inc
     ? `最大涨幅：${inc.matchKey} ${inc.from} → ${inc.to}（+${(inc.pct * 100).toFixed(1)}%）`
     : '无条目上调'
+  // 调价公告胶囊开关（2026-11-15 用户拍板默认 false）：勾选才向用户推送公告
+  const box = reactive({ notifyUsers: false })
+  const previewText =
+    d.increaseCount > 0 || d.decreaseCount > 0 || d.newCount > 0
+      ? `涨价 ${d.increaseCount} 档 / 降价 ${d.decreaseCount} 档 / 新增 ${d.newCount} 档`
+      : '无用户可感知的 credit 变化'
+  const message = h('div', null, [
+    h('p', null, `确认发布 ${d.draftVersion} 为 active？${incText}`),
+    h(
+      'div',
+      { style: 'display:flex;align-items:center;gap:10px;margin-top:10px;' },
+      [
+        h(ElSwitch, {
+          modelValue: box.notifyUsers,
+          'onUpdate:modelValue': (v: string | number | boolean) => (box.notifyUsers = v === true),
+        }),
+        h('span', { style: 'font-size:13px;' }, `推送调价公告给用户（${previewText}）`),
+      ],
+    ),
+  ])
   try {
-    await ElMessageBox.confirm(`确认发布 ${d.draftVersion} 为 active？${incText}`, '发布确认', {
+    await ElMessageBox.confirm(message, '发布确认', {
       type: 'warning',
       confirmButtonText: '发布',
       cancelButtonText: '取消',
@@ -146,8 +166,8 @@ async function publish() {
     return
   }
   try {
-    const { version } = await adminApi.pricingVersions.publish(draft.value.id)
-    ElMessage.success(`已发布 ${version}`)
+    const { version } = await adminApi.pricingVersions.publish(draft.value.id, box.notifyUsers)
+    ElMessage.success(box.notifyUsers ? `已发布 ${version}，公告已推送` : `已发布 ${version}（未推送公告）`)
     draft.value = null
     diff.value = null
     await reload()

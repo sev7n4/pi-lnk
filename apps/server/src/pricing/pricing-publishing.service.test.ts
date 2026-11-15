@@ -360,7 +360,7 @@ describe('PricingPublishingService.publish', () => {
     const draft = await svc.createDraftFromActive('v2', '正常调价')
     await svc.upsertEntries(draft.id, [{ matchKey: 'text', capability: 'text', credits: 6 }])
 
-    await expect(svc.publish(draft.id)).resolves.toEqual({ version: 'v2' })
+    await expect(svc.publish(draft.id)).resolves.toEqual({ version: 'v2', announcementId: null })
 
     const v1 = db.versions.find((v) => v.version === 'v1')!
     const v2 = db.versions.find((v) => v.version === 'v2')!
@@ -452,7 +452,7 @@ describe('PricingPublishingService.publish', () => {
       // r=505 ≤ ceiling=95238 ⇒ 合规
       { matchKey: 'text:step-2-16k:out', capability: 'text', credits: 505, basis: 'launch-reprice', costRateId: 'cr_text' },
     ])
-    await expect(svc.publish(draft.id)).resolves.toEqual({ version: 'v2' })
+    await expect(svc.publish(draft.id)).resolves.toEqual({ version: 'v2', announcementId: null })
     expect(db.versions.find((v) => v.version === 'v2')!.status).toBe('active')
   })
 })
