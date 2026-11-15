@@ -16,6 +16,7 @@ const { listCostRecords, updateCostRecord, rebuildSubjects, materializeDraft, ge
   getReadiness: vi.fn(),
   versionsList: vi.fn(),
   createDraft: vi.fn(),
+  collectCostRates: vi.fn(),
 }))
 
 vi.mock('@/services/admin-api', () => ({
