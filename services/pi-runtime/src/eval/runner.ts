@@ -106,6 +106,12 @@ export interface CaseResult {
 	 * 报告固定展示——跨 run 基线对比前先核一致，模型静默升级 otherwise 不可见。
 	 */
 	model?: string;
+	/**
+	 * ⭐ P0 观测修复（2026-11-15，D3）：provider id（/sessions 响应透传，与 model 同构）。
+	 * 纯报告元信息、不参与判据——BYOK 多渠道对比（如 deepseek-v4-flash vs deepseek-chat）
+	 * 与「静默回落 platform」归因靠它区分（byok-<sha1> vs agnes）。
+	 */
+	provider?: string;
 	/** C-1b：identity 断裂观测——断裂次数（§8.6，只观测不计分）。 */
 	identityBroken?: number;
 	/** C-1b：identity 断裂观测——观测次数（每个标注计一次）。 */
@@ -321,6 +327,9 @@ export function summarize(
 	// ⭐ C-1b（§8.7）：本轮实际模型 id 集合——跨 run 基线对比前先核一致。
 	const modelsUsed = [...new Set(results.map((r) => r.model).filter(Boolean))] as string[];
 	const modelLine = modelsUsed.length > 0 ? [`模型：${modelsUsed.join(", ")}（§8.7 跨 run 对比前先核一致）`] : [];
+	// ⭐ P0 D3：provider 集合（byok-<sha1> vs agnes）——多渠道对比 / 静默回落归因。
+	const providersUsed = [...new Set(results.map((r) => r.provider).filter(Boolean))] as string[];
+	const providerLine = providersUsed.length > 0 ? [`provider：${providersUsed.join(", ")}（P0 D3；byok-<sha1>=自建渠道 / agnes=platform）`] : [];
 	const lines = [
 		header,
 		`L1 行为回归：${pass}/${judged} 通过（${(passRate * 100).toFixed(1)}%）· fail ${fail} · error ${error} · skip ${skipped}`,
@@ -337,6 +346,7 @@ export function summarize(
 			? [`画布：canvasSessionId=${meta.canvasSessionId}（真实 Nest 画布，工具可回查）`]
 			: []),
 		...modelLine,
+		...providerLine,
 		...identitySection,
 		...(meta?.coverageNote ? [`⚠️ 覆盖盲区：${meta.coverageNote}`] : []),
 		...skipSection,
@@ -345,7 +355,7 @@ export function summarize(
 			.filter((r) => r.verdict === "fail" || r.verdict === "error")
 			.map(
 				(r) =>
-					`  [${r.verdict}] ${r.caseId} (${r.durationMs}ms${(r.attempts ?? 1) > 1 ? `, ${r.attempts} 次` : ""}${r.model ? `, model=${r.model}` : ""}${r.stepVerdicts ? `, steps=${r.stepVerdicts.join("/")}` : ""})：${r.failures.join("; ")}`,
+					`  [${r.verdict}] ${r.caseId} (${r.durationMs}ms${(r.attempts ?? 1) > 1 ? `, ${r.attempts} 次` : ""}${r.model ? `, model=${r.model}` : ""}${r.provider ? `, provider=${r.provider}` : ""}${r.stepVerdicts ? `, steps=${r.stepVerdicts.join("/")}` : ""})：${r.failures.join("; ")}`,
 			),
 	]
 		.filter(Boolean)
@@ -632,6 +642,8 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 		}
 		// C-1b：model（任一 attempt 记录到的实际模型）与 identity 观测透传进最终结果
 		const modelSeen = attemptResults.find((r) => r.model)?.model ?? errorResults.find((r) => r.model)?.model;
+		// P0 D3：provider 与 model 同构透传（纯报告元信息，不参与判据）
+		const providerSeen = attemptResults.find((r) => r.provider)?.provider ?? errorResults.find((r) => r.provider)?.provider;
 		const idSource =
 			attemptResults.find((r) => (r.identityObserved ?? 0) > 0) ??
 			attemptResults[0] ??
@@ -654,6 +666,7 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 			attemptVerdicts,
 			...(errorAttempts > 0 ? { errorAttempts } : {}),
 			...(modelSeen ? { model: modelSeen } : {}),
+			...(providerSeen ? { provider: providerSeen } : {}),
 			...(idSource && (idSource.identityObserved ?? 0) > 0
 				? {
 						identityBroken: idSource.identityBroken ?? 0,
@@ -748,6 +761,7 @@ async function runOneAttempt(
 					durationMs: Date.now() - started,
 					toolNames: run.transcript.toolNames,
 					...(run.model ? { model: run.model } : {}),
+					...(run.provider ? { provider: run.provider } : {}),
 				};
 			}
 			canvas = probe;
@@ -761,6 +775,7 @@ async function runOneAttempt(
 			toolNames: run.transcript.toolNames,
 			usage: run.transcript.usage,
 			...(run.model ? { model: run.model } : {}),
+			...(run.provider ? { provider: run.provider } : {}),
 		};
 	} catch (err) {
 		// driver 自身抛异常（连接失败等）⇒ 归error，**不**归fail。
@@ -796,6 +811,7 @@ async function runStepsAttempt(
 	const sessionId = `eval-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 	const transcripts: EvalTranscript[] = [];
 	let model: string | undefined;
+	let provider: string | undefined;
 	try {
 		for (const [i, step] of steps.entries()) {
 			const run = await runEvalCase(
@@ -812,6 +828,7 @@ async function runStepsAttempt(
 				},
 			);
 			if (!model && run.model) model = run.model;
+			if (!provider && run.provider) provider = run.provider;
 			transcripts.push(run.transcript);
 			if (process.env.PI_EVAL_DEBUG) {
 				process.stderr.write(
@@ -827,6 +844,7 @@ async function runStepsAttempt(
 			durationMs: Date.now() - started,
 			toolNames: [],
 			...(model ? { model } : {}),
+			...(provider ? { provider } : {}),
 		};
 	}
 	// 画布终态读回：收尾步声明了 expectCanvasState 才读（零判据步不烧探针）。
@@ -842,6 +860,7 @@ async function runStepsAttempt(
 				durationMs: Date.now() - started,
 				toolNames: transcripts.flatMap((t) => t.toolNames),
 				...(model ? { model } : {}),
+				...(provider ? { provider } : {}),
 			};
 		}
 		canvas = probe;
@@ -855,6 +874,7 @@ async function runStepsAttempt(
 		toolNames: transcripts.flatMap((t) => t.toolNames),
 		usage: sumUsage(transcripts),
 		...(model ? { model } : {}),
+		...(provider ? { provider } : {}),
 		identityBroken: v.identity.broken,
 		identityObserved: v.identity.observed,
 		stepCount: steps.length,
