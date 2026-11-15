@@ -4,6 +4,7 @@ import { Type } from 'class-transformer'
 import { TEXT_NODE_FORMATS } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
 import { AgentCanvasToolsService, BATCH_NODES_MAX } from './agent-canvas-tools.service'
+import { CanvasService } from '../canvas/canvas.service'
 import { AgentInternalGuard } from './agent-internal.guard'
 import { CompositionService, type PreviewCompositionInput } from './composition.service'
 import { WorkflowRecipeService } from './workflow-recipe.service'
@@ -1235,6 +1236,26 @@ class SaveContextSnapshotDto {
   messageCount?: number
 }
 
+export class CreateCanvasInternalDto {
+  @IsString()
+  userId!: string
+
+  @IsOptional()
+  @IsString()
+  title?: string
+}
+
+export class RenameCanvasInternalDto {
+  @IsString()
+  sessionId!: string
+
+  @IsString()
+  userId!: string
+
+  @IsString()
+  title!: string
+}
+
 @Controller('agent/internal')
 @UseGuards(AgentInternalGuard)
 export class AgentCanvasToolsController {
@@ -1244,6 +1265,7 @@ export class AgentCanvasToolsController {
     @Inject(CompositionService) private readonly composition: CompositionService,
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(AgentMemoryService) private readonly memory: AgentMemoryService,
+    @Inject(CanvasService) private readonly canvasService: CanvasService,
   ) {}
 
   // 被删历史（2026-10-17 prompt 节点下线）：@Post('upsert-prompt-node') 端点
@@ -1277,6 +1299,22 @@ export class AgentCanvasToolsController {
   @Post('read-media')
   async readMedia(@Body() dto: ReadMediaDto) {
     const data = await this.tools.readMedia(dto)
+    return { code: 0, message: 'ok', data }
+  }
+
+  // Eval canvas provisioning（P1，2026-11-15 立项 spec 拍板方案 A）：跑批 CLI
+  // 用测试账号自建/自归档画布（D2 只归档不删 / D3 fail-fast）。服务 token 面
+  // 与其余 internal 端点一致；生产用户路径零接触（生产入口零 ./eval 引用）。
+  @Post('create-canvas')
+  async createCanvas(@Body() dto: CreateCanvasInternalDto) {
+    const data = await this.canvasService.create(dto.userId, dto.title)
+    return { code: 0, message: 'ok', data }
+  }
+
+  /** D2 归档：改名不删（属主校验走 canvasService.update 的 findFirst(id+userId) 口径）。 */
+  @Post('rename-canvas')
+  async renameCanvas(@Body() dto: RenameCanvasInternalDto) {
+    const data = await this.canvasService.update(dto.sessionId, dto.userId, { title: dto.title })
     return { code: 0, message: 'ok', data }
   }
 

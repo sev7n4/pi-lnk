@@ -3,6 +3,8 @@ import { BadRequestException, ValidationPipe } from '@nestjs/common'
 import { describe, expect, it, vi } from 'vitest'
 import {
   AgentCanvasToolsController,
+  CreateCanvasInternalDto,
+  RenameCanvasInternalDto,
   InstantiateRecipeDto,
   RunTextGenerationDto,
   SaveMemoryDto,
@@ -61,14 +63,17 @@ describe('AgentCanvasToolsController 新端点透传', () => {
   const makeController = () => {
     const updateNode = vi.fn(async () => ({ nodeId: 'n1', actions: [] }))
     const listNodeModelOptions = vi.fn(async () => ({ modalities: { image: [] } }))
+    const createCanvas = vi.fn(async () => ({ id: 'sess-new', title: 'eval-run-x' }))
+    const renameCanvas = vi.fn(async () => ({ id: 'sess-old', title: 'eval-used-x' }))
     const controller = new AgentCanvasToolsController(
       { updateNode, listNodeModelOptions } as never,
       {} as never,
       {} as never,
       {} as never,
       {} as never,
+      { create: createCanvas, update: renameCanvas } as never,
     )
-    return { controller, updateNode, listNodeModelOptions }
+    return { controller, updateNode, listNodeModelOptions, createCanvas, renameCanvas }
   }
 
   it('update-node 把 dto 透传给 service 并包成 {code:0,data}', async () => {
@@ -77,6 +82,22 @@ describe('AgentCanvasToolsController 新端点透传', () => {
     const out = await controller.updateNode(dto)
     expect(updateNode).toHaveBeenCalledWith(dto)
     expect(out).toEqual({ code: 0, message: 'ok', data: { nodeId: 'n1', actions: [] } })
+  })
+
+  it('create-canvas 透传 canvasService.create（eval P1 provision，D1）', async () => {
+    const { controller, createCanvas } = makeController()
+    const dto = { userId: 'u1', title: 'eval-run-20261115-210000' }
+    const out = await controller.createCanvas(dto)
+    expect(createCanvas).toHaveBeenCalledWith('u1', 'eval-run-20261115-210000')
+    expect(out).toEqual({ code: 0, message: 'ok', data: { id: 'sess-new', title: 'eval-run-x' } })
+  })
+
+  it('rename-canvas 透传 canvasService.update（D2 归档不删，属主校验在 service）', async () => {
+    const { controller, renameCanvas } = makeController()
+    const dto = { sessionId: 'sess-old', userId: 'u1', title: 'eval-used-20261115-210000' }
+    const out = await controller.renameCanvas(dto)
+    expect(renameCanvas).toHaveBeenCalledWith('sess-old', 'u1', { title: 'eval-used-20261115-210000' })
+    expect(out).toEqual({ code: 0, message: 'ok', data: { id: 'sess-old', title: 'eval-used-x' } })
   })
 
   it('list-model-options 把 dto 透传给 service 并包成 {code:0,data}', async () => {
@@ -221,5 +242,40 @@ describe('RunTextGenerationDto', () => {
       { type: 'body', metatype: RunTextGenerationDto },
     )
     expect(result.nodeContext).toEqual({ canvasSummary: '画布共 2 个节点' })
+  })
+})
+
+describe('eval provisioning DTO（P1 create/rename canvas）', () => {
+  const pipe = new ValidationPipe({ transform: true, whitelist: true })
+
+  it('CreateCanvasInternalDto：userId/title 均不被剥离', async () => {
+    const result = await pipe.transform(
+      { userId: 'u1', title: 'eval-run-x' },
+      { type: 'body', metatype: CreateCanvasInternalDto },
+    )
+    expect(result.userId).toBe('u1')
+    expect(result.title).toBe('eval-run-x')
+  })
+
+  it('CreateCanvasInternalDto：title 可省（service 落默认标题）', async () => {
+    const result = await pipe.transform({ userId: 'u1' }, { type: 'body', metatype: CreateCanvasInternalDto })
+    expect(result.title).toBeUndefined()
+  })
+
+  it('CreateCanvasInternalDto：缺 userId → 拒绝', async () => {
+    await expect(
+      pipe.transform({ title: 'x' }, { type: 'body', metatype: CreateCanvasInternalDto }),
+    ).rejects.toBeInstanceOf(BadRequestException)
+  })
+
+  it('RenameCanvasInternalDto：三字段齐备才放行', async () => {
+    await expect(
+      pipe.transform({ sessionId: 's1', userId: 'u1' }, { type: 'body', metatype: RenameCanvasInternalDto }),
+    ).rejects.toBeInstanceOf(BadRequestException)
+    const ok = await pipe.transform(
+      { sessionId: 's1', userId: 'u1', title: 'eval-used-x' },
+      { type: 'body', metatype: RenameCanvasInternalDto },
+    )
+    expect(ok).toEqual({ sessionId: 's1', userId: 'u1', title: 'eval-used-x' })
   })
 })
