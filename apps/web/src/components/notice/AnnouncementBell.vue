@@ -1,13 +1,10 @@
 <script setup lang="ts">
 // 调价公告：铃铛（未读 badge）+ 公告中心抽屉（设计稿 §4 常驻入口）。
 // 明细表列：模型 / 档位 / 旧积分 / 新积分 / 变化%（涨红↑ 降绿↓，A 股口径）。
+// ⛔ 颜色一律 Tailwind 语义类（theme-usage 棘轮：品牌色与 rgba 字面量基线 0 不得增加）。
 import { ref, watch } from 'vue'
 import { ElDrawer, ElTable, ElTableColumn, ElTag } from 'element-plus'
-import {
-  announcementApi,
-  type AnnouncementDetail,
-  type AnnouncementListItem,
-} from '@/services/announcement-api'
+import { announcementApi, type AnnouncementDetail, type AnnouncementListItem } from '@/services/announcement-api'
 import { useAnnouncements } from '@/composables/useAnnouncements'
 
 const { items, unreadCount, refresh, markRead } = useAnnouncements()
@@ -51,6 +48,11 @@ function pctClass(row: unknown): string {
   return 'text-fg-2'
 }
 
+function pctArrow(row: unknown): string {
+  const i = row as { kind: string }
+  return i.kind === 'decrease' ? '↓' : i.kind === 'increase' ? '↑' : ''
+}
+
 function fmtTime(iso: string): string {
   return new Date(iso).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
@@ -60,15 +62,19 @@ function fmtTime(iso: string): string {
   <div class="relative">
     <button
       type="button"
-      class="bell-btn"
+      class="inline-flex h-8 w-8 items-center justify-center rounded-lg text-fg-2 transition hover:bg-surface-elevated hover:text-fg"
       data-testid="announcement-bell"
       aria-label="公告"
       @click="drawerOpen = true"
     >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true" class="h-[1.15rem] w-[1.15rem]">
         <path stroke-linecap="round" stroke-linejoin="round" d="M14.857 17.082a23.85 23.85 0 0 0 5.454-1.31A8.967 8.967 0 0 1 18 9.75V9A6 6 0 0 0 6 9v.75a8.967 8.967 0 0 1-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.26 24.26 0 0 1-5.714 0m5.714 0a3 3 0 1 1-5.714 0" />
       </svg>
-      <span v-if="unreadCount > 0" class="bell-badge" data-testid="announcement-badge">{{ unreadCount > 99 ? '99+' : unreadCount }}</span>
+      <span
+        v-if="unreadCount > 0"
+        class="absolute -top-0.5 -right-1 rounded-full bg-danger-bg px-1.5 py-0.5 text-[10px] leading-none font-bold text-danger"
+        data-testid="announcement-badge"
+      >{{ unreadCount > 99 ? '99+' : unreadCount }}</span>
     </button>
 
     <ElDrawer v-model="drawerOpen" title="公告中心" size="460px" data-testid="announcement-drawer">
@@ -78,8 +84,8 @@ function fmtTime(iso: string): string {
           v-for="a in items"
           :key="a.id"
           type="button"
-          class="ann-item"
-          :class="{ 'ann-item-unread': !a.read }"
+          class="w-full rounded-lg border p-3 text-left transition"
+          :class="a.read ? 'border-line-subtle bg-surface-card hover:bg-surface-elevated' : 'border-accent bg-surface-card hover:bg-surface-elevated'"
           @click="openDetail(a)"
         >
           <div class="flex items-center gap-2">
@@ -91,7 +97,7 @@ function fmtTime(iso: string): string {
         </button>
       </div>
 
-      <div v-if="detail" class="mt-4 border-t border-border pt-4">
+      <div v-if="detail" class="mt-4 border-t border-line-subtle pt-4">
         <h4 class="text-sm font-semibold text-fg">{{ detail.title }}</h4>
         <p class="mb-2 text-xs text-fg-2">{{ detail.summary }}</p>
         <ElTable :data="detail.payload" size="small" data-testid="announcement-detail-table">
@@ -105,7 +111,7 @@ function fmtTime(iso: string): string {
           </ElTableColumn>
           <ElTableColumn label="变化" width="80">
             <template #default="{ row }">
-              <span :class="pctClass(row)">{{ row.kind === 'decrease' ? '↓' : row.kind === 'increase' ? '↑' : '' }}{{ pctText(row) }}</span>
+              <span :class="pctClass(row)">{{ pctArrow(row) }}{{ pctText(row) }}</span>
             </template>
           </ElTableColumn>
         </ElTable>
@@ -114,61 +120,3 @@ function fmtTime(iso: string): string {
     </ElDrawer>
   </div>
 </template>
-
-<style scoped>
-.bell-btn {
-  position: relative;
-  display: inline-flex;
-  height: 2rem;
-  width: 2rem;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.5rem;
-  color: var(--fg-2, inherit);
-}
-.bell-btn:hover {
-  background: var(--surface-elevated, rgba(0, 0, 0, 0.05));
-}
-.bell-btn svg {
-  height: 1.15rem;
-  width: 1.15rem;
-}
-.bell-badge {
-  position: absolute;
-  top: -2px;
-  right: -4px;
-  border-radius: 9999px;
-  background: var(--danger, #ef4444);
-  color: #fff;
-  font-size: 10px;
-  line-height: 1;
-  padding: 2px 5px;
-}
-.ann-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
-  border-radius: 0.5rem;
-  padding: 0.65rem 0.75rem;
-  background: var(--surface, transparent);
-}
-.ann-item:hover {
-  background: var(--surface-elevated, rgba(0, 0, 0, 0.04));
-}
-.ann-item-unread {
-  border-color: var(--primary, rgba(99, 102, 241, 0.5));
-}
-.text-danger {
-  color: var(--danger, #ef4444);
-}
-.text-success {
-  color: var(--success, #16a34a);
-}
-.text-fg-2 {
-  color: var(--fg-2, rgba(0, 0, 0, 0.6));
-}
-.text-fg-3 {
-  color: var(--fg-3, rgba(0, 0, 0, 0.4));
-}
-</style>
