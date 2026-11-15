@@ -44,11 +44,16 @@ test("renders C3 plan-gate counters（propose/decision/blocked）", () => {
 	m.observePlanDecision("execute");
 	m.observePlanDecision("timeout");
 	m.observePlanGateBlocked("upsert_media_node");
+	m.observePlanAssumptions(true);
+	m.observePlanAssumptions(false);
+	m.observePlanAssumptions(true);
 	const out = m.render(0, "test");
 	assert.match(out, /pi_runtime_plan_proposed_total 2/);
 	assert.match(out, /pi_runtime_plan_decisions_total\{decision="execute"\} 1/);
 	assert.match(out, /pi_runtime_plan_decisions_total\{decision="timeout"\} 1/);
 	assert.match(out, /pi_runtime_plan_gate_blocked_total\{tool="upsert_media_node"\} 1/);
+	assert.match(out, /pi_runtime_plan_assumptions_total\{present="present"\} 2/);
+	assert.match(out, /pi_runtime_plan_assumptions_total\{present="absent"\} 1/);
 });
 
 test("③ 错误分类：Nest 结构化 errorKind 走 tool_error_kinds 通道（精确，不靠正则猜）", () => {

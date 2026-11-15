@@ -49,14 +49,39 @@ export function createProposePlanTool(registry: PendingToolRegistry, metrics: Me
 				{ description: "方案步骤（确认后逐项执行并更新任务状态）", min: 1, max: 20 },
 			),
 			explanation: Type.Optional(Type.String({ description: "方案思路/取舍概述（1-2 句），随方案一起展示给用户，帮助其做确认决策" })),
+			assumptions: Type.Optional(Type.Array(
+				Type.String({ description: "方案依赖的一条显式假设（如「目标画布为空」「素材已上传」「数据源可访问」），每条一句" }),
+				{ description: "方案成立所依赖的假设清单（确认卡「假设」区展示 + 显式化打点）；非平凡方案应显式列出", min: 1, max: 12 },
+			)),
+			scope: Type.Optional(Type.Object(
+				{
+					inScope: Type.Array(Type.String({ description: "本方案明确覆盖的事项" }), { min: 1, max: 12 }),
+					outOfScope: Type.Array(Type.String({ description: "本方案明确排除的事项" }), { min: 0, max: 12 }),
+				},
+				{ description: "方案范围边界：明确覆盖与明确排除，帮助用户校准预期（确认卡「范围」区展示）" },
+			)),
 		}),
 		execute: async (
 			id: string,
-			p: { summary: string; steps: { content: string; activeForm?: string }[]; explanation?: string },
+			p: {
+				summary: string;
+				steps: { content: string; activeForm?: string }[];
+				explanation?: string;
+				assumptions?: string[];
+				scope?: { inScope: string[]; outOfScope: string[] };
+			},
 			onUpdate: AgentHarnessToolUpdateCallback<{ ok: boolean; canvasCommands: unknown[] }> | undefined,
 			tc: LnkpiToolContext,
 		): Promise<AgentToolResult<{ ok: boolean; plan: Record<string, unknown> }>> => {
 			metrics.observePlanProposed();
+			// A-3（spec docs/superpowers/specs/2026-11-15-a3-propose-plan-assumptions-design.md）：
+			// 声明式假设/范围结构化透传 —— question.plan 供确认卡渲染、details.plan 供 transcript/eval
+			// 取证；缺省键不出现（键不出现纪律）；plan-gate decision 语义零改动（gate 只消费 decision）。
+			const planMeta = {
+				...(p.assumptions?.length ? { assumptions: p.assumptions } : {}),
+				...(p.scope ? { scope: p.scope } : {}),
+			};
+			metrics.observePlanAssumptions(Boolean(p.assumptions?.length));
 			// ① 步骤落 C1 管道：全 pending（方案尚未被确认执行）
 			const { snapshot, diff } = overwriteTodos(
 				tc.sessionId,
@@ -74,6 +99,7 @@ export function createProposePlanTool(registry: PendingToolRegistry, metrics: Me
 					summary: p.summary,
 					...(p.explanation ? { explanation: p.explanation } : {}),
 					steps: p.steps.map((s) => ({ content: s.content, ...(s.activeForm ? { activeForm: s.activeForm } : {}) })),
+					...planMeta,
 				},
 				options: [
 					{ label: "开始执行", value: "execute" },
@@ -88,7 +114,7 @@ export function createProposePlanTool(registry: PendingToolRegistry, metrics: Me
 				details: {
 					ok: true,
 					todo: { snapshot, diff },
-					plan: { summary: p.summary, ...(p.explanation ? { explanation: p.explanation } : {}), steps: snapshot, ...plan },
+					plan: { summary: p.summary, ...(p.explanation ? { explanation: p.explanation } : {}), steps: snapshot, ...planMeta, ...plan },
 					canvasCommands,
 				},
 			});

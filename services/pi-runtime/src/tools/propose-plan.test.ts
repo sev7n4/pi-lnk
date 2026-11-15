@@ -11,7 +11,7 @@ import type { Metrics } from "../metrics.js";
 function stubRegistry(resolution: Awaited<ReturnType<PendingToolRegistry["waitForUser"]>>): PendingToolRegistry {
 	return { waitForUser: async () => resolution } as unknown as PendingToolRegistry;
 }
-const metrics = { observePlanProposed() {}, observePlanDecision() {}, observePlanGateBlocked() {} } as unknown as Metrics;
+const metrics = { observePlanProposed() {}, observePlanDecision() {}, observePlanGateBlocked() {}, observePlanAssumptions() {} } as unknown as Metrics;
 
 const noopUpdate = () => {};
 /** vendor AgentHarnessTool.execute 尾参 stub（invocation + chord Context）。 */
@@ -23,7 +23,7 @@ const ctx = { abortSignal: undefined, value: () => undefined, toString: () => "t
 
 const CARD = { callId: "call-1" };
 
-function toolCall(id: string, p: { summary: string; steps: { content: string; activeForm?: string }[]; explanation?: string }) {
+function toolCall(id: string, p: { summary: string; steps: { content: string; activeForm?: string }[]; explanation?: string; assumptions?: string[]; scope?: { inScope: string[]; outOfScope: string[] } }) {
 	return { id, p };
 }
 
@@ -135,5 +135,45 @@ describe("propose_plan 工具", () => {
 		assert.equal(q.plan!.summary, "三步做视频");
 		assert.equal(q.plan!.explanation, "先脚本再封面最后成片，分步可控");
 		assert.equal(q.plan!.steps.length, 3);
+	});
+
+	it("A-3：assumptions/scope 透传 plan 工件（details.plan + question.plan）+ 显式化打点 present", async () => {
+		const observed: boolean[] = [];
+		const m = {
+			observePlanProposed() {}, observePlanDecision() {}, observePlanGateBlocked() {},
+			observePlanAssumptions(present: boolean) { observed.push(present); },
+		} as unknown as Metrics;
+		const t = createProposePlanTool(stubRegistry({ status: "answered", answers: { plan_confirm: ["execute"] } }), m);
+		const call = toolCall(CARD.callId, {
+			summary: "三步配图",
+			steps: [{ content: "建节点" }],
+			assumptions: ["目标画布为空", "素材已上传"],
+			scope: { inScope: ["生成 1 张配图"], outOfScope: ["排版与文案"] },
+		});
+		let update: { content: { text: string }[] } | undefined;
+		const res = await t.execute!(call.id, call.p, (u: unknown) => { update = u as { content: { text: string }[] }; }, { sessionId: "canvas-1" } as never, invocation as never, ctx as never);
+		const details = res.details as { plan: { assumptions?: string[]; scope?: { inScope: string[]; outOfScope: string[] } } };
+		assert.deepEqual(details.plan.assumptions, ["目标画布为空", "素材已上传"]);
+		assert.deepEqual(details.plan.scope, { inScope: ["生成 1 张配图"], outOfScope: ["排版与文案"] });
+		const card = JSON.parse(update!.content[0].text);
+		const q = card.canvasCommands[0].questions[0];
+		assert.deepEqual(q.plan.assumptions, ["目标画布为空", "素材已上传"]);
+		assert.deepEqual(q.plan.scope, { inScope: ["生成 1 张配图"], outOfScope: ["排版与文案"] });
+		assert.deepEqual(observed, [true]);
+	});
+
+	it("A-3：不传 assumptions/scope ⇒ plan 工件无这两个键（键不出现纪律）+ 打点 absent", async () => {
+		const observed: boolean[] = [];
+		const m = {
+			observePlanProposed() {}, observePlanDecision() {}, observePlanGateBlocked() {},
+			observePlanAssumptions(present: boolean) { observed.push(present); },
+		} as unknown as Metrics;
+		const t = createProposePlanTool(stubRegistry({ status: "answered", answers: { plan_confirm: ["execute"] } }), m);
+		const call = toolCall(CARD.callId, { summary: "s", steps: [{ content: "a" }] });
+		const res = await t.execute!(call.id, call.p, noopUpdate, { sessionId: "canvas-1" } as never, invocation as never, ctx as never);
+		const details = res.details as { plan: Record<string, unknown> };
+		assert.ok(!("assumptions" in details.plan), "未传 assumptions 不得出现该键");
+		assert.ok(!("scope" in details.plan), "未传 scope 不得出现该键");
+		assert.deepEqual(observed, [false]);
 	});
 });

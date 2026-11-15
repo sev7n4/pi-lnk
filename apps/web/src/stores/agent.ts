@@ -816,7 +816,7 @@ export const useAgentStore = defineStore('agent', () => {
       options: { label: string; value: string }[]
       multiSelect?: boolean
       allowOther?: boolean
-      plan?: { summary: string; explanation?: string; steps: { content: string; activeForm?: string }[] }
+      plan?: { summary: string; explanation?: string; steps: { content: string; activeForm?: string }[]; assumptions?: string[]; scope?: { inScope: string[]; outOfScope: string[] } }
     }>
   }) {
     // T4 打点：ask 等待开始（幂等键 callId）。
