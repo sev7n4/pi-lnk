@@ -743,6 +743,32 @@ export function appendPromptBlocks(base: string, blocks: readonly string[]): str
 }
 
 /**
+ * B-3 工具引导一等化（spec `2026-11-15-b3-tool-guidelines-design.md` §2.2 / D-3）：
+ * 把 LnkpiTool.promptGuidelines 静态渲染成 `<tool_guidelines>` XML 段。
+ *
+ * - 来源 = `toolEnsemble.registered` **全集**（D-1 静态渲染）：不随 tiering/门禁/active
+ *   变化 ⇒ guidelines 段内容会话期内恒定，cache 零新增扰动。上游段级 diff 的「内容不变
+ *   则缓存不动」精神由此推到极值；diffSystemPromptSections 真身在 coding-agent 包
+ *   （依赖纪律禁止引入），pico3 `SystemSection` 未转正——本函数是过渡形态而非平行轮子。
+ * - 格式（D-3）：XML 包装对齐上游 sections 渲染；bullet 流对齐上游 buildRules；
+ *   每条 bullet 带工具名前缀（`- <tool>: <rule>`）——静态段无 tools 段承载归属，不前缀则模型无法归属。
+ * - 无 guidelines 的工具不出现；段空（无任何工具声明）整段返回空串——与 A-3「缺省键不出现」一致。
+ * - 工具级 kill switch 天然兼容：`PI_RUNTIME_TODO_TOOL=off` 时 todo_write 不注册
+ *   （tools/todo.ts），registered 不含它 ⇒ 其引导自动消失（B-3 结构解耦的直接体现）。
+ */
+export function renderToolGuidelinesBlock(tools: readonly LnkpiTool[]): string {
+	const lines: string[] = [];
+	for (const tool of tools) {
+		for (const guideline of tool.promptGuidelines ?? []) {
+			const text = guideline.trim();
+			if (text) lines.push(`- ${tool.name}: ${text}`);
+		}
+	}
+	if (lines.length === 0) return "";
+	return `<tool_guidelines>\n${lines.join("\n")}\n</tool_guidelines>`;
+}
+
+/**
  * 会话身份。provider 二态（model-assembly.assembleModel）：
  * - Nest 注入 llm override（现状所有会话都发）→ `byok-<12hex>` = sha1(providerRef) 前 12 位，
  *   **platform 渠道同形**（`platform::agnes-2.5-flash` → byok-ea8288a2e48b）——`byok-` 前缀只是
@@ -3407,7 +3433,10 @@ export class SessionManager {
 		const index = this.skills?.indexBlock ?? "";
 		// 官方模式：不再注入延迟工具索引块（名单会诱使弱模型直调未激活工具；
 		// 发现能力由 tool_search 搜索语义承担，见 tools/tiering.ts 头注释）。
-		return appendPromptBlocks(prompt, [index]);
+		// B-3：`<tool_guidelines>` 段静态渲染（registered 全集，D-1），固定排在
+		// skills index 之后（§2.2：两块拼接顺序恒定，避免互扰缓存指纹）。
+		const guidelines = renderToolGuidelinesBlock(this.getToolEnsemble().registered);
+		return appendPromptBlocks(prompt, [index, guidelines]);
 	}
 
 /** 工具分层（审计 P0-④，懒计算一次）：官方模式两件套 registered / activeToolNames。 */

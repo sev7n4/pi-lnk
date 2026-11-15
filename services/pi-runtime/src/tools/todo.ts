@@ -258,6 +258,9 @@ export function buildTodoTools(deps: TodoToolDeps = {}): LnkpiTool[] {
 		label: "任务清单",
 		tier: "write_light",
 		summary: "维护多步任务清单（全量覆写）",
+		// B-3 等量置换：原 prompt-registry/rules/task_tool.md（v1.1.0）todo_write 侧条文，
+		// 逐字迁移（「需先出方案…」半句归 propose_plan；等量置换断言见 session-manager.tool-guidelines.test.ts）。
+		promptGuidelines: ["多步任务开工前 todo_write 提交清单（全量覆写），完成即更新，全部完成交空数组。"],
 		description:
 			"维护当前会话的任务清单，用于多步任务（≥3 步）执行透明化。约定：1) 全量覆写——每次调用必须包含全部任务项，漏发历史项等同删除；2) 任意时刻至多一项 in_progress；3) 全部完成时提交空数组清空清单；4) 变更已有任务时带上其 id（content 可改写=重命名），新增任务省略 id。",
 		parameters: todoSchema,

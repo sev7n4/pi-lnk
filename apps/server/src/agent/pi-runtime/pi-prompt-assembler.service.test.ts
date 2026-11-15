@@ -532,6 +532,8 @@ describe("组装管线契约（spec §8.1，M3 PR 门禁）", () => {
 		// 3035→3046（余量 165→154）。
 		// 2026-10-17 prompt 节点下线（v1.5.0）：gen_tool_policy 规则 11 删 prompt 工具，
 		// 3046→3039（余量 154→161）。
+		// 2026-11-15 B-3：task_tool.md 整文件删除（迁入工具 promptGuidelines）——todoTools
+		// 最紧组合（3175/余量 25）压力源消除，BASELINE 四组合数字不受影响（均不含 todoTools）。
 		// 2026-10-21 SP-A 第 23 条点名 create_nodes_batch（canvas_daily_ops v1.4.0）：
 		// 正文 60 字（Δ=+61）⇒ 3039→3100（余量 161→100），含 todoTools 最紧组合 3186（余量 14，贴线）；
 		// 压回 28 字后 3039→3068（余量 161→132），最紧组合 3154（余量 46）。
@@ -673,18 +675,6 @@ describe("PiPromptAssembler 动态段（assembleDynamic：SEL-REF 指代块）",
 	});
 });
 
-// ── C1：task_tool 规则组注入/剔除（kill switch 的组级机制；env 过滤在 agent.service）──
-describe("C1 task_tool（todoTools 组）注入与剔除", () => {
-	it("todoTools 组开 → assembled prompt 含 task_tool 规则", async () => {
-		const asm = makeAssembler({ nodes: [] });
-		const text = await asm.assembleStatic({ ruleGroups: ["core", "writeTools", "genTools", "todoTools"] });
-		expect(text).toContain("todo_write");
-		expect(text).toContain("全量覆写");
-	});
-
-	it("todoTools 组剔除（PI_RUNTIME_TODO_TOOL=off 语义）→ 不含该规则", async () => {
-		const asm = makeAssembler({ nodes: [] });
-		const text = await asm.assembleStatic({ ruleGroups: ["core", "writeTools", "genTools"] });
-		expect(text).not.toContain("todo_write 提交任务清单");
-	});
-});
+// ── B-3（2026-11-15）：task_tool/todoTools 组已删除——todo_write/propose_plan 纪律
+// 逐字迁入工具 promptGuidelines（session-manager.tool-guidelines.test.ts 对账）；
+// kill switch（PI_RUNTIME_TODO_TOOL=off）语义由 pi-runtime 侧工具级承担（tools/todo.ts）。──

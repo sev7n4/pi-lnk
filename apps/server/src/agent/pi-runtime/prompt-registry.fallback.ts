@@ -70,10 +70,6 @@ export const CANVAS_DAILY_OPS = `19. 整理/排版/铺开节点用 arrange_nodes
 22. 工具列表里没有的能力，先 tool_search 按关键词搜（勿直接答「做不到」），搜到后按其参数调用；宣告要搜的同一轮必须真调 tool_search，禁止只叙述不调用。闲聊/道谢/纯识图问句不调上述工具。
 23. 多节点用 create_nodes_batch。`;
 
-/** task_tool（C1 2026-10-09）：todo_write 任务计划汇报。与 rules/task_tool.md body 逐字一致（L7 校验）。
- * 正文刻意极简（63 字符）：L6 预算余量仅 89，详细约定在 todo_write 工具 schema description。 */
-export const TASK_TOOL_RULES = `多步任务开工前 todo_write 提交清单（全量覆写），完成即更新，全部完成交空数组；需先出方案时先 propose_plan 征确认再执行，确认前不写画布不调生成。`;
-
 /**
  * subagent-delegation（2026-11-12 基线修复）：研究类任务主动委派只读子代理。
  * 与 rules/subagent-delegation.md body 逐字一致（L7 校验）。
