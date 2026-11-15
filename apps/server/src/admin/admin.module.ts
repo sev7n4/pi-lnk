@@ -8,6 +8,7 @@ import { PlatformChannelAdminController } from './platform-channel.controller'
 import { PricingPublishingController } from './pricing-publishing.controller'
 import { PricingSubjectController } from './pricing-subject.controller'
 import { PricingCostController } from './pricing-cost.controller'
+import { PricingCostRecordController } from './pricing-cost-record.controller'
 import { PricingMarginController } from './pricing-margin.controller'
 import { PricingMaterializeController } from './pricing-materialize.controller'
 import { PricingGrayController } from './pricing-gray.controller'
@@ -43,6 +44,7 @@ import { PricingModule } from '../pricing/pricing.module'
     PricingPublishingController,
     PricingSubjectController,
     PricingCostController,
+    PricingCostRecordController,
     PricingMarginController,
     PricingMaterializeController,
     PricingGrayController,

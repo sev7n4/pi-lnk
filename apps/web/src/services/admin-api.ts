@@ -327,9 +327,36 @@ export type CostRateImportResult = {
   results: Array<{ modelKey: string; spec: string; ok: boolean; message?: string }>
 }
 
+/** 定价中心成本记录档位（spec: docs/design/2026-11-15-pricing-console-redesign.md §4）。 */
+export type CostRecordTier = {
+  spec: string
+  label: string
+  unit: string
+  unitQuantity: number
+  costYuan: number | null
+  perVideoDerived: number | null
+}
+
+export type CostRecordRow = {
+  modelKey: string
+  displayName: string
+  modality: string
+  audioKind: string | null
+  channel: string
+  profitPct: number | null
+  tiers: CostRecordTier[]
+  subjectsTotal: number
+  missingSpecs: string[]
+  status: 'ready' | 'partial' | 'missing'
+}
+
+export type CostRecordUpdateInput = {
+  tiers: { spec: string; costYuan: number }[]
+  profitPct?: number
+}
+
 /** 利润策略录入：phase 由服务端 phaseOf(scope, scopeKey) 生成。 */
-export type MarginPolicyInput = {
-  scope: string
+export type MarginPolicyInput = {  scope: string
   scopeKey?: string | null
   profitBp: number
   priceFloorBp?: number
@@ -533,6 +560,17 @@ export const adminApi = {
 
     putMarginPolicy: (input: MarginPolicyInput): Promise<{ phase: string }> =>
       unwrap(adminHttp.put('/admin/pricing/margin-policies', input)),
+
+    /** 定价中心：聚合每个在售模型为一条成本记录（档位/利润率/就绪）。 */
+    listCostRecords: (): Promise<CostRecordRow[]> => unwrap(adminHttp.get('/admin/pricing/cost-records')),
+
+    /** 定价中心：更新一条成本记录的档位数值与利润率（只接受在售模型）。 */
+    updateCostRecord: (modelKey: string, input: CostRecordUpdateInput): Promise<{ modelKey: string; savedTiers: number; profitBp: number | null }> =>
+      unwrap(adminHttp.put(`/admin/pricing/cost-records/${encodeURIComponent(modelKey)}`, input)),
+
+    /** D-2 一次性迁移（幂等）：per_video → per_second，非线性跳过不猜。 */
+    migrateVideoPerSecond: (): Promise<{ converted: number; retired: number; skipped: { modelKey: string; res: string; reason: string }[] }> =>
+      unwrap(adminHttp.post('/admin/pricing/cost-records/migrate-video-per-second', {})),
 
     listMarginPolicies: (): Promise<MarginPolicyRow[]> => unwrap(adminHttp.get('/admin/pricing/margin-policies')),
 

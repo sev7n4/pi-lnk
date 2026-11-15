@@ -13,8 +13,9 @@ import { optionalDate, optionalString, requireNonEmptyString, requireNumber } fr
  * - 业务语义：upsert by `(channel, modelKey, spec)` 唯一（同渠道同模型同档位只一条价）。
  */
 
-// AC10：成本登记永不接受这些字段（D9 折算已移到录入侧，绑 sourceRef 结算凭据）。
-const FORBIDDEN_COST_FIELDS = ['currency', 'currencySrc', 'fxRate', 'fxUsdCny', 'costUsd', 'usdPerM']
+// AC10：成本登记永不接受这些字段（D9 折算已移到录入侧，绑 sourceRef 结算凭据）——共享常量。
+export { FORBIDDEN_COST_FIELDS } from './pricing-cost-shared'
+import { FORBIDDEN_COST_FIELDS } from './pricing-cost-shared'
 
 const COST_SOURCES = ['official_list', 'negotiated', 'channel_actual', 'provisional'] as const
 const COST_UNITS = ['per_image', 'per_video', 'per_call', 'per_1m_tokens', 'per_second'] as const

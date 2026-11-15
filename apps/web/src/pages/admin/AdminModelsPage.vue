@@ -271,10 +271,46 @@ const form = ref<CatalogEntryInput>({})
 // paramsJson 与 form.params 的桥接：表单里编辑 JSON 文本，提交时解析回对象
 const paramsJson = ref('{}')
 
+// 上架流程内嵌定价卡（初始填写模式，可整体跳过；spec: 2026-11-15-pricing-console-redesign.md §2）。
+// 档位与主体枚举同一口径：视频元/秒（时长自动展开）、图像元/张、音频按类型、文本 in/out/cache。
+const pricingEnabled = ref(true)
+const pricingProfitPct = ref(10)
+const pricingValues = ref<Record<string, string>>({})
+const PRICING_TIERS: Record<string, { spec: string; label: string; hint: string }[]> = {
+  image: [
+    { spec: '1K', label: '1K（元/张）', hint: '如 0.30' },
+    { spec: '2K', label: '2K（元/张）', hint: '如 0.45' },
+    { spec: '4K', label: '4K（元/张）', hint: '如 0.80' },
+  ],
+  video: [
+    { spec: '480p', label: '480p（元/秒）', hint: '时长 4s/5s/10s/15s 自动展开' },
+    { spec: '768p', label: '768p（元/秒）', hint: '如 0.572' },
+    { spec: '2k', label: '2k（元/秒）', hint: '如 0.93' },
+  ],
+  audio: [
+    { spec: 'voice', label: '语音（元/百字符）', hint: '如 0.009' },
+    { spec: 'design', label: '音频设计（元/百字符）', hint: '如 0.02' },
+    { spec: 'music', label: '音乐（元/首）', hint: '如 0.5' },
+  ],
+  text: [
+    { spec: 'in', label: '输入（元/百万 token）', hint: '如 0.15' },
+    { spec: 'out', label: '输出（元/百万 token）', hint: '如 0.60' },
+    { spec: 'cache', label: '缓存（元/百万 token）', hint: '如 0.02' },
+  ],
+}
+const pricingTierList = computed(() => (form.value.modality ? PRICING_TIERS[form.value.modality] : undefined) ?? [])
+
+function resetPricingCard(): void {
+  pricingEnabled.value = true
+  pricingProfitPct.value = 10
+  pricingValues.value = {}
+}
+
 function startCreate() {
   editing.value = null
   form.value = { modelKey: '', displayName: '', gatewayModelId: '', modality: 'text', providerBinding: 'gateway-openai-compat', params: {} }
   paramsJson.value = JSON.stringify(form.value.params)
+  resetPricingCard()
   dialogVisible.value = true
 }
 
@@ -308,8 +344,25 @@ async function submitForm() {
       await adminApi.updateCatalogEntry(editing.value.id, form.value)
       ElMessage.success('已保存')
     } else {
+      const modelKey = String(form.value.modelKey ?? '')
       await adminApi.createCatalogEntry(form.value)
-      ElMessage.success('已新增（软删同 key 视为恢复上架）')
+      // 上架即定价（spec: 2026-11-15-pricing-console-redesign.md R1/R2）：卡片有值则同步落
+      // 一条成本记录 + model 自持利润率；保存失败不阻断上架（可稍后在定价中心补填）。
+      const tiers = pricingTierList.value
+        .map((t) => ({ spec: t.spec, raw: (pricingValues.value[t.spec] ?? '').trim() }))
+        .filter((t) => t.raw !== '')
+        .map((t) => ({ spec: t.spec, costYuan: Number(t.raw) }))
+        .filter((t) => Number.isFinite(t.costYuan) && t.costYuan >= 0)
+      if (pricingEnabled.value && tiers.length > 0) {
+        try {
+          await adminApi.pricingS1.updateCostRecord(modelKey, { tiers, profitPct: pricingProfitPct.value })
+          ElMessage.success('已上架并保存定价（成本档位 + 利润率），上架即定价就绪')
+        } catch {
+          ElMessage.warning('已上架；定价保存失败，请到「定价中心」补填')
+        }
+      } else {
+        ElMessage.success('已新增（软删同 key 视为恢复上架）')
+      }
     }
     dialogVisible.value = false
     await reload()
@@ -341,6 +394,10 @@ defineExpose({
   activeSelectedCount,
   dialogVisible,
   form,
+  pricingEnabled,
+  pricingProfitPct,
+  pricingValues,
+  pricingTierList,
 })
 </script>
 
@@ -463,6 +520,20 @@ defineExpose({
         <el-form-item label="params (JSON)">
           <el-input v-model="paramsJson" type="textarea" :rows="3" placeholder='{"model":"native"}' />
         </el-form-item>
+        <template v-if="!editing">
+          <el-divider content-position="left">定价（可跳过，稍后在定价中心填）</el-divider>
+          <el-form-item label="保存定价">
+            <el-switch v-model="pricingEnabled" />
+            <span class="ml-2 text-xs text-fg-3">档位随模态自动列出；留空的档位不会保存</span>
+          </el-form-item>
+          <el-form-item v-for="t in pricingTierList" :key="t.spec" :label="t.label">
+            <el-input v-model="pricingValues[t.spec]" class="w-44" :placeholder="t.hint" />
+          </el-form-item>
+          <el-form-item label="利润率 %">
+            <el-input-number v-model="pricingProfitPct" :min="0" :max="100" :step="1" />
+            <span class="ml-2 text-xs text-fg-3">本模型自持利润率，与其它模型互不影响</span>
+          </el-form-item>
+        </template>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>

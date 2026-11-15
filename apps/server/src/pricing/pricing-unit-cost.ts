@@ -63,8 +63,9 @@ function affordable(r: UnitCostRateRow, at: Date): boolean {
  *  - 文本 token 行 unit=per_1m_tokens、unitQuantity=1e6 ⇒ 令 units=1e6，costYuanPerRequest===costYuan（每 1M token 成本），
  *    正是反比率公式 r 的输入；
  *  - provisional / costYuan<=0 / unitsPerRequest=null / unitQuantity<=0 ⇒ 一律返回 null（调用方置 cost_missing）；
- *  - 视频 U6：成本行 modelKey 与售价键不同构，按 videoPriceFamily + (res, duration) 归一，禁止字符串直等；
- *    整条 per_video 行优先，per_second 行按 duration 展开，**无 5s 锚点线性外推分支**（缺整条行即 null）。
+ *  - 视频 U6/D-2：成本行 modelKey 与售价键不同构，legacy per_video 行按 videoPriceFamily +
+ *    (res, duration) 归一，禁止字符串直等；粗化 per_second 行（定价中心卡片写入）按
+ *    模型 + 分辨率精确匹配后按 duration 展开。**无 5s 锚点线性外推分支**（缺整条行即 null）。
  */
 export function resolveUnitCost(subject: SubjectInput, rates: UnitCostRateRow[], at: Date): UnitCost | null {
   const isToken = subject.billableUnit.startsWith('token_')
@@ -83,9 +84,12 @@ export function resolveUnitCost(subject: SubjectInput, rates: UnitCostRateRow[],
       if (subject.capability === 'text') return r.unit === 'per_1m_tokens' && r.spec.endsWith(subject.spec)
       if (isImageFamily) return r.unit === 'per_image' && r.spec === imageRes
       if (subject.capability === 'video') {
-        // U6：按 family + (res, duration) 归一，不直等 modelKey
+        // D-2 粗化行（每分辨率·每秒，定价中心卡片写入）：严格按 模型 + 分辨率 精确匹配，
+        // 禁止跨模型/跨分辨率误用（原实现仅按 family 匹配不看 spec，2k 会误用 480p 每秒成本）。
+        if (r.unit === 'per_second') return r.modelKey === subject.modelKey && r.spec === res
+        // U6：legacy per_video 行按 family + (res, duration) 归一，不直等 modelKey
         if (videoPriceFamily(r.modelKey) !== family) return false
-        return (r.unit === 'per_video' && r.spec === `${res}:${dur}`) || r.unit === 'per_second'
+        return r.unit === 'per_video' && r.spec === `${res}:${dur}`
       }
       // 音频（及任何 per_call 能力）：必须按模型精确匹配，禁止跨模型误用成本。
       // 例：stepaudio-3-gen-preview 不应套用 step-tts-mini 的字符成本。
