@@ -22,6 +22,8 @@ import { SessionManager, toSessionKey, type EventListener } from "./session-mana
 import { buildTodoTools, getTodoState, resetTodoStoreForTest } from "./tools/todo.js";
 import { createProposePlanTool } from "./tools/propose-plan.js";
 import { registerPlanGateHooks } from "./gate/plan-gate-wiring.js";
+import { registerRunEndHooks } from "./gate/subagent-barrier.js";
+import { SubagentCoordinator } from "./gate/subagent.js";
 import { isPlanPending, resetPlanState } from "./gate/plan-gate.js";
 import type { LnkpiTool } from "./tools/types.js";
 import type { Metrics } from "./metrics.js";
@@ -59,7 +61,17 @@ const fakeWriteTool: LnkpiTool = {
 	},
 };
 
-const metricsStub = { observePlanProposed() {}, observePlanDecision() {}, observePlanGateBlocked() {}, observePlanAssumptions() {} } as unknown as Metrics;
+const metricsStub = { observePlanProposed() {}, observePlanDecision() {}, observePlanGateBlocked() {}, observePlanAssumptions() {}, observeBarrier() {} } as unknown as Metrics;
+
+/** P1：与 index.ts 同步注册唯一 before_run_end handler（合成 plan-gate followUp + barrier）。测试无后台子任务，coordinator 恒空。 */
+function registerRunEndForTest(sessionId: string, harness: Parameters<typeof registerRunEndHooks>[0]): void {
+	registerRunEndHooks(harness, {
+		sessionId,
+		coordinator: new SubagentCoordinator(),
+		resolvePlanKey: () => sessionId,
+		metrics: metricsStub,
+	});
+}
 const registryStub = {
 	waitForUser: async () => ({ status: "answered", answers: { plan_confirm: ["execute"] } }),
 } as unknown as PendingToolRegistry;
@@ -107,6 +119,7 @@ function makeManager(): SessionManager {
 		onSessionCreated(sessionId, harness) {
 			// 与 index.ts 同一接线源：planKey = canvasSessionId ?? key，测试无画布映射 ⇒ 即 key。
 			registerPlanGateHooks(harness, { planKey: sessionId, tiers, metrics: metricsStub });
+			registerRunEndForTest(sessionId, harness);
 		},
 	}, undefined, sharedConfig());
 }
@@ -180,6 +193,7 @@ test("plan-gate 接线：keep（不确认）后写工具被拦", async () => {
 	const sm = new SessionManager(tools, "", modelFactory, undefined, {
 		onSessionCreated(sessionId, harness) {
 			registerPlanGateHooks(harness, { planKey: sessionId, tiers, metrics: metricsStub });
+			registerRunEndForTest(sessionId, harness);
 		},
 	}, undefined, sharedConfig());
 
@@ -218,6 +232,7 @@ async function runProposeAndReopen(
 	const sm1 = new SessionManager(tools, "", modelFactory, undefined, {
 		onSessionCreated(sessionId, harness) {
 			registerPlanGateHooks(harness, { planKey: sessionId, tiers, metrics: metricsStub });
+			registerRunEndForTest(sessionId, harness);
 		},
 	}, undefined, sharedConfig());
 	await sm1.create(threadKey, { userId: "u1" });
@@ -231,6 +246,7 @@ async function runProposeAndReopen(
 	const sm2 = new SessionManager(tools, "", modelFactory, undefined, {
 		onSessionCreated(sessionId, harness) {
 			registerPlanGateHooks(harness, { planKey: sessionId, tiers, metrics: metricsStub });
+			registerRunEndForTest(sessionId, harness);
 		},
 	}, undefined, sharedConfig());
 	const result = await sm2.create(threadKey, { userId: "u1" });

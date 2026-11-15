@@ -18,6 +18,15 @@ import { getTodoState } from "../tools/todo.js";
 import { planGateEnabled } from "../runtime-config.js";
 import { consumePlanExecutionSignal, shouldBlockForPlan } from "./plan-gate.js";
 
+/** 纯函数：plan 执行信号命中且 todo 有未完成项 → followUp 文案；否则 undefined。
+ *  供 run-end 合成器（subagent-barrier.ts）调用，只算不注册；信号一次性消费，只调用一次。 */
+export function planGateFollowUp(planKey: string): string | undefined {
+	if (!consumePlanExecutionSignal(planKey)) return undefined;
+	const next = getTodoState(planKey).find((i) => i.status !== "completed");
+	if (!next) return undefined;
+	return `用户已确认方案，继续执行任务清单的下一步：「${next.content}」。完成或受挫后用 todo_write 更新状态；全部完成后提交空数组清空清单。`;
+}
+
 export function registerPlanGateHooks(
 	harness: AgentHarness<LnkpiToolContext>,
 	opts: {
@@ -45,14 +54,7 @@ export function registerPlanGateHooks(
 			},
 		};
 	});
-	harness.hooks.on("before_run_end", async () => {
-		// 双保险不双执行（spec §3.4）：信号消费一次即清；todo 全部完成则不注入。
-		const planKey = resolveKey();
-		if (!consumePlanExecutionSignal(planKey)) return undefined;
-		const next = getTodoState(planKey).find((i) => i.status !== "completed");
-		if (!next) return undefined;
-		return {
-			followUp: `用户已确认方案，继续执行任务清单的下一步：「${next.content}」。完成或受挫后用 todo_write 更新状态；全部完成后提交空数组清空清单。`,
-		};
-	});
+	// before_run_end 已迁移到 registerRunEndHooks（subagent-barrier.ts）——统一合成
+	// plan-gate 续跑 + barrier 结果回注，避开上游 hooks.js 多 handler last-write-wins。
+	// 本函数只保留 before_tool 拦写（plan-gate-wiring.ts 的 planGateFollowUp 纯函数仍供其调用）。
 }

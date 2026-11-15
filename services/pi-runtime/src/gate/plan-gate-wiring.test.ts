@@ -11,6 +11,8 @@ import assert from "node:assert/strict";
 import type { AgentHarness } from "@earendil-works/pi-agent-core";
 import type { LnkpiToolContext } from "../tools/types.js";
 import { registerPlanGateHooks } from "./plan-gate-wiring.js";
+import { registerRunEndHooks } from "./subagent-barrier.js";
+import { SubagentCoordinator } from "./subagent.js";
 import { markPlanDecision, resetPlanState, shouldBlockForPlan } from "./plan-gate.js";
 import { seedTodoState, getTodoState, resetTodoStoreForTest } from "../tools/todo.js";
 
@@ -27,7 +29,7 @@ function stubHarness() {
 	return { harness, handlers };
 }
 
-const metrics = { observePlanGateBlocked() {} } as never;
+const metrics = { observePlanGateBlocked() {}, observeBarrier() {} } as never;
 
 test("kill switch off：registerPlanGateHooks 不注册任何钩子", () => {
 	process.env.PI_RUNTIME_PLAN_GATE = "off";
@@ -44,7 +46,8 @@ test("kill switch on：钩子照常注册", () => {
 	const { harness, handlers } = stubHarness();
 	registerPlanGateHooks(harness, { planKey: "k1", tiers: new Map(), metrics });
 	assert.ok(handlers.has("before_tool"));
-	assert.ok(handlers.has("before_run_end"));
+	// P1（2026-11-15）：before_run_end 已迁移到 registerRunEndHooks——此处只保留 before_tool 拦写。
+	assert.equal(handlers.has("before_run_end"), false, "plan-gate-wiring 不再注册 before_run_end");
 });
 
 test("planKey 惰性求值：canvasSessionId 后续自愈后，钩子用新键判定", async () => {
@@ -81,6 +84,13 @@ test("planKey 惰性求值：followUp 查 todo 也用现算键", async () => {
 	registerPlanGateHooks(harness, {
 		planKey: () => canvasId ?? "pi-key2",
 		tiers: new Map(),
+		metrics,
+	});
+	// P1：before_run_end 现由 registerRunEndHooks 统一注册（合成 plan-gate followUp）。
+	registerRunEndHooks(harness, {
+		sessionId: "pi-key2",
+		coordinator: new SubagentCoordinator(),
+		resolvePlanKey: () => canvasId ?? "pi-key2",
 		metrics,
 	});
 	const beforeRunEnd = handlers.get("before_run_end")!;

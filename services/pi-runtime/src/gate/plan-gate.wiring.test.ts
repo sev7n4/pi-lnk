@@ -25,3 +25,10 @@ test("index.ts 接线落点：plan-gate 三处接线齐备", () => {
 	const nestShortCircuit = indexSrc.indexOf("if (!nestClient) return undefined;");
 	assert.ok(wiringAt > -1 && nestShortCircuit > -1 && wiringAt < nestShortCircuit, "plan 接线必须挂在 if (!nestClient) 之前");
 });
+
+test("index.ts 接线落点：P1 before_run_end 由 registerRunEndHooks 统一注册", () => {
+	assert.match(indexSrc, /registerRunEndHooks\(/, "index.ts 必须调用 registerRunEndHooks（唯一 before_run_end handler）");
+	const runEndAt = indexSrc.indexOf("registerRunEndHooks(");
+	const nestShortCircuit = indexSrc.indexOf("if (!nestClient) return undefined;");
+	assert.ok(runEndAt > -1 && nestShortCircuit > -1 && runEndAt < nestShortCircuit, "barrier 接线必须挂在 if (!nestClient) 之前");
+});

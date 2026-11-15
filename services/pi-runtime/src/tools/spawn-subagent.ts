@@ -109,8 +109,9 @@ export function createSpawnSubagentTool(coordinator: SubagentCoordinator, metric
 		metrics.observeSubagentOutcome(outcome.status);
 		// 截断唯一属主 = applyReportTruncation（runSubagent 内），此处只透传
 		const report = outcome.report;
+			const partialFlag = outcome.partial === true ? true : undefined;
 			if (outcome.status === "completed") {
-				return textResult({ ok: true, callId: attempt.callId, report, usage: { turns: outcome.turns, durationMs: outcome.durationMs, status: outcome.status }, truncated: outcome.truncated === true ? true : undefined });
+				return textResult({ ok: true, callId: attempt.callId, report, usage: { turns: outcome.turns, durationMs: outcome.durationMs, status: outcome.status }, truncated: outcome.truncated === true ? true : undefined, partial: partialFlag });
 			}
 			return textResult({
 				ok: false,
@@ -119,6 +120,7 @@ export function createSpawnSubagentTool(coordinator: SubagentCoordinator, metric
 				report,
 				usage: { turns: outcome.turns, durationMs: outcome.durationMs, status: outcome.status },
 				truncated: outcome.truncated === true ? true : undefined,
+				partial: partialFlag,
 			});
 		},
 	};
@@ -135,7 +137,8 @@ export function createCollectSubagentTool(coordinator: SubagentCoordinator, metr
 		summary: "按 callId 查询后台子代理调研的状态与报告",
 		description:
 			"查询 spawn_subagent(mode:'background') 派发的子任务。status=running 表示仍在跑，稍后再查；" +
-			"终态返回 report（completed/failed/timeout/budget_exceeded）；" +
+			"终态返回 report（completed/failed/timeout/budget_exceeded/stream_interrupted）；" +
+			"stream_interrupted 表示子任务 provider 断流、报告不完整（partial:true），合成结论时须谨慎标注未核实；" +
 			"interrupted/unknown 表示记录不存在或已随进程重启丢失，请重新派发调研。",
 		parameters: Type.Object({
 			callId: Type.String({ description: "spawn_subagent 返回的 callId" }),
@@ -165,6 +168,7 @@ export function createCollectSubagentTool(coordinator: SubagentCoordinator, metr
 				report: r.report,
 				usage: { turns: r.turns, durationMs: r.durationMs, status: r.status },
 				truncated: r.truncated === true ? true : undefined,
+				partial: r.partial === true ? true : undefined,
 			});
 		},
 	};

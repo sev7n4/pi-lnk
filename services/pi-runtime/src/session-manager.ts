@@ -14,7 +14,7 @@
  *   message_* / turn_* 同名直传；fault / handler_error 归一为 error（spec 称 pi
  *   无独立 error 事件是指 AgentEvent 层——harness 层有，必须转发否则丢错）。
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -646,6 +646,13 @@ const BUFFER_LIMIT = 500;
 
 /** 默认（也是唯一）对话 lane 名；换档等 lane 级操作必须落在与 prompt 同一条 lane 上。 */
 const MAIN_LANE = "main";
+
+/** P2（spec 2026-11-15 §6.3）：子代理专用 systemPrompt——不含主 run 的 skill index / spawn hint /
+ *  collect 纪律（避免工具集 fail-open：提示词说能用 collect、白名单却无此工具）。只声明只读调研角色
+ *  + 报告契约；结构化 task 由首条 user 消息独占注入。 */
+const SUBAGENT_SYSTEM_PROMPT =
+	"你是只读调研子代理。用白名单工具（画布只读/文档/记忆/联网）完成交给你的调研，禁止写画布或生成内容。" +
+	"调研结束时给出结论先行的报告，末尾附「来源」清单，无法核实的说法标注「未核实」。";
 
 /**
  * run 后压缩（摘要 LLM 调用）的等待上限。
@@ -3259,19 +3266,16 @@ export class SessionManager {
 		opts?.signal?.addEventListener("abort", onAbort, { once: true });
 		let subKey: string | undefined;
 		try {
-			// 全量历史：entryId 缺省 = 当前 tip、position 缺省含 tip（session/types.ts ForkOptions）。
-			let forkedSession: Awaited<ReturnType<typeof source.repo.fork>>;
+			// P2（spec 2026-11-15 §6）：干净子会话——不 fork 全量历史（fork 的 ForkOptions 无清空 transcript
+			// 选项，子代理会继承主 run 的 skill/spawn hint/collect 纪律，撞白名单 unavailable）。
+			// build() 不传 session ⇒ repo.create 建全新空 session；canvasSessionId / models / model /
+			// identity 沿用来源身份与画布指针，storeScopeKey 用子键（build 内 subagentTools 分支已隔离）。
 			try {
-				forkedSession = await source.repo.fork(
-					source.sessionMeta,
-					{ scope: "branch", branch: MAIN_LANE },
-					run.context,
-				);
-				subKey = toSessionKey(`${source.id}__sub_${forkedSession.metadata.id}`);
+				subKey = toSessionKey(`${source.id}__sub_${randomUUID()}`);
 				await this.build(
 					subKey,
 					{
-						systemPrompt: source.basePrompt,
+						systemPrompt: SUBAGENT_SYSTEM_PROMPT,
 						workingDir: source.sessionMeta.cwd,
 						canvasSessionId: source.canvasSessionId,
 						userId: source.userId,
@@ -3282,11 +3286,9 @@ export class SessionManager {
 					source.models,
 					source.model,
 					source.identity,
-					{ env: source.env, repo: source.repo, session: forkedSession },
+					{ env: source.env, repo: source.repo }, // 关键：不传 session ⇒ repo.create 全新空会话
 				);
 			} catch (err) {
-				// I3：fork/build 段被超时/取消打断（fork 传 run.context，abort 会炸掉 staging）——
-				// timedOut 在此优先归类 timeout，真错误照常外抛（coordinator 兜底转 failed）。
 				if (timedOut) return { report: "", turns: 0, durationMs: Date.now() - t0, status: "timeout" };
 				throw err;
 			}
@@ -3297,11 +3299,10 @@ export class SessionManager {
 				return { report: "", turns: 0, durationMs: Date.now() - t0, status: "timeout" };
 			}
 			const lane = await sub.harness.lane(MAIN_LANE, this.context);
-			// fork 还原的盘上 lane config 带着**来源会话**的全量 activeToolNames（restore.ts
-			// 原样还原、seed 只对新建 lane 生效），而子 harness 的 config.tools 是白名单子集
-			// ——vendor generation 校验 activeToolNames ⊆ config.tools 会撞
-			// configured_tools_unavailable（run 直接 failed）。官方覆盖口：setActiveTools
-			// 落在 fork 出来的子会话自己的存储上，不触碰主会话。
+			// P2：干净 session 的 config.tools 已是白名单子集（build 的 subagentTools 分支只注册
+			// 白名单），activeToolNames 初始亦为白名单——这里 setActiveTools 是幂等保险：
+			// 防 vendor 从盘上还原的 lane config 残留非白名单 activeToolNames 触发
+			// configured_tools_unavailable。落在子会话自己的存储上，不触碰主会话。
 			if (sub.subagentToolNames) {
 				await lane.setActiveTools(sub.subagentToolNames, this.context);
 			}
@@ -3333,19 +3334,34 @@ export class SessionManager {
 			const durationMs = Date.now() - t0;
 			// 刀B（spec 2026-11-14-subagent-contract-d2-nonblock-design.md §4.3）：截断不再静默——
 			// applyReportTruncation（gate/subagent.ts）唯一实现点：原文超限置 truncated（additive）。
-			const { report, truncated } = applyReportTruncation(await this.extractSubagentReport(lane));
+			// P3：报告提取返回 { report, partial }——断流（尾部 toolCall 无 synthesis / 开场白被当报告）
+			// 标 partial，避免半截结论被主 run 当成功 synthesis（spec 2026-11-15 §7.1）。
+			const { report: rawReport, partial } = await this.extractSubagentReport(lane);
+			const { report, truncated } = applyReportTruncation(rawReport);
+			this.metrics?.observeSubagentReport(
+				partial ? (report ? "partial" : "empty") : "synthesis",
+			);
 			// 状态判定优先级：预算超限（settled 闸是权威信号——forceSettle 会把 run 折叠成
-			// 正常结算的 completed，run status 不可信）> 超时（我们 cancel）> run 终态 > 其他失败。
+			// 正常结算的 completed，run status 不可信）> 超时（我们 cancel）> 断流升级 > run 终态 > 其他失败。
+			// P3 D3（spec §7.2）：vendor 报 completed 但报告断流（partial，无 synthesis）⇒ 升级为
+			// stream_interrupted——与真 completed 区分；timeout/budget 有独立权威信号，不被覆盖。
 			if (sub.turnBudget.settled) {
-				return { report, turns, durationMs, status: "budget_exceeded", truncated };
+				return { report, turns, durationMs, status: "budget_exceeded", truncated, partial };
 			}
 			if (timedOut) {
-				return { report, turns, durationMs, status: "timeout", truncated };
+				return { report, turns, durationMs, status: "timeout", truncated, partial };
 			}
 			if (outcome.status === "completed") {
-				return { report, turns, durationMs, status: "completed", truncated };
+				return {
+					report,
+					turns,
+					durationMs,
+					status: partial ? "stream_interrupted" : "completed",
+					truncated,
+					partial,
+				};
 			}
-			return { report, turns, durationMs, status: "failed", truncated };
+			return { report, turns, durationMs, status: "failed", truncated, partial };
 		} finally {
 			clearTimeout(timer);
 			opts?.signal?.removeEventListener("abort", onAbort);
@@ -3359,11 +3375,17 @@ export class SessionManager {
 		}
 	}
 
-	/** 子 run 报告提取：transcript 倒序找第一条有文本的 assistant 消息（plan-gate 扫描同款防御式形状）。 */
-	private async extractSubagentReport(lane: AgentLane): Promise<string> {
+	/** P3（spec 2026-11-15 §7.1）子 run 报告提取：取最新有实质内容的 assistant 文本为 synthesis；
+	 *  断流（尾部 toolCall/toolResult 无后续 synthesis，或最新文本是开场白/过渡话术）标 partial，
+	 *  且报告不取该过渡话术——避免 provider 断流时开场白被当最终报告落账（生产事故 L3 根因）。 */
+	private async extractSubagentReport(
+		lane: AgentLane,
+	): Promise<{ report: string; partial: boolean }> {
 		const entries = await lane
 			.findEntries({ order: "newestFirst" }, this.context)
 			.then((v) => (Array.isArray(v) ? v : []), () => []);
+		const assistantTexts: string[] = [];
+		let sawToolTail = false;
 		for (const e of entries) {
 			const entry = e as {
 				role?: string;
@@ -3372,6 +3394,8 @@ export class SessionManager {
 			} | null;
 			if (!entry) continue;
 			const role = entry.message?.role ?? entry.role;
+			// newestFirst：数组首条最新。若最新条目是 toolResult 且此前无 assistant 文本 ⇒ 尾部工具流（断流信号）。
+			if (role === "toolResult" && !sawToolTail && assistantTexts.length === 0) sawToolTail = true;
 			if (role !== "assistant") continue;
 			const content = entry.message?.content ?? entry.content;
 			const text = Array.isArray(content)
@@ -3382,9 +3406,18 @@ export class SessionManager {
 				: typeof content === "string"
 					? content
 					: "";
-			if (text.trim()) return text.trim();
+			if (text.trim()) assistantTexts.push(text.trim());
 		}
-		return "";
+		if (assistantTexts.length === 0) return { report: "", partial: true };
+		// 最新一条 assistant 文本即候选 synthesis（newestFirst ⇒ assistantTexts[0] 最新）。
+		const newest = assistantTexts[0]!;
+		// 最小启发式（spec §7.1）：短文本 + 过渡词开头 = 开场白/过渡话术，不是结论。
+		const looksLikeTransition =
+			newest.length < 40 && /^(我来|我先|好的|收到|让我|后台)/.test(newest);
+		if (looksLikeTransition && (assistantTexts.length === 1 || sawToolTail)) {
+			return { report: "", partial: true };
+		}
+		return { report: newest, partial: false };
 	}
 
 	async remove(threadKey: string): Promise<boolean> {

@@ -58,7 +58,15 @@ export class SubagentSlots {
 	}
 }
 
-export type SubagentStatus = "completed" | "failed" | "timeout" | "budget_exceeded";
+export type SubagentStatus = "completed" | "failed" | "timeout" | "budget_exceeded" | "stream_interrupted";
+
+/** P1（spec 2026-11-15 §5.2）：barrier 等待单个 callId 的终态快照。status 可为 deadline 的 interrupted（本进程未收口）。 */
+export type SettledSubagentResult = {
+	callId: string;
+	status: SubagentStatus | "interrupted";
+	report: string;
+	partial: boolean;
+};
 
 export interface SubagentOutcome {
 	report: string;
@@ -67,6 +75,8 @@ export interface SubagentOutcome {
 	status: SubagentStatus;
 	/** 刀B（spec 2026-11-14 §4.3）：报告原文超 SUBAGENT_REPORT_MAX_CHARS 被截尾时置 true；恰等长/未截不写字段。 */
 	truncated?: boolean;
+	/** P3（spec 2026-11-15 §7.1）：报告断流（provider 断流/尾部 toolCall 无 synthesis）置 true。 */
+	partial?: boolean;
 }
 
 /** 刀B（§4.3）：截断唯一实现点——runSubagent 与测试共用；恰等长不置 truncated（JSON.stringify 丢 undefined = additive）。 */
@@ -112,6 +122,8 @@ export class SubagentCoordinator {
 	/** 磁盘懒 replay 一次性闸 */
 	#replayed = false;
 	#ledgerSpawnedIds?: Set<string>;
+	/** P1：按会话聚合的未收口 background callId（barrier 用；block 模式不登记）。 */
+	#pendingBySession = new Map<string, Set<string>>();
 
 	constructor(private ledger?: SubtaskLedger) {}
 
@@ -128,6 +140,14 @@ export class SubagentCoordinator {
 		if (!this.slots.acquire()) return { ok: false, reason: "concurrency_full" };
 		const callId = randomUUID();
 		const mode: "block" | "background" = opts?.mode === "background" ? "background" : "block";
+		if (mode === "background") {
+			let set = this.#pendingBySession.get(piSessionKey);
+			if (!set) {
+				set = new Set();
+				this.#pendingBySession.set(piSessionKey, set);
+			}
+			set.add(callId);
+		}
 		this.ledger?.append({
 			type: "spawned", callId, sessionKey: piSessionKey,
 			taskPreview: task.slice(0, 200), mode, ts: Date.now(),
@@ -150,6 +170,7 @@ export class SubagentCoordinator {
 					type: "terminal", callId, status: outcome.status,
 					turns: outcome.turns, durationMs: outcome.durationMs,
 					truncated: outcome.truncated === true ? true : undefined,
+					partial: outcome.partial === true ? true : undefined,
 					reportChars: outcome.report.length, report: outcome.report, ts: Date.now(),
 				});
 				this.#settled.set(callId, outcome);
@@ -158,9 +179,58 @@ export class SubagentCoordinator {
 			.finally(() => {
 				this.#inFlight.delete(callId);
 				this.slots.release();
+				const set = this.#pendingBySession.get(piSessionKey);
+				if (set) {
+					set.delete(callId);
+					if (set.size === 0) this.#pendingBySession.delete(piSessionKey);
+				}
 			});
 		this.#inFlight.set(callId, promise);
 		return { ok: true, promise, callId };
+	}
+
+	/** P1（spec §5.2）：返回该会话仍在途的 background callId 快照（block 模式不在此列）。 */
+	pendingFor(sessionKey: string): string[] {
+		return [...(this.#pendingBySession.get(sessionKey) ?? [])];
+	}
+
+	/** P1：等到给定 callId 全部 settle（或 deadline）。永不 reject。
+	 *  已 settled 立返；在途的 race 其 promise 与 deadline；deadline 未决标 interrupted（诚实：本进程未收口）。 */
+	async awaitSettled(callIds: string[], opts: { deadlineMs: number }): Promise<SettledSubagentResult[]> {
+		return Promise.all(
+			callIds.map(async (callId): Promise<SettledSubagentResult> => {
+				const settled = this.#settled.get(callId);
+				if (settled) {
+					return {
+						callId, status: settled.status, report: settled.report,
+						partial: settled.partial === true || settled.status === "stream_interrupted" || settled.status === "timeout",
+					};
+				}
+				const inFlight = this.#inFlight.get(callId);
+				if (!inFlight) {
+					return { callId, status: "interrupted", report: "", partial: true };
+				}
+				let timer: ReturnType<typeof setTimeout> | undefined;
+				const deadline = new Promise<"__deadline__">((resolve) => {
+					timer = setTimeout(() => resolve("__deadline__"), opts.deadlineMs);
+				});
+				try {
+					const winner = await Promise.race([
+						inFlight.then((): "__done__" => "__done__"),
+						deadline,
+					]);
+					if (winner === "__deadline__") {
+						return { callId, status: "interrupted", report: "", partial: true };
+					}
+					const done = this.#settled.get(callId);
+					return done
+						? { callId, status: done.status, report: done.report, partial: done.partial === true || done.status === "stream_interrupted" || done.status === "timeout" }
+						: { callId, status: "interrupted", report: "", partial: true };
+				} finally {
+					if (timer) clearTimeout(timer);
+				}
+			}),
+		);
 	}
 
 	/** 刀A（spec §6.2/§6.5）：in-flight → running；settled → 终态；磁盘懒 replay（一次）→ 终态；
@@ -175,7 +245,7 @@ export class SubagentCoordinator {
 				if (!this.#settled.has(id)) {
 					this.#settled.set(id, {
 						report: st.report, turns: st.turns, durationMs: st.durationMs,
-						status: st.status, truncated: st.truncated,
+						status: st.status, truncated: st.truncated, partial: st.partial,
 					});
 				}
 			}

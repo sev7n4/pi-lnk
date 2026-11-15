@@ -30,6 +30,8 @@ export interface SubtaskTerminalRecord {
 	durationMs: number;
 	/** 报告原文超限被截（与 SubagentOutcome.truncated 同源） */
 	truncated?: boolean;
+	/** P3（spec 2026-11-15 §7.1）：报告断流（无 synthesis）标记 */
+	partial?: boolean;
 	reportChars: number;
 	/** 全文随行落盘（≤20k）——collect 重启后若 terminal 在账本则报告仍可取回 */
 	report: string;
@@ -44,6 +46,7 @@ export interface LedgerTerminalState {
 	turns: number;
 	durationMs: number;
 	truncated?: boolean;
+	partial?: boolean;
 	report: string;
 }
 
@@ -98,6 +101,7 @@ export class SubtaskLedger {
 					turns: rec.turns,
 					durationMs: rec.durationMs,
 					truncated: rec.truncated,
+					partial: rec.partial,
 					report: rec.report,
 				});
 			}
