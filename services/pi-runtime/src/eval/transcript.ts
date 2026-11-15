@@ -162,7 +162,14 @@ export function foldRuntimeEvents(events: readonly RuntimeEvent[]): EvalTranscri
 				const dedupKey = callId ?? `${name}#${toolCalls.length}`;
 				if (!name || seenCallIds.has(dedupKey)) break;
 				seenCallIds.add(dedupKey);
-				toolCalls.push({ name, callId, input: data.input ?? data.arguments });
+				// ⭐⭐ P0 观测修复（2026-11-15，run-3 9/9 假 fail）：vendor `tool_start` 载荷的
+				//   入参字段是 **`args`**（session-manager `ToolLikeEvent` 注释明示「vendor 侧
+				//   tool_start 全 camelCase」）。旧实现只读 `input`/`arguments` ⇒ 生产里
+				//   `toolCalls[].input` 恒 undefined ⇒ pickLatestPlanSnapshot 恒读空清单 ⇒
+				//   快照类判据 9/9「清单条目数 0 低于下限」——模型行为健康全被判 fail。
+				//   单测没拦住：合成事件直接带 `input`，掩盖了生产 wiring 断层。
+				//   兜底顺序保留 `input`/`arguments`（兼容合成事件与未来上游改名）。
+				toolCalls.push({ name, callId, input: data.input ?? data.arguments ?? data.args });
 				break;
 			}
 			case "usage":
