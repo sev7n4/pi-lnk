@@ -177,3 +177,29 @@ q4-03 的价值：它是「三层点名模型」P3（系统提示点名）生效
 - success 路径：`--only vision-001` → pass 2684ms，model=deepseek-v4-flash，registryHash=395a3cf49b1f（pod 内原生探针，非 patch 版）。
 - catch 路径：`--only vision-001 --timeout 3000` 强制超时 → verdict=fail + **model=deepseek-v4-flash 带回** ✅——run-1 的「超时无 model」归因断层消除，为 #880 的行为级复测判据。
 - 边界（只记录不扩判据）：driver 三个返回点均带 `provider`（dist `createdProvider`×5 取证），但 runner 组装 per-case 结果只透传 `model`——§8.7 只要求 model 列，provider 列进报告属可选 follow-up（另行授权，不阻塞本基线）。
+
+## 11. 行为归因回填——判据修复后首批真实信号（2026-11-15，run-3 + 翻案重跑 + 600s 复跑三段证据）
+
+> 回填性质：验收 3「失败归因三分类」的**行为级**数据落档（§10 为 run-1/2 基线）。判据基础设施勘误见 PR #893（transcript fold 读 vendor `tool_start` 的 `args` 字段——修快照判据 9/9 假 fail）；§10.1 的「120s 超时零工具调用」形态在本节获 600s 限额对照定案。
+
+### 11.1 归因勘误链（三次数据，逐段纠偏）
+
+| 轮次 | 环境 | 表象 | 终判 |
+| --- | --- | --- | --- |
+| run-3（6842fdcf） | 39 条 | 9 条「清单条目数 0」同形态 fail | **判据基础设施假 fail**（#893 字段错位），非模型行为 |
+| rerun9（786624f6，宿主机跑法） | 9 条假 fail case | 9/9 fail：4 条真实行为 + 5 条 300s 零调用 | 300s 形态存疑 |
+| rerun5-600（同环境，--timeout 600s） | 上述 5 条 | 全部 133–279s 自然结束且归因清晰，struct-02 **pass**（156s） | **零调用 300s = DeepSeek 响应延迟波动，非模型能力缺失；300s 默认不足**（D1 诚实边界「保守值非充分值」实证） |
+
+### 11.2 真实行为信号汇总（判据修复后首批，rerun9 ∪ rerun5-600 去重）
+
+- **粒度过碎（4 条）**：decomp-04（8>上限5）、decomp-05（8>6）、rec-01（7>6）、struct-03（7>6）——快照判据读到真实条目，「拆解粒度」判据首次产出行为区分；
+- **拆解未落快照（3 条）**：decomp-01（探索 14 步后 ask_user×2 回避）、decomp-03（19 工具全链——含 spawn_subagent×2 + collect_subagent_result 子代理全链首次生产观察——但无 todo_write）、decomp-06（ask_user×2 + propose_plan 但无 todo_write）；
+- **status 推进违例（1 条）**：struct-01（34 调用，快照读到了，但无任何 item 落 in_progress，实际 completed×3 + pending）——G5 状态漂移的首个真实样本，与 roadmap §12 replan 观测判据直接相关；
+- **翻正**：struct-02 在 600s 限额下 156s 全链 pass——同 case 同画布同 prompt，时间预算是 pass/fail 的调节变量。
+
+### 11.3 对验收标准与后续的影响
+
+1. **验收 3「抖动率 <20%」口径修正**：延迟型波动（零调用截断）与行为型波动（判据二态翻转）必须分开计——前者走环境分母（degraded 候选），后者才进抖动率；
+2. **跑批时间预算**：默认 300s 对 deepseek-v4-flash 不充分（600s 下 4/5 自然结束）；后续 run 建议 `--timeout 600000` 或 D1 常量升档，与「P0 300s 是保守值」诚实边界合并裁决；
+3. requiresConfirm 4 条仍归 A-6 真机走查（未变）；q3-07 画布污染归 P1（PR #896 已实施，待合并生效）；
+4. 阈值仍不拍（C-1b 验收 4 纪律）：单轮 9 条样本不足，待 run-4（每 run 新画布 + 600s）再采第二轮。
