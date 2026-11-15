@@ -95,6 +95,17 @@ export type LnkpiTool = AgentHarnessTool<LnkpiToolContext> & {
 	 * （后者是 provider 异步续生成），勿混淆。
 	 */
 	deferred?: boolean;
+	/**
+	 * B-3 工具引导一等化（2026-11-15 spec `2026-11-15-b3-tool-guidelines-design.md`）：
+	 * 工具使用纪律的单源声明，随工具定义走——composeSystemPrompt 静态渲染成
+	 * `<tool_guidelines>` 段（registered 全集、不随 tiering/active 变化，cache 零新增扰动）。
+	 * 未声明（或声明为空数组）的工具不出现在段内；段空时整段不出现。
+	 * ⚠️ 上游 `promptGuidelines`（coding-agent ToolDefinition）在 pi-runtime harness 路径
+	 * 不可达（agent-core 直通求值 + customPrompt 分支不渲染 tools/rules 段，spec §1.1），
+	 * 本字段是消费端一等化的等价实现，非上游原语移植；1.0.0 upmerge 若 pico3
+	 * `SystemSection` 转正，本段迁移到该机制。
+	 */
+	promptGuidelines?: string[];
 };
 
 /**

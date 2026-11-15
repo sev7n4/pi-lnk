@@ -34,6 +34,9 @@ export function createProposePlanTool(registry: PendingToolRegistry, metrics: Me
 		name: "propose_plan",
 		label: "提议方案",
 		summary: "提交整场执行方案并阻塞等待用户确认",
+		// B-3 等量置换：原 prompt-registry/rules/task_tool.md（v1.1.0）propose_plan 侧条文，
+		// 逐字迁移（「多步任务开工前…」半句归 todo_write；等量置换断言见 session-manager.tool-guidelines.test.ts）。
+		promptGuidelines: ["需先出方案时先 propose_plan 征确认再执行，确认前不写画布不调生成。"],
 		description:
 			"把多步执行方案提交给用户确认：步骤清单由宿主以任务卡展示，并弹出确认卡（开始执行/调整计划/仅保留方案），本回合内阻塞等待（有界，超时则保留方案并结束本轮，不自动执行）。" +
 			"何时必用：用户要求「先出方案/先规划/先别动手」，或任务需要多步写画布且做法需要用户拍板时。" +

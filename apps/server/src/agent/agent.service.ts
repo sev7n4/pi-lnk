@@ -3376,15 +3376,11 @@ export class AgentService implements OnModuleInit {
         `AGENT_RULE_GROUPS 覆盖生效: [${ruleGroups.join(',')}] —— 仅限 A/B 评测，生产发版不得携带该变量`,
       )
     }
-    const staticPrompt = await assembler.assembleStatic({
-      ruleGroups: ruleGroups.filter(
-        // C1 kill switch（spec 2026-10-09-task-tool-design.md §3.1）：PI_RUNTIME_TODO_TOOL=off
-        // 时 task_tool 规则不注入。⚠️ 双部署单元（Nest 容器 / pi-runtime k3s）各自读同一 env 名，
-        // 上线检查单必须核对一致；off 但工具仍注册的错配由 pi-runtime 侧 isError 兜底。
-        (g) => g !== 'todoTools' || process.env.PI_RUNTIME_TODO_TOOL !== 'off',
-      ),
-    })
-    // C1：⟦plan⟧/⟦task-done⟧ 教学段已删除——模型改教 todo_write 工具（prompt-registry task_tool 规则）。
+    // B-3（2026-11-15）：task_tool.md 迁入工具 promptGuidelines，todoTools 组删除——
+    // Nest 侧不再做组过滤；PI_RUNTIME_TODO_TOOL=off 的 kill switch 语义由 pi-runtime 侧
+    // 承担（tools/todo.ts 不注册 todo_write ⇒ 其 promptGuidelines 随工具自动消失）。
+    const staticPrompt = await assembler.assembleStatic({ ruleGroups })
+    // C1：⟦plan⟧/⟦task-done⟧ 教学段已删除——模型改教 todo_write 工具（B-3 起纪律随工具 promptGuidelines 单源）。
     // planMarkers.ts 保留为只读重放兼容层（老会话 resume 渲染旧卡片），TTL 自然退场。
     // P0-①：会话键 = 对话（threadId），不是画布会话（sessionId）——新对话即新键、新上下文。
     // 与持久化键 / cancelRun 共用同一推导，三处必须一致。
