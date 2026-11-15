@@ -381,3 +381,11 @@ export interface CapabilityItem {
 export * from './pi/typebox-bridge'
 
 export * from './shareTemplate'
+
+// D-1 L0 资产契约（AssetNodeData / MaterialMeta zod 解析，未知键 fail-closed）
+export * from './canvas/assetContract'
+
+// D-1 L1 失效传播纯函数（下游闭包 / 防抖动，spec §8.2-4）。
+// computeContentHash 走 node:crypto，web 打包不安全 ⇒ 只从
+// `@lnkpi/shared/canvas/lineage.server` subpath 引（barrel 不 re-export）。
+export * from './canvas/lineage'

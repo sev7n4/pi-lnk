@@ -4918,6 +4918,10 @@ export class AgentService implements OnModuleInit {
     if (canvasActions.length > 0 && userId) {
       await this.persistCanvasEntities(sessionId, canvasActions)
 
+      // ⚠️ 休眠写点（当前全部调用点传 false，见 :683/:4195/:4548）。若启用必须先接
+      // D-1 契约：stripServerOwnedAssetFields + applyStalePropagation（见
+      // agent-canvas-tools.service.ts 同名函数），否则构成「无传播第三写通道」——
+      // 绕过单一写者事务内的 hash/stale 失效传播，破坏 D-1 不变式。
       if (opts.rewriteCanvasData) {
         const session = await this.prisma.session.findUnique({ where: { id: sessionId } })
         if (session) {

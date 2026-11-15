@@ -175,6 +175,12 @@ class SessionOnlyDto {
   sessionId!: string
 }
 
+/** D-1：资产契约快照查询（与 get-canvas-summary 同款 SessionOnly 形态）。 */
+export class GetAssetContractSnapshotDto {
+  @IsString()
+  sessionId!: string
+}
+
 class ReadMediaDto {
   @IsString()
   url!: string
@@ -1321,6 +1327,13 @@ export class AgentCanvasToolsController {
   @Post('get-canvas-summary')
   async getCanvasSummary(@Body() dto: SessionOnlyDto) {
     const data = await this.tools.getCanvasSummary(dto)
+    return { code: 0, message: 'ok', data }
+  }
+
+  /** D-1：资产契约快照（pi-runtime acceptance 判据输入；只读，service token 鉴权走类级 guard）。 */
+  @Post('get-asset-contract-snapshot')
+  async getAssetContractSnapshot(@Body() dto: GetAssetContractSnapshotDto) {
+    const data = await this.tools.getAssetContractSnapshot(dto)
     return { code: 0, message: 'ok', data }
   }
 

@@ -94,6 +94,28 @@ export interface IdentityObservation {
 }
 
 /**
+ * ⭐ D-1 资产契约观测谓词闭集（三值，与 asset-oracle.ts 三 judge 同名——单一真相源）：
+ * - `idClosure`：引用闭包（judgeIdClosure，孤儿引用/一名多实体）；
+ * - `authorityRef`：权威素材引用（judgeAuthorityRef，未验收/未钉版本/同维度多重权威）；
+ * - `durationBudget`：台词时长预算（judgeDurationBudget，4.5 字/秒，禁采信模型自报 #815）。
+ */
+export type AssetContractPredicate = "idClosure" | "authorityRef" | "durationBudget";
+
+/**
+ * ⭐ D-1 资产契约观测判据（**只观测不计分**——C-1 §8.6 / expectIdentitySurvival
+ * 「编写期标注 + 运行时只观测」同款纪律：观测结果进报告与基线档案，不进 failures）。
+ *
+ * 编写期在步骤上声明「本步行为需观测哪些资产契约谓词」，L0 校验兜形态
+ * （谓词名闭集 + 引用一致性）；runner 消费面（经 Task 5 internal 快照端点
+ * 取结构化输入、离线复判三 oracle）**本刀不接线**——Produces 无新运行时面，
+ * 接线属后续刀，接线前该标注为休眠资产（L0 保证形态可信）。
+ */
+export interface AssetContractExpect {
+	/** 触发观测的谓词名（闭集见 AssetContractPredicate；空数组 = 僵尸标注，L0 拦截）。 */
+	failOn?: Array<AssetContractPredicate>;
+}
+
+/**
  * 多轮 case 的单步（实施 spec §3.1）。字段语义与顶层同款字段一致，
  * 另有三个 steps 专属能力：`requireProgress`（相对上一步）、
  * `expectIdentitySurvival`（§8.6 观测标注）、以及与后续步共享会话上下文。
@@ -116,6 +138,12 @@ export interface GoldenStep {
 	 * itemIndex 上界 = 该步 expectTodoSnapshot.maxItems ?? 6（编写期上界，L0 校验）。
 	 */
 	expectIdentitySurvival?: { itemIndex: number };
+	/**
+	 * ⭐ D-1：资产契约观测判据（**只观测不计分**，见 AssetContractExpect 注释）。
+	 * GoldenStep 专属（单轮 case 无跨回合资产链可观测，L0 拦截顶层误用，
+	 * 同 expectIdentitySurvival 先例）。
+	 */
+	expectAssetContract?: AssetContractExpect;
 }
 
 /** 一条行为回归 case。 */

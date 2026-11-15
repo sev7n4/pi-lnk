@@ -179,8 +179,25 @@ export const GetCanvasSummaryRequestSchema = z.object({
 
 export type GetCanvasSummaryRequest = z.infer<typeof GetCanvasSummaryRequestSchema>
 
+// D-1 L3（2026-11-16）：只读派生字段——server 在 get_canvas_summary handler 内从
+// canvasData 直读派生（stale 闭包在写路径 applyStalePropagation 已完成，读路径
+// 不遍历边）。optional 向后兼容既有消费方（pi-runtime 工具、verify-contract）；
+// 空值缺省键不出现（A-3 纪律：无 stale/无资产字段 ⇒ 两个键都不在 JSON 里）。
 export const GetCanvasSummaryResponseSchema = z.object({
   nodes: z.array(CanvasSummaryNodeSchema),
+  staleNodeIds: z.array(z.string()).optional(),
+  lineage: z
+    .array(
+      z
+        .object({
+          nodeId: z.string(),
+          assetId: z.string().optional(),
+          version: z.number().optional(),
+          stale: z.boolean().optional(),
+        })
+        .strict()
+    )
+    .optional(),
 })
 
 export type GetCanvasSummaryResponse = z.infer<typeof GetCanvasSummaryResponseSchema>

@@ -17,9 +17,11 @@ import {
 	parseAcceptance,
 	type AcceptanceOutcome,
 	type AcceptanceRequirement,
+	type AssetContractOracle,
 	type CanvasOracle,
 	type GenerationOracle,
 } from "./acceptance.js";
+import { judgeAuthorityRef, judgeDurationBudget, judgeIdClosure, type OracleVerdict } from "./asset-oracle.js";
 
 export function isTodoToolEnabled(): boolean {
 	return process.env.PI_RUNTIME_TODO_TOOL !== "off";
@@ -129,9 +131,11 @@ type TodoResult = AgentToolResult<TodoDetails>;
 export interface TodoToolDeps {
 	oracle?: GenerationOracle;
 	canvasOracle?: CanvasOracle;
+	/** D-1：资产契约快照 oracle（三 judge 判定器输入的组装由 acceptance.fetchAssetContractInput 完成）。 */
+	assetOracle?: AssetContractOracle;
 	onAcceptanceOutcome?: (outcome: AcceptanceOutcome) => void;
 	/** C-2b：按 kind 记录「声明项数」（写入率子维度，防机制空转观测不到）。 */
-	onAcceptanceKind?: (kind: "generation" | "canvas_state") => void;
+	onAcceptanceKind?: (kind: "generation" | "canvas_state" | "asset_contract") => void;
 }
 
 /** 零副作用硬拒的**唯一**构造点（A-2' 幻觉 id / C-2a 判据非法 / C-2b 证据不足共用）：
@@ -168,7 +172,7 @@ async function verifyAcceptance(
 	// ① 结构校验全部先做：任一非法立即硬拒，且优先于任何 IO（不查 oracle）
 	const requirements: Array<{
 		content: string;
-		kind: "generation" | "canvas_state";
+		kind: "generation" | "canvas_state" | "asset_contract";
 		requirement: AcceptanceRequirement;
 	}> = [];
 	for (const item of declared) {
@@ -186,6 +190,7 @@ async function verifyAcceptance(
 	const enabled = isAcceptanceEnabled();
 	const generationReqs = requirements.filter((r) => r.kind === "generation");
 	const canvasReqs = requirements.filter((r) => r.kind === "canvas_state");
+	const assetReqs = requirements.filter((r) => r.kind === "asset_contract");
 	const reminders: string[] = [];
 	// 依赖缺失（kill switch / 未注入 oracle / 缺 userId）⇒ 该组不查、不改回执、不计数。
 	// checkedAny=false 时整体返回 skip（C-2a 逐字节旧行为）。
@@ -238,6 +243,49 @@ async function verifyAcceptance(
 					return {
 						kind: "reject",
 						text: `调用被拒绝：任务项「${req.content}」声明了验收判据，但画布证据不支持。实际：${judged.evidence}。当前清单保持不变。请继续干活（补齐画布节点）或如实降级（分项说明哪些真完成），不要标 completed。`,
+					};
+				}
+			}
+		}
+	}
+
+	// ③.5 asset_contract 组（D-1）：三谓词按声明逐个跑 judge*，同组复用一次快照；
+	// 任一 reject ⇒ 立即硬拒（reject > fail_open > pass 聚合纪律同 generation/canvas）。
+	if (assetReqs.length > 0 && enabled && deps.assetOracle !== undefined) {
+		checkedAny = true;
+		const result = await deps.assetOracle.inspect({ sessionId: toolContext.sessionId });
+		if (!result.ok) {
+			deps.onAcceptanceOutcome?.("fail_open");
+			console.warn(`[todo_write] asset contract oracle 查询失败（fail-open）：${result.reason}`);
+			reminders.push(
+				`\n\n[acceptance] 资产契约证据查询失败（${result.reason}），本次收尾校验已放行；请勿据此视为验收通过。`,
+			);
+		} else {
+			for (const req of assetReqs) {
+				const preds = req.requirement.assetContract;
+				if (preds === undefined) continue; // parse 已保证存在，防御兜底
+				const checks: Array<[string, OracleVerdict]> = [];
+				if (preds.idClosure === true) {
+					checks.push([
+						"idClosure",
+						judgeIdClosure({
+							registeredIds: result.input.registeredIds,
+							referencedIds: result.input.referencedIds,
+						}),
+					]);
+				}
+				if (preds.authorityRef === true) {
+					checks.push(["authorityRef", judgeAuthorityRef({ authorities: result.input.authorities })]);
+				}
+				if (preds.durationBudget === true) {
+					checks.push(["durationBudget", judgeDurationBudget({ rows: result.input.durationRows })]);
+				}
+				for (const [pred, judged] of checks) {
+					if (judged.verdict !== "reject") continue;
+					deps.onAcceptanceOutcome?.("fail_closed");
+					return {
+						kind: "reject",
+						text: `调用被拒绝：任务项「${req.content}」声明了验收判据，但资产契约证据不支持。判定：${judged.reason}（谓词 ${pred}）；实际：${JSON.stringify(judged.evidence ?? {})}。当前清单保持不变。请继续干活（补齐资产契约）或如实降级（分项说明哪些真完成），不要标 completed。`,
 					};
 				}
 			}

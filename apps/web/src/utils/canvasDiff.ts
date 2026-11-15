@@ -31,6 +31,11 @@ import type { CanvasAction, CanvasData } from '@lnkpi/shared'
  * 曾把陈旧的 `digestVersion` 回写覆盖服务端新版本 ⇒ HTML Header 恒停「第 5 版」、
  * 元数据卡在 4（生产 nginx 实证同一会话 573 次客户端 PATCH）。这三个键是系统所有，
  * 客户端一律不得提交（含 `source`：受信级 CSP 判据，客户端不可自封 system-digest）。
+ *
+ * D-1（2026-11-15）：`stale` / `contentHash` / `version` 一并收口——只由服务端
+ * 单一写者事务推进（agent-canvas-tools persist/commitStage 的失效传播）；前端只读
+ * 消费，diff 到变化一律丢弃，否则客户端整份式 PATCH 循环会抹掉 stale 标记旁路
+ * L1 失效传播（spec 2026-11-15-d1-creative-asset-contract §11 风险 2）。
  */
 export const CLIENT_FORBIDDEN_NODE_DATA_KEYS: ReadonlySet<string> = new Set([
   'status',
@@ -41,6 +46,9 @@ export const CLIENT_FORBIDDEN_NODE_DATA_KEYS: ReadonlySet<string> = new Set([
   'digest',
   'digestVersion',
   'source',
+  'stale',
+  'contentHash',
+  'version',
 ])
 
 interface DiffNode {

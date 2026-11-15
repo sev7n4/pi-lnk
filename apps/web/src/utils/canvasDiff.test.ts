@@ -85,6 +85,25 @@ describe('diffCanvasData', () => {
     }
   })
 
+  it('D-1：stale / contentHash / version 属服务端单一写者 ⇒ 客户端变化一律丢弃', () => {
+    // 事故形态：客户端整份式 PATCH 循环把服务端刚写的 stale:true 回写成 false，
+    // L1 失效传播被旁路（spec 2026-11-15-d1-creative-asset-contract §11 风险 2）。
+    const saved = d([{
+      id: 'n1', type: 'text', position: { x: 0, y: 0 },
+      data: { stale: true, contentHash: 'h1', version: 3, title: 'a' },
+    }])
+    const current = d([{
+      id: 'n1', type: 'text', position: { x: 0, y: 0 },
+      data: { stale: false, contentHash: 'h2', version: 4, title: 'a' },
+    }])
+    const out = diffCanvasData(saved, current)
+    expect(out.droppedKeys).toBe(3)
+    expect(out.ops).toEqual([])
+    for (const key of ['stale', 'contentHash', 'version']) {
+      expect(CLIENT_FORBIDDEN_NODE_DATA_KEYS.has(key)).toBe(true)
+    }
+  })
+
   it('白名单外键「有→无」同样丢弃，不产生 null 覆盖', () => {
     const saved = d([{ id: 'n1', type: 'image', position: { x: 0, y: 0 }, data: { errorMessage: 'x', title: 'a' } }])
     const current = d([{ id: 'n1', type: 'image', position: { x: 0, y: 0 }, data: { title: 'a' } }])

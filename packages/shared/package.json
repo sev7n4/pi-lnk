@@ -9,12 +9,14 @@
     ".": "./src/index.ts",
     "./upstreamReconciliation": "./src/upstreamReconciliation.ts",
     "./modelHealth": "./src/modelHealth.ts",
-    "./shareTemplate": "./src/shareTemplate.ts"
+    "./shareTemplate": "./src/shareTemplate.ts",
+    "./canvas/lineage.server": "./src/canvas/lineage.server.ts"
   },
   "typesVersions": {
     "*": {
       "upstreamReconciliation": ["src/upstreamReconciliation.ts"],
-      "modelHealth": ["src/modelHealth.ts"]
+      "modelHealth": ["src/modelHealth.ts"],
+      "canvas/lineage.server": ["src/canvas/lineage.server.ts"]
     }
   },
   "scripts": {

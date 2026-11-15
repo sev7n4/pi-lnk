@@ -935,6 +935,115 @@ describe("L0 · identity 断裂观测语义（C-1b §8.6，只观测不计分）
 	});
 });
 
+describe("L0 · expectAssetContract 观测判据（D-1，只观测不计分）", () => {
+	// 三值闭集与 asset-oracle.ts 三 judge 同名（judgeIdClosure/judgeAuthorityRef/judgeDurationBudget）。
+	// TS 类型层已封死字面量，但 L0 兜运行时校验：JSON/脚本编写的 case 绕过 tsc，
+	// 闭集漂移（如谓词改名）必须在零 token 层先红（同 expectTodoStatus 枚举校验范式）。
+	const PREDICATE_CLOSED_SET = ["idClosure", "authorityRef", "durationBudget"] as const;
+
+	/**
+	 * 单条 expectAssetContract 标注的形态校验（GOLDEN_CASES 全扫与负例探针共用）。
+	 * 返回违例描述列表；空数组 = 合法。
+	 */
+	function checkAssetAnnotation(owner: string, expect?: { failOn?: readonly string[] }): string[] {
+		const problems: string[] = [];
+		if (!expect) return problems;
+		const failOn = expect.failOn ?? [];
+		// ⭐ 引用一致性（夹具内可判定部分）：闭集外引用 = 谓词改名/手滑，观测无从落地
+		for (const p of failOn) {
+			if (!(PREDICATE_CLOSED_SET as readonly string[]).includes(p)) {
+				problems.push(`${owner}: failOn 含闭集外谓词 "${p}"（合法值 ${PREDICATE_CLOSED_SET.join("/")})`);
+			}
+		}
+		// ⭐ 空数组 = 僵尸标注（声明了观测却零谓词，与「expectTools: [] 是判据」相反——
+		//   那里空数组有「不得调任何工具」语义，这里空数组无任何语义可承载）
+		if (failOn.length === 0) {
+			problems.push(`${owner}: failOn 为空数组（僵尸标注——要么删标注，要么写明观测谓词）`);
+		}
+		// ⭐ 重复引用 = 编写期笔误（同一谓词重复观测无意义，还污染 observed 计数口径）
+		const dupes = failOn.filter((p, i) => failOn.indexOf(p) !== i);
+		if (dupes.length > 0) {
+			problems.push(`${owner}: failOn 重复引用 [${[...new Set(dupes)].join(", ")}]`);
+		}
+		return problems;
+	}
+
+	it("⭐ failOn 谓词名必须属于三值闭集（GOLDEN_CASES 全扫 + 负例探针证明校验器真的拦）", () => {
+		const problems: string[] = [];
+		for (const c of GOLDEN_CASES) {
+			for (const [i, s] of (c.steps ?? []).entries()) {
+				problems.push(...checkAssetAnnotation(`${c.id} step[${i}]`, s.expectAssetContract));
+			}
+		}
+		assert.deepEqual(problems, [], `expectAssetContract 形态违例：\n  ${problems.join("\n  ")}`);
+		// 负例探针：闭集外谓词必须被拦（校验器自身不可僵尸）
+		const bad = checkAssetAnnotation("probe", { failOn: ["idClosureX" as never] });
+		assert.equal(bad.length, 1, "闭集外谓词应被拦截");
+		assert.match(bad[0] ?? "", /idClosureX/);
+	});
+
+	it("⭐ 单轮 case 不得声明 expectAssetContract（GoldenStep 专属，同 identity 先例；运行时兜底防 JSON 绕过 tsc）", () => {
+		const problems: string[] = [];
+		for (const c of GOLDEN_CASES) {
+			// 类型层已禁止顶层该字段；cast 扫描兜运行时面（JSON 编写 / any 中转）
+			if (!c.steps && (c as { expectAssetContract?: unknown }).expectAssetContract !== undefined) {
+				problems.push(`${c.id}: 单轮 case 声明 expectAssetContract（无跨回合资产链可观测）`);
+			}
+		}
+		assert.deepEqual(problems, [], `expectAssetContract 顶层误用：\n  ${problems.join("\n  ")}`);
+		// 负例探针：单轮误用确实产生违例
+		const misuse: GoldenCase = {
+			id: "probe-top",
+			origin: "audit",
+			about: "探针",
+			text: "x",
+			...({ expectAssetContract: { failOn: ["idClosure"] } } as object),
+		} as GoldenCase;
+		assert.equal(
+			!misuse.steps && (misuse as { expectAssetContract?: unknown }).expectAssetContract !== undefined,
+			true,
+			"探针必须命中顶层误用判定",
+		);
+	});
+
+	it("⭐ failOn 空数组 / 重复引用 = 非法（引用一致性：空=僵尸标注，重复=编写期笔误）", () => {
+		const empty = checkAssetAnnotation("probe-empty", { failOn: [] });
+		assert.ok(empty.some((p) => /僵尸标注/.test(p)), "空 failOn 应被拦");
+		const dupe = checkAssetAnnotation("probe-dupe", { failOn: ["idClosure", "idClosure"] });
+		assert.ok(dupe.some((p) => /重复引用 \[idClosure\]/.test(p)), "重复引用应被拦");
+		// 对照：合法三值任一组合零违例
+		assert.deepEqual(checkAssetAnnotation("probe-ok", { failOn: ["durationBudget"] }), []);
+	});
+
+	it("⭐ 只观测不计分：声明 expectAssetContract 不改变 evaluateStep / evaluateMultiStep 判定", () => {
+		const plain: GoldenStep = { text: "拆解", expectTodoSnapshot: { minItems: 1 } };
+		const observed: GoldenStep = {
+			text: "拆解",
+			expectTodoSnapshot: { minItems: 1 },
+			expectAssetContract: { failOn: ["idClosure", "authorityRef", "durationBudget"] },
+		};
+		// 判据本可过的 transcript：带观测声明 ⇒ 仍 pass，failures 逐字一致
+		const tOk = transcriptOf({
+			toolNames: ["todo_write"],
+			toolCalls: [{ name: "todo_write", callId: "c700", input: { todos: [{ content: "写大纲" }] } }],
+		});
+		const rPlainOk = evaluateStep(plain, tOk, null);
+		const rObsOk = evaluateStep(observed, tOk, null);
+		assert.deepEqual(rObsOk.failures, [], "只观测不计分：声明不得引入新失败");
+		assert.deepEqual(rObsOk.failures, rPlainOk.failures);
+		// 判据本该 fail 的 transcript：带观测声明 ⇒ 仍 fail，失败集合不增不减（观测不进 failures）
+		const tBad = transcriptOf({ toolNames: [] });
+		const rPlainBad = evaluateStep(plain, tBad, null);
+		const rObsBad = evaluateStep(observed, tBad, null);
+		assert.ok(rObsBad.failures.length > 0, "判据本该 fail 的仍 fail");
+		assert.deepEqual(rObsBad.failures, rPlainBad.failures);
+		// 多轮整链同口径：观测声明不进整链 failures（passed 口径）
+		const chain = evaluateMultiStep([observed, plain], [tOk, tOk]);
+		assert.equal(chain.passed, true);
+		assert.deepEqual(chain.failures, []);
+	});
+});
+
 describe("L0 · judgeCanvasState 判定语义（C-1b §3.2）", () => {
 	it("nodeCount 超上界 ⇒ fail（污染累积/越权写入）", () => {
 		const r = judgeCanvasState(

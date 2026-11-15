@@ -85,6 +85,55 @@ test("parse: requireSucceeded 非 boolean / generation 非对象 ⇒ 非法", ()
 	assert.equal(parseAcceptance({ kind: "generation", generation: "yes" }).ok, false);
 });
 
+test("parse: kind=asset_contract 缺 assetContract ⇒ 非法", () => {
+	const r = parseAcceptance({ kind: "asset_contract" });
+	assert.equal(r.ok, false);
+	if (!r.ok) assert.match(r.reason, /assetContract/);
+});
+
+test("parse: kind=asset_contract 零谓词（空对象 / 全 false）⇒ 非法（防游戏化）", () => {
+	assert.equal(parseAcceptance({ kind: "asset_contract", assetContract: {} }).ok, false);
+	assert.equal(
+		parseAcceptance({ kind: "asset_contract", assetContract: { idClosure: false, authorityRef: false, durationBudget: false } })
+			.ok,
+		false,
+	);
+});
+
+test("parse: kind=asset_contract 合法（至少一谓词 true）⇒ ok 且归一化", () => {
+	assert.deepEqual(parseAcceptance({ kind: "asset_contract", assetContract: { idClosure: true } }), {
+		ok: true,
+		requirement: { kind: "asset_contract", assetContract: { idClosure: true } },
+	});
+	// false 谓词不带入归一化结果（与 generation.requireSucceeded:false 同款）
+	assert.deepEqual(
+		parseAcceptance({ kind: "asset_contract", assetContract: { idClosure: true, authorityRef: false } }),
+		{ ok: true, requirement: { kind: "asset_contract", assetContract: { idClosure: true } } },
+	);
+});
+
+test("parse: kind 与子对象错配 ⇒ 非法（D-1 asset_contract 双向）", () => {
+	assert.equal(parseAcceptance({ kind: "generation", assetContract: { idClosure: true } }).ok, false);
+	assert.equal(parseAcceptance({ kind: "canvas_state", assetContract: { idClosure: true } }).ok, false);
+	assert.equal(
+		parseAcceptance({ kind: "asset_contract", assetContract: { idClosure: true }, generation: {} }).ok,
+		false,
+	);
+	assert.equal(
+		parseAcceptance({
+			kind: "asset_contract",
+			assetContract: { idClosure: true },
+			canvasState: { nodeCount: { min: 1 } },
+		}).ok,
+		false,
+	);
+});
+
+test("parse: assetContract 谓词非 boolean / 未知字段 ⇒ 非法", () => {
+	assert.equal(parseAcceptance({ kind: "asset_contract", assetContract: { idClosure: "yes" } }).ok, false);
+	assert.equal(parseAcceptance({ kind: "asset_contract", assetContract: { note: "看起来对" } }).ok, false);
+});
+
 test("oracle: 首项即最新，status 自由字符串原样带回", async () => {
 	const client = {
 		post: async () => ({

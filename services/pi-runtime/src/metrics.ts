@@ -503,7 +503,7 @@ export class Metrics {
 	}
 
 	/** C-2b 按 kind 观测声明项数（一次 todo_write 有 N 个声明项就记 N 次）。 */
-	observeAcceptanceKind(kind: "generation" | "canvas_state"): void {
+	observeAcceptanceKind(kind: "generation" | "canvas_state" | "asset_contract"): void {
 		this.acceptanceKinds.set(kind, (this.acceptanceKinds.get(kind) ?? 0) + 1);
 	}
 

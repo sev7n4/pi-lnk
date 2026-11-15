@@ -8,7 +8,7 @@ import { Metrics } from "../metrics.js";
 /** C-2a/C-2b 接线守卫（仿 html-craft.wiring / SOP 刀）：防「机制装了但生产没注入」
  *  —— tool_search 激活率 0 与 spawn_subagent 零调用都是这一形态的前科。 */
 describe("C-2a/C-2b acceptance wiring", () => {
-	it("todo_write schema 暴露 acceptance，kind 枚举恰为两类已实现 oracle", () => {
+	it("todo_write schema 暴露 acceptance，kind 枚举恰为已实现 oracle（含 D-1 asset_contract）", () => {
 		const [t] = buildTodoTools();
 		const root = readRecord(t.parameters, "todo_write.parameters");
 		assert.ok(root.ok);
@@ -37,8 +37,9 @@ describe("C-2a/C-2b acceptance wiring", () => {
 		const consts = Array.isArray(kind.value.anyOf)
 			? (kind.value.anyOf as unknown[]).map((v) => (v as { const?: unknown }).const)
 			: [kind.value.const ?? (kind.value as { enum?: unknown[] }).enum?.[0]];
-		// 枚举封死：只注册已实现校验的两类（noOverlap / user_confirm 代码零实现 ⇒ 不得出现）
-		assert.deepEqual(consts, ["generation", "canvas_state"]);
+		// 枚举封死：只注册已实现校验的 oracle（noOverlap / user_confirm 代码零实现 ⇒ 不得出现；
+		// asset_contract 三谓词全部有实现 ⇒ 进枚举，spec §5.3）
+		assert.deepEqual(consts, ["generation", "canvas_state", "asset_contract"]);
 		const required = acceptance.value.required;
 		assert.ok(Array.isArray(required) && required.includes("kind"), "kind 必须是必填（缺失即字段非法）");
 		// C-2b：canvasState 载荷只暴露已实现的两个谓词
@@ -49,6 +50,16 @@ describe("C-2a/C-2b acceptance wiring", () => {
 			assert.ok(csProps.ok);
 			if (csProps.ok) {
 				assert.deepEqual(Object.keys(csProps.value).sort(), ["nodeCount", "nodeTypeCounts"]);
+			}
+		}
+		// D-1：assetContract 载荷只暴露已实现的三个谓词
+		const ac = readRecord(accProps.value.assetContract, "acceptance.properties.assetContract");
+		assert.ok(ac.ok, "schema 未暴露 assetContract");
+		if (ac.ok) {
+			const acProps = readRecord(ac.value.properties, "assetContract.properties");
+			assert.ok(acProps.ok);
+			if (acProps.ok) {
+				assert.deepEqual(Object.keys(acProps.value).sort(), ["authorityRef", "durationBudget", "idClosure"]);
 			}
 		}
 	});

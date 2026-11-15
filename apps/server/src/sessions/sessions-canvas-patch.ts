@@ -23,6 +23,9 @@ import type { CanvasAction } from '@lnkpi/shared'
  *
  * P1b（2026-11-07）：新增 digest / digestVersion / source——画布总览由系统管道
  * 独占写入，客户端回拉后的 PATCH 循环不得把陈旧版本号/信任标记回灌（生产实证）。
+ * D-1（2026-11-15）：新增 stale / contentHash / version——只由服务端单一写者事务
+ * 推进（agent-canvas-tools persist/commitStage 的失效传播），客户端不得回灌或清除，
+ * 否则 L1 失效传播被旁路（spec 2026-11-15-d1-creative-asset-contract §11 风险 2）。
  * 与 apps/web/src/utils/canvasDiff.ts 同名常量必须逐字一致（双端 ratchet）。
  */
 export const CLIENT_FORBIDDEN_NODE_DATA_KEYS: ReadonlySet<string> = new Set([
@@ -34,6 +37,9 @@ export const CLIENT_FORBIDDEN_NODE_DATA_KEYS: ReadonlySet<string> = new Set([
   'digest',
   'digestVersion',
   'source',
+  'stale',
+  'contentHash',
+  'version',
 ])
 
 /** plain object 判定（侧车 op 载荷校验用；null/数组/标量均非）。 */
