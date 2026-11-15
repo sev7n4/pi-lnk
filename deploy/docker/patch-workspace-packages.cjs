@@ -30,6 +30,14 @@ for (const rel of packages) {
       types: './dist/modelHealth.d.ts',
       default: './dist/modelHealth.js',
     },
+    // D-1 (#900)：agent-canvas-tools.service 运行时 import
+    // '@lnkpi/shared/canvas/lineage.server'（node:crypto 版 computeContentHash）。
+    // 与 src 侧 package.json 的子路径导出一一对应——漏掉会在生产镜像运行时
+    // ERR_PACKAGE_PATH_NOT_EXPORTED（#900 Deploy 失败根因）。
+    './canvas/lineage.server': {
+      types: './dist/canvas/lineage.server.d.ts',
+      default: './dist/canvas/lineage.server.js',
+    },
   }
   fs.writeFileSync(file, `${JSON.stringify(pkg, null, 2)}\n`)
   console.log(`patched ${rel}`)
