@@ -30,6 +30,7 @@
  */
 import { runL1 } from "./runner.js";
 import { loadEvalByokOverride } from "./byok.js";
+import { archiveEvalCanvas, createEvalCanvas, decideProvisioning, type NestEndpoint } from "./provision.js";
 
 function parseArgs(argv: string[]): {
 	only?: string[];
@@ -71,7 +72,11 @@ async function main(): Promise<void> {
 
 	//⭐ 画布上下文从环境变量读（不硬编码进仓库）：这些是**环境事实**，
 	// 不是代码配置。缺了 runL1 会 fail-fast 并说清怎么补。
-	const canvasSessionId = process.env.PI_EVAL_CANVAS_SESSION_ID;
+	// ⭐⭐ P1 canvas provisioning（立项 spec 2026-11-15 拍板方案 A）：
+	// 未显式传画布 id 且 userId/nest 齐 ⇒ run 开始自动建新画布（D1），
+	// 新 id 供本轮全部 case；建失败 ⇒ 整 run error（D3 fail-fast，不回落共享画布）。
+	// 显式传 PI_EVAL_CANVAS_SESSION_ID ⇒ 行为与历史完全一致（单画布复现模式，验收 3）。
+	let canvasSessionId = process.env.PI_EVAL_CANVAS_SESSION_ID;
 	const userId = process.env.PI_EVAL_USER_ID;
 	// ⭐ Nest 连接信息**仅用于画布规模预检**（见 GoldenCase.requiresCanvasNodes）。
 	// 缺了不会静默—— runL1 会 fail-fast 并说清怎么补，
@@ -80,6 +85,28 @@ async function main(): Promise<void> {
 	// 用不同前缀是为了不与pi-runtime 自身的运行时配置混淆。
 	const nestBaseUrl = process.env.PI_EVAL_NEST_BASE_URL ?? process.env.NEST_BASE_URL;
 	const nestToken = process.env.PI_EVAL_NEST_TOKEN ?? process.env.NEST_SERVICE_TOKEN;
+	const nest: NestEndpoint | undefined =
+		nestBaseUrl && nestToken ? { baseUrl: nestBaseUrl, token: nestToken } : undefined;
+	const decision = decideProvisioning({ canvasSessionId, userId, nest });
+	let provisioned: { sessionId: string; title: string; archiveTitle: string } | undefined;
+	if (decision.provision && nest && userId) {
+		try {
+			provisioned = await createEvalCanvas(nest, userId);
+			canvasSessionId = provisioned.sessionId;
+			process.stderr.write(
+				`画布已新建：${provisioned.title} → ${provisioned.sessionId}（run 结束归档为 ${provisioned.archiveTitle}，不删除）\n`,
+			);
+		} catch (err) {
+			// D3 fail-fast：建画布失败就整 run error，不回落共享画布
+			//（回落会把环境问题伪装成行为问题，重蹈 q3-07 画布污染覆辙）。
+			process.stderr.write(
+				`建画布失败（P1 provisioning，D3 fail-fast）：${err instanceof Error ? err.message : String(err)}\n` +
+					"处置：检查 NEST_BASE_URL/NEST_SERVICE_TOKEN/PI_EVAL_USER_ID，或显式传 PI_EVAL_CANVAS_SESSION_ID 走单画布复现模式。\n",
+			);
+			process.exit(2);
+			return;
+		}
+	}
 	// ⭐ BYOK（可选）：设了 EVAL_BYOK_* 即让跑批走你自己的渠道，绕开 AGNES 429。
 	// 密钥只在环境变量里，本文件不持有明文。未设则回落 AGNES（既有行为不变）。
 	const byok = loadEvalByokOverride();
@@ -98,6 +125,17 @@ async function main(): Promise<void> {
 		},
 	});
 
+	// D2 归档：run 结束把本轮画布改名 eval-used-<runStamp>（不删，保留取证现场）。
+	// 归档失败只记 warning，不影响退出码——运行结论已产出，归档只是命名 hygiene。
+	if (provisioned && canvasSessionId && nest && userId) {
+		const archived = await archiveEvalCanvas(nest, canvasSessionId, userId, provisioned.archiveTitle);
+		if (!archived.ok) {
+			process.stderr.write(
+				`⚠️ 画布归档改名失败（不删，现场仍在 ${canvasSessionId}）：${archived.error ?? "unknown"}\n`,
+			);
+		}
+	}
+
 	if (args.json) {
 		process.stdout.write(
 			`${JSON.stringify(
@@ -110,6 +148,13 @@ async function main(): Promise<void> {
 					degraded: summary.degraded,
 					totalTokens: summary.totalTokens,
 					...(summary.canvasSessionId ? { canvasSessionId: summary.canvasSessionId } : {}),
+					...(provisioned
+						? {
+								canvasProvisioned: true,
+								canvasTitle: provisioned.title,
+								canvasArchivedAs: provisioned.archiveTitle,
+							}
+						: {}),
 					...(summary.staticPrompt
 						? {
 								registryHash: summary.staticPrompt.registryHash,
