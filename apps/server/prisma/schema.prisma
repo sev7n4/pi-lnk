@@ -975,6 +975,33 @@ model PricingGrayWhitelist {
   @@index([userId])
 }
 
+// ── 调价公告（2026-11-15-pricing-change-announcement-design）──
+// publish 钩子唯一触发面（物化不触发）；notifyUsers=false 时不生成。
+// 单条聚合公告：payload 存全量明细数组，前端 Top N + 摘要展开。
+// 不建 FK：versionFrom/VersionTo 是 PriceListVersion id，archived 语义不级联。
+model Announcement {
+  id          String   @id @default(cuid())
+  type        String   @default("pricing-change") // 首期唯一枚举
+  versionFrom String?
+  versionTo   String
+  title       String
+  summary     String?
+  payload     String // JSON 明细数组：[{capability,modelKey,displayName,spec,specLabel,from,to,pct,kind}]
+  publishedAt DateTime @default(now())
+  effectiveAt DateTime
+  reads       AnnouncementRead[]
+  @@index([type, publishedAt])
+}
+
+model AnnouncementRead {
+  announcementId String
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  userId         String
+  readAt         DateTime @default(now())
+  @@id([announcementId, userId])
+  @@index([userId])
+}
+
 // ── P2 token 精确计费（2026-10-15-p2-token-precise-billing）──
 // PointHold：回合预扣冻结单。回合发起先冻结积分（User.pointsFrozen），结算时
 // 按实际用量 settle（差额自然留在余额），error/超时由 releaseExpiredHolds 全退防泄漏。

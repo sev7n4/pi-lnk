@@ -72,6 +72,9 @@ const diffData = (over: Record<string, unknown> = {}) => ({
   added: 1,
   changed: 2,
   unchanged: 3,
+  increaseCount: 1,
+  decreaseCount: 1,
+  newCount: 1,
   maxIncrease: { matchKey: 'gpt-4o', from: 100, to: 150, pct: 0.5 },
   maxDecrease: null,
   floorViolations: [],
@@ -233,11 +236,14 @@ describe('AdminPricingVersionsPage', () => {
     await vm.publish()
     await flushPromises()
     expect(ElMessageBoxConfirm).toHaveBeenCalledTimes(1)
-    const [msg] = ElMessageBoxConfirm.mock.calls[0] as string[]
-    expect(msg).toContain('最大涨幅')
-    expect(msg).toContain('gpt-4o')
-    expect(msg).toContain('+50.0%')
-    expect(publish).toHaveBeenCalledWith('v-1')
+    // 发布确认 message 已 VNode 化（公告胶囊开关 + 预告行）：序列化后断言文本节点
+    const [msg] = ElMessageBoxConfirm.mock.calls[0] as unknown[]
+    expect(JSON.stringify(msg)).toContain('最大涨幅')
+    expect(JSON.stringify(msg)).toContain('gpt-4o')
+    expect(JSON.stringify(msg)).toContain('+50.0%')
+    expect(JSON.stringify(msg)).toContain('推送调价公告给用户')
+    // notifyUsers 胶囊默认 false（2026-11-15 用户拍板）：显式传 false
+    expect(publish).toHaveBeenCalledWith('v-1', false)
   })
 
   it('回滚：二次确认后调用 rollback', async () => {

@@ -8,11 +8,13 @@ import type { SubjectRow } from './pricing-subject.service'
 import { incMaterialize, incCostSource, incUnitMismatch } from './pricing-metrics'
 
 /**
- * 成本 × 利润 → 积分（价格行，spec §5.1）：credits = max(1, ceil(成本(元) × (1 + profitBp/10000) ÷ 积分锚(0.01元)))。
+ * 成本 × 利润 → 积分（价格行，spec §5.1）：credits = ceil(成本(元) × (1 + profitBp/10000) ÷ 积分锚(0.01元))。
  * 与 `computeCreditsFromCost(cost, 11000)` 当且仅当 profitBp=1000 时逐值相等（AC6 等价锚）。
+ * 0 成本 ⇒ 0 分（2026-11-15 用户拍板：cogvideox 官方免费模型允许物化为 0 分，不再强制最低积分粒度 1 分；
+ * 正成本 ceil ≥ 1 天然保底，无 0.5 分中间态）。
  */
 export function creditsOf(costYuanPerRequest: number, profitBp: number): number {
-  return Math.max(1, Math.ceil((costYuanPerRequest * (10000 + profitBp)) / 10000 / 0.01))
+  return Math.ceil((costYuanPerRequest * (10000 + profitBp)) / 10000 / 0.01)
 }
 
 /**

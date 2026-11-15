@@ -201,7 +201,12 @@ export class PricingCostRecordController {
       return ENUMERATED_IMAGE_RESOLUTIONS.map((res) => ({
         spec: res, label: `${res}（元/张）`, unit: 'per_image', unitQuantity: 1,
         costYuan: tierCostYuan(rows, e.modelKey, res, at), perVideoDerived: null,
-        materializedCredits: subjectCreditsByTier.get(`image|${e.modelKey}|${res}`) ?? null,
+        // 物化主体行 spec=`<res>:<count>`（逐张数结算真源）：档位卡显示单张基准价（count=1 行）；
+        // 无 :1 行（历史数据）回落裸分辨率 key，再缺才 null。
+        materializedCredits:
+          subjectCreditsByTier.get(`image|${e.modelKey}|${res}:1`) ??
+          subjectCreditsByTier.get(`image|${e.modelKey}|${res}`) ??
+          null,
         creditsByDuration: null,
       }))
     }

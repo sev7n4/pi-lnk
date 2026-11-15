@@ -17,6 +17,7 @@ import { BadRequestException, Inject, Injectable, NotFoundException } from '@nes
 import { PrismaService } from '../prisma/prisma.service'
 import { checkCostFloor, isTextTokenMatchKey, type FloorViolation } from './pricing.core'
 import { PricingService } from './pricing.service'
+import { PricingAnnouncementService } from './pricing-announcement.service'
 
 /**
  * 草案 vs active 的对比摘要。
@@ -32,6 +33,10 @@ export interface DiffSummary {
   unchanged: number
   maxIncrease: { matchKey: string; from: number; to: number; pct: number } | null
   maxDecrease: { matchKey: string; from: number; to: number; pct: number } | null
+  /** 发布确认对话框公告预告（设计稿 §6）：涨价/降价/新增档数（全口径逐条计数） */
+  increaseCount: number
+  decreaseCount: number
+  newCount: number
   floorViolations: FloorViolation[]
   /** 有 costRateId 引用但 CostRate 行缺失（发布时按跳过地板处理并告警） */
   missingCost: string[]
@@ -101,6 +106,7 @@ export class PricingPublishingService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     private readonly pricing: PricingService,
+    private readonly announcements: PricingAnnouncementService,
   ) {}
 
   /** 从当前 active 版本复制全部 entries（含 basis/costRateId）建新 draft。 */
@@ -273,6 +279,8 @@ export class PricingPublishingService {
     let added = 0
     let changed = 0
     let unchanged = 0
+    let increaseCount = 0
+    let decreaseCount = 0
     let maxIncrease: DiffSummary['maxIncrease'] = null
     let maxDecrease: DiffSummary['maxDecrease'] = null
 
@@ -294,11 +302,13 @@ export class PricingPublishingService {
       changed++
       const pct = (de.credits - ae.credits) / ae.credits
       if (de.credits > ae.credits) {
+        increaseCount++
         if (!maxIncrease || pct > maxIncrease.pct) {
           maxIncrease = { matchKey: key, from: ae.credits, to: de.credits, pct }
         }
       } else {
         // 降幅最大 = pct 最负
+        decreaseCount++
         if (!maxDecrease || pct < maxDecrease.pct) {
           maxDecrease = { matchKey: key, from: ae.credits, to: de.credits, pct }
         }
@@ -329,6 +339,9 @@ export class PricingPublishingService {
       added,
       changed,
       unchanged,
+      increaseCount,
+      decreaseCount,
+      newCount: added,
       maxIncrease,
       maxDecrease,
       floorViolations,
@@ -344,8 +357,12 @@ export class PricingPublishingService {
    * 发布 draft 为 active（单事务，原子）。
    * 事务内：draft 校验（存在/draft 态/非空）→ 地板校验 → draft→active+publishedAt →
    * 旧 active→archived → audit。任一步 throw ⇒ 整个事务回滚，状态零变化。
+   *
+   * notifyUsers=true（默认 false，2026-11-15 用户拍板）：发布成功后生成调价公告
+   * （Announcement 单条聚合）。公告生成在事务外、失败只记日志不回滚——价格已生效，
+   * 公告缺失是可补发的运营问题而非数据事故。
    */
-  async publish(draftId: string): Promise<{ version: string }> {
+  async publish(draftId: string, opts?: { notifyUsers?: boolean }): Promise<{ version: string; announcementId: string | null }> {
     // 发布前门禁（spec §6.8 七条硬拒：空集/非 draft/缺成本主体/计量未对齐/地板违规/
     // 成本引用缺失/marginPolicy 引用缺失）：不通过即带结构化违规清单 400，绝不静默发布。
     const verdict = await this.validatePublish(draftId)
@@ -354,6 +371,10 @@ export class PricingPublishingService {
         `发布校验未通过 ${verdict.violations.length} 条: ${verdict.violations.join('; ')}`,
       )
     }
+    const notifyUsers = opts?.notifyUsers === true
+    let fromActiveId: string | null = null
+    let publishedId = ''
+    let publishedVersion = ''
     const out = await this.prisma.$transaction(async (tx) => {
       // 单一 active 不变量的观察点与写入点同处一个事务首行（终审 Minor M3：
       // 查在事务外、建在事务内，并发 publish 可建出两个 active，而 loadActiveTable
@@ -403,15 +424,31 @@ export class PricingPublishingService {
             version: draft.version,
             status: 'active',
             entryCount: draft.entries.length,
+            notifyUsers,
           }),
         },
       })
+      fromActiveId = oldActive?.id ?? null
+      publishedId = draft.id
+      publishedVersion = published.version
       return { version: published.version }
     })
     // 提交成功后清计价缓存：新 active 版本立即对 quote 生效（否则最长 30s 继续
     // 按旧价扣费；终审 Important I3）。事务 throw 时不会走到这里⇒ 失败不改缓存。
     this.pricing.invalidate()
-    return out
+    // 调价公告（唯一触发面）：notifyUsers=true 才生成；失败只记日志不回滚。
+    let announcementId: string | null = null
+    if (notifyUsers) {
+      try {
+        announcementId = await this.announcements.generateForPublish(fromActiveId, publishedId)
+      } catch (err) {
+        console.error(
+          `[pricing-publishing] 调价公告生成失败（价格已生效，可补发）：version=${publishedVersion}`,
+          err instanceof Error ? err.message : err,
+        )
+      }
+    }
+    return { version: publishedVersion, announcementId }
   }
 
   /**

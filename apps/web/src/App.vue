@@ -3,6 +3,7 @@ import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import LoginDialog from '@/components/auth/LoginDialog.vue'
+import AnnouncementBanner from '@/components/notice/AnnouncementBanner.vue'
 import { useAuthStore } from '@/stores/auth'
 
 const route = useRoute()
@@ -37,6 +38,7 @@ onMounted(() => {
   <div class="min-h-[100dvh] bg-surface">
     <div v-if="!isImmersiveCanvas" class="pointer-events-none fixed inset-0 bg-hero-gradient" />
     <AppHeader v-if="!isImmersiveCanvas" />
+    <AnnouncementBanner v-if="!isImmersiveCanvas" />
     <main class="relative z-10" :class="isImmersiveCanvas ? 'h-[100dvh] overflow-hidden' : ''">
       <!-- ⛔ 2026-10-25：`:key="route.path"` 不是可有可无的优化，是**切项目能生效**的前提。
            同一路由只换 param（/workflow/a → /workflow/b）时，Vue Router 默认**复用组件实例**
