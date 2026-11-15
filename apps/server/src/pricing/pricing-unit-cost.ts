@@ -39,10 +39,12 @@ export type SubjectInput = {
 }
 
 /**
- * source 四级优先级：channel_actual(实测) > negotiated(议价) > official_list(官方牌价) > provisional(暂定)。
+ * source 五级优先级：manual(人工卡片改过，采集器不得覆盖) > channel_actual(实测) > negotiated(议价)
+ * > official_list(官方牌价) > provisional(暂定)。
  * 取候选里 rank 最高者；同 rank 取 effectiveFrom 更晚（更近生效）；per_video 优先于 per_second（锚点倍乘禁用）。
  */
 const SOURCE_RANK: Record<string, number> = {
+  manual: 5,
   channel_actual: 4,
   negotiated: 3,
   official_list: 2,
@@ -62,7 +64,8 @@ function affordable(r: UnitCostRateRow, at: Date): boolean {
  * 关键约束（§3.5.4）：
  *  - 文本 token 行 unit=per_1m_tokens、unitQuantity=1e6 ⇒ 令 units=1e6，costYuanPerRequest===costYuan（每 1M token 成本），
  *    正是反比率公式 r 的输入；
- *  - provisional / costYuan<=0 / unitsPerRequest=null / unitQuantity<=0 ⇒ 一律返回 null（调用方置 cost_missing）；
+ *  - provisional / costYuan<0 / 「costYuan=0 且来源非 official_list·channel_actual」（D1 显式 0 价）/
+ *    unitsPerRequest=null / unitQuantity<=0 ⇒ 一律返回 null（调用方置 cost_missing）；
  *  - 视频 U6/D-2：成本行 modelKey 与售价键不同构，legacy per_video 行按 videoPriceFamily +
  *    (res, duration) 归一，禁止字符串直等；粗化 per_second 行（定价中心卡片写入）按
  *    模型 + 分辨率精确匹配后按 duration 展开。**无 5s 锚点线性外推分支**（缺整条行即 null）。
@@ -80,7 +83,11 @@ export function resolveUnitCost(subject: SubjectInput, rates: UnitCostRateRow[],
   const imageRes = subject.capability === 'image' ? res : '1K'
   const candidates = rates
     .filter((r) => {
-      if (!affordable(r, at) || r.unitQuantity <= 0 || r.costYuan <= 0 || r.provisional) return false
+      if (!affordable(r, at) || r.unitQuantity <= 0 || r.provisional) return false
+      // D1 显式 0 价（免费模型）：仅 official_list / channel_actual 来源的 costYuan=0 视为合法免费价；
+      // 负价恒拒；其余来源（negotiated/provisional）的 0 价视为数据残缺 ⇒ cost_missing，绝不猜。
+      if (r.costYuan < 0) return false
+      if (r.costYuan === 0 && r.source !== 'official_list' && r.source !== 'channel_actual') return false
       if (subject.capability === 'text') return r.unit === 'per_1m_tokens' && r.spec.endsWith(subject.spec)
       if (isImageFamily) return r.unit === 'per_image' && r.spec === imageRes
       if (subject.capability === 'video') {

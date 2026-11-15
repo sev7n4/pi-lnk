@@ -9,6 +9,8 @@ import { PricingPublishingController } from './pricing-publishing.controller'
 import { PricingSubjectController } from './pricing-subject.controller'
 import { PricingCostController } from './pricing-cost.controller'
 import { PricingCostRecordController } from './pricing-cost-record.controller'
+import { PricingCostCollectController } from './pricing-cost-collect.controller'
+import { COST_COLLECT_FETCH, CostCollectService } from '../pricing/cost-collect.service'
 import { PricingMarginController } from './pricing-margin.controller'
 import { PricingMaterializeController } from './pricing-materialize.controller'
 import { PricingGrayController } from './pricing-gray.controller'
@@ -45,11 +47,16 @@ import { PricingModule } from '../pricing/pricing.module'
     PricingSubjectController,
     PricingCostController,
     PricingCostRecordController,
+    PricingCostCollectController,
     PricingMarginController,
     PricingMaterializeController,
     PricingGrayController,
     AutomationAdminController,
   ],
-  providers: [AdminTokenGuard],
+  providers: [
+    AdminTokenGuard,
+    CostCollectService,
+    { provide: COST_COLLECT_FETCH, useValue: (url: string) => fetch(url, { signal: AbortSignal.timeout(20_000) }) },
+  ],
 })
 export class AdminModule {}
