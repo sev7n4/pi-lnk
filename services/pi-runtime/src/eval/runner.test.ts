@@ -676,4 +676,17 @@ describe("L1 runner · ⭐⭐ error（限流）补跑 —— 别让环境废票�
 			assert.deepEqual(r.attemptVerdicts, ["pass", "pass", "pass"]);
 		});
 	});
+
+	it("⭐ P0 D3：provider 与 model 同构透传进 per-case 结果（/sessions 响应 → CaseResult）", async () => {
+		const { runL1 } = await import("./runner.js");
+		await withSeqRuntime(new Set([2]), async (baseUrl) => {
+			const s = await runL1(runOpts(baseUrl, 2));
+			const r = s.results[0];
+			// withSeqRuntime 的 /sessions 恒回 provider:"p" / model:"m"
+			assert.equal(r.model, "m", "model 透传（既有语义，作对照锚）");
+			assert.equal(r.provider, "p", "provider 必须与 model 同样到达 CaseResult（纯报告元信息）");
+			// 汇总行用中文冒号 `provider：p`，非 pass 明细行用 `provider=p`（两种展示都要保留）
+			assert.match(s.report, /provider：p/, "汇总行必须可见 provider（P0 D3 验收）");
+		});
+	});
 });

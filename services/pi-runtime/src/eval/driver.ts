@@ -21,6 +21,13 @@
  */
 import { foldRuntimeEvents, type EvalCaseInput, type EvalLlmOverride, type EvalTranscript, type RuntimeEvent } from "./transcript.js";
 
+/**
+ * ⭐ P0 观测修复（2026-11-15，D1）：单轮默认超时。120s 会把 deepseek-v4-flash（首工具延迟
+ * >120s，完整工作流实测 170–211s）截断成「零工具调用」假象 ⇒ 300s = 实测 + 余量。
+ * 具名导出供 L0 断言（不用真等 300s 才能测），语义锚见 `2026-11-15-eval-observation-fix-design.md` §2 D1。
+ */
+export const DEFAULT_CASE_TIMEOUT_MS = 300_000;
+
 export interface RuntimeDriverOptions {
 	/** pi-runtime 基址，如 `http://127.0.0.1:8100`。 */
 	baseUrl: string;
@@ -66,7 +73,11 @@ export async function runEvalCase(
 	input: EvalCaseInput,
 ): Promise<RuntimeRunResult> {
 	const base = options.baseUrl.replace(/\/+$/, "");
-	const timeoutMs = options.timeoutMs ?? 120_000;
+	// ⭐ P0 观测修复（2026-11-15，D1）：默认超时 120s → 300s。
+	//   证据：deepseek-v4-flash 首工具延迟 >120s（思考型），完整工作流实测 170–211s；
+	//   120s 把完整工作流截断成「零工具调用」假象 ⇒ run-2 的 18/18 条 BYOK fail 全是截断假象
+	//   （C-1b §10 基线回填双探针）。300s = 211s 实测 + 余量；按族配置等 run-3 时长分布再议。
+	const timeoutMs = options.timeoutMs ?? DEFAULT_CASE_TIMEOUT_MS;
 	//⭐ 允许调用方指定 sessionId 以**复用会话做多轮对照**（2026-10-07）。
 	//   为什么需要：每轮新会话 ⇒ 无法比较「工具集恒定」与「工具集变化」对 prompt cache 的影响
 	//   —— 跨会话的 cache_read 量不可比（同会话才有共享前缀）。

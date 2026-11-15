@@ -1,7 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, type Server, type ServerResponse } from "node:http";
-import { runEvalCase } from "./driver.js";
+import { runEvalCase, DEFAULT_CASE_TIMEOUT_MS } from "./driver.js";
 
 /**
  * HTTP 驱动层测试（不起真 LLM，用假 server 验协议与折叠）。
@@ -113,6 +113,12 @@ async function startFakeRuntime(
 }
 
 describe("runEvalCase（pi-runtime HTTP 驱动）", () => {
+	it("⭐ P0 D1：默认超时 = DEFAULT_CASE_TIMEOUT_MS(300s)——deepseek-v4-flash 首工具延迟 >120s，120s 会截断完整工作流成「零调用」假象", () => {
+		// 具名常量导出 ⇒ L0 直接断言（不用真等 300s 跑一次超时）。
+		// 语义锚：2026-11-15-eval-observation-fix-design.md §2 D1；证据：C-1b §10 双探针（211s/170s）。
+		assert.equal(DEFAULT_CASE_TIMEOUT_MS, 300_000);
+	});
+
 	it("⭐ 订阅必须早于 prompt（顺序反了会丢首帧 → 假绿）", async () => {
 		const fake = await startFakeRuntime({
 			events: [

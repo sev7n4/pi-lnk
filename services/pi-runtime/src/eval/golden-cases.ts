@@ -786,18 +786,21 @@ export function evaluateMultiStep(
 }
 
 /**
- * 取本回合**最后一次** `todo_write` / `propose_plan` 的清单快照（C-1a Q2 判据）。
+ * 取本回合 `todo_write` / `propose_plan` 的**最后一条非空**清单快照（C-1a Q2 判据）。
  *
- * 「最后一次」= 终态语义，与运行时 `pickLatestSnapshot` 播种精神一致：
- * 模型可能先写一版再修订，判结构应判最终落定的清单，不是首稿。
+ * 「最后一条非空」= 实质终态语义：模型可能先写一版再修订，判结构应判最终落定的
+ * 实质清单，不是首稿；**收尾清空**（「完成后清空」纪律的合规信号）不覆盖判读
+ * ——旧「取最后一条」语义会把终态空快照误判成「条目数 0」（P0 观测修复 D2）。
+ * 全部调用均为空 ⇒ 返回最后一条空快照（「条目数 0」照报，是真失败）；
+ * 无任何拆解调用 ⇒ 返回 null（由调用方区分「没拆」失败）。
  * 双 schema 同构：`todo_write` 为 `todos:[{content,…}]`、`propose_plan` 为
  * `{steps:[…]}`，逐项 content 兜底 `summary`（生产实测两种 schema 皆有命中）。
- * 无任何拆解调用 ⇒ 返回 null（由调用方区分「没拆」失败）。
  */
 export function pickLatestPlanSnapshot(
 	toolCalls: EvalTranscript["toolCalls"],
 ): PlanSnapshot | null {
-	let found: PlanSnapshot | null = null;
+	let last: PlanSnapshot | null = null;
+	let lastNonEmpty: PlanSnapshot | null = null;
 	for (const call of toolCalls) {
 		if (call.name !== "todo_write" && call.name !== "propose_plan") continue;
 		const input = (call.input ?? {}) as {
@@ -809,9 +812,17 @@ export function pickLatestPlanSnapshot(
 			content: (it.content ?? it.summary ?? "").trim(),
 			...(it.status !== undefined ? { status: it.status } : {}),
 		}));
-		found = { tool: call.name, items };
+		const snap = { tool: call.name, items };
+		last = snap;
+		if (items.length > 0) lastNonEmpty = snap;
 	}
-	return found;
+	// ⭐ P0 观测修复（2026-11-15，D2）：「最后一条」优先取**非空**快照。
+	//   证据（C-1b §10 双探针）：模型遵守 SKILL「完成后清空」纪律，收尾会写一条空清单
+	//   ⇒ 旧「取最后一条」语义把终态空快照判成「条目数 0 低于下限」——判据与纪律打架，
+	//   模型行为健康却被判 fail。判结构应判最后一次**实质清单**；收尾清空是合规信号，不是拆解缺失。
+	//   全部为空 ⇒ 仍返回最后一条（「条目数 0 低于下限」照报：调了拆解工具但没写条目是真失败）；
+	//   无任何拆解调用 ⇒ null（「未触发拆解工具」，原语义不变）。
+	return lastNonEmpty ?? last;
 }
 
 function truncate(text: string, max = 120): string {

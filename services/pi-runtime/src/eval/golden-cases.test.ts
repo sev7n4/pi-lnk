@@ -513,6 +513,55 @@ describe("L0 · expectTodoSnapshot 判定语义（C-1a）", () => {
 		);
 		assert.equal(r.passed, true);
 	});
+
+	// ── P0 观测修复 D2：收尾清空 = 合规信号，判据读「最后一条非空」快照 ──
+	// 背景：C-1b §10 双探针实锤——模型遵守 SKILL「完成后清空」纪律，旧「取最后一条」
+	// 语义把终态空快照判成「条目数 0」，判据与纪律打架。
+
+	it("⭐ 写清单 → 收尾清空 ⇒ 判据读非空快照（不误判「条目数 0」）", () => {
+		const r = evaluateCase(
+			{ ...base, expectTodoSnapshot: { minItems: 2, maxItems: 4 } },
+			transcriptOf({
+				toolNames: ["todo_write"],
+				toolCalls: [
+					todoCall([{ content: "分析" }, { content: "创作" }]),
+					// 执行中的进度更新（非空，仍可读）
+					todoCall([{ content: "分析" }, { content: "创作" }]),
+					// ⭐ 收尾清空（合规信号）：items 空
+					todoCall([]),
+				],
+			}),
+		);
+		assert.equal(r.passed, true, `应读最后一条非空快照而通过，实际 failures=${JSON.stringify(r.failures)}`);
+	});
+
+	it("⭐ 写 → 修订 → 收尾清空 ⇒ 读修订版（最后一条非空，不是首稿）", () => {
+		const snap = pickLatestPlanSnapshot([
+			todoCall([{ content: "旧版一" }, { content: "旧版二" }]),
+			todoCall([{ content: "新版一" }, { content: "新版二" }, { content: "新版三" }]),
+			todoCall([]),
+		]);
+		assert.ok(snap, "应返回非空快照");
+		assert.equal(snap?.items.length, 3, "应取修订版（3 条）而非首稿（2 条）");
+	});
+
+	it("全部调用为空 ⇒ 维持「条目数 0」真失败（调了拆解工具但没写条目）", () => {
+		const r = evaluateCase(
+			{ ...base, expectTodoSnapshot: { minItems: 2 } },
+			transcriptOf({ toolNames: ["todo_write"], toolCalls: [todoCall([])] }),
+		);
+		assert.equal(r.passed, false);
+		assert.match(r.failures[0] ?? "", /低于下限 2/);
+	});
+
+	it("无任何拆解调用 ⇒ 维持「未触发拆解工具」（原语义）", () => {
+		assert.equal(pickLatestPlanSnapshot([]), null);
+		const r = evaluateCase(
+			{ ...base, expectTodoSnapshot: { minItems: 2 } },
+			transcriptOf({}),
+		);
+		assert.match(r.failures[0] ?? "", /未触发拆解工具/);
+	});
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
