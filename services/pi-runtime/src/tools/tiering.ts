@@ -83,6 +83,9 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	// read_media（VISP S-7）：恢复路径必须无门槛可达（直注失败时模型靠它自救），
 	// 不得进延迟集——tool_search 触发率实测为 0，延迟即不可达（R-V10）。
 	"read_media",
+	// 侧栏文本素材全文读取（2026-11-15 粘贴芯片）：T* 芯片进 prompt 只有 200 字标签，
+	// 全文只能靠本工具取回；延迟即不可达（搜索触发率实测 0，同恢复工具先例）。
+	"read_document",
 	// validate_canvas_layout（VISP Phase 2 Path C，R-V10）：确定性校验是「布局自述」的
 	// 事实源闸门（R-V6），必须在模型自述「没重叠」的同一轮可用；且常驻工具
 	// create_nodes_batch / arrange_nodes 会制造它要校验的场景（本文件铁律：

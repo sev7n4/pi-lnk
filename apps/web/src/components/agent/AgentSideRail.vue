@@ -4067,6 +4067,10 @@ defineExpose({
                   :mobile-enter-newline="!isDesktopDock"
                   :prediction-history="predictionHistory"
                   submit-on-enter
+                  :paste-text-policy="composer.pasteTextPolicy"
+                  :can-undo-paste="composer.canUndoPaste"
+                  @paste-text-chip="composer.promotePasteToTextChip"
+                  @undo-paste="composer.undoPromotedPaste"
                   @submit="onComposerSubmit"
                 />
                   <button

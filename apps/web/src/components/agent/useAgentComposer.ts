@@ -1,7 +1,8 @@
-import { computed, nextTick } from 'vue'
+import { computed, getCurrentInstance, nextTick, onUnmounted, ref, watch } from 'vue'
 import type { Ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import type { SidebarAttachment } from '@lnkpi/shared'
+import { SIDEBAR_ATTACHMENT_MAX, type SidebarAttachment } from '@lnkpi/shared'
+import { shouldPromotePasteToTextChip, type PasteTextProbe } from '@/composables/pasteTextChip'
 import { randomId } from '@/utils/randomId'
 import type MentionInput from '@/components/canvas/MentionInput.vue'
 import type { MentionOption } from '@/components/canvas/MentionInput.vue'
@@ -12,6 +13,7 @@ export interface ComposerSidebarApi {
   addFromPayload: (item: SidebarAttachment) => void
   addFromFile: (file: File) => Promise<void>
   assignRefKeys: () => string[]
+  remove: (id: string) => void
 }
 
 export interface AgentComposerDeps {
@@ -179,6 +181,57 @@ export function useAgentComposer(deps: AgentComposerDeps) {
     void addFiles(event.dataTransfer?.files ?? [])
   }
 
+  /** 长文本粘贴提升：唯一副作用点（芯片构造 / 可逆栈 / 提示）。 */
+  const PASTE_UNDO_WINDOW_MS = 6000
+  const lastPromotion = ref<{ id: string; text: string } | null>(null)
+  const canUndoPaste = computed(() => Boolean(lastPromotion.value))
+  let pasteUndoTimer: ReturnType<typeof setTimeout> | null = null
+
+  // 用户继续输入 / 发送清空草稿即失去撤销机会（textarea 原生 undo 不覆盖本次提升）
+  watch(input, () => { lastPromotion.value = null }, { flush: 'sync' })
+  if (getCurrentInstance()) {
+    onUnmounted(() => {
+      if (pasteUndoTimer) clearTimeout(pasteUndoTimer)
+    })
+  }
+
+  function pasteTextPolicy(probe: PasteTextProbe): boolean {
+    return shouldPromotePasteToTextChip({
+      ...probe,
+      pendingCount: sidebar.pendingAttachments.value.length,
+      maxCount: SIDEBAR_ATTACHMENT_MAX,
+    }).promote
+  }
+
+  function promotePasteToTextChip(text: string) {
+    const id = randomId()
+    sidebar.addFromPayload({
+      id,
+      mediaType: 'text',
+      sourceKind: 'upload',
+      label: `粘贴文本 · ${[...text].length} 字`,
+      text,
+    })
+    // addFromPayload 容量满时静默 return；policy 已保证有空位，此处再兜底
+    const idx = sidebar.pendingAttachments.value.findIndex((a) => a.id === id)
+    if (idx < 0) return
+    lastPromotion.value = { id, text }
+    if (pasteUndoTimer) clearTimeout(pasteUndoTimer)
+    pasteUndoTimer = setTimeout(() => { lastPromotion.value = null }, PASTE_UNDO_WINDOW_MS)
+    const keys = sidebar.assignRefKeys()
+    ElMessage.success(`已作为 ${keys[idx] ?? 'T1'} 素材加入 · ⌘Z 还原为文本`)
+  }
+
+  function undoPromotedPaste() {
+    const promotion = lastPromotion.value
+    if (!promotion) return
+    sidebar.remove(promotion.id)
+    lastPromotion.value = null
+    if (pasteUndoTimer) { clearTimeout(pasteUndoTimer); pasteUndoTimer = null }
+    composerRef.value?.insertText(promotion.text)
+    nextTick(() => composerRef.value?.focus())
+  }
+
   return {
     pendingAttachmentItems,
     mentionOptions,
@@ -198,5 +251,9 @@ export function useAgentComposer(deps: AgentComposerDeps) {
     onDragOver,
     onDragLeave,
     onDrop,
+    pasteTextPolicy,
+    promotePasteToTextChip,
+    undoPromotedPaste,
+    canUndoPaste,
   }
 }

@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { splitRefMentions } from '@/composables/useRefMentions'
 import { acceptPrediction, buildGhostPrediction } from '@/components/agent/composer/prediction'
+import { readPasteTextProbe, type PasteTextProbe } from '@/composables/pasteTextChip'
 
 export interface MentionOption {
   id: string
@@ -22,9 +23,18 @@ const props = defineProps<{
   mobileEnterNewline?: boolean
   /** P2-1.1 输入预测上下文：近期 user/assistant 文本（AgentSideRail 传入，cap ~20） */
   predictionHistory?: string[]
+  /** 长文本粘贴是否提升为素材芯片；不传 = 完全原生（另两个使用点零影响） */
+  pasteTextPolicy?: (probe: PasteTextProbe) => boolean
+  /** 存在可撤销的粘贴提升时，⌘/Ctrl+Z 交宿主还原 */
+  canUndoPaste?: boolean
 }>()
 
-const emit = defineEmits<{ 'update:modelValue': [v: string]; submit: [] }>()
+const emit = defineEmits<{
+  'update:modelValue': [v: string]
+  submit: []
+  'paste-text-chip': [text: string]
+  'undo-paste': []
+}>()
 
 const textareaRef = ref<HTMLTextAreaElement>()
 const backdropRef = ref<HTMLDivElement>()
@@ -113,6 +123,17 @@ function onInput(e: Event) {
   syncBackdropScroll()
 }
 
+/** 通用事件层：策略由宿主提供，本组件不认识 sidebar / 芯片。 */
+function onPaste(e: ClipboardEvent) {
+  if (!props.pasteTextPolicy) return
+  const el = textareaRef.value
+  if (!el || !e.clipboardData) return
+  const probe = readPasteTextProbe(e, el)
+  if (!props.pasteTextPolicy(probe)) return
+  e.preventDefault()
+  emit('paste-text-chip', probe.text)
+}
+
 function insertMention(option: MentionOption) {
   const el = textareaRef.value
   if (!el || mentionStart.value < 0) return
@@ -182,6 +203,12 @@ function dismissGhost() {
 }
 
 function onKeydown(e: KeyboardEvent) {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && props.canUndoPaste) {
+    e.preventDefault()
+    e.stopPropagation()
+    emit('undo-paste')
+    return
+  }
   if (showMenu.value && filteredMentions.value.length) {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
@@ -265,6 +292,7 @@ function onKeydown(e: KeyboardEvent) {
         :aria-label="placeholder ?? '内容输入'"
         :disabled="disabled"
         @input="onInput"
+        @paste="onPaste"
         @keydown="onKeydown"
         @scroll="syncBackdropScroll"
         @click="textareaRef && detectMention(textareaRef)"
