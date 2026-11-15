@@ -79,10 +79,15 @@ const TEXT_TIERS: { spec: string; rowSpec: string; label: string }[] = [
   { spec: 'cache', rowSpec: 'per_1m_tokens_cache', label: '缓存（元/百万 token）' },
 ]
 
-/** 档位行匹配：per_second / per_image / per_1m_tokens 均为 模型+spec 精确；音频 per_call 也按模型精确。 */
+/** 档位行匹配：per_second / per_image / per_1m_tokens 均为 模型+spec 精确；音频 per_call 也按模型精确。
+ *  D1：official_list / channel_actual 来源的显式 0 价（免费模型）视为已填。 */
 function tierCostYuan(rows: CostRecordRateRow[], modelKey: string, rowSpec: string, at: Date): number | null {
   const hit = rows
-    .filter((r) => r.modelKey === modelKey && r.spec === rowSpec && r.costYuan > 0 && !r.provisional && effective(r, at))
+    .filter((r) => {
+      if (r.modelKey !== modelKey || r.spec !== rowSpec || r.provisional || !effective(r, at)) return false
+      if (r.costYuan > 0) return true
+      return r.costYuan === 0 && (r.source === 'official_list' || r.source === 'channel_actual')
+    })
     .sort((a, b) => (b.effectiveFrom?.getTime() ?? 0) - (a.effectiveFrom?.getTime() ?? 0))[0]
   return hit ? hit.costYuan : null
 }
@@ -208,8 +213,8 @@ export class PricingCostRecordController {
       const mapped = this.mapTierToCostRow(entry, spec)
       await this.prisma.costRate.upsert({
         where: { channel_modelKey_spec: { channel: 'platform', modelKey, spec: mapped.rowSpec } },
-        create: { channel: 'platform', modelKey, spec: mapped.rowSpec, unit: mapped.unit, unitQuantity: mapped.unitQuantity, costYuan, source: 'official_list', provisional: false },
-        update: { unit: mapped.unit, unitQuantity: mapped.unitQuantity, costYuan, source: 'official_list', provisional: false, effectiveTo: null },
+        create: { channel: 'platform', modelKey, spec: mapped.rowSpec, unit: mapped.unit, unitQuantity: mapped.unitQuantity, costYuan, source: 'manual', provisional: false },
+        update: { unit: mapped.unit, unitQuantity: mapped.unitQuantity, costYuan, source: 'manual', provisional: false, effectiveTo: null },
       })
       if (entry.modality === 'video') await this.retireLegacyPerVideo(modelKey, spec, at)
       savedTiers += 1

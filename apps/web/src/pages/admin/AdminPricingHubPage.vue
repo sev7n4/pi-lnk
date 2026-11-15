@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { adminApi, AdminApiError, type CostRecordRow, type CostRecordTier, type MaterializeResult } from '@/services/admin-api'
+import { adminApi, AdminApiError, type CollectRunReport, type CostRecordRow, type CostRecordTier, type MaterializeResult } from '@/services/admin-api'
 
 /**
  * 定价中心（spec: docs/design/2026-11-15-pricing-console-redesign.md）：
@@ -25,6 +25,11 @@ const selectedTier = ref('')
 const refreshing = ref(false)
 const lastMaterialize = ref<MaterializeResult | null>(null)
 const lastReadinessOk = ref<boolean | null>(null)
+
+// 同步上游价目（成本自动采集，两段式：dryRun 预览 → 确认落库）
+const syncing = ref(false)
+const syncPreview = ref<CollectRunReport | null>(null)
+const syncDialogVisible = ref(false)
 
 const MODALITY_LABEL: Record<string, string> = { image: '图像', video: '视频', audio: '音频', text: '文本' }
 
@@ -169,9 +174,36 @@ async function refreshPricing(): Promise<void> {
   }
 }
 
+async function syncPreviewRun(): Promise<void> {
+  syncing.value = true
+  actionError.value = ''
+  try {
+    syncPreview.value = await adminApi.pricingS1.collectCostRates({ dryRun: true })
+    syncDialogVisible.value = true
+  } catch (err) {
+    actionError.value = errMsg(err, '同步预览失败')
+  } finally {
+    syncing.value = false
+  }
+}
+
+async function syncApply(): Promise<void> {
+  syncing.value = true
+  try {
+    const rep = await adminApi.pricingS1.collectCostRates({ dryRun: false })
+    syncDialogVisible.value = false
+    await reload(true)
+    ElMessage.success(`已写入 ${rep.written} 档${rep.keptManual.length > 0 ? `；保留人工值 ${rep.keptManual.length} 档` : ''}；预览后请点「生成价目表」出价`)
+  } catch (err) {
+    actionError.value = errMsg(err, '同步落库失败')
+  } finally {
+    syncing.value = false
+  }
+}
+
 onMounted(() => reload(false))
 
-defineExpose({ reload, saveRecord, refreshPricing, records, selectedKey, tierValues, profitPctValue, lastMaterialize, actionError })
+defineExpose({ reload, saveRecord, refreshPricing, syncPreviewRun, syncApply, syncPreview, syncDialogVisible, records, selectedKey, tierValues, profitPctValue, lastMaterialize, actionError })
 </script>
 
 <template>
@@ -180,9 +212,41 @@ defineExpose({ reload, saveRecord, refreshPricing, records, selectedKey, tierVal
       <h1 class="text-lg font-semibold text-fg">定价中心</h1>
       <span class="text-sm text-fg-3">卡片数量 = 在售模型数；增删记录在「模型管理」上下架，这里只改数值</span>
       <el-button :loading="loading" @click="reload()">刷新</el-button>
+      <el-button :loading="syncing" @click="syncPreviewRun">同步上游价目</el-button>
       <el-button type="primary" :loading="refreshing" @click="refreshPricing">生成价目表</el-button>
       <router-link to="/admin/pricing-versions" class="text-sm text-accent">价目表（只读）→</router-link>
     </header>
+
+    <!-- 同步上游价目：dryRun 预览 → 人工确认才落库（两段式，D4） -->
+    <el-dialog v-model="syncDialogVisible" title="同步上游价目（预览）" width="720px">
+      <p class="mb-2 text-sm text-fg-2">以下为将从渠道自动获取的成本行预览（只写官方牌价，不覆盖人工值）。确认后落库。</p>
+      <template v-if="syncPreview">
+        <div v-for="a in syncPreview.adapters" :key="a.upstream" class="mb-3">
+          <div class="text-sm font-semibold text-fg">{{ a.upstream }}（候选 {{ a.candidates.length }} / 跳过 {{ a.skips.length }}）</div>
+          <el-table :data="a.candidates" size="small" class="mt-1" max-height="260">
+            <el-table-column prop="modelKey" label="模型" width="200" />
+            <el-table-column prop="spec" label="档位" width="90" />
+            <el-table-column prop="costYuan" label="成本(元)" width="110" />
+            <el-table-column label="凭证">
+              <template #default="{ row }">
+                <span class="text-xs text-fg-3">{{ row.evidence.note }}</span>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div v-for="s in a.skips" :key="s.modelKey + s.spec" class="text-xs text-fg-3 mt-1">跳过 {{ s.modelKey }} · {{ s.spec }}：{{ s.reason }}</div>
+          <div v-if="a.error" class="text-xs text-danger mt-1">{{ a.upstream }} 失败：{{ a.error }}</div>
+        </div>
+        <div v-for="u in syncPreview.uncovered" :key="u.upstream" class="text-xs text-fg-3">
+          {{ u.upstream }} 无自动通道，需人工填数：{{ u.modelKeys.join('、') }}
+        </div>
+      </template>
+      <template #footer>
+        <el-button @click="syncDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="syncing" :disabled="!syncPreview || syncPreview.adapters.every((a) => a.candidates.length === 0)" @click="syncApply">
+          确认写入
+        </el-button>
+      </template>
+    </el-dialog>
 
     <p v-if="actionError" class="mb-3 rounded border border-danger-border bg-danger-bg p-2 text-sm text-danger">{{ actionError }}</p>
 

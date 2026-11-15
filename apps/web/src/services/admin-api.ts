@@ -355,6 +355,29 @@ export type CostRecordUpdateInput = {
   profitPct?: number
 }
 
+/** 成本自动采集（spec: docs/design/2026-11-15-cost-auto-collect-design.md §2/D4）。 */
+export type CollectCandidateDto = {
+  modelKey: string
+  spec: string
+  rowSpec: string
+  unit: string
+  unitQuantity: number
+  costYuan: number
+  source: 'official_list'
+  evidence: { url: string; note: string }
+}
+
+export type CollectSkipDto = { modelKey: string; spec: string; reason: string }
+
+export type CollectRunReport = {
+  ranAt: string
+  dryRun: boolean
+  adapters: { upstream: string; status: 'ok' | 'error'; candidates: CollectCandidateDto[]; skips: CollectSkipDto[]; error?: string }[]
+  uncovered: { upstream: string; modelKeys: string[] }[]
+  written: number
+  keptManual: { modelKey: string; rowSpec: string }[]
+}
+
 /** 利润策略录入：phase 由服务端 phaseOf(scope, scopeKey) 生成。 */
 export type MarginPolicyInput = {  scope: string
   scopeKey?: string | null
@@ -571,6 +594,10 @@ export const adminApi = {
     /** D-2 一次性迁移（幂等）：per_video → per_second，非线性跳过不猜。 */
     migrateVideoPerSecond: (): Promise<{ converted: number; retired: number; skipped: { modelKey: string; res: string; reason: string }[] }> =>
       unwrap(adminHttp.post('/admin/pricing/cost-records/migrate-video-per-second', {})),
+
+    /** 成本自动采集：dryRun=true（缺省）只回预览，确认后 dryRun=false 落库（只写 official_list，不覆盖 manual）。 */
+    collectCostRates: (opts: { dryRun?: boolean; upstreams?: string[] }): Promise<CollectRunReport> =>
+      unwrap(adminHttp.post('/admin/pricing/cost-collect/run', { dryRun: opts.dryRun ?? true, ...(opts.upstreams ? { upstreams: opts.upstreams } : {}) })),
 
     listMarginPolicies: (): Promise<MarginPolicyRow[]> => unwrap(adminHttp.get('/admin/pricing/margin-policies')),
 

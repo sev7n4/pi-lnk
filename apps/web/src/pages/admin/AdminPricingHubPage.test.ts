@@ -8,7 +8,7 @@ import AdminPricingHubPage from './AdminPricingHubPage.vue'
 // - saveRecord：只提交已填档位 + 自持利润率（R3/R4），空档位不提交；
 // - refreshPricing：rebuild → 建 draft → 物化 → 门禁预览全链调用。
 
-const { listCostRecords, updateCostRecord, rebuildSubjects, materializeDraft, getReadiness, versionsList, createDraft } = vi.hoisted(() => ({
+const { listCostRecords, updateCostRecord, rebuildSubjects, materializeDraft, getReadiness, versionsList, createDraft, collectCostRates } = vi.hoisted(() => ({
   listCostRecords: vi.fn(),
   updateCostRecord: vi.fn(),
   rebuildSubjects: vi.fn(),
@@ -26,6 +26,7 @@ vi.mock('@/services/admin-api', () => ({
       rebuildSubjects: (...a: unknown[]) => rebuildSubjects(...a),
       materializeDraft: (...a: unknown[]) => materializeDraft(...a),
       getReadiness: (...a: unknown[]) => getReadiness(...a),
+      collectCostRates: (...a: unknown[]) => collectCostRates(...a),
     },
     pricingVersions: {
       list: (...a: unknown[]) => versionsList(...a),
@@ -79,6 +80,10 @@ type HubVm = {
   actionError: string
   saveRecord: () => Promise<void>
   refreshPricing: () => Promise<void>
+  syncPreviewRun: () => Promise<void>
+  syncApply: () => Promise<void>
+  syncPreview: unknown
+  syncDialogVisible: boolean
 }
 
 function mountPage() {
@@ -143,5 +148,25 @@ describe('AdminPricingHubPage（定价中心）', () => {
     expect(createDraft).toHaveBeenCalledTimes(1)
     expect(materializeDraft).toHaveBeenCalledWith('draft-1')
     expect(vm.lastMaterialize?.added).toBe(5)
+  })
+
+  it('同步上游价目：dryRun 预览 → 确认落库（两段式 D4）', async () => {
+    listCostRecords.mockResolvedValue([videoRecord])
+    const preview = {
+      ranAt: 't', dryRun: true, written: 0, keptManual: [],
+      adapters: [{ upstream: 'zhipu', status: 'ok', candidates: [{ modelKey: 'cogvideox-flash', spec: '480p', costYuan: 0, evidence: { url: 'u', note: '免费' } }], skips: [] }],
+      uncovered: [],
+    }
+    collectCostRates.mockResolvedValueOnce(preview).mockResolvedValueOnce({ ...preview, dryRun: false, written: 1 })
+    const w = mountPage()
+    await flushPromises()
+    const vm = w.vm as unknown as HubVm
+    await vm.syncPreviewRun()
+    expect(collectCostRates).toHaveBeenNthCalledWith(1, { dryRun: true })
+    expect(vm.syncDialogVisible).toBe(true)
+    expect(vm.syncPreview).not.toBeNull()
+    await vm.syncApply()
+    expect(collectCostRates).toHaveBeenNthCalledWith(2, { dryRun: false })
+    expect(vm.syncDialogVisible).toBe(false)
   })
 })

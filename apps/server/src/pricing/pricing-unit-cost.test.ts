@@ -81,3 +81,35 @@ describe('image_edit / image_variant 复用图像 per_image 锚点（spec="*" �
     expect(c?.costYuanPerRequest).toBeCloseTo(0.3)
   })
 })
+
+describe('D1 显式 0 价（免费模型）', () => {
+  const freeSubject = { capability: 'video', modelKey: 'cogvideox-flash', spec: '768p:5s', upstream: 'zhipu', billableUnit: 'video_call', unitsPerRequest: 1 }
+  it('official_list 来源的 0 价 per_second 是合法免费价（costYuanPerRequest=0）', () => {
+    const row = rate({ id: 'free', modelKey: 'cogvideox-flash', spec: '768p', unit: 'per_second', unitQuantity: 1, costYuan: 0, source: 'official_list' })
+    const c = resolveUnitCost(freeSubject, [row], new Date())
+    expect(c).not.toBeNull()
+    expect(c!.costYuan).toBe(0)
+    expect(c!.costYuanPerRequest).toBe(0)
+    expect(c!.costSource).toBe('official_list')
+  })
+  it('channel_actual 来源的 0 价同样合法', () => {
+    const row = rate({ id: 'free2', modelKey: 'cogvideox-flash', spec: '768p', unit: 'per_second', unitQuantity: 1, costYuan: 0, source: 'channel_actual' })
+    expect(resolveUnitCost(freeSubject, [row], new Date())).not.toBeNull()
+  })
+  it('negotiated 来源的 0 价视为数据残缺 ⇒ null（不猜）', () => {
+    const row = rate({ id: 'bad', modelKey: 'cogvideox-flash', spec: '768p', unit: 'per_second', unitQuantity: 1, costYuan: 0, source: 'negotiated' })
+    expect(resolveUnitCost(freeSubject, [row], new Date())).toBeNull()
+  })
+  it('负价恒拒；provisional 0 价仍排除', () => {
+    const neg = rate({ id: 'neg', modelKey: 'cogvideox-flash', spec: '768p', unit: 'per_second', unitQuantity: 1, costYuan: -1, source: 'official_list' })
+    expect(resolveUnitCost(freeSubject, [neg], new Date())).toBeNull()
+    const prov = rate({ id: 'prov', modelKey: 'cogvideox-flash', spec: '768p', unit: 'per_second', unitQuantity: 1, costYuan: 0, source: 'official_list', provisional: true })
+    expect(resolveUnitCost(freeSubject, [prov], new Date())).toBeNull()
+  })
+  it('manual 来源 rank 高于 channel_actual（采集器不得覆盖人工行）', () => {
+    const manual = rate({ id: 'm', modelKey: 'cogvideox-flash', spec: '768p', unit: 'per_second', unitQuantity: 1, costYuan: 0.01, source: 'manual' })
+    const actual = rate({ id: 'a', modelKey: 'cogvideox-flash', spec: '768p', unit: 'per_second', unitQuantity: 1, costYuan: 0.02, source: 'channel_actual', effectiveFrom: new Date(Date.now() + 60_000) })
+    const c = resolveUnitCost(freeSubject, [actual, manual], new Date())
+    expect(c!.costRateId).toBe('m')
+  })
+})
