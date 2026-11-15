@@ -11,6 +11,7 @@ import {
   audioKindOf,
   computeImportTranslation,
   decodeChannelModel,
+  downstreamClosure,
   duplicateResultToCanvasActions,
   duplicateSubgraph,
   getGenerationScene,
@@ -25,6 +26,7 @@ import {
   resolveNodeRefs,
   resolveCanonicalVideoRequest,
   summarizePromptCompletion,
+  shouldPropagate,
   validateWorkflow,
   GROUP_COLOR_KEYS,
   parseGroupColorKey,
@@ -38,10 +40,14 @@ import {
   type LocalRefBinding,
   type NodeType,
   type SidebarAttachment,
+  parseAssetNodeData,
+  parseMaterialMeta,
   validateEdgeAdditions,
   validateSidebarAttachments,
   wouldCreateCycle,
 } from '@lnkpi/shared'
+// D-1：node:crypto 版 computeContentHash 走 subpath（web-safe barrel 不含它）
+import { computeContentHash } from '@lnkpi/shared/canvas/lineage.server'
 import { PrismaService } from '../prisma/prisma.service'
 import { PersistRemoteService } from '../assets/persist-remote.service'
 import { buildDigestUpsertActions } from './canvas-digest.service'
@@ -138,6 +144,60 @@ function nodeTitle(node: { data?: Record<string, unknown> | null }): string {
 
 function nodeStatus(node: { data?: Record<string, unknown> | null }): string {
   return String(node.data?.status ?? 'draft')
+}
+
+// ── D-1 L1 失效传播（spec §6.2 图 2 / §8.2-4）────────────────────────────────
+// 三段式：剥 server 专属字段（单一写者）→ 事务内算哈希比对 → 下游闭包原子写 stale。
+// 纯函数模块级定义（与 validateNodePatch 同款纪律）：可独立单测逐条打靶。
+
+/**
+ * 节点结构化内容哈希：只算 prompt/title + Task 1 资产内容字段（assetId/pinnedVersion/
+ * derivedFrom）。status/url/generationRecordId 等生命周期字段不参与（生成状态翻转不得
+ * 抖动传播）；contentHash/version/stale 簿记字段本身不参与（自反馈）。
+ * data 为 null/undefined 按空字段集处理——Task 1 前任务指针：不对 null 调
+ * parseAssetNodeData（会 ok:false），直接字段读取，绝不抛错中断保存路径。
+ */
+const CONTENT_HASH_FIELDS = ['title', 'prompt', 'assetId', 'pinnedVersion', 'derivedFrom'] as const
+
+export function computeNodeContentHash(data: Record<string, unknown> | null | undefined): string {
+  const fields: Record<string, unknown> = {}
+  for (const k of CONTENT_HASH_FIELDS) {
+    if (data?.[k] !== undefined) fields[k] = data[k]
+  }
+  return computeContentHash(fields)
+}
+
+/**
+ * stale/contentHash/version 是**服务端事务专属写**（Review Focus 1，spec §11 风险 2：
+ * 「前端 saveCanvas 整份覆盖抹掉服务端写的 stale/version」）。action 载荷里携带的这些
+ * 字段在进 applier 前剥除——更新走浅合并，不剥会把服务端刚写的标记一键抹掉。
+ */
+const SERVER_OWNED_ASSET_FIELDS: ReadonlySet<string> = new Set(['stale', 'contentHash', 'version'])
+
+export function stripServerOwnedAssetFields(actions: CanvasAction[]): CanvasAction[] {
+  return actions.map((action) => {
+    if (action.type !== 'update_node' && action.type !== 'add_node') return action
+    const data = (action.payload as { data?: unknown }).data
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return action
+    const owned = Object.keys(data as Record<string, unknown>).filter((k) =>
+      SERVER_OWNED_ASSET_FIELDS.has(k),
+    )
+    if (owned.length === 0) return action
+    const cleaned = { ...(data as Record<string, unknown>) }
+    for (const k of owned) delete cleaned[k]
+    return {
+      ...action,
+      payload: { ...action.payload, data: cleaned },
+    } as CanvasAction
+  })
+}
+
+/** changedNodeIds 对账：persist / commitStage 共用的「本次事务写到哪些节点」口径。 */
+function changedNodeIdsOf(actions: CanvasAction[]): string[] {
+  return actions
+    .filter((a) => a.type === 'update_node' || a.type === 'add_node')
+    .map((a) => (a.payload as { id?: unknown }).id)
+    .filter((id): id is string => typeof id === 'string' && id.length > 0)
 }
 
 /** update_node 的唯一可写字段集（spec §4.1）。改动此表必须同步 spec 与图 1。 */
@@ -927,8 +987,46 @@ export class AgentCanvasToolsService {
     groups: Array<{ id: string; title: string; colorKey?: string; childIds: string[] }>
     omittedCount?: number
     focusNodeId?: string
+    /**
+     * D-1 L3（spec §5.1）只读派生：`data.stale === true` 的节点 id 列表。
+     * stale 闭包在写路径（applyStalePropagation，单一写者事务内）已完成——
+     * 读路径是直读字段，**不遍历边、不调 downstreamClosure**。
+     * 空列表缺省键不出现（A-3 纪律）。
+     */
+    staleNodeIds?: string[]
+    /**
+     * D-1 L3 只读派生：携带任一资产字段（assetId / version / stale）的节点摘要。
+     * 条目内缺省键不出现（data 没有的字段不写进条目，而非填 null）。
+     * 与 groups 同理**不做焦点过滤**：stale/lineage 是跨节点整体事实，
+     * 被焦点过滤掉会让 Agent 看不到下游失效状态。
+     */
+    lineage?: Array<{ nodeId: string; assetId?: string; version?: number; stale?: boolean }>
   }> {
     const { canvas } = await this.loadSession(input.sessionId)
+    // D-1 L3 只读派生（spec §5.1）：直读 node.data 字段。data 可能缺失/垃圾
+    // （存量节点常态）——只做字段读取兜底，绝不抛错中断读链路
+    // （与 applyStalePropagation / getAssetContractSnapshot 同款纪律）。
+    let staleNodeIds: string[] | undefined
+    let lineage: Array<{ nodeId: string; assetId?: string; version?: number; stale?: boolean }> | undefined
+    for (const n of canvas.nodes) {
+      const data = (n as { data?: unknown }).data
+      if (data === null || typeof data !== 'object') continue
+      const rec = data as Record<string, unknown>
+      const stale = rec.stale === true
+      const assetId = typeof rec.assetId === 'string' && rec.assetId.length > 0 ? rec.assetId : undefined
+      const version =
+        typeof rec.version === 'number' && Number.isFinite(rec.version) ? rec.version : undefined
+      if (stale) (staleNodeIds ??= []).push(n.id)
+      if (stale || assetId !== undefined || version !== undefined) {
+        lineage ??= []
+        lineage.push({
+          nodeId: n.id,
+          ...(assetId !== undefined && { assetId }),
+          ...(version !== undefined && { version }),
+          ...(stale && { stale: true }),
+        })
+      }
+    }
     const all = canvas.nodes.map((n) => ({
       id: n.id,
       type: n.type,
@@ -938,15 +1036,24 @@ export class AgentCanvasToolsService {
     const groups = summarizeGroups(canvas.groups ?? [])
     // 焦点过滤 fail-open 三闸：无焦点 / 小画布 / 焦点不存在 → 全量（任何一类都不丢信息）。
     const focus = input.focusNodeId
-    if (!focus || all.length <= AgentCanvasToolsService.CANVAS_SUMMARY_FULL_LIMIT) return { nodes: all, groups }
-    if (!canvas.nodes.some((n) => n.id === focus)) return { nodes: all, groups }
+    if (!focus || all.length <= AgentCanvasToolsService.CANVAS_SUMMARY_FULL_LIMIT)
+      return { nodes: all, groups, ...(staleNodeIds !== undefined && { staleNodeIds }), ...(lineage !== undefined && { lineage }) }
+    if (!canvas.nodes.some((n) => n.id === focus))
+      return { nodes: all, groups, ...(staleNodeIds !== undefined && { staleNodeIds }), ...(lineage !== undefined && { lineage }) }
     const keep = new Set<string>([focus])
     for (const e of canvas.edges) {
       if (e.source === focus) keep.add(e.target)
       if (e.target === focus) keep.add(e.source)
     }
     const nodes = all.filter((n) => keep.has(n.id))
-    return { nodes, groups, omittedCount: all.length - nodes.length, focusNodeId: focus }
+    return {
+      nodes,
+      groups,
+      omittedCount: all.length - nodes.length,
+      focusNodeId: focus,
+      ...(staleNodeIds !== undefined && { staleNodeIds }),
+      ...(lineage !== undefined && { lineage }),
+    }
   }
 
   async addNodesBatch(input: {
@@ -3307,6 +3414,111 @@ export class AgentCanvasToolsService {
     }
   }
 
+  /**
+   * D-1：资产契约快照（pi-runtime acceptance 判据输入，fix round 1 裁决口径）。只读，零写路径。
+   * 判据全部来自服务端结构化字段，禁采信模型自报（#815）。派生口径：
+   * - registeredIds：canvasData 全部节点 data.assetId（经 parseAssetNodeData 解析；data 缺失
+   *   或无 assetId 的存量节点不计入）。⚠️ 真实节点 data 混有 prompt/title 等业务键，strict
+   *   zod 必然 ok:false（computeNodeContentHash 同款现实）⇒ 解析失败时降级为 L1 同款直接
+   *   字段读取，仅当 assetId 字段存在且为非空字符串时登记；data 非对象 / assetId、derivedFrom
+   *   字段类型垃圾 ⇒ skippedNodes 计数（口径见各分支注释）。
+   * - referencedIds：全部 Shot.pinnedAssetId（非空）∪ 全部节点 data.derivedFrom（去重）。
+   *   只做结构化字段，不做文本级引用提取（D-1 局限，limitations 透出）。
+   * - authorities：session 全部 Material（经 Shot 关联），metadata 经 parseMaterialMeta；
+   *   每条输出 {dimension, materialId, accepted, pinned}：
+   *     · accepted = Material.status === 'completed' —— MaterialStatus 闭集为
+   *       idle|generating|completed|failed|fallback_pending（@lnkpi/shared index.ts），
+   *       'completed' 是唯一的生产终态成功值（createFromAgent 缺省、生成成功回调落
+   *       'completed'；failed/fallback_pending/error 非验收态，见 material.service.ts）。
+   *     · pinned = entry.pinnedVersion 存在。
+   *   metadata 解析失败的素材跳过（不产生 authority，裁决口径「未解析 metadata 跳过」）。
+   * - durationRows：全部 Shot 输出 {shotId, durationMs}；dialogueChars 无结构化源 ⇒ 缺省
+   *   不造数（client 组装边界把缺 dialogueChars 归 missing ⇒ durationBudget oracle
+   *   reject + missingDuration 证据——诚实的 fail-closed，dialogue 源留 follow-up）。
+   * 响应缺字段时 client 端 fetchAssetContractInput 转 ok:false ⇒ fail-open，契约不变。
+   */
+  async getAssetContractSnapshot(input: { sessionId: string }) {
+    const session = await this.prisma.session.findUnique({ where: { id: input.sessionId } })
+    if (!session) throw new NotFoundException('会话不存在')
+    const canvas = parseCanvas(session.canvasData)
+    const shots = await this.prisma.shot.findMany({
+      where: { sessionId: input.sessionId },
+      select: {
+        id: true,
+        durationMs: true,
+        pinnedAssetId: true,
+        materials: { select: { id: true, status: true, metadata: true } },
+      },
+    })
+    const registeredIds: string[] = []
+    const derivedFromIds: string[] = []
+    let skippedNodes = 0
+    for (const node of canvas.nodes) {
+      const data = (node as { data?: unknown }).data
+      // 存量节点多数无 data 字段：不算「解析失败」，静默不计入
+      if (data === null || data === undefined) continue
+      const parsed = parseAssetNodeData(data)
+      if (parsed.ok) {
+        if (parsed.value.assetId !== undefined) registeredIds.push(parsed.value.assetId)
+        if (parsed.value.derivedFrom !== undefined) derivedFromIds.push(parsed.value.derivedFrom)
+        continue
+      }
+      // 严格解析失败（真实常态：data 混业务键）⇒ L1 computeNodeContentHash 同款直接字段读取
+      if (typeof data !== 'object' || Array.isArray(data)) {
+        skippedNodes++ // data 非对象 ⇒ 不可解析
+        continue
+      }
+      const rec = data as Record<string, unknown>
+      const assetId = rec.assetId
+      if (assetId !== undefined && (typeof assetId !== 'string' || assetId.length === 0)) {
+        skippedNodes++ // assetId 字段类型垃圾 ⇒ 不可采信
+        continue
+      }
+      if (assetId !== undefined) registeredIds.push(assetId)
+      const derivedFrom = rec.derivedFrom
+      if (derivedFrom !== undefined && (typeof derivedFrom !== 'string' || derivedFrom.length === 0)) {
+        skippedNodes++ // derivedFrom 字段类型垃圾 ⇒ 不可采信
+        continue
+      }
+      if (derivedFrom !== undefined) derivedFromIds.push(derivedFrom)
+    }
+    const authorities: Array<{
+      dimension: string
+      materialId: string
+      accepted: boolean
+      pinned: boolean
+    }> = []
+    for (const shot of shots) {
+      for (const material of shot.materials) {
+        const meta = parseMaterialMeta(material.metadata)
+        if (!meta.ok) continue // 未解析 metadata ⇒ 跳过该素材（不产生 authority）
+        for (const [dimension, entry] of Object.entries(meta.value.authority ?? {})) {
+          authorities.push({
+            dimension,
+            materialId: material.id,
+            accepted: material.status === 'completed',
+            pinned: entry.pinnedVersion !== undefined,
+          })
+        }
+      }
+    }
+    const durationRows = shots.map((shot) => ({
+      shotId: shot.id,
+      ...(shot.durationMs !== null ? { durationMs: shot.durationMs } : {}),
+    }))
+    const pinnedIds = shots
+      .map((s) => s.pinnedAssetId)
+      .filter((v): v is string => typeof v === 'string' && v.length > 0)
+    return {
+      registeredIds,
+      referencedIds: [...new Set([...pinnedIds, ...derivedFromIds])],
+      authorities,
+      durationRows,
+      skippedNodes,
+      limitations: ['text-references-not-derived'],
+    }
+  }
+
   async duplicateNode(input: {
     sessionId: string
     userId: string
@@ -4049,6 +4261,50 @@ export class AgentCanvasToolsService {
     return { ...latest, status: latest.status === 'generating' ? 'timeout' : latest.status }
   }
 
+  /**
+   * D-1 L1 失效传播（spec §6.2 图 2 / §8.2-4）：单一写者事务内的**内存态变换**。
+   *
+   * brief 建议签名 `applyStalePropagation(tx, sessionId, changedNodeIds)`；本仓实际代码
+   * 中 persist 的 `tx.session.update` 是唯一写点（merged 内存态一次写回）——若本方法
+   * 再持 tx 独立写一次，等于在同一事务里开出第二条写入通道（spec §6.2 硬约束禁止）。
+   * 故收缩为就地变换：调用方在 tx.session.update 前对 merged 生效，写通道保持唯一
+   * （brief「插入点以实际代码为准」）。
+   *
+   * 语义：哈希不变 ⇒ 不写任何东西（防抖动幂等，spec §8.2-4）；哈希变化/首次 ⇒
+   * changed 节点盖 contentHash + version 自增，并写 stale:false（重写即新鲜——
+   * 本次拿到新 contentHash/version，自身不是陈旧品；若此前被标 stale 在此一并清除），
+   * 且对 downstreamClosure（BFS，不含起点）的每个下游节点写 data.stale=true——
+   * 全部在同一事务内落库。
+   */
+  private applyStalePropagation(canvas: CanvasData, changedNodeIds: readonly string[]): void {
+    if (changedNodeIds.length === 0) return
+    const propagating: string[] = []
+    for (const id of changedNodeIds) {
+      const node = canvas.nodes.find((n) => n.id === id)
+      if (!node) continue
+      // Task 1 前任务指针：data 可能 null/undefined——只做字段读取兜底，不调 parse，
+      // 绝不抛错中断整条保存路径。
+      const prevHash =
+        typeof node.data?.contentHash === 'string' ? node.data.contentHash : undefined
+      const nextHash = computeNodeContentHash(node.data)
+      if (!shouldPropagate(prevHash, nextHash)) continue
+      node.data = {
+        ...(node.data ?? {}),
+        contentHash: nextHash,
+        version: (Number(node.data?.version) || 0) + 1,
+        stale: false,
+      }
+      propagating.push(id)
+    }
+    if (propagating.length === 0) return
+    const downstreamIds = new Set(downstreamClosure(canvas.edges ?? [], propagating))
+    if (downstreamIds.size === 0) return
+    for (const node of canvas.nodes) {
+      if (!downstreamIds.has(node.id)) continue
+      node.data = { ...(node.data ?? {}), stale: true }
+    }
+  }
+
   private async loadSession(sessionId: string): Promise<{
     id: string
     userId: string
@@ -4114,21 +4370,27 @@ export class AgentCanvasToolsService {
       const staged = parseStagedActions(session.stagedActions)
       if (staged.length === 0) return { actions: [] }
       const current = parseCanvas(session.canvasData)
-      const updated = this.applier.apply(current, staged, {
+      // D-1 review fix：staged 提交与 persist 同型接线（无第二事务）——
+      // (a) staged 载荷剥 server 专属资产字段；(b) staged 内容变更算 hash 传播下游 stale，
+      // 全部随同一条 tx.session.update 写回。
+      const safeActions = stripServerOwnedAssetFields(staged)
+      const updated = this.applier.apply(current, safeActions, {
         onGuardReject: (nodeId) =>
           this.logger.warn(
             `terminal_regen_rejected sessionId=${input.sessionId} nodeId=${nodeId} path=commitStage`,
           ),
       })
+      const merged: CanvasData = { ...current, ...updated }
+      this.applyStalePropagation(merged, changedNodeIdsOf(safeActions))
       await tx.session.update({
         where: { id: input.sessionId },
         data: {
-          canvasData: JSON.stringify({ ...current, ...updated }),
+          canvasData: JSON.stringify(merged),
           stagedActions: null,
           stagedAt: null,
         },
       })
-      return { actions: staged }
+      return { actions: safeActions }
     })
   }
 
@@ -4339,11 +4601,16 @@ export class AgentCanvasToolsService {
         )
       }
       const current = parseCanvas(session.canvasData)
-      const updated = this.applier.apply(current, actions, {
+      // D-1 Review Focus 1：server 专属资产字段进 applier 前剥除（见 stripServerOwnedAssetFields）。
+      const safeActions = stripServerOwnedAssetFields(actions)
+      const updated = this.applier.apply(current, safeActions, {
         onGuardReject: (nodeId) =>
           this.logger.warn(`terminal_regen_rejected sessionId=${sessionId} nodeId=${nodeId}`),
       })
       const merged: CanvasData = { ...current, ...updated }
+      // D-1 L1 失效传播（spec §6.2 图 2 / §8.2-4）：与 canvasData 落库同一事务——
+      // stale 标记与 version 更新同生共死，禁止第二条写入通道。
+      this.applyStalePropagation(merged, changedNodeIdsOf(safeActions))
       await tx.session.update({
         where: { id: sessionId },
         data: { canvasData: JSON.stringify(merged) },

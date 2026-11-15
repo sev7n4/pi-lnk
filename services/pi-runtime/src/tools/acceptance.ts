@@ -25,8 +25,9 @@ export const acceptanceSchema = Type.Object(
 			[
 				Type.Literal("generation", { description: "生成类收尾验收：本会话最近一次生成有证据（C-2a）" }),
 				Type.Literal("canvas_state", { description: "画布终态验收：节点数/按类型计数（C-2b）" }),
+				Type.Literal("asset_contract", { description: "资产契约验收：ID 引用闭包 / 权威引用唯一 / 台词时长预算（D-1）" }),
 			],
-			{ description: "只允许两类可机检 oracle" },
+			{ description: "只允许已实现校验的可机检 oracle" },
 		),
 		generation: Type.Optional(
 			Type.Object(
@@ -58,14 +59,31 @@ export const acceptanceSchema = Type.Object(
 				{ description: "画布判据（至少一谓词）；仅 kind=canvas_state 时可给" },
 			),
 		),
+		assetContract: Type.Optional(
+			Type.Object(
+				{
+					idClosure: Type.Optional(Type.Boolean({ description: "校验剧本实体引用闭包（孤儿/一名多实体 ⇒ 拒）" })),
+					authorityRef: Type.Optional(Type.Boolean({ description: "校验各维度权威素材唯一且已验收钉版" })),
+					durationBudget: Type.Optional(Type.Boolean({ description: "校验台词字数 ≤ Shot 结构化时长×4.5" })),
+				},
+				{ description: "至少一谓词为 true；判据输入由服务端结构化数据提供，禁自由文本" },
+			),
+		),
 	},
 	{ description: "可选。仅当本项标 completed 时生效；不接受自由文本/主观描述" },
 );
 
+export interface AssetContractPredicates {
+	idClosure?: boolean;
+	authorityRef?: boolean;
+	durationBudget?: boolean;
+}
+
 export interface TodoAcceptance {
-	kind: "generation" | "canvas_state";
+	kind: "generation" | "canvas_state" | "asset_contract";
 	generation?: { requireSucceeded?: boolean };
 	canvasState?: CanvasCountsExpect;
+	assetContract?: AssetContractPredicates;
 }
 
 export interface GenerationLatest {
@@ -81,9 +99,10 @@ export interface GenerationLatest {
  *  不要据此推断「模型可以省略 kind」。C-2b 的 canvas_state 显式带 kind + canvasState
  *  （§14.4 防游戏化：至少一谓词）。 */
 export type AcceptanceRequirement = {
-	kind?: "generation" | "canvas_state";
+	kind?: "generation" | "canvas_state" | "asset_contract";
 	requireSucceeded?: boolean;
 	canvasState?: CanvasCountsExpect;
+	assetContract?: AssetContractPredicates;
 };
 export type AcceptanceOutcome = "declared" | "pass" | "fail_closed" | "fail_open";
 
@@ -150,7 +169,7 @@ function parseRange(
 export function parseAcceptance(value: unknown): AcceptanceParse {
 	const rec = readRecord(value, "acceptance");
 	if (!rec.ok) return rec;
-	const allowed = new Set(["kind", "generation", "canvasState"]);
+	const allowed = new Set(["kind", "generation", "canvasState", "assetContract"]);
 	for (const key of Object.keys(rec.value)) {
 		if (!allowed.has(key)) {
 			return { ok: false, reason: `acceptance.${key}: 不允许的字段（自由文本禁入）` };
@@ -160,6 +179,9 @@ export function parseAcceptance(value: unknown): AcceptanceParse {
 	if (kind === "generation") {
 		if (rec.value.canvasState !== undefined) {
 			return { ok: false, reason: "acceptance.canvasState 只能用于 kind=canvas_state" };
+		}
+		if (rec.value.assetContract !== undefined) {
+			return { ok: false, reason: "acceptance.assetContract 只能用于 kind=asset_contract" };
 		}
 		const gen = rec.value.generation;
 		if (gen === undefined) return { ok: true, requirement: {} };
@@ -179,6 +201,9 @@ export function parseAcceptance(value: unknown): AcceptanceParse {
 	if (kind === "canvas_state") {
 		if (rec.value.generation !== undefined) {
 			return { ok: false, reason: "acceptance.generation 只能用于 kind=generation" };
+		}
+		if (rec.value.assetContract !== undefined) {
+			return { ok: false, reason: "acceptance.assetContract 只能用于 kind=asset_contract" };
 		}
 		const raw = rec.value.canvasState;
 		if (raw === undefined) {
@@ -217,9 +242,41 @@ export function parseAcceptance(value: unknown): AcceptanceParse {
 		}
 		return { ok: true, requirement: { kind: "canvas_state", canvasState } };
 	}
+	if (kind === "asset_contract") {
+		if (rec.value.generation !== undefined) {
+			return { ok: false, reason: "acceptance.generation 只能用于 kind=generation" };
+		}
+		if (rec.value.canvasState !== undefined) {
+			return { ok: false, reason: "acceptance.canvasState 只能用于 kind=canvas_state" };
+		}
+		const raw = rec.value.assetContract;
+		if (raw === undefined) {
+			return { ok: false, reason: "acceptance.assetContract: kind=asset_contract 时必须给资产契约判据" };
+		}
+		const acRec = readRecord(raw, "acceptance.assetContract");
+		if (!acRec.ok) return acRec;
+		const assetContract: AssetContractPredicates = {};
+		for (const key of Object.keys(acRec.value)) {
+			if (key !== "idClosure" && key !== "authorityRef" && key !== "durationBudget") {
+				return { ok: false, reason: `acceptance.assetContract.${key}: 不允许的字段` };
+			}
+			const v = acRec.value[key];
+			if (typeof v !== "boolean") {
+				return { ok: false, reason: `acceptance.assetContract.${key}: 必须是 boolean` };
+			}
+			if (v === true) {
+				assetContract[key as keyof AssetContractPredicates] = true;
+			}
+		}
+		// §14.4 防游戏化（C-2b 同款）：至少一谓词为 true（空对象/全 false 等于「写了不校验」）
+		if (assetContract.idClosure !== true && assetContract.authorityRef !== true && assetContract.durationBudget !== true) {
+			return { ok: false, reason: "acceptance.assetContract: 至少一谓词为 true（idClosure / authorityRef / durationBudget）" };
+		}
+		return { ok: true, requirement: { kind: "asset_contract", assetContract } };
+	}
 	return {
 		ok: false,
-		reason: `acceptance.kind 必须是 "generation" 或 "canvas_state"（实际：${String(kind)}）`,
+		reason: `acceptance.kind 必须是 "generation" / "canvas_state" / "asset_contract"（实际：${String(kind)}）`,
 	};
 }
 
@@ -294,6 +351,118 @@ export function createNestGenerationOracle(client: OracleNestClient): Generation
 			} catch (error) {
 				return { ok: false, reason: error instanceof Error ? error.message : String(error) };
 			}
+		},
+	};
+}
+
+/** D-1：资产契约判定器输入（asset-oracle.ts 三 judge 的共同入参形态）。 */
+export interface AssetContractJudgeInput {
+	registeredIds: string[];
+	referencedIds: string[];
+	authorities: Array<{ dimension: string; materialId: string; accepted: boolean; pinned: boolean }>;
+	durationRows: Array<{ shotId: string; durationMs?: number; dialogueChars?: number }>;
+}
+
+export type AssetContractOracleResult =
+	| { ok: true; input: AssetContractJudgeInput }
+	| { ok: false; reason: string };
+
+export interface AssetContractOracle {
+	inspect(input: { sessionId: string }): Promise<AssetContractOracleResult>;
+}
+
+/** D-1：资产契约快照组装。查询故障/响应缺字段 ⇒ ok:false（调用方 fail-open + 计数）；
+ *  判据只读服务端结构化字段（Shot.durationMs 等），禁采信模型自报（#815）。
+ *  ⚠️ durationMs/dialogueChars 非有限数（NaN/Infinity）或负值一律归入 missing 语义
+ *  （Task 4 评审 Minor：证据不足不猜——missing 由 judgeDurationBudget fail-closed 拒）。
+ *  端点 /agent/internal/get-asset-contract-snapshot 由 Nest 侧聚合返回：
+ *  画布节点 data 实体登记（@lnkpi/shared AssetNodeData.assetId）为 registeredIds、
+ *  边 + Material.metadata（parseMaterialMeta）的 authority 为 authorities、
+ *  Shot 结构化列为 durationRows；端点未就绪时调用抛错 ⇒ ok:false ⇒ fail-open，契约仍闭合。 */
+export async function fetchAssetContractInput(
+	client: OracleNestClient,
+	sessionId: string,
+): Promise<AssetContractOracleResult> {
+	try {
+		const data: unknown = await client.post("/agent/internal/get-asset-contract-snapshot", { sessionId });
+		const rec = readRecord(data, "get-asset-contract-snapshot.data");
+		if (!rec.ok) return { ok: false, reason: rec.reason };
+		const idLists: Array<[string, string[]]> = [];
+		for (const key of ["registeredIds", "referencedIds"] as const) {
+			const arr = rec.value[key];
+			if (!Array.isArray(arr)) {
+				return { ok: false, reason: `get-asset-contract-snapshot.data.${key}: 非数组` };
+			}
+			const ids: string[] = [];
+			for (const [i, raw] of arr.entries()) {
+				if (typeof raw !== "string" || raw.length === 0) {
+					return { ok: false, reason: `data.${key}[${i}]: 缺失或非字符串` };
+				}
+				ids.push(raw);
+			}
+			idLists.push([key, ids]);
+		}
+		const rawAuthorities = rec.value.authorities;
+		if (!Array.isArray(rawAuthorities)) {
+			return { ok: false, reason: "get-asset-contract-snapshot.data.authorities: 非数组" };
+		}
+		const authorities: AssetContractJudgeInput["authorities"] = [];
+		for (const [i, raw] of rawAuthorities.entries()) {
+			const arec = readRecord(raw, `data.authorities[${i}]`);
+			if (!arec.ok) return { ok: false, reason: arec.reason };
+			const { dimension, materialId, accepted, pinned } = arec.value;
+			if (
+				typeof dimension !== "string" ||
+				dimension.length === 0 ||
+				typeof materialId !== "string" ||
+				materialId.length === 0
+			) {
+				return { ok: false, reason: `data.authorities[${i}].dimension/materialId: 缺失或非字符串` };
+			}
+			if (typeof accepted !== "boolean" || typeof pinned !== "boolean") {
+				return { ok: false, reason: `data.authorities[${i}].accepted/pinned: 缺失或非 boolean` };
+			}
+			authorities.push({ dimension, materialId, accepted, pinned });
+		}
+		const rawRows = rec.value.durationRows;
+		if (!Array.isArray(rawRows)) {
+			return { ok: false, reason: "get-asset-contract-snapshot.data.durationRows: 非数组" };
+		}
+		const durationRows: AssetContractJudgeInput["durationRows"] = [];
+		for (const [i, raw] of rawRows.entries()) {
+			const rrec = readRecord(raw, `data.durationRows[${i}]`);
+			if (!rrec.ok) return { ok: false, reason: rrec.reason };
+			const shotId = rrec.value.shotId;
+			if (typeof shotId !== "string" || shotId.length === 0) {
+				return { ok: false, reason: `data.durationRows[${i}].shotId: 缺失或非字符串` };
+			}
+			const row: { shotId: string; durationMs?: number; dialogueChars?: number } = { shotId };
+			const usable = (v: unknown): v is number =>
+				typeof v === "number" && Number.isFinite(v) && v >= 0;
+			if (usable(rrec.value.durationMs)) row.durationMs = rrec.value.durationMs;
+			if (usable(rrec.value.dialogueChars)) row.dialogueChars = rrec.value.dialogueChars;
+			durationRows.push(row);
+		}
+		return {
+			ok: true,
+			input: {
+				registeredIds: idLists[0]![1],
+				referencedIds: idLists[1]![1],
+				authorities,
+				durationRows,
+			},
+		};
+	} catch (error) {
+		return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+	}
+}
+
+/** D-1 生产资产契约 oracle：与 generation/canvas 同款窄面 client + fail-open 纪律
+ *  （查询异常/形态不符统一转 ok:false，由调用方按 §14.3 放行）。 */
+export function createNestAssetContractOracle(client: OracleNestClient): AssetContractOracle {
+	return {
+		async inspect(input: { sessionId: string }): Promise<AssetContractOracleResult> {
+			return fetchAssetContractInput(client, input.sessionId);
 		},
 	};
 }

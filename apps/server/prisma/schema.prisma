@@ -325,6 +325,10 @@ model Story {
   status       String   @default("draft")
   episodeCount Int      @default(1)
   coverUrl     String?
+  // D-1：内容哈希与锁定版本（spec §7 Story 行）。
+  contentHash   String?
+  lockedAt      DateTime?
+  lockedVersion Int?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 }
@@ -358,6 +362,14 @@ model Shot {
   status    String     @default("draft")
   positionX Float      @default(0)
   positionY Float      @default(0)
+  // D-1 资产契约（spec 2026-11-15-d1 §7）：闭集枚举值见 @lnkpi/shared assetContract.ts；判据只读本列，禁采信模型自报数字（#815）。
+  axisSide      String?
+  screenDirection String?
+  shotSize      String?
+  durationMs    Int?
+  contentHash   String?
+  version       Int?
+  pinnedAssetId String?
   materials Material[]
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt

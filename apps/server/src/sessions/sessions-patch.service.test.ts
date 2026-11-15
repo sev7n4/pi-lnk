@@ -73,6 +73,27 @@ describe('sanitizeClientOps（C1a 纯函数）', () => {
     warn.mockRestore()
   })
 
+  it('D-1：stale / contentHash / version 只由服务端单一写者事务写 ⇒ PATCH 载荷携带即剥除', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { sanitized, strippedKeys } = sanitizeClientOps([
+      {
+        type: 'update_node',
+        payload: {
+          id: 'n1',
+          data: { stale: false, contentHash: 'fake', version: 99, title: '保留' },
+        },
+      },
+    ])
+    expect(strippedKeys).toBe(3)
+    const data = (sanitized[0] as { payload: { data: Record<string, unknown> } }).payload.data
+    expect(data).toEqual({ title: '保留' })
+    for (const key of ['stale', 'contentHash', 'version']) {
+      expect(CLIENT_FORBIDDEN_NODE_DATA_KEYS.has(key)).toBe(true)
+      expect(key in data).toBe(false)
+    }
+    warn.mockRestore()
+  })
+
   it('双端 ratchet：web canvasDiff 与服务端禁写键名单逐字一致（防单侧放宽）', () => {
     const webSrc = readFileSync(
       fileURLToPath(new URL('../../../web/src/utils/canvasDiff.ts', import.meta.url)),

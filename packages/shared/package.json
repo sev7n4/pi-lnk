@@ -9,12 +9,20 @@
     ".": "./src/index.ts",
     "./upstreamReconciliation": "./src/upstreamReconciliation.ts",
     "./modelHealth": "./src/modelHealth.ts",
-    "./shareTemplate": "./src/shareTemplate.ts"
+    "./shareTemplate": "./src/shareTemplate.ts",
+    "./canvas/lineage.server": "./src/canvas/lineage.server.ts"
   },
   "typesVersions": {
     "*": {
-      "upstreamReconciliation": ["src/upstreamReconciliation.ts"],
-      "modelHealth": ["src/modelHealth.ts"]
+      "upstreamReconciliation": [
+        "src/upstreamReconciliation.ts"
+      ],
+      "modelHealth": [
+        "src/modelHealth.ts"
+      ],
+      "canvas/lineage.server": [
+        "src/canvas/lineage.server.ts"
+      ]
     }
   },
   "scripts": {
@@ -28,6 +36,7 @@
     "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
+    "@types/node": "^26.6.6",
     "typescript": "^5.7.3",
     "vitest": "^3.2.4"
   }
