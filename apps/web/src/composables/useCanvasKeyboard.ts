@@ -1,4 +1,5 @@
 import { onMounted, onUnmounted, type Ref } from 'vue'
+import { isTypingTarget } from '@/utils/isTypingTarget'
 
 interface CanvasKeyboardOptions {
   enabled: Ref<boolean>
@@ -13,13 +14,6 @@ interface CanvasKeyboardOptions {
 
 export function useCanvasKeyboard(options: CanvasKeyboardOptions) {
   const pressed = new Set<string>()
-
-  function isTypingTarget(target: EventTarget | null) {
-    if (!(target instanceof HTMLElement)) return false
-    const tag = target.tagName
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true
-    return target.isContentEditable
-  }
 
   function onKeyDown(event: KeyboardEvent) {
     if (!options.enabled.value || isTypingTarget(event.target)) return

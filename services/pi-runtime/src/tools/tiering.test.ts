@@ -414,8 +414,16 @@ describe("render_canvas_view 常驻", () => {
  * **2026-10-06 实测结果：hit = 6、miss/empty = 0**（无常驻替代品的探针 4/4 主动搜索命中）
  * ⇒ 扩到本批全量 9 个（见 tiering.ts 文件头「分级下发实验已做完」）。
  */
-describe("减点名下沉：读类诊断 9 工具必须延迟（2026-10-06，已由分级下发实验支持）", () => {
+describe("侧栏文本素材全文读取（2026-11-15 粘贴芯片保真前置）", () => {
+	it("read_document 必须常驻：T* 芯片进 prompt 只有 200 字标签，全文恢复路径不得延迟", () => {
+		assert.ok(ALWAYS_ON_TOOL_NAMES.has("read_document"));
+	});
+});
+
+describe("减点名下沉：读类诊断 DEMOTED 清单必须延迟（2026-10-06 实验）", () => {
 	// 2026-10-07：`get_canvas_summary` 已从本清单移出（提回常驻，见下方 describe）
+	// 2026-11-15：read_document 因侧栏文本芯片全文恢复路径提回常驻（见上方 describe），
+	// 从本清单移出；其余仍为分级下发实验的下沉结果。
 	const DEMOTED = [
 		"get_canvas_layout",
 		"get_node",
@@ -423,7 +431,6 @@ describe("减点名下沉：读类诊断 9 工具必须延迟（2026-10-06，已
 		"get_generation_status",
 		"get_generation_diagnostic",
 		"list_user_assets",
-		"read_document",
 		"list_model_options",
 	];
 

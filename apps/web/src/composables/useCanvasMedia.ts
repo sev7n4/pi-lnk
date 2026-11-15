@@ -1,4 +1,5 @@
 import type { Ref } from 'vue'
+import { isTypingTarget } from '@/utils/isTypingTarget'
 import { ElMessage } from 'element-plus'
 import { apiUrl, resolveMediaUrl } from '@/services/api-base'
 
@@ -225,6 +226,8 @@ export function setupCanvasMediaHandlers(
   }
 
   async function onPaste(event: ClipboardEvent) {
+    // P0：window 级监听不得抢走可编辑目标（composer textarea）的原生粘贴。
+    if (isTypingTarget(event.target)) return
     const items = event.clipboardData?.items
     if (!items?.length) return
     for (const item of items) {
