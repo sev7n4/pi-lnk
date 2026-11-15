@@ -113,3 +113,18 @@ describe('D1 显式 0 价（免费模型）', () => {
     expect(c!.costRateId).toBe('m')
   })
 })
+
+describe('D-3 音频 chars_100 主体（unitsPerRequest=null 仍可解析）', () => {
+  const audioSubject = { capability: 'audio', modelKey: 'step-tts-mini', spec: 'voice', upstream: 'stepfun', billableUnit: 'chars_100', unitsPerRequest: null }
+  it('chars_100 单位基数=100：per_call 行(每百字符价) 折算 costYuanPerRequest===costYuan', () => {
+    const row = rate({ id: 'tts', modelKey: 'step-tts-mini', spec: 'per_100_chars', unit: 'per_call', unitQuantity: 100, costYuan: 0.009 })
+    const c = resolveUnitCost(audioSubject, [row], new Date())
+    expect(c).not.toBeNull()
+    expect(c!.costYuanPerRequest).toBeCloseTo(0.009, 10)
+    expect(c!.unitsPerRequest).toBe(100)
+  })
+  it('跨模型 per_call 行不得命中（音档按模型精确）', () => {
+    const row = rate({ id: 'other', modelKey: 'stepaudio-3-tts', spec: 'per_100_chars', unit: 'per_call', unitQuantity: 100, costYuan: 0.0095 })
+    expect(resolveUnitCost(audioSubject, [row], new Date())).toBeNull()
+  })
+})
