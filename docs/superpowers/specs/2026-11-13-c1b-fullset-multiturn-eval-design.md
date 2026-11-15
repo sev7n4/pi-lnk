@@ -150,3 +150,30 @@ q4-03 的价值：它是「三层点名模型」P3（系统提示点名）生效
 2. identity 观测的 content 逐字对比口径保守（§3.3），断裂率数字的含义必须在报告里写明口径；
 3. 画布无重置能力 ⇒ Q3 对画布终态的断言力弱于理想（上界 only）——若未来 C-2 需要精确初始态，画布快照/恢复是独立立项；
 4. Q4 观测期判据宽松（二选一即过）——扩强门禁等 spawned 持续性数据（#858 后 7 天复核纪律）。
+
+## 10. 基线回填（2026-11-15，BYOK 解墙后 run-1/run-2，只追加）
+
+> 上游：`2026-11-15-a3…` 同期以用户 DeepSeek key 走 EVAL_BYOK（`deepseek-v4-flash`，账号 17279698608 画布 `cmwcxs37a00hhpa011rurftwg`）。run-1 = `eval-full.json`（pod 8465c9b45f-zlsxj，interval 500ms，缺逐条 model）；run-2 = `eval-run2.json`（pod 86f7f74984-ccvk5，pod 内临时 patch driver 使超时路径补记 model，interval 12s）。PR #880（`ac61f4cd`）将该修复落正式源码。两轮 registryHash/Version 完全一致（`395a3cf49b1f` / v1.4.1）、同画布、degraded=false ⇒ 逐 case 可比。
+
+### 10.1 结果与逐条归因
+
+| 分桶 | 数量 | 归因 | 明细 |
+|---|---|---|---|
+| pass | 8 | BYOK 真过 | decomp-n2/n3、q4-05、gen-claim-003（run-2 翻正，两轮均 3 attempts，属抖动）、vision-001、tool-discovery-002/003、write-guard-001 |
+| fail | 18 | BYOK 干净失败 | **16 条 = 120s 超时零工具调用**（decomp-01..06/n1、rec-01/n4、struct-01..03、q4-01/02/04、vision-002）⇒ 主导形态 = deepseek-v4-flash 首工具调用延迟 > 120s，非 429 非 pacing；**2 条 = 3 attempts 工具选择 miss**（tool-discovery-001 缺 arrange_nodes、sidebar-ref-001 缺 apply_sidebar_attachments） |
+| error | 9 | 结构性排除 | 8 条 agnes-2.5-flash 429「请实名认证」（q3-01..06/08、q4-03——case 显式指定 platform 模型）；1 条画布预检（q3-07：67 节点 > 上界 8，跨 case 污染，环境问题非模型问题） |
+| skipped | 4 | harness 能力边界 | gen-claim-001/002、write-guard-002/003 = requiresConfirm（propose_generation 阻塞等用户点确认） |
+
+（run-1 同形态：pass 7 / fail 19 / error 9 / skipped 4——勘误：11-15 日志早前记 skipped=3，实为 4。）
+
+### 10.2 与 §8 验收标准第 3 条的对账
+
+- 全集跑通 ≥2 轮 ✅（run-1/run-2）；抖动率 1/39 ≈ 2.6% < 20% ✅；model id 列 ✅（run-2 起逐 case）；失败归因三分类 ✅（§10.1 fail/error/skipped 三态分离）；identity 断裂计数区块 ✅（runner 报告内建）。
+- **不拍阈值**：C-2c spec 门禁（G1–G4）未达前本基线只作 gate 输入，不建 collectors/不设通过率红线。
+- 遗留：agnes 通道 8 条 429 待实名认证解墙后补跑；画布快照/恢复未立项前 q3-07 类预检 error 持续存在；requiresConfirm 4 条需真机走查覆盖（A-6）。
+
+### 10.3 上线复测（pi-runtime:ac61f4cd，2026-11-15）
+
+- success 路径：`--only vision-001` → pass 2684ms，model=deepseek-v4-flash，registryHash=395a3cf49b1f（pod 内原生探针，非 patch 版）。
+- catch 路径：`--only vision-001 --timeout 3000` 强制超时 → verdict=fail + **model=deepseek-v4-flash 带回** ✅——run-1 的「超时无 model」归因断层消除，为 #880 的行为级复测判据。
+- 边界（只记录不扩判据）：driver 三个返回点均带 `provider`（dist `createdProvider`×5 取证），但 runner 组装 per-case 结果只透传 `model`——§8.7 只要求 model 列，provider 列进报告属可选 follow-up（另行授权，不阻塞本基线）。
