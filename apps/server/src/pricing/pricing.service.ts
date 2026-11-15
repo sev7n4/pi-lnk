@@ -33,6 +33,7 @@ import {
   type TextTokenSpec,
 } from './pricing.core'
 import { subjectKeyOf } from './pricing-subject.service'
+import { deriveSubjectSpec } from './pricing.core'
 import { incResolution } from './pricing-metrics'
 import { enumeratePricingSpace } from './pricing.space'
 
@@ -106,6 +107,14 @@ interface GrayTable {
 export class PricingService implements OnModuleInit {
   private cache: PriceTable | null = null
   private grayCache: GrayTable | null = null
+  /**
+   * 主体自解析索引（P1 扣费接管 · spec §P1）：`capability|modelKey|spec` → provider/upstream。
+   * TTL 与价目表同（30s）；写路径 invalidate() 一并清除。主体表 ~百行，全量一次载入。
+   */
+  private subjectIndex: {
+    map: Map<string, { provider: string; upstream: string }>
+    loadedAt: number
+  } | null = null
   private degraded = false
   /**
    * degraded 是否可自愈：仅「boot 时无 active 版本」这一成因置true。
@@ -130,6 +139,7 @@ export class PricingService implements OnModuleInit {
   invalidate(): void {
     this.cache = null
     this.grayCache = null
+    this.subjectIndex = null
     // 写路径刚变更过 active 版本：解除自愈探测节流，下一笔 quote 立刻复核
     // （否则降级进程刚被 publish 救活却还要再等一个 TTL 才认新表）。
     this.lastSelfHealAt = null
@@ -212,7 +222,7 @@ export class PricingService implements OnModuleInit {
     }
     // S1：subjectKey 六级解析。PRICING_SUBJECT_KEYS==='off' 时跳过前三级（灰度/全局/模型默认 subjectKey 行）。
     const useSubjectKey = process.env.PRICING_SUBJECT_KEYS !== 'off'
-    const subjectKey = useSubjectKey ? this.resolveSubjectKey(q) : undefined
+    const subjectKey = useSubjectKey ? await this.resolveSubjectKey(q) : undefined
     const normModel = modelOptionName(q.modelKey ?? '').trim().toLowerCase()
     try {
       const key = buildMatchKey(q)
@@ -273,15 +283,66 @@ export class PricingService implements OnModuleInit {
     }
   }
 
-  /** 由 PricingQuery 推导 subjectKey：q.subjectKey 直接取；否则五段归一；五段缺任一返回 undefined（跳过前三级）。 */
-  private resolveSubjectKey(q: PricingQuery): string | undefined {
+  /**
+   * 由 PricingQuery 推导 subjectKey：q.subjectKey 直接取；否则五段归一；五段缺任一
+   * 时尝试**服务端自解析**（P1 扣费接管 · spec §P1）——按 capability 规范化推导 spec
+   * （deriveSubjectSpec）+ 查主体索引补全 provider/upstream。无 modelKey / 推导不出
+   * spec / 主体表无该行 / DB 异常 ⇒ undefined（跳过主体级，落 legacy 行，绝不猜价）。
+   */
+  private async resolveSubjectKey(q: PricingQuery): Promise<string | undefined> {
     if (q.subjectKey) return q.subjectKey
     const modelKey = modelOptionName(q.modelKey ?? '').trim().toLowerCase()
     const spec = q.spec
     const provider = q.provider
     const upstream = q.upstream
-    if (!modelKey || !spec || !provider || !upstream) return undefined
-    return subjectKeyOf({ capability: q.capability, modelKey, spec, provider, upstream })
+    if (modelKey && spec && provider && upstream) {
+      return subjectKeyOf({ capability: q.capability, modelKey, spec, provider, upstream })
+    }
+    if (!modelKey) return undefined
+    const derived = deriveSubjectSpec(q)
+    if (!derived) return undefined
+    const subject = await this.lookupSubject(q.capability, modelKey, derived)
+    if (!subject) return undefined
+    return subjectKeyOf({
+      capability: q.capability,
+      modelKey,
+      spec: derived,
+      provider: subject.provider,
+      upstream: subject.upstream,
+    })
+  }
+
+  /** 主体索引查询（TTL 缓存；DB 异常返回 null —— 缺主体即回落 legacy，永不 throw）。 */
+  private async lookupSubject(
+    capability: string,
+    modelKey: string,
+    spec: string,
+  ): Promise<{ provider: string; upstream: string } | null> {
+    try {
+      if (!this.subjectIndex || Date.now() - this.subjectIndex.loadedAt >= CACHE_TTL_MS) {
+        const rows = await this.prisma.pricingSubject.findMany({
+          where: { status: { not: 'offboarded' } },
+          select: { capability: true, modelKey: true, spec: true, provider: true, upstream: true },
+          orderBy: { provider: 'asc' },
+        })
+        const map = new Map<string, { provider: string; upstream: string }>()
+        for (const r of rows) {
+          if (!r?.capability || !r?.modelKey || !r?.spec) continue
+          const key = `${r.capability}|${String(r.modelKey).trim().toLowerCase()}|${r.spec}`
+          // 同规格多渠道主体取首行（orderBy provider 保证稳定；当前单渠道一主体）
+          if (!map.has(key)) map.set(key, { provider: r.provider, upstream: r.upstream })
+        }
+        this.subjectIndex = { map, loadedAt: Date.now() }
+      }
+      return this.subjectIndex.map.get(`${capability}|${modelKey}|${spec}`) ?? null
+    } catch (err) {
+      console.warn(
+        '[pricing] 主体索引加载失败 — 本笔报价跳过主体级：',
+        err instanceof Error ? err.message : err,
+      )
+      this.subjectIndex = null
+      return null
+    }
   }
 
   /** 命中 subjectKey 行时附加价格锁快照（成本/利润/来源等），条件写入（非命中路径不出现该键）。 */

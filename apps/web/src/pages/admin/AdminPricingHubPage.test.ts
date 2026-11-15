@@ -51,13 +51,26 @@ const videoRecord = {
   channel: 'gateway-openai-compat',
   profitPct: null,
   tiers: [
-    { spec: '480p', label: '480p（元/秒）', unit: 'per_second', unitQuantity: 1, costYuan: null, perVideoDerived: null },
-    { spec: '768p', label: '768p（元/秒）', unit: 'per_second', unitQuantity: 1, costYuan: null, perVideoDerived: 0.572 },
-    { spec: '2k', label: '2k（元/秒）', unit: 'per_second', unitQuantity: 1, costYuan: null, perVideoDerived: null },
+    { spec: '480p', label: '480p（元/秒）', unit: 'per_second', unitQuantity: 1, costYuan: null, perVideoDerived: null, materializedCredits: null, creditsByDuration: null },
+    {
+      spec: '768p',
+      label: '768p（元/秒）',
+      unit: 'per_second',
+      unitQuantity: 1,
+      costYuan: null,
+      perVideoDerived: 0.572,
+      materializedCredits: null,
+      creditsByDuration: [
+        { duration: 5, credits: 315 },
+        { duration: 10, credits: 630 },
+      ],
+    },
+    { spec: '2k', label: '2k（元/秒）', unit: 'per_second', unitQuantity: 1, costYuan: null, perVideoDerived: null, materializedCredits: null, creditsByDuration: null },
   ],
   subjectsTotal: 12,
   missingSpecs: ['480p:4s'],
   status: 'missing',
+  materializedVersion: 'v-final2-123837',
 }
 
 const imageRecord = {
@@ -67,10 +80,11 @@ const imageRecord = {
   audioKind: null,
   channel: 'gateway-openai-compat',
   profitPct: 10,
-  tiers: [{ spec: '1K', label: '1K（元/张）', unit: 'per_image', unitQuantity: 1, costYuan: 0.3, perVideoDerived: null }],
+  tiers: [{ spec: '1K', label: '1K（元/张）', unit: 'per_image', unitQuantity: 1, costYuan: 0.3, perVideoDerived: null, materializedCredits: 33, creditsByDuration: null }],
   subjectsTotal: 9,
   missingSpecs: [],
   status: 'ready',
+  materializedVersion: 'v-final2-123837',
 }
 
 type HubVm = {
@@ -149,6 +163,29 @@ describe('AdminPricingHubPage（定价中心）', () => {
     expect(createDraft).toHaveBeenCalledTimes(1)
     expect(materializeDraft).toHaveBeenCalledWith('draft-1')
     expect(vm.lastMaterialize?.added).toBe(5)
+  })
+
+  it('P1.6 物化积分：video 按时长枚举+每秒折算，image 单值，无物化显示「—」', async () => {
+    listCostRecords.mockResolvedValue([videoRecord])
+    const w = mountPage()
+    await flushPromises()
+    // 默认选中首个非就绪模型（v-a），首个档位 480p（无物化条目）
+    expect(w.text()).toContain('物化后扣费积分：—')
+    expect(w.text()).toContain('（v-final2-123837）')
+    // 切到 768p 档位：每秒折算 63 分 + 时长枚举
+    const vm = w.vm as unknown as { selectedTier: string }
+    vm.selectedTier = '768p'
+    await flushPromises()
+    expect(w.text()).toContain('约 63 分/秒')
+    expect(w.text()).toContain('5s=315分')
+    expect(w.text()).toContain('10s=630分')
+  })
+
+  it('P1.6 物化积分：image 档位显示单值（N 分/张）', async () => {
+    listCostRecords.mockResolvedValue([imageRecord])
+    const w = mountPage()
+    await flushPromises()
+    expect(w.text()).toContain('物化后扣费积分：33 分/张')
   })
 
   it('同步上游价目：dryRun 预览 → 确认落库（两段式 D4）', async () => {

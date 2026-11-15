@@ -349,7 +349,18 @@ export class MaterialService {
   }
 
   private async platformFallbackQuote(type: string, meta: Record<string, unknown>, userId: string): Promise<PricingQuote> {
-    if (type === 'image') return this.pricing.quote({ capability: 'image', count: 1 }, userId)
+    if (type === 'image') {
+      return this.pricing.quote(
+        {
+          capability: 'image',
+          count: 1,
+          // P1 扣费接管（spec §P1.5）：带模型/分辨率才能命中主体行，缺省回落 legacy。
+          modelKey: typeof meta.model === 'string' ? meta.model : undefined,
+          resolution: typeof meta.resolution === 'string' ? meta.resolution : undefined,
+        },
+        userId,
+      )
+    }
     if (type === 'video') {
       return this.pricing.quote(
         {
@@ -414,7 +425,11 @@ export class MaterialService {
     }
 
     // 诊断 B4：与 studio 主链路同源定价（按分辨率分级），单一真源 shared
-    const quote = await this.pricing.quote({ capability: 'image', count: 1, resolution }, userId)
+    // P1 扣费接管（spec §P1.5）：带 modelKey 命中主体行（成本×利润价），无主体回落 legacy。
+    const quote = await this.pricing.quote(
+      { capability: 'image', count: 1, resolution, modelKey: model },
+      userId,
+    )
     const cost = quote.credits
     const chargeReason = '图像生成'
 

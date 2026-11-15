@@ -130,6 +130,49 @@ describe('PricingCostRecordController（定价中心聚合/更新/迁移）', ()
     expect(text.profitPct).toBeNull()
   })
 
+  it('P1.6：GET 聚合返回物化后扣费积分（active 优先，draft 兜底预览；未物化为 null）', async () => {
+    await seedSubject(prisma, VIDEO_KEY, '768p:5s')
+    // draft 版本：主体行 + 文本反比率行（预览口径）
+    const draft = await prisma.priceListVersion.create({
+      data: { version: 'v-draft-p16', status: 'draft' },
+    })
+    await prisma.priceListEntry.createMany({
+      data: [
+        { versionId: draft.id, capability: 'video', matchKey: 'video', credits: 315, basis: 'auto-derived', subjectKey: subjectKey('video', VIDEO_KEY, '768p:5s') },
+        { versionId: draft.id, capability: 'text', matchKey: `text:${TEXT_KEY}:in`, credits: 20 },
+        { versionId: draft.id, capability: 'text', matchKey: `text:${TEXT_KEY}:out`, credits: 60 },
+      ],
+    })
+    const res = await controller.list()
+    const video = res.data.find((r) => r.modelKey === VIDEO_KEY)!
+    const text = res.data.find((r) => r.modelKey === TEXT_KEY)!
+    expect(video.materializedVersion).toBe('v-draft-p16')
+    // 视频按秒单价：主体行进 creditsByDuration（时长枚举对象数组），materializedCredits 恒 null
+    expect(video.tiers.find((t) => t.spec === '768p')?.creditsByDuration).toEqual([{ duration: 5, credits: 315 }])
+    expect(video.tiers.find((t) => t.spec === '480p')?.materializedCredits).toBeNull()
+    // 文本反比率行（matchKey `text:<model>:<spec>`）进 textTokenCredits
+    expect(text.tiers.find((t) => t.spec === 'in')?.materializedCredits).toBe(20)
+    expect(text.tiers.find((t) => t.spec === 'out')?.materializedCredits).toBe(60)
+
+    // active 版本出现后接管（发布语义）：主体行更新为 630
+    const active = await prisma.priceListVersion.create({
+      data: { version: 'v-active-p16', status: 'active' },
+    })
+    await prisma.priceListEntry.create({
+      data: { versionId: active.id, capability: 'video', matchKey: 'video', credits: 630, basis: 'auto-derived', subjectKey: subjectKey('video', VIDEO_KEY, '768p:5s') },
+    })
+    const res2 = await controller.list()
+    const video2 = res2.data.find((r) => r.modelKey === VIDEO_KEY)!
+    expect(video2.materializedVersion).toBe('v-active-p16')
+    expect(video2.tiers.find((t) => t.spec === '768p')?.creditsByDuration).toEqual([{ duration: 5, credits: 630 }])
+    // draft 的文本行不再可见（active 无文本行）
+    const text2 = res2.data.find((r) => r.modelKey === TEXT_KEY)!
+    expect(text2.tiers.find((t) => t.spec === 'in')?.materializedCredits).toBeNull()
+
+    await prisma.priceListEntry.deleteMany({ where: { versionId: { in: [draft.id, active.id] } } })
+    await prisma.priceListVersion.deleteMany({ where: { id: { in: [draft.id, active.id] } } })
+  })
+
   it('R3+D-2：PUT 落 per_second 行并退役 legacy per_video；等价金标准逐元相等', async () => {
     await seedSubject(prisma, VIDEO_KEY, '768p:5s')
     await seedRate(prisma, { modelKey: VIDEO_KEY, spec: '768p:5s', unit: 'per_video', costYuan: 2.86 })

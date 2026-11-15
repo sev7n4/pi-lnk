@@ -17,7 +17,12 @@ import {
 import { videoCreditsForModel } from '../points/video-credits'
 
 export type PricingCapability = 'text' | 'image' | 'image_variant' | 'image_edit' | 'video' | 'audio'
-export type AudioPriceKind = 'voice' | 'music'
+/**
+ * 报价 query 的音频 kind。P1 扣费接管起纳入 'design'（gen-preview 有独立成本行，
+ * spec §P1.5 解除 design→voice 归并）；legacy 回落路径 legacyPriceOf 对 design/voice
+ * 同价 5 分，归并语义仅在回落路径保持。
+ */
+export type AudioPriceKind = 'voice' | 'design' | 'music'
 export type VideoPriceFamily = 'default' | 'minimax-h3' | 'h3-max' | 'h3-max-turbo'
 
 export interface PricingQuery {
@@ -93,8 +98,35 @@ export function canonicalImageCount(count?: number): 1 | 2 | 3 | 4 {
   return Math.max(1, Math.min(4, Math.floor(raw))) as 1 | 2 | 3 | 4
 }
 
-function canonicalVideoDuration(duration?: number): number {
+/** 视频时长规范：非有限按缺省 5s（legacy 同口径，不改既有语义）。导出供主体自解析复用。 */
+export function canonicalVideoDuration(duration?: number): number {
   return Number.isFinite(duration) ? Number(duration) : 5
+}
+
+/**
+ * 主体规格自解析（P1 扣费接管 · spec 2026-11-15-pricing-subject-billing-takeover §P1）：
+ * 由报价 query 推导 PricingSubject.spec，使 quote 在调用方只传 modelKey（不传
+ * provider/upstream/spec）时也能命中主体行。纯函数、与主体枚举同源规范化：
+ * - video：`<res>:<dur>s`（768p:5s）
+ * - audio：voice/design/music（真实 kind，与 legacy 的 design→voice 归并解耦）
+ * - image：1K/2K/4K
+ * - image_edit / image_variant：`*`（无分辨率主体）
+ * - text：undefined（文本走 token 反比率行，不经主体解析）
+ */
+export function deriveSubjectSpec(q: PricingQuery): string | undefined {
+  switch (q.capability) {
+    case 'video':
+      return `${canonicalVideoResolution(q.resolution)}:${canonicalVideoDuration(q.duration)}s`
+    case 'audio':
+      return q.audioKind === 'music' ? 'music' : q.audioKind === 'design' ? 'design' : 'voice'
+    case 'image':
+      return canonicalImageResolution(q.resolution)
+    case 'image_edit':
+    case 'image_variant':
+      return '*'
+    default:
+      return undefined
+  }
 }
 
 /**
