@@ -3,6 +3,8 @@ import { computed, ref } from 'vue'
 import type { NodeRef, RefMediaType } from '@/composables/useNodeRefs'
 import DockTypeIcon from '@/components/canvas/dock-studio/shared/DockTypeIcon.vue'
 import AgentRefHoverPreview from '@/components/agent/AgentRefHoverPreview.vue'
+import AgentRefDetailSheet from '@/components/agent/AgentRefDetailSheet.vue'
+import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
 import { resolveMediaUrl } from '@/services/api-base'
 import type { DockNodeIconKind } from '@/components/canvas/dock-studio/shared/dockIcons'
 import { anchorFromElement, type AnchorRect } from '@/utils/refPreviewPosition'
@@ -13,7 +15,7 @@ const props = defineProps<{
   draggable?: boolean
   dragging?: boolean
   dragOver?: boolean
-  /** composer = 输入区（hover 预览）；history = 历史气泡（仅点击引用） */
+  /** composer = 输入区（hover 预览）；history = 历史气泡（hover 预览 + 「再次引用」动作） */
   variant?: 'composer' | 'history'
 }>()
 
@@ -27,10 +29,16 @@ const emit = defineEmits<{
   dragend: []
 }>()
 
+const { isMobileLayout } = useAgentMobileLayout()
+const chipEl = ref<HTMLElement | null>(null)
 const previewOpen = ref(false)
 const previewAnchor = ref<AnchorRect | null>(null)
 const hoverTimer = ref<number | null>(null)
 const isHoveringPreview = ref(false)
+/** PC 点击 / 卡内「展开」后钉住：不随 mouseleave 关闭，可滚动全文 / 播放媒体 */
+const pinned = ref(false)
+/** 触屏无 hover：点击直接开全宽 sheet，绝不复用 hover 定位逻辑 */
+const sheetOpen = ref(false)
 
 const MEDIA_ICON: Record<RefMediaType, DockNodeIconKind> = {
   text: 'text',
@@ -54,13 +62,13 @@ function clearHoverTimer() {
 
 const isHistory = computed(() => props.variant === 'history')
 
-const chipTitle = computed(() => {
-  if (isHistory.value) return `再次引用 ${props.refItem.refKey}`
-  return `${props.refItem.refKey} · ${props.refItem.label}`
-})
+const chipTitle = computed(() => `${props.refItem.refKey} · ${props.refItem.label}`)
+const actionLabel = computed(() =>
+  `${isHistory.value ? '再次引用' : '引用'} @${props.refItem.refKey}`,
+)
 
 function onEnter(event: MouseEvent) {
-  if (isHistory.value) return
+  if (isMobileLayout.value || pinned.value) return
   clearHoverTimer()
   const el = event.currentTarget
   if (el instanceof HTMLElement) {
@@ -72,7 +80,7 @@ function onEnter(event: MouseEvent) {
 }
 
 function onLeave() {
-  if (isHistory.value) return
+  if (isMobileLayout.value || pinned.value) return
   clearHoverTimer()
   hoverTimer.value = window.setTimeout(() => {
     if (!isHoveringPreview.value) previewOpen.value = false
@@ -86,7 +94,27 @@ function onPreviewEnter() {
 
 function onPreviewLeave() {
   isHoveringPreview.value = false
+  if (pinned.value) return
   previewOpen.value = false
+}
+
+/** 卡内点「展开全文 / 查看大图 / 播放」⇒ 钉住，避免 80ms 自动关把交互吃掉。 */
+function onPreviewPin() {
+  clearHoverTimer()
+  pinned.value = true
+  previewOpen.value = true
+}
+
+function closePreview() {
+  clearHoverTimer()
+  pinned.value = false
+  previewOpen.value = false
+}
+
+function onAction() {
+  emit('mention', props.refItem.refKey)
+  closePreview()
+  sheetOpen.value = false
 }
 
 function onRemoveClick(event: MouseEvent) {
@@ -94,14 +122,26 @@ function onRemoveClick(event: MouseEvent) {
   emit('remove')
 }
 
+/**
+ * 点击芯片 = **查看内容**（此前只插 @T1，用户 hover/点击都看不到文档正文）。
+ * PC → 钉住 hover 卡；移动端 → MobileSheet。@T1 / 再次引用移到详情面的拇指区动作。
+ */
 function onClick() {
   if (!props.clickable || props.refItem.stale) return
-  emit('mention', props.refItem.refKey)
+  if (isMobileLayout.value) {
+    sheetOpen.value = true
+    return
+  }
+  previewAnchor.value = (chipEl.value ? anchorFromElement(chipEl.value) : null) ?? previewAnchor.value
+  clearHoverTimer()
+  previewOpen.value = true
+  pinned.value = true
 }
 </script>
 
 <template>
   <div
+    ref="chipEl"
     class="dock-ref-chip"
     :class="{
       'dock-ref-chip--history': isHistory,
@@ -126,7 +166,7 @@ function onClick() {
     @dragend="emit('dragend')"
   >
     <span v-if="isHistory" class="dock-ref-chip__reattach-badge" aria-hidden="true">↺</span>
-    <span v-if="isHistory" class="dock-ref-chip__reattach-tip">再次引用</span>
+    <span v-if="isHistory" class="dock-ref-chip__reattach-tip">查看内容</span>
     <span class="dock-ref-chip__key">{{ refItem.refKey }}</span>
 
     <img
@@ -163,11 +203,24 @@ function onClick() {
   </div>
 
   <AgentRefHoverPreview
-    v-if="!isHistory && previewOpen && previewAnchor"
+    v-if="previewOpen && previewAnchor"
     :ref-item="refItem"
     :anchor="previewAnchor"
+    :pinned="pinned"
+    :action-label="actionLabel"
     @mouseenter="onPreviewEnter"
     @mouseleave="onPreviewLeave"
+    @pin="onPreviewPin"
+    @close="closePreview"
+    @action="onAction"
+  />
+
+  <AgentRefDetailSheet
+    v-if="sheetOpen"
+    :ref-item="refItem"
+    :action-label="actionLabel"
+    @close="sheetOpen = false"
+    @action="onAction"
   />
 </template>
 

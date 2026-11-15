@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue'
 import type { NodeRef } from '@/composables/useNodeRefs'
-import { resolveMediaUrl } from '@/services/api-base'
+import AgentRefMediaBody from '@/components/agent/AgentRefMediaBody.vue'
 
 const props = defineProps<{
   refItem: NodeRef
@@ -12,15 +12,6 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: []
 }>()
-
-const mediaUrl = computed(() => {
-  const raw = props.refItem.payload.url ?? props.refItem.preview ?? ''
-  return raw ? resolveMediaUrl(raw) : ''
-})
-
-const textContent = computed(() => {
-  return props.refItem.payload.text ?? props.refItem.preview ?? ''
-})
 
 const style = computed(() => {
   const margin = 12
@@ -50,7 +41,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
   <Teleport to="body">
     <div class="fixed inset-0 z-[130]" @click="emit('close')">
       <div
-        class="dock-ref-preview pointer-events-auto fixed w-[340px] max-h-[min(420px,70vh)] overflow-hidden rounded-xl border border-overlay/12 bg-[rgba(24,24,24,0.96)] shadow-2xl backdrop-blur-xl"
+        class="dock-ref-preview pointer-events-auto fixed w-[340px] max-h-[min(420px,70vh)] overflow-hidden rounded-xl border border-overlay/12 bg-surface-overlay text-fg shadow-2xl backdrop-blur-xl"
         :style="style"
         @click.stop
       >
@@ -68,36 +59,8 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
           </button>
         </div>
 
-        <div class="p-3">
-          <p
-            v-if="refItem.mediaType === 'text'"
-            class="max-h-[280px] overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-fg"
-          >
-            {{ textContent || '（空文本）' }}
-          </p>
-
-          <img
-            v-else-if="refItem.mediaType === 'image' && mediaUrl"
-            :src="mediaUrl"
-            alt=""
-            class="max-h-[300px] w-full rounded-lg object-contain"
-          >
-
-          <video
-            v-else-if="refItem.mediaType === 'video' && mediaUrl"
-            :src="mediaUrl"
-            controls
-            class="max-h-[300px] w-full rounded-lg"
-          />
-
-          <audio
-            v-else-if="refItem.mediaType === 'audio' && mediaUrl"
-            :src="mediaUrl"
-            controls
-            class="w-full"
-          />
-
-          <p v-else class="text-xs text-fg-3">暂无可预览内容</p>
+        <div class="max-h-[calc(70vh-48px)] overflow-y-auto p-3">
+          <AgentRefMediaBody :ref-item="refItem" expanded />
         </div>
       </div>
     </div>
