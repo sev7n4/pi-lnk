@@ -37,6 +37,8 @@ const previewOpen = ref(false)
 const previewAnchor = ref<AnchorRect | null>(null)
 const hoverTimer = ref<number | null>(null)
 const isHoveringPreview = ref(false)
+/** 卡内「展开/播放」后钉住：dock-studio 芯片点击仍是插 @refKey，查看走 hover 卡 */
+const pinned = ref(false)
 
 const MEDIA_ICON: Record<RefMediaType, DockNodeIconKind> = {
   text: 'text',
@@ -70,6 +72,7 @@ function onEnter(event: MouseEvent) {
 }
 
 function onLeave() {
+  if (pinned.value) return
   clearHoverTimer()
   hoverTimer.value = window.setTimeout(() => {
     if (!isHoveringPreview.value) previewOpen.value = false
@@ -83,6 +86,19 @@ function onPreviewEnter() {
 
 function onPreviewLeave() {
   isHoveringPreview.value = false
+  if (pinned.value) return
+  previewOpen.value = false
+}
+
+function onPreviewPin() {
+  clearHoverTimer()
+  pinned.value = true
+  previewOpen.value = true
+}
+
+function closePreview() {
+  clearHoverTimer()
+  pinned.value = false
   previewOpen.value = false
 }
 
@@ -161,8 +177,11 @@ function onClick() {
     v-if="previewOpen && previewAnchor"
     :ref-item="refItem"
     :anchor="previewAnchor"
+    :pinned="pinned"
     @mouseenter="onPreviewEnter"
     @mouseleave="onPreviewLeave"
+    @pin="onPreviewPin"
+    @close="closePreview"
   />
 </template>
 

@@ -38,6 +38,34 @@ function labelOf(item: SidebarBlockInput): string {
 	return parts[parts.length - 1] ?? url;
 }
 
+/**
+ * 2026-11-15 生产事故：长文本粘贴成 T* 芯片后「没被模型接住」。
+ *
+ * 取证（会话 cmwggbyab… / cmwhdn5um…）：侧栏块只给 `T1=` 的前 200 字原文，
+ * 模型把它读成「用户提供的任务背景描述，而不是一个文档」，连着三次答
+ * 「没有看到任何文档/附件」「侧栏参考素材区域为空」，甚至误调 read_media(ref:"T1")；
+ * 直到模型自己 tool_search 摸到 read_document 才答对。
+ *
+ * ⇒ 只把 read_document 提回常驻集解决的是「schema 拿得到」，没解决「模型不知道该读」。
+ *   这里在**每轮动态块**（不吃 L6 预算）里显式点名：这是文档、= 后只是预览、
+ *   涉及文档的提问必须先读全文。与 buildImageInjectedNotice 同一套「明示块」手法。
+ *
+ * 只在正文真被截断时才点名：短文本整段已在 `T1=` 行里，加指令纯属噪声。
+ * 字数展示用码点（与前端芯片 label 一致）；判定用 UTF-16 长度（与 labelOf 的 slice 一致）。
+ */
+function buildAttachedDocumentNotices(valid: SidebarBlockInput[], keys: string[]): string[] {
+	return valid.flatMap((item, i) => {
+		const key = keys[i];
+		if (!key || (item.mediaType ?? "").trim() !== "text") return [];
+		const text = (item.text ?? "").trim();
+		if (text.length <= TEXT_LABEL_MAX) return [];
+		const chars = [...text].length;
+		return [
+			`【文档已附加】${key} 是用户随本轮消息附加的文档（共 ${chars} 字），不是背景说明；下面 ${key}= 仅为前 ${TEXT_LABEL_MAX} 字预览。凡涉及「这个文档 / 附件 / 读到什么」的提问，必须先调用 read_document(ref:"${key}") 读取全文再回答，不得仅凭预览断言「没有附件」；超 20000 字用 start_index 续读。`,
+		];
+	});
+}
+
 export function buildSidebarBlock(attachments: SidebarBlockInput[]): string {
 	if (!attachments.length) return "";
 	// F2：先过滤合法 mediaType 再 zip keys（未知 mediaType 直接跳过，避免 index 错位）
@@ -45,6 +73,9 @@ export function buildSidebarBlock(attachments: SidebarBlockInput[]): string {
 	if (!valid.length) return "";
 	const keys = assignSidebarRefKeys(valid);
 	const lines = ["侧栏参考素材："];
+	// 点名行放在素材行**之前**：模型先读到「这是附件文档」，再读 200 字预览，
+	// 才不会把预览当成任务背景（生产思考记录实证的误读顺序）。
+	lines.push(...buildAttachedDocumentNotices(valid, keys));
 	valid.forEach((item, i) => {
 		if (!keys[i]) return;
 		// 2026-11-05 生产事故（composer 图不进上下文）：只给文件名时模型拿不到真实 url，

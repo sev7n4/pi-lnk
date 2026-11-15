@@ -90,3 +90,58 @@ describe("buildImageInjectedNotice（VISP 2026-11-06 生产事故：直注成功
 		expect(buildImageInjectedNotice(undefined)).toBe("");
 	});
 });
+
+/**
+ * 2026-11-15 生产事故回归锁：长文本粘贴成 T* 芯片后，
+ * 模型把 `T1=<前 200 字>` 读成「任务背景描述」，连答三次「没有附件」并误调 read_media。
+ * 判据必须是**行为级**：点名行是否真进了 prompt 块、是否在素材行之前、是否给出取全文的工具名。
+ */
+describe("长文本素材的「文档已附加」点名（模型接住文档）", () => {
+	const longDoc = "我在做一个创作的agent，".repeat(80); // 明显超 200 字
+
+	it("超 200 字：块头点名这是附加文档、给字数、要求先 read_document(ref:\"T1\")", () => {
+		const block = buildSidebarBlock([{ text: longDoc, mediaType: "text" }]);
+		expect(block).toContain("【文档已附加】");
+		expect(block).toContain("不是背景说明");
+		expect(block).toContain('read_document(ref:"T1")');
+		expect(block).toContain(`共 ${[...longDoc].length} 字`);
+		expect(block).toContain("不得仅凭预览断言「没有附件」");
+	});
+
+	it("点名行必须在素材行之前（生产思考记录实证：先读预览会把文档当背景）", () => {
+		const block = buildSidebarBlock([{ text: longDoc, mediaType: "text" }]);
+		expect(block.indexOf("【文档已附加】")).toBeLessThan(block.indexOf("T1=" + longDoc.slice(0, 200)));
+		expect(block.startsWith("侧栏参考素材：\n【文档已附加】")).toBe(true);
+	});
+
+	it("短文本 / 图片 / 音视频：零噪声，块内容与点名前逐字一致", () => {
+		expect(buildSidebarBlock([{ text: "产品文案草稿", mediaType: "text" }])).toBe(
+			"侧栏参考素材：\nT1=产品文案草稿",
+		);
+		const mediaOnly = buildSidebarBlock([
+			{ url: "https://cdn.x/a/b.png?sign=1", mediaType: "image" },
+			{ url: "https://x/v.mp4", mediaType: "video" },
+			{ url: "https://x/a.mp3", mediaType: "audio" },
+		]);
+		expect(mediaOnly).not.toContain("【文档已附加】");
+		expect(mediaOnly).not.toContain("read_document");
+	});
+
+	it("多文档：每个 T* 各自点名，refKey 不串位；图片行不背文档指令", () => {
+		const block = buildSidebarBlock([
+			{ url: "https://x/a.png", mediaType: "image" },
+			{ text: longDoc, mediaType: "text" },
+			{ text: "第二篇" + longDoc, mediaType: "text" },
+		]);
+		expect(block).toContain('read_document(ref:"T1")');
+		expect(block).toContain('read_document(ref:"T2")');
+		expect(block).not.toContain('read_document(ref:"I1")');
+		expect(block).toContain("I1=a.png url=https://x/a.png");
+	});
+
+	it("点名行进的是动态块，不触碰 L6 静态预算（块体仍以「侧栏参考素材」开头）", () => {
+		const block = buildSidebarBlock([{ text: longDoc, mediaType: "text" }]);
+		expect(block.startsWith("侧栏参考素材")).toBe(true);
+		expect(block.length).toBeLessThan(2000);
+	});
+});
