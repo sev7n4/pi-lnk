@@ -65,14 +65,19 @@ function affordable(r: UnitCostRateRow, at: Date): boolean {
  *  - 文本 token 行 unit=per_1m_tokens、unitQuantity=1e6 ⇒ 令 units=1e6，costYuanPerRequest===costYuan（每 1M token 成本），
  *    正是反比率公式 r 的输入；
  *  - provisional / costYuan<0 / 「costYuan=0 且来源非 official_list·channel_actual」（D1 显式 0 价）/
- *    unitsPerRequest=null / unitQuantity<=0 ⇒ 一律返回 null（调用方置 cost_missing）；
+ *    unitQuantity<=0 ⇒ 一律返回 null（调用方置 cost_missing）；unitsPerRequest=null 除
+ *    chars_100（D-3，基数 100）与 token 族外 ⇒ null；
  *  - 视频 U6/D-2：成本行 modelKey 与售价键不同构，legacy per_video 行按 videoPriceFamily +
  *    (res, duration) 归一，禁止字符串直等；粗化 per_second 行（定价中心卡片写入）按
  *    模型 + 分辨率精确匹配后按 duration 展开。**无 5s 锚点线性外推分支**（缺整条行即 null）。
  */
 export function resolveUnitCost(subject: SubjectInput, rates: UnitCostRateRow[], at: Date): UnitCost | null {
   const isToken = subject.billableUnit.startsWith('token_')
-  const units = isToken ? 1e6 : subject.unitsPerRequest
+  // D-3 音频字符主体：chars_100 的计价基数固定为「每请求 100 字符」（成本行 unitQuantity=100
+  // 即 每 100 字符成本）⇒ units=100，与成本行折算后 costYuanPerRequest===costYuan。
+  // 主体重建对 TTS 类音频置 unitsPerRequest=null（实际字符数运行时才知），静态价目按基数 100 计。
+  const isChars100 = subject.billableUnit === 'chars_100'
+  const units = isToken ? 1e6 : isChars100 ? 100 : subject.unitsPerRequest
   if (units === null || units <= 0) return null
 
   const family = videoPriceFamily(subject.modelKey)
