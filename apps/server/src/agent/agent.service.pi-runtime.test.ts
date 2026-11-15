@@ -1325,7 +1325,7 @@ const runMemoryInjection = async (items: unknown[], tag: string): Promise<string
 })
 
 describe('AgentService B-2 ruleGroups + minors', () => {
-  it('active：assemble 收到 ruleGroups [core, writeTools, genTools, todoTools]（B-5 + C1）', async () => {
+  it('active：assemble 收到 ruleGroups [core, writeTools, genTools]（B-5；B-3 后 todoTools 组已整删）', async () => {
     process.env.PI_RUNTIME_MODE = 'active'
     process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
 
@@ -1374,7 +1374,7 @@ describe('AgentService B-2 ruleGroups + minors', () => {
       events.push(event)
     }
     expect(events.map((e) => e.type)).toContain('done')
-    expect(assembleStatic.mock.calls[0][0]).toMatchObject({ ruleGroups: ['core', 'writeTools', 'genTools', 'todoTools'] })
+    expect(assembleStatic.mock.calls[0][0]).toMatchObject({ ruleGroups: ['core', 'writeTools', 'genTools'] })
   })
 
   it('active：PI_RUNTIME_TODO_TOOL=off → todoTools 从 ruleGroups 剔除（C1 kill switch）', async () => {
