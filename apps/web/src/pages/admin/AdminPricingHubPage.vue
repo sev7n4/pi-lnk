@@ -58,6 +58,32 @@ const missingList = computed(() => {
 
 const selectedTierObj = computed<CostRecordTier | null>(() => selected.value?.tiers.find((t) => t.spec === selectedTier.value) ?? null)
 
+/**
+ * P1.6 物化积分文案（口径与扣费一致，spec 2026-11-15-pricing-subject-billing-takeover）：
+ * video 按时长枚举 + 每秒折算；audio voice/design 每百字符、music 每首；image 每张；
+ * text 每百万 token（反比率行 = 实际结算口径）。无物化条目返回空串（不渲染）。
+ */
+function materializedCreditsText(t: CostRecordTier): string {
+  if (t.creditsByDuration && t.creditsByDuration.length > 0) {
+    const items = t.creditsByDuration.map((e) => `${e.duration}s=${e.credits}分`).join(' · ')
+    const first = t.creditsByDuration[0]!
+    const perSecond = Math.round((first.credits / first.duration) * 10) / 10
+    return `约 ${perSecond} 分/秒（${items}）`
+  }
+  if (t.materializedCredits === null) return ''
+  const unitBySpec =
+    t.spec === 'music'
+      ? '/首'
+      : t.spec === 'voice' || t.spec === 'design'
+        ? '/百字符'
+        : t.spec === '1K' || t.spec === '2K' || t.spec === '4K'
+          ? '/张'
+          : t.spec === 'in' || t.spec === 'out' || t.spec === 'cache'
+            ? '/百万token'
+            : ''
+  return `${t.materializedCredits} 分${unitBySpec}`
+}
+
 function errMsg(err: unknown, fallback: string): string {
   return err instanceof AdminApiError ? err.message : fallback
 }
@@ -315,6 +341,15 @@ defineExpose({ reload, saveRecord, refreshPricing, syncPreviewRun, syncApply, sy
           <span v-if="selectedTierObj.costYuan === null && selectedTierObj.perVideoDerived !== null" class="text-xs text-fg-3">
             参考值 {{ selectedTierObj.perVideoDerived }} 元（由既有整条视频成本折算，保存后按「元/秒」生效）
           </span>
+        </div>
+
+        <!-- P1.6：物化后扣费积分（active 价目表主体行/反比率行，与扣费同源；无条目显示「—」） -->
+        <div
+          v-if="selectedTierObj && (materializedCreditsText(selectedTierObj) || selected.materializedVersion)"
+          class="mt-2 text-xs text-fg-3"
+        >
+          物化后扣费积分：{{ materializedCreditsText(selectedTierObj) || '—' }}
+          <span v-if="selected.materializedVersion">（{{ selected.materializedVersion }}）</span>
         </div>
 
         <div class="mt-4 flex flex-wrap items-center gap-3">

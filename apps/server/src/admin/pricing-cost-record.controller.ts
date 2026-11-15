@@ -51,6 +51,16 @@ export interface CostRecordTier {
   costYuan: number | null
   /** legacy per_video 行折算的每秒参考值（仅展示预填，不落存储）。 */
   perVideoDerived: number | null
+  /**
+   * 物化后扣费积分（P1.6 · spec 2026-11-15-pricing-subject-billing-takeover）：
+   * 读 active 价目表（无则最新 draft）的主体行/文本反比率行 credits——物化了什么就
+   * 显示什么，服务端不重算公式。无物化条目为 null（前端显示「—」）。
+   * 口径：video=null（按秒无单一值，见 creditsByDuration）；audio voice/design=每百字符、
+   * music=每首；image=每张；text=每百万 token（反比率行 = 实际结算口径）。
+   */
+  materializedCredits: number | null
+  /** 仅视频档：按时长枚举的物化积分（spec=`<res>:<dur>s` 的主体行）。 */
+  creditsByDuration: { duration: number; credits: number }[] | null
 }
 
 export interface CostRecordDto {
@@ -64,6 +74,8 @@ export interface CostRecordDto {
   subjectsTotal: number
   missingSpecs: string[]
   status: 'ready' | 'partial' | 'missing'
+  /** 物化积分取数来源版本（active 优先，无 active 取最新 draft）；无任何版本为 null。 */
+  materializedVersion: string | null
 }
 
 /** 音频档位 → 成本行 spec 映射（与 inferCostUnit 口径一致）。 */
@@ -106,6 +118,30 @@ export class PricingCostRecordController {
       this.prisma.costRate.findMany(),
       this.prisma.marginPolicy.findMany({ where: { scope: 'model' } }),
     ])
+    // P1.6 物化积分来源：active 优先（扣费真源），无 active 取最新 draft（发布前预览）。
+    let priceVersion = await this.prisma.priceListVersion.findFirst({
+      where: { status: 'active' },
+      include: { entries: true },
+    })
+    if (!priceVersion) {
+      priceVersion = await this.prisma.priceListVersion.findFirst({
+        where: { status: 'draft' },
+        orderBy: { createdAt: 'desc' },
+        include: { entries: true },
+      })
+    }
+    // 主体行索引：subjectKey（capability|modelKey|spec|provider|upstream）→ credits；
+    // 文本反比率行（matchKey `text:<model>:<spec>`，实际结算口径）单独索引。
+    const subjectCredits = new Map<string, number>()
+    const textTokenCredits = new Map<string, number>()
+    for (const e of priceVersion?.entries ?? []) {
+      if (e.subjectKey) subjectCredits.set(e.subjectKey, e.credits)
+      else if (e.matchKey.startsWith('text:') && !e.matchKey.includes('|')) {
+        const rest = e.matchKey.slice('text:'.length)
+        const sep = rest.lastIndexOf(':')
+        if (sep > 0) textTokenCredits.set(`${rest.slice(0, sep)}|${rest.slice(sep + 1)}`, e.credits)
+      }
+    }
     const subjectsByModel = new Map<string, typeof subjects>()
     for (const s of subjects) {
       const list = subjectsByModel.get(s.modelKey) ?? []
@@ -116,7 +152,7 @@ export class PricingCostRecordController {
     const rows = rates as CostRecordRateRow[]
     const data: CostRecordDto[] = []
     for (const e of entries) {
-      const tiers = this.tiersFor(e, rows, at)
+      const tiers = this.tiersFor(e, rows, at, subjectCredits, textTokenCredits)
       const modelSubjects = subjectsByModel.get(e.modelKey) ?? []
       const missingSpecs: string[] = []
       for (const s of modelSubjects) {
@@ -143,25 +179,45 @@ export class PricingCostRecordController {
         subjectsTotal: modelSubjects.length,
         missingSpecs,
         status,
+        materializedVersion: priceVersion?.version ?? null,
       })
     }
     return { code: 0, message: 'ok', data }
   }
 
   /** 按模态展开档位（与主体枚举同一常量源，零映射漂移）。 */
-  private tiersFor(e: { modelKey: string; modality: string; audioKind: string | null }, rows: CostRecordRateRow[], at: Date): CostRecordTier[] {
+  private tiersFor(
+    e: { modelKey: string; modality: string; audioKind: string | null },
+    rows: CostRecordRateRow[],
+    at: Date,
+    subjectCredits: Map<string, number>,
+    textTokenCredits: Map<string, number>,
+  ): CostRecordTier[] {
     if (e.modality === 'image') {
       return ENUMERATED_IMAGE_RESOLUTIONS.map((res) => ({
         spec: res, label: `${res}（元/张）`, unit: 'per_image', unitQuantity: 1,
         costYuan: tierCostYuan(rows, e.modelKey, res, at), perVideoDerived: null,
+        materializedCredits: subjectCredits.get(`image|${e.modelKey}|${res}`) ?? null,
+        creditsByDuration: null,
       }))
     }
     if (e.modality === 'video') {
       const family = videoPriceFamily(e.modelKey)
       return ENUMERATED_VIDEO_RESOLUTIONS_CANONICAL.map((res) => {
         const own = tierCostYuan(rows, e.modelKey, res, at)
+        // P1.6 物化积分：按时长枚举该分辨率下的主体行（spec=`<res>:<dur>s`）。
+        const byDuration: { duration: number; credits: number }[] = []
+        for (const [key, credits] of subjectCredits) {
+          const parts = key.split('|')
+          if (parts.length !== 5 || parts[0] !== 'video' || parts[1] !== e.modelKey) continue
+          const specParts = parts[2].split(':')
+          if (specParts[0] !== res) continue
+          const dur = Number(specParts[1]?.replace('s', ''))
+          if (Number.isFinite(dur) && dur > 0) byDuration.push({ duration: dur, credits })
+        }
+        byDuration.sort((a, b) => a.duration - b.duration)
         if (own !== null) {
-          return { spec: res, label: `${res}（元/秒）`, unit: 'per_second', unitQuantity: 1, costYuan: own, perVideoDerived: null }
+          return { spec: res, label: `${res}（元/秒）`, unit: 'per_second', unitQuantity: 1, costYuan: own, perVideoDerived: null, materializedCredits: null, creditsByDuration: byDuration.length > 0 ? byDuration : null }
         }
         // legacy per_video 行折算参考值（仅展示；保存后落 per_second 行并退役旧行）
         const legacy = rows
@@ -169,7 +225,7 @@ export class PricingCostRecordController {
           .sort((a, b) => (b.effectiveFrom?.getTime() ?? 0) - (a.effectiveFrom?.getTime() ?? 0))[0]
         const dur = legacy ? Number(legacy.spec.split(':')[1]?.replace('s', '')) : NaN
         const derived = legacy && Number.isFinite(dur) && dur > 0 ? legacy.costYuan / dur : null
-        return { spec: res, label: `${res}（元/秒）`, unit: 'per_second', unitQuantity: 1, costYuan: null, perVideoDerived: derived }
+        return { spec: res, label: `${res}（元/秒）`, unit: 'per_second', unitQuantity: 1, costYuan: null, perVideoDerived: derived, materializedCredits: null, creditsByDuration: byDuration.length > 0 ? byDuration : null }
       })
     }
     if (e.modality === 'audio') {
@@ -178,13 +234,16 @@ export class PricingCostRecordController {
         .filter((k) => k in AUDIO_TIER_SPEC)
         .map((k) => {
           const m = AUDIO_TIER_SPEC[k]
-          return { spec: k, label: m.label, unit: m.unit, unitQuantity: m.unitQuantity, costYuan: tierCostYuan(rows, e.modelKey, m.rowSpec, at), perVideoDerived: null }
+          return { spec: k, label: m.label, unit: m.unit, unitQuantity: m.unitQuantity, costYuan: tierCostYuan(rows, e.modelKey, m.rowSpec, at), perVideoDerived: null, materializedCredits: subjectCredits.get(`audio|${e.modelKey}|${k}`) ?? null, creditsByDuration: null }
         })
     }
     if (e.modality === 'text') {
       return TEXT_TIERS.map((t) => ({
         spec: t.spec, label: t.label, unit: 'per_1m_tokens', unitQuantity: 1e6,
         costYuan: tierCostYuan(rows, e.modelKey, t.rowSpec, at), perVideoDerived: null,
+        // 文本实际结算走 token 反比率行（quoteTextTokens），非主体行——显示真实扣费口径。
+        materializedCredits: textTokenCredits.get(`${e.modelKey}|${t.spec}`) ?? null,
+        creditsByDuration: null,
       }))
     }
     return []

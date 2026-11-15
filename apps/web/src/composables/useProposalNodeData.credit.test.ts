@@ -56,6 +56,7 @@ describe('proposalCreditCost — 价目表权威取数', () => {
     expect(mockQuote).toHaveBeenCalledWith({
       capability: 'image',
       count: 1,
+      modelKey: 'realism-v2', // P1.5：展示参数 ⊇ 计费参数（modelId 归一剥前缀）
       resolution: '1K',
     })
   })
@@ -91,7 +92,7 @@ describe('proposalCreditCost — 价目表权威取数', () => {
       expect(mod.proposalCreditCost(one)).toBe(33)
       expect(mod.proposalCreditCost(two)).toBe(66)
     })
-    expect(mockQuote).toHaveBeenCalledWith({ capability: 'image', count: 2, resolution: '2K' })
+    expect(mockQuote).toHaveBeenCalledWith({ capability: 'image', count: 2, modelKey: 'realism-v2', resolution: '2K' })
   })
 
   it('video：quote 未返回前 undefined（宁可不显示，绝不显示假数字），返回后显权威值', async () => {
@@ -107,7 +108,7 @@ describe('proposalCreditCost — 价目表权威取数', () => {
 
     expect(mod.proposalCreditCost(v)).toBeUndefined()
     await vi.waitFor(() => expect(mod.proposalCreditCost(v)).toBe(30))
-    expect(mockQuote).toHaveBeenCalledWith({ capability: 'video', duration: 5 })
+    expect(mockQuote).toHaveBeenCalledWith({ capability: 'video', modelKey: 'gen-v2', resolution: undefined, duration: 5 })
   })
 
   it('服务端 creditCost 权威优先：直接返回，不发 quote 请求', async () => {

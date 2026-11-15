@@ -96,8 +96,15 @@ const readonly = computed(() =>
   }),
 )
 // 展示值单一真相源：走服务端 quote 端点（与计费同源读价目表）；离线才回落本地估算。
+// P1.5 不变式：必须带 modelKey（与 studio generateImage 扣费侧同参）才能命中主体行，
+// 缺省落 legacy 家族行 ⇒ 展示≠扣费（spec 2026-11-15-pricing-subject-billing-takeover）。
 const { credits } = usePricingQuote(
-  () => ({ capability: 'image', count: imageCount.value, resolution: imageResolution.value }),
+  () => ({
+    capability: 'image',
+    modelKey: catalogModelKeyFromValue(imageModel.value),
+    count: imageCount.value,
+    resolution: imageResolution.value,
+  }),
   () => estimateImageCredits(imageCount.value, imageResolution.value),
 )
 

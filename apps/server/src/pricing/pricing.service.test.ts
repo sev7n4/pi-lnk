@@ -14,7 +14,7 @@ import type { PrismaService } from '../prisma/prisma.service'
 const V = 'v1-legacy-equivalent'
 
 function fakePrisma(
-  entries: Array<{ matchKey: string; credits: number }> | null,
+  entries: Array<{ matchKey: string; credits: number; subjectKey?: string; costSnapshotYuan?: number; profitBpSnapshot?: number; unitSnapshot?: string }> | null,
   opts: {
     throws?: boolean
     counts?: { legacyRows: number; totalRows: number }
@@ -22,7 +22,9 @@ function fakePrisma(
     grayThrows?: boolean
     marginBp?: number
     /** Task 7：pricingSubject 主体行（isKnownTokenModel 数据化白名单查此表）。 */
-    pricingSubjects?: Array<{ modelKey: string; spec: string; status?: string }>
+    pricingSubjects?: Array<{ capability?: string; modelKey: string; spec: string; status?: string; provider?: string; upstream?: string }>
+    /** P1：主体索引加载抛错（回落 legacy 路径用）。 */
+    subjectIndexThrows?: boolean
   } = {},
 ) {
   const findFirst = vi.fn(async () => {
@@ -48,18 +50,28 @@ function fakePrisma(
   // Task 7：isKnownTokenModel 查 pricingSubject 中 in/out 双行。默认池回灌 8 个
   // TEXT_TOKEN_MODELS（各带 in/out、status 'priced'），使既有 token 测试在无显式
   // pricingSubjects 时仍认作已知模型；AC7 用 opts.pricingSubjects 覆盖（只含新模型）。
-  const subjectPool: Array<{ modelKey: string; spec: string; status: string }> =
+  // P1 主体索引：resolveSubjectKey 的 findMany 不带 modelKey（全量载入）⇒ 缺省池
+  // （行无 capability 字段）被索引构建跳过 ⇒ 既有测试仍走 legacy 行，行为不变。
+  const subjectPool: Array<{ capability?: string; modelKey: string; spec: string; status: string; provider?: string; upstream?: string }> =
     opts.pricingSubjects ??
     TEXT_TOKEN_MODELS.flatMap((m) => [
       { modelKey: m, spec: 'in', status: 'priced' },
       { modelKey: m, spec: 'out', status: 'priced' },
     ])
   const pricingSubject = {
-    findMany: vi.fn(async (args: { where?: { modelKey?: string; status?: { not?: string } } }) => {
+    findMany: vi.fn(async (args: { where?: { modelKey?: string; capability?: string; status?: { not?: string } } }) => {
+      if (opts.subjectIndexThrows) throw new Error('subject index db down')
       const model = args?.where?.modelKey
+      const capability = args?.where?.capability
       const statusNot = args?.where?.status?.not
       return subjectPool.filter(
-        (r) => r.modelKey === model && (statusNot ? r.status !== statusNot : true),
+        (r) =>
+          (model === undefined || r.modelKey === model) &&
+          // capability 宽松匹配：缺省池行无 capability 字段（Task 7 token 白名单形态），
+          // 只对显式带 capability 的行过滤——isKnownTokenModel 查 capability:'text' 时
+          // 仍能命中缺省池，既有 token 测试不破。
+          (capability === undefined || r.capability === undefined || r.capability === capability) &&
+          (statusNot ? r.status !== statusNot : true),
       )
     }),
   }
@@ -163,6 +175,157 @@ describe('PricingService.quote', () => {
     await svc.quote({ capability: 'text' })
     await svc.quote({ capability: 'text' })
     expect(findFirst).toHaveBeenCalledTimes(1)
+  })
+})
+
+// —— P1 扣费接管：主体自解析（spec 2026-11-15-pricing-subject-billing-takeover §P1）——
+
+describe('PricingService.quote 主体自解析（P1）', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    delete process.env.PRICING_SOURCE
+    delete process.env.PRICING_SUBJECT_KEYS
+  })
+
+  const VIDEO_SUBJECTS = [
+    { capability: 'video', modelKey: 'h3-max', spec: '768p:10s', provider: 'fal', upstream: 'fal', status: 'priced' },
+    { capability: 'video', modelKey: 'h3-max', spec: '768p:5s', provider: 'fal', upstream: 'fal', status: 'priced' },
+  ]
+
+  function tableWithSubjects() {
+    return [
+      // legacy 家族行（旧价，兜底基准）
+      { matchKey: 'video:h3-max:768p:10:-:ri0:rv0', credits: 75 },
+      { matchKey: 'video:h3-max:768p:5:-:ri0:rv0', credits: 45 },
+      { matchKey: 'video:default:768p:10:-:ri0:rv0', credits: 50 },
+      { matchKey: 'video:default:768p:5:-:ri0:rv0', credits: 30 },
+      { matchKey: 'audio:design', credits: 5 },
+      { matchKey: 'text', credits: 5 },
+      // 主体行（成本×利润价，P1 起实际扣费）
+      { matchKey: 'video', credits: 630, subjectKey: 'video|h3-max|768p:10s|fal|fal', costSnapshotYuan: 5.72, profitBpSnapshot: 1000 },
+      { matchKey: 'video', credits: 315, subjectKey: 'video|h3-max|768p:5s|fal|fal', costSnapshotYuan: 2.86, profitBpSnapshot: 1000 },
+      { matchKey: 'audio', credits: 1, subjectKey: 'audio|stepaudio-3-gen-preview|design|agnes_hub|stepfun', costSnapshotYuan: 0.0095, profitBpSnapshot: 1000 },
+      { matchKey: 'image', credits: 13, subjectKey: 'image|gpt-image-2|1K|platform|platform', costSnapshotYuan: 0.072, profitBpSnapshot: 1000 },
+    ]
+  }
+
+  it('video 只传 modelKey+分辨率+时长 ⇒ 自解析命中主体行（附价格锁快照）', async () => {
+    const { prisma } = fakePrisma(tableWithSubjects(), { pricingSubjects: VIDEO_SUBJECTS })
+    const svc = new PricingService(prisma)
+    const r = await svc.quote({ capability: 'video', modelKey: 'h3-max', resolution: '768p', duration: 10 })
+    expect(r.credits).toBe(630)
+    expect(r.subjectKey).toBe('video|h3-max|768p:10s|fal|fal')
+    expect(r.costYuanPerRequest).toBe(5.72)
+    expect(r.profitBp).toBe(1000)
+    expect(r.degraded).toBeUndefined()
+  })
+
+  it('显式 subjectKey 直取优先于自解析（六级解析第一级，自解析不触发）', async () => {
+    const { prisma } = fakePrisma(tableWithSubjects(), { pricingSubjects: VIDEO_SUBJECTS })
+    const svc = new PricingService(prisma)
+    // 传表内存在的主体行 key：直取命中（630），且不得再走自解析（findMany 零调用）
+    const r = await svc.quote({
+      capability: 'video',
+      modelKey: 'h3-max',
+      resolution: '768p',
+      duration: 10,
+      subjectKey: 'video|h3-max|768p:10s|fal|fal',
+    })
+    expect(r.credits).toBe(630)
+    expect(r.subjectKey).toBe('video|h3-max|768p:10s|fal|fal')
+    const findMany = (prisma as unknown as { pricingSubject: { findMany: ReturnType<typeof vi.fn> } }).pricingSubject.findMany
+    expect(findMany).not.toHaveBeenCalled()
+  })
+
+  it('显式 subjectKey 表内不存在 ⇒ 不自解析不猜价，回落 legacy 行', async () => {
+    const { prisma } = fakePrisma(tableWithSubjects(), { pricingSubjects: VIDEO_SUBJECTS })
+    const svc = new PricingService(prisma)
+    const r = await svc.quote({
+      capability: 'video',
+      modelKey: 'h3-max',
+      resolution: '768p',
+      duration: 10,
+      subjectKey: 'video|h3-max|768p:10s|minimax|minimax',
+    })
+    // miss ⇒ 跳过主体级落 legacy 家族行（75），绝不拿自解析 fal 行（630）顶上
+    expect(r.credits).toBe(75)
+    expect(r.subjectKey).toBeUndefined()
+  })
+
+  it('audio design + modelKey ⇒ 命中 design 主体行（解除 design→voice 归并）', async () => {
+    const { prisma } = fakePrisma(tableWithSubjects(), {
+      pricingSubjects: [
+        ...VIDEO_SUBJECTS,
+        { capability: 'audio', modelKey: 'stepaudio-3-gen-preview', spec: 'design', provider: 'agnes_hub', upstream: 'stepfun', status: 'priced' },
+      ],
+    })
+    const svc = new PricingService(prisma)
+    const r = await svc.quote({ capability: 'audio', audioKind: 'design', modelKey: 'stepaudio-3-gen-preview' })
+    expect(r.credits).toBe(1)
+    expect(r.subjectKey).toBe('audio|stepaudio-3-gen-preview|design|agnes_hub|stepfun')
+  })
+
+  it('image 传 modelKey+分辨率 ⇒ 命中图像主体行', async () => {
+    const { prisma } = fakePrisma(tableWithSubjects(), {
+      pricingSubjects: [
+        ...VIDEO_SUBJECTS,
+        { capability: 'image', modelKey: 'gpt-image-2', spec: '1K', provider: 'platform', upstream: 'platform', status: 'priced' },
+      ],
+    })
+    const svc = new PricingService(prisma)
+    const r = await svc.quote({ capability: 'image', modelKey: 'gpt-image-2', resolution: '1K', count: 1 })
+    expect(r.credits).toBe(13)
+    expect(r.subjectKey).toBe('image|gpt-image-2|1K|platform|platform')
+  })
+
+  it('时长缺省 ⇒ 规范化为 5s 主体行', async () => {
+    const { prisma } = fakePrisma(tableWithSubjects(), { pricingSubjects: VIDEO_SUBJECTS })
+    const svc = new PricingService(prisma)
+    const r = await svc.quote({ capability: 'video', modelKey: 'h3-max', resolution: '768p' })
+    expect(r.credits).toBe(315)
+    expect(r.subjectKey).toBe('video|h3-max|768p:5s|fal|fal')
+  })
+
+  it('主体表无该行 ⇒ 回落 legacy 家族行（绝不猜价）', async () => {
+    const { prisma } = fakePrisma(tableWithSubjects(), { pricingSubjects: VIDEO_SUBJECTS })
+    const svc = new PricingService(prisma)
+    const r = await svc.quote({ capability: 'video', modelKey: 'seedance-2.0', resolution: '768p', duration: 10 })
+    expect(r.credits).toBe(50) // default 家族 legacy 行，绝不误用 h3-max 主体价
+    expect(r.subjectKey).toBeUndefined()
+  })
+
+  it('无 modelKey ⇒ 跳过主体级（既有 legacy 行为不变）', async () => {
+    const { prisma } = fakePrisma(tableWithSubjects(), { pricingSubjects: VIDEO_SUBJECTS })
+    const svc = new PricingService(prisma)
+    await expect(svc.quote({ capability: 'video', resolution: '768p', duration: 5 })).resolves.toEqual({
+      credits: 30, // 无 modelKey ⇒ default 家族 legacy 行，不命中 h3-max 主体行
+      ruleVersion: V,
+    })
+  })
+
+  it('杀开关 PRICING_SUBJECT_KEYS=off ⇒ 跳过主体级（进程级回滚杠杆）', async () => {
+    process.env.PRICING_SUBJECT_KEYS = 'off'
+    const { prisma } = fakePrisma(tableWithSubjects(), { pricingSubjects: VIDEO_SUBJECTS })
+    const svc = new PricingService(prisma)
+    await expect(svc.quote({ capability: 'video', modelKey: 'h3-max', resolution: '768p', duration: 10 })).resolves.toEqual({
+      credits: 75,
+      ruleVersion: V,
+    })
+  })
+
+  it('主体索引 DB 异常 ⇒ 回落 legacy（永不 throw）', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { prisma } = fakePrisma(tableWithSubjects(), { pricingSubjects: VIDEO_SUBJECTS, subjectIndexThrows: true })
+    const svc = new PricingService(prisma)
+    const r = await svc.quote({ capability: 'video', modelKey: 'h3-max', resolution: '768p', duration: 10 })
+    expect(r.credits).toBe(75)
+    expect(warn).toHaveBeenCalled()
+  })
+
+  it('文本不受自解析影响（capability=text 无主体推导，走 legacy/token 行）', async () => {
+    const { prisma } = fakePrisma(tableWithSubjects(), { pricingSubjects: VIDEO_SUBJECTS })
+    const svc = new PricingService(prisma)
+    await expect(svc.quote({ capability: 'text' })).resolves.toEqual({ credits: 5, ruleVersion: V })
   })
 })
 

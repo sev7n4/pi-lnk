@@ -133,16 +133,31 @@ export function resolveProposalNodeData(
 const quoteMap = reactive(new Map<string, number>())
 const inflight = new Set<string>()
 
-/** 由节点数据推导报价 query（image / video / audio 三类生成节点；未知类型不报价）。 */
-function quoteQueryOf(d: ProposalNodeData): PriceQuoteQuery | null {
+/**
+ * 由节点数据推导报价 query（image / video / audio 三类生成节点；未知类型不报价）。
+ *
+ * ⚠️ P1.5 不变式（spec 2026-11-15-pricing-subject-billing-takeover）：展示参数必须
+ * ⊇ 计费参数——studio 扣费侧传 modelKey（+video 的 resolution），这里缺任一项都会
+ * 落 legacy 家族行而实扣走主体行 ⇒ 重演 #674 展示≠扣费。modelId 为渠道编码值
+ * （`platform::xxx`），服务端 modelOptionName 会剥前缀，直传即可。
+ * 导出仅供 P1.5 契约测试消费（useProposalNodeData.quote-contract）。
+ */
+export function quoteQueryOf(d: ProposalNodeData): PriceQuoteQuery | null {
   if (d.nodeType === 'video') {
-    return { capability: 'video', duration: d.videoDuration ?? 5 }
+    return {
+      capability: 'video',
+      modelKey: d.modelId || undefined,
+      resolution: d.videoResolution || undefined,
+      duration: d.videoDuration ?? 5,
+    }
   }
   if (d.nodeType === 'audio') {
-    return d.audioKind ? { capability: 'audio', audioKind: d.audioKind } : null
+    if (!d.audioKind) return null
+    return { capability: 'audio', audioKind: d.audioKind, modelKey: d.modelId || undefined }
   }
   return {
     capability: 'image',
+    modelKey: d.modelId || undefined,
     count: Math.max(1, d.imageCount || 1),
     resolution: d.imageResolution || '1K',
   }

@@ -1089,11 +1089,15 @@ export class StudioService {
     scope?: CanvasGenerationScope,
   ) {
     const n = Math.max(1, Math.min(4, Number(count) || 1))
-    // 诊断 B4：定价按分辨率分级（1K=10 / 2K=15 / 4K=20 每张），单一真源在 shared
-    const quote = await this.pricing.quote({ capability: 'image', count: n, resolution }, userId)
-    const cost = quote.credits
     const chargeReason = '图像生成'
+    // P1 扣费接管（spec §P1.5）：先解析模型再报价——quote 带 modelKey 才能命中主体行
+    // （成本×利润价），否则落 legacy 家族行导致展示≠扣费。
     const resolved = await this.resolver.resolveForGeneration(userId, model, 'image')
+    const quote = await this.pricing.quote(
+      { capability: 'image', count: n, resolution, modelKey: resolved.modelName },
+      userId,
+    )
+    const cost = quote.credits
     const { mergedText, skippedMerge, mergeDegraded, referenceImages } = await this.resolveMergedPrompt(
       prompt,
       refs,
@@ -1323,11 +1327,15 @@ export class StudioService {
     cancel?: CancelFlag,
     scope?: CanvasGenerationScope,
   ) {
-    const quote = await this.pricing.quote({ capability: 'image_variant' }, userId)
-    const cost = quote.credits
-    const chargeReason = '图像变体'
     const combined = basePrompt ? `${basePrompt}。变体要求：${prompt}` : prompt
     const resolved = await this.resolver.resolveForGeneration(userId, model, 'image')
+    // P1 扣费接管（spec §P1.5）：带 modelKey 命中主体行（spec="*"），无主体回落 legacy。
+    const quote = await this.pricing.quote(
+      { capability: 'image_variant', modelKey: resolved.modelName },
+      userId,
+    )
+    const cost = quote.credits
+    const chargeReason = '图像变体'
     const storeModel = model ?? resolved.modelName
     const baseMeta = { variation: true, basePrompt, channelId: resolved.channelId, chargeReason }
     // 账本对账（诊断 B2 收尾）：与 generateImage 同构的「记录先行」——先建 generating 占位
@@ -2362,9 +2370,11 @@ export class StudioService {
     const quote = await this.pricing.quote(
       {
         capability: 'audio',
-        // AudioKind（'voice'|'design'|'music'）归一为 AudioPriceKind（'voice'|'music'）：
-        // 与 legacy 计价分支逐字同果——music 15 分、voice/design 5 分（pricing.core.ts legacyPriceOf audio 分支）
-        audioKind: kind === 'music' ? 'music' : 'voice',
+        // P1 扣费接管（spec §P1.5）：解除 design→voice 归并，传真实 kind + modelKey
+        // 命中主体行（gen-preview design 有独立成本行）；无主体模型回落 legacy 行
+        // （legacyPriceOf：design/voice 同 5 分，归并语义在回落路径保持）。
+        audioKind: kind,
+        modelKey: resolved.modelName,
       },
       userId,
     )

@@ -335,6 +335,13 @@ export type CostRecordTier = {
   unitQuantity: number
   costYuan: number | null
   perVideoDerived: number | null
+  /**
+   * 物化后扣费积分（P1.6）：active 价目表主体行 credits（文本=反比率行，实际结算口径）。
+   * video=null（按秒无单一值，见 creditsByDuration）；无物化条目为 null。
+   */
+  materializedCredits: number | null
+  /** 仅视频档：按时长枚举的主体行积分（4s/5s/10s/15s）。 */
+  creditsByDuration: { duration: number; credits: number }[] | null
 }
 
 export type CostRecordRow = {
@@ -348,6 +355,8 @@ export type CostRecordRow = {
   subjectsTotal: number
   missingSpecs: string[]
   status: 'ready' | 'partial' | 'missing'
+  /** 物化积分取数来源版本（active 优先，无 active 取最新 draft）。 */
+  materializedVersion: string | null
 }
 
 export type CostRecordUpdateInput = {
