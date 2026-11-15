@@ -65,11 +65,26 @@
 
 ---
 
-## 3. 裁决点（本 spec 提请评审拍板）
+## 3. 裁决点（2026-11-15 已裁决：原则=吃满上游实现与最佳实践，不重复造轮子）
 
-- **D-1 静态渲染 vs 动态渲染**：按 `registered` 全集静态渲染（cache 稳定，段内容不随 tiering/门禁变化）vs 按 `active` 渲染（token 省但 cache 随工具集变化打散）。**建议：静态**——B-1 将引入门禁态声明集收缩，若 guidelines 随 active 变，门禁进出会额外打断前缀缓存，与 B-1 的 cache 代价分析叠加；静态渲染使本刀对 cache **零新增扰动**。
-- **D-2 registry 删除形态**：`task_tool.md` 整文件删除 vs 降为占位（保留 id/version 供引用追溯）。**建议：整文件删除**——MANIFEST 同步摘除；回溯走 git 历史，不留僵尸占位。
-- **D-3 段名与格式**：`<tool_guidelines>`（XML 段，对齐 vendor 段风格）vs 裸文本块。**建议：XML 段**——与 vendor sections 命名习惯一致，1.0.0 upmerge 映射时更易对照（D3 基座裁决延续）。
+### 裁决依据（上游实证）
+
+- **上游段机制真身**：coding-agent `buildSystemPromptSections` 按 **selectedTools（active 集）** 构建 tools/rules 段，并经 `diffSystemPromptSections` 做**段级 diff**——这是上游保 cache 的最佳实践真身。但它只存在于 coding-agent 包，且 `customPrompt` 分支不渲染；agent-core 稳定版 `AgentHarness` 无段机制（`generation.ts:61-65` 直通）。
+- **上游有未转正的先例**：agent-core `harness/pico3/harness.ts:63` 已有 `SystemSection[]` + `registerSection` 机制——上游自己也在向「agent-core 段机制」演进，但 experimental、非本项目路径。
+- **项目依赖纪律**：`eval/driver.ts` 头注释 + ADR-0001/DEPENDENCIES.md 明令**不引 `@earendil-works/pi-coding-agent`**（交互式终端宿主层）。为一段渲染拖整包依赖 = 违反既有裁决。
+- **上游格式**：`buildRules` 输出为 bullet 流（`- ${rule}`）；sections 渲染统一 XML 包装（`<${name}>…</${name}>`，`system-prompt.ts:177`）。
+
+### D-1 渲染时机 → **静态渲染（registered 全集），复用既有 `appendPromptBlocks`**
+
+理由：① 上游段级 diff 的**精神**是「内容不变则缓存不动」——静态渲染把该精神推到极值：guidelines 段不随 tiering/门禁/active 变化，cache **零新增扰动**，与 B-1 门禁态声明集收缩正交不叠加；② 要复刻上游 `diffSystemPromptSections` 必须引 coding-agent（违反依赖纪律）或自建段 diff（造轮子），两者都被原则否决；③ pico3 `SystemSection` 是上游正主，1.0.0 upmerge 时若转正，本段迁移到该机制（已记入 D3 基座映射核验清单）——当下自建是**过渡形态而非平行轮子**。
+
+### D-2 registry 删除形态 → **整文件删除 + MANIFEST 同步摘除**
+
+理由：① vendor resource loader 语义是「目录内文件即所载」，无占位僵尸文件概念；② 本项目 ADR-0003 prompt-registry 单源纪律——占位文件让 registryHash 校验多一个空转条目，破坏「规则文件=有内容规则」不变式；③ 回溯走 git 历史（等量置换可 diff 到删除 commit）。
+
+### D-3 段名与格式 → **`<tool_guidelines>` XML 段 + `- <tool>: <rule>` bullet 流**
+
+理由：① XML 包装对齐上游 sections 渲染（`system-prompt.ts:177`）；② bullet 流对齐上游 `buildRules` 输出；③ 段名不用上游的 `rules`/`tools`——那两个名字在上游语义绑定默认 prompt 装配，复用会制造假等价；`tool_guidelines` 与字段名一一对应、与 vendor 段命名风格同族；④ 每条 bullet 加工具名前缀是必要偏离：上游 bullet 的工具归属由 tools 段承载，我们的静态段无 tools 段，不前缀则模型无法归属。
 
 ## 4. 验收锚
 
