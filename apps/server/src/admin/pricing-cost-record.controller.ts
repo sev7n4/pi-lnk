@@ -130,13 +130,17 @@ export class PricingCostRecordController {
         include: { entries: true },
       })
     }
-    // 主体行索引：subjectKey（capability|modelKey|spec|provider|upstream）→ credits；
+    // 主体行索引：三段前缀（capability|modelKey|spec）→ credits——档位聚合不知道
+    // provider/upstream（渠道绑定在目录层），按前缀取该模型该档第一行；video 的
+    // creditsByDuration 与 image/audio 的 materializedCredits 同源消费此索引。
     // 文本反比率行（matchKey `text:<model>:<spec>`，实际结算口径）单独索引。
-    const subjectCredits = new Map<string, number>()
+    const subjectCreditsByTier = new Map<string, number>()
     const textTokenCredits = new Map<string, number>()
     for (const e of priceVersion?.entries ?? []) {
-      if (e.subjectKey) subjectCredits.set(e.subjectKey, e.credits)
-      else if (e.matchKey.startsWith('text:') && !e.matchKey.includes('|')) {
+      if (e.subjectKey) {
+        const prefix = e.subjectKey.split('|').slice(0, 3).join('|')
+        if (!subjectCreditsByTier.has(prefix)) subjectCreditsByTier.set(prefix, e.credits)
+      } else if (e.matchKey.startsWith('text:') && !e.matchKey.includes('|')) {
         const rest = e.matchKey.slice('text:'.length)
         const sep = rest.lastIndexOf(':')
         if (sep > 0) textTokenCredits.set(`${rest.slice(0, sep)}|${rest.slice(sep + 1)}`, e.credits)
@@ -152,7 +156,7 @@ export class PricingCostRecordController {
     const rows = rates as CostRecordRateRow[]
     const data: CostRecordDto[] = []
     for (const e of entries) {
-      const tiers = this.tiersFor(e, rows, at, subjectCredits, textTokenCredits)
+      const tiers = this.tiersFor(e, rows, at, subjectCreditsByTier, textTokenCredits)
       const modelSubjects = subjectsByModel.get(e.modelKey) ?? []
       const missingSpecs: string[] = []
       for (const s of modelSubjects) {
@@ -190,14 +194,14 @@ export class PricingCostRecordController {
     e: { modelKey: string; modality: string; audioKind: string | null },
     rows: CostRecordRateRow[],
     at: Date,
-    subjectCredits: Map<string, number>,
+    subjectCreditsByTier: Map<string, number>,
     textTokenCredits: Map<string, number>,
   ): CostRecordTier[] {
     if (e.modality === 'image') {
       return ENUMERATED_IMAGE_RESOLUTIONS.map((res) => ({
         spec: res, label: `${res}（元/张）`, unit: 'per_image', unitQuantity: 1,
         costYuan: tierCostYuan(rows, e.modelKey, res, at), perVideoDerived: null,
-        materializedCredits: subjectCredits.get(`image|${e.modelKey}|${res}`) ?? null,
+        materializedCredits: subjectCreditsByTier.get(`image|${e.modelKey}|${res}`) ?? null,
         creditsByDuration: null,
       }))
     }
@@ -207,9 +211,10 @@ export class PricingCostRecordController {
         const own = tierCostYuan(rows, e.modelKey, res, at)
         // P1.6 物化积分：按时长枚举该分辨率下的主体行（spec=`<res>:<dur>s`）。
         const byDuration: { duration: number; credits: number }[] = []
-        for (const [key, credits] of subjectCredits) {
+        for (const [key, credits] of subjectCreditsByTier) {
+          // 三段前缀索引 key = capability|modelKey|spec（spec=`<res>:<dur>s`）
           const parts = key.split('|')
-          if (parts.length !== 5 || parts[0] !== 'video' || parts[1] !== e.modelKey) continue
+          if (parts.length !== 3 || parts[0] !== 'video' || parts[1] !== e.modelKey) continue
           const specParts = parts[2].split(':')
           if (specParts[0] !== res) continue
           const dur = Number(specParts[1]?.replace('s', ''))
@@ -234,7 +239,7 @@ export class PricingCostRecordController {
         .filter((k) => k in AUDIO_TIER_SPEC)
         .map((k) => {
           const m = AUDIO_TIER_SPEC[k]
-          return { spec: k, label: m.label, unit: m.unit, unitQuantity: m.unitQuantity, costYuan: tierCostYuan(rows, e.modelKey, m.rowSpec, at), perVideoDerived: null, materializedCredits: subjectCredits.get(`audio|${e.modelKey}|${k}`) ?? null, creditsByDuration: null }
+          return { spec: k, label: m.label, unit: m.unit, unitQuantity: m.unitQuantity, costYuan: tierCostYuan(rows, e.modelKey, m.rowSpec, at), perVideoDerived: null, materializedCredits: subjectCreditsByTier.get(`audio|${e.modelKey}|${k}`) ?? null, creditsByDuration: null }
         })
     }
     if (e.modality === 'text') {

@@ -165,6 +165,16 @@ describe('PricingCostRecordController（定价中心聚合/更新/迁移）', ()
     const video2 = res2.data.find((r) => r.modelKey === VIDEO_KEY)!
     expect(video2.materializedVersion).toBe('v-active-p16')
     expect(video2.tiers.find((t) => t.spec === '768p')?.creditsByDuration).toEqual([{ duration: 5, credits: 630 }])
+    // 三段前缀索引回归守卫（11-15 生产取证抓出：get 三段 vs set 五段恒 miss ⇒ image/audio 恒 null）
+    await prisma.modelCatalogEntry.create({
+      data: { modelKey: 'img-p16', displayName: '图像 P16', gatewayModelId: 'img-p16', modality: 'image', providerBinding: 'gateway-openai-compat', params: '{}' },
+    })
+    await prisma.priceListEntry.create({
+      data: { versionId: active.id, capability: 'image', matchKey: 'image', credits: 13, basis: 'auto-derived', subjectKey: `image|img-p16|1K|gateway|upstream-a` },
+    })
+    const res3 = await controller.list()
+    const img = res3.data.find((r) => r.modelKey === 'img-p16')!
+    expect(img.tiers.find((t) => t.spec === '1K')?.materializedCredits).toBe(13)
     // draft 的文本行不再可见（active 无文本行）
     const text2 = res2.data.find((r) => r.modelKey === TEXT_KEY)!
     expect(text2.tiers.find((t) => t.spec === 'in')?.materializedCredits).toBeNull()
