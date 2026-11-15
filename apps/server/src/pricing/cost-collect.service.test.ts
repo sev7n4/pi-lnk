@@ -40,7 +40,7 @@ describe('collectMinimax（官方牌价常量表 + fx 录入侧折算）', () =>
     const p768 = rep.candidates.find((c) => c.spec === '768p')!
     expect(p768.costYuan).toBeCloseTo(0.08 * fx, 10)
     expect(p768.evidence.url).toContain('platform.minimax.io')
-    expect(rep.skips).toEqual([{ modelKey: 'minimax-h3', spec: '480p', reason: expect.stringContaining('480P') }])
+    expect(rep.skips).toEqual([{ modelKey: 'minimax-h3', spec: '480p', reason: expect.stringContaining('该分辨率') }])
   })
 })
 
