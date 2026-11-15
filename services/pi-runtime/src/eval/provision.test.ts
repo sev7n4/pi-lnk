@@ -4,7 +4,9 @@ import {
  archiveEvalCanvas,
  createEvalCanvas,
  decideProvisioning,
+ EVAL_SEED_NODE_COUNT,
  runStamp,
+ seedEvalCanvas,
 } from "./provision.js";
 
 const NEST = { baseUrl: "http://127.0.0.1:5100/api", token: "svc-token" };
@@ -84,6 +86,43 @@ describe("createEvalCanvas（D1/D3）", () => {
 			() => createEvalCanvas(NEST, "u1", { fetchImpl }),
 			/create-canvas/,
 		);
+	});
+});
+
+describe("seedEvalCanvas（run-4 实证缺口：空画布不满足下界类前提）", () => {
+	it("默认播 12 个种子：POST add-nodes-batch，items 形态齐备且 key 确定性", async () => {
+		const calls: Array<{ url: string; body: string }> = [];
+		const fetchImpl = (async (url: string, init: RequestInit) => {
+			calls.push({ url, body: String(init.body) });
+			return jsonRes(200, { code: 0, message: "ok", data: {} });
+		}) as typeof fetch;
+		const out = await seedEvalCanvas(NEST, "sess-new", "u1", { fetchImpl });
+		assert.equal(out.seeded, 12);
+		assert.equal(out.seeded, EVAL_SEED_NODE_COUNT);
+		assert.ok(calls[0]!.url.endsWith("/agent/internal/add-nodes-batch"));
+		const body = JSON.parse(calls[0]!.body);
+		assert.equal(body.sessionId, "sess-new");
+		assert.equal(body.userId, "u1");
+		assert.equal(body.items.length, 12);
+		assert.equal(body.items[0].key, "eval-seed-01");
+		assert.equal(body.items[11].key, "eval-seed-12");
+		assert.equal(body.items[0].targetType, "text");
+	});
+
+	it("HTTP 失败 ⇒ 抛错（画布未就绪不该跑，与 D3 同口径）", async () => {
+		const fetchImpl = (async () => jsonRes(400, { message: "bad" })) as typeof fetch;
+		await assert.rejects(() => seedEvalCanvas(NEST, "s", "u1", { fetchImpl }), /HTTP 400/);
+	});
+
+	it("count 可覆盖（行为级守卫：播 3 个也成功）", async () => {
+		const bodies: string[] = [];
+		const fetchImpl = (async (_url: string, init: RequestInit) => {
+			bodies.push(String(init.body));
+			return jsonRes(200, { code: 0, message: "ok", data: {} });
+		}) as typeof fetch;
+		const out = await seedEvalCanvas(NEST, "s", "u1", { count: 3, fetchImpl });
+		assert.equal(out.seeded, 3);
+		assert.equal(JSON.parse(bodies[0]!).items.length, 3);
 	});
 });
 
