@@ -197,7 +197,8 @@ describe("runEvalCase（pi-runtime HTTP 驱动）", () => {
 				return;
 			}
 			res.writeHead(200, { "content-type": "application/json" });
-			res.end("{}");
+			// ⭐ 返回真实形状的 provider/model：超时路径也必须带回（run-2 归因）
+			res.end(JSON.stringify({ sessionId: "t", provider: "byok-test", model: "deepseek-v4-flash", status: "created" }));
 		});
 		await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
 		const addr = server.address();
@@ -208,6 +209,9 @@ describe("runEvalCase（pi-runtime HTTP 驱动）", () => {
 			});
 			assert.equal(out.transcript.completed, false);
 			assert.ok(out.errors.some((e) => e.includes("timeout")), `实际 ${JSON.stringify(out.errors)}`);
+			// ⭐ run-2 归因：错误路径也必须带 /sessions 响应的 provider/model
+			assert.equal(out.model, "deepseek-v4-flash");
+			assert.equal(out.provider, "byok-test");
 		} finally {
 			// ⚠️ 必须 closeAllConnections：timeout 用例里 SSE 响应**永不结束**，
 			// 只 close() 会一直等这些连接 ⇒ 整个测试文件挂死（不是 driver 的问题）。

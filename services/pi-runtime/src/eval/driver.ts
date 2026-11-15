@@ -188,11 +188,16 @@ export async function runEvalCase(
 		// 超时/网络错误：把已收事件照样折叠返回，让 case 断言能看到「跑到哪一步」，
 		// 而不是只丢一个错误 —— 后者无法区分「没调工具」与「根本没跑起来」。
 		const transcript = foldRuntimeEvents(collected);
+		// ⭐ run-2 归因修复（2026-11-15）：超时/网络错误路径此前漏带 provider/model
+		// ⇒ run-1 的 19 条 fail 全部「无 model 记录」，无法区分「走了 AGNES 回落」
+		// 与「DeepSeek 但超时」。归因是报告元信息，不是判据——错误路径照样带。
 		return {
 			transcript,
 			events: collected,
 			usage: transcript.usage,
 			errors: [...transcript.errors, err instanceof Error ? err.message : String(err)],
+			...(createdModel ? { model: createdModel } : {}),
+			...(createdProvider ? { provider: createdProvider } : {}),
 		};
 	}
 
