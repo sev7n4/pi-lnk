@@ -77,4 +77,4 @@
 | --- | --- | --- |
 | B-1 声明集收缩 | 🟡 立项基座已落档（本文件 §1） | vendor loader.ts:424 / types.ts:507；tiering SSOT 冲突待 plan 裁决 |
 | B-2 任务契约一等化 | 🟡 立项基座已落档（本文件 §2） | vendor session-manager.ts:1290；EntryProjector 族待 plan 细化 |
-| B-3 工具引导下沉 | 🟡 立项基座已落档（本文件 §3） | vendor agent-session.ts:3462-3475 / system-prompt.ts:21-22 |
+| B-3 工具引导下沉 | 🟡 独立立项 spec 已落档（`2026-11-15-b3-tool-guidelines-design.md`） | ⚠️ 基座 §3 两处前提被复审证伪（原语在 AgentHarness 路径不可达；迁移实量极小），路线以独立 spec §2「消费端一等化」为准 |
