@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { foldRuntimeEvents, type RuntimeEvent } from "./transcript.js";
+import { pickLatestPlanSnapshot } from "./golden-cases.js";
 
 /**
  * 流式事件 → 归一化 transcript 的折叠测试。
@@ -91,6 +92,51 @@ describe("foldRuntimeEvents（流式事件折叠）", () => {
 		]);
 		assert.equal(t.toolCalls[0]?.name, "propose_generation");
 		assert.deepEqual(t.toolCalls[0]?.input, { nodeId: "n1" });
+	});
+
+	it("⭐⭐ vendor 形态：tool_start 载荷入参字段是 args（camelCase）⇒ 必须抓到", () => {
+		// run-3 生产证据（2026-11-15）：session-manager `attachEvents` 把 harness `tool_start`
+		// 事件整体透传为 SSE data，vendor 字段名是 `args`（ToolLikeEvent 注释明示
+		// 「vendor 侧 tool_start 全 camelCase」）。旧实现只读 input/arguments ⇒
+		// 生产里 toolCalls[].input 恒 undefined ⇒ 快照类判据 9/9「清单条目数 0」假 fail。
+		const t = foldRuntimeEvents([
+			{
+				type: "tool_execution_start",
+				data: {
+					toolName: "todo_write",
+					toolCallId: "c9",
+					args: { todos: [{ content: "调研画布结构", status: "in_progress" }] },
+				},
+			},
+		] as unknown as RuntimeEvent[]);
+		assert.equal(t.toolCalls[0]?.name, "todo_write");
+		assert.deepEqual(t.toolCalls[0]?.input, {
+			todos: [{ content: "调研画布结构", status: "in_progress" }],
+		});
+	});
+
+	it("⭐⭐⭐ 行为级守卫：fold→judge 全链——vendor 形态事件折叠后快照判据必须读到真实条目", () => {
+		// 防 wiring 断层复发：若 fold 丢入参，pickLatestPlanSnapshot 恒读空清单，
+		// 生产跑批回到 run-3 的 9/9「清单条目数 0 低于下限」假 fail（模型行为健康全被判 fail）。
+		const t = foldRuntimeEvents([
+			{
+				type: "tool_execution_start",
+				data: {
+					toolName: "todo_write",
+					toolCallId: "a",
+					args: { todos: [{ content: "步骤一" }, { content: "步骤二" }] },
+				},
+			},
+			// 收尾清空（合规信号，D2 语义）——真实生产里同样是 args 载荷：
+			{
+				type: "tool_execution_start",
+				data: { toolName: "todo_write", toolCallId: "b", args: { todos: [] } },
+			},
+		] as unknown as RuntimeEvent[]);
+		const snap = pickLatestPlanSnapshot(t.toolCalls);
+		assert.ok(snap, "应取到最后一次非空快照（D2：收尾清空不算条目缺失）");
+		assert.equal(snap.tool, "todo_write");
+		assert.equal(snap.items.length, 2, "折叠链路必须保住条目——丢参即此处红");
 	});
 
 	it("agent_end(completed) + 无 error ⇒ completed", () => {
