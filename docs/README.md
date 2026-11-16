@@ -93,6 +93,7 @@
 | [`adr/0016-creative-skills-ecosystem-compatibility.md`](./adr/0016-creative-skills-ecosystem-compatibility.md) | **ADR-0016 创作类 Skills 生态兼容**——生态化从阶段四提前；双通路归一 + 三档兼容 C0/C1/C2/C3 + 服务端确定性安装；agent 不执行前置步骤；以 WorkBuddy 为行为北极星、复刻契约不复制信任模型 | Accepted —— 方向/决策来源 |
 | [`superpowers/specs/2026-11-10-creative-skills-ecosystem-discovery-loading-design.md`](./superpowers/specs/2026-11-10-creative-skills-ecosystem-discovery-loading-design.md) | **创作类 Skills 生态兼容：技能发现与双通路加载设计规格（13 章）**——完整分析事实依据（含 §3.9 WorkBuddy 北极星实现解剖 F38–F55）与既有判断显式修订/推翻清单、§4.7 逐能力复刻裁决、4 张结构图、M0/M1 行为级验收判据与可转红负例、M0–M4 路标与两个北极星验收线 | 活资产 —— 待评审，实施依据 |
 | [`superpowers/specs/2026-11-16-creative-skills-ecosystem-discovery-loading-design-v2.md`](./superpowers/specs/2026-11-16-creative-skills-ecosystem-discovery-loading-design-v2.md) | **创作类 Skills 生态兼容规格 v2（上游原语接线修订稿，13 章）**——§0 逐节差异表（v1 13 节逐条处置）；§3.1 上游原语清单事实基座 U-1…U-11；§10 M0 可达性探针判据 M0-P1–P11 与可转红负例；附录 A 探针全文 / B 实跑 stdout（11/11 GREEN、变异 4/4 RED）/ C 原语速查。⭐ 实证 `setResources` 不落盘 ⇒ resume/fork 必须重注入 | 活资产 —— **执行面以此稿为准**，待评审 |
+| [`superpowers/plans/2026-11-16-m0-upstream-skills-wiring.md`](./superpowers/plans/2026-11-16-m0-upstream-skills-wiring.md) | **M0 上游原语接线实施计划**——W1 `resources` 唯一注入点 / W2 index 每轮 `getResources()`+上游 formatter（预算外装配，B-3 顺序恒定）/ W3 `forceSkills` 收敛 `lane.skill`（未知名 fail-closed 400）/ W5 `load_skill` 描述对齐 `<available_skills>`；探针落库 11/11、变异 M-W1/W2/W3 全 RED；pi-runtime 2020/2020 + tsc 干净 | 活资产 —— 实现依据 |
 
 ## 保留的目录
 

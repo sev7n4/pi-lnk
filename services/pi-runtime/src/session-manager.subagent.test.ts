@@ -250,7 +250,7 @@ test("runSubagent: 子代理不继承 source.basePrompt 的 spawn 委派规则�
 	const main = captured[0]!;
 	const mainSp =
 		typeof main.systemPrompt === "function"
-			? (main.systemPrompt as () => string)()
+			? await (main.systemPrompt as () => Promise<string>)()
 			: String(main.systemPrompt ?? "");
 	assert.ok(mainSp.includes(DELEGATION), "fixture 失效：主会话 systemPrompt 缺 spawn 委派规则");
 
@@ -259,7 +259,7 @@ test("runSubagent: 子代理不继承 source.basePrompt 的 spawn 委派规则�
 	assert.ok(captured.length >= mainCalls + 1, "build 触发一次新的 harnessFactory");
 	const subSp =
 		typeof sub.systemPrompt === "function"
-			? (sub.systemPrompt as () => string)()
+			? await (sub.systemPrompt as () => Promise<string>)()
 			: String(sub.systemPrompt ?? "");
 	assert.ok(
 		!subSp.includes(DELEGATION),

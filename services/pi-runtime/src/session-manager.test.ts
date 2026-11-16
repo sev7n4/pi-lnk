@@ -17,6 +17,7 @@ import { Metrics } from "./metrics.js";
 import type { RuntimeConfig } from "./runtime-config.js";
 import { COMPACTION_RETENTION_INSTRUCTIONS } from "./compaction-summary.js";
 import { SkillRegistry } from "./skills/registry.js";
+import { buildSkillResources } from "./skills/resources.js";
 import { Closed } from "@earendil-works/pi-agent-core";
 
 /**
@@ -94,11 +95,12 @@ describe("SessionManager harnessFactory 注入缝", () => {
 			focusNodeId: "node-1",
 		});
 		const cfg = captured as {
-			systemPrompt: (tc: unknown) => string;
+			systemPrompt: (tc: unknown) => Promise<string>;
 			toolContext: (tc: unknown) => Record<string, unknown>;
 			thinkingLevel?: string;
 		};
-		assert.equal(cfg.systemPrompt(undefined), SYS_BASE);
+		// M0：systemPrompt 闭包为 async（每轮 await harness.getResources()），vendor 原生 await。
+		assert.equal(await cfg.systemPrompt(undefined), SYS_BASE);
 		assert.equal(cfg.thinkingLevel, "medium");
 		const tc = cfg.toolContext(undefined);
 		assert.equal(tc.userId, "u1");
@@ -233,6 +235,7 @@ describe("SessionManager skills 注入（D-η' Task 4）", () => {
 			return {
 				harness: {
 					events: { on: () => () => {} },
+					getResources: async () => ({ skills: [] }),
 					lane: async () => ({ prompt: async () => ({ ok: true }) }),
 					close: async () => {},
 				},
@@ -240,8 +243,9 @@ describe("SessionManager skills 注入（D-η' Task 4）", () => {
 		};
 		const sm = new SessionManager([{ name: "t_probe" } as never], "", undefined, factory, undefined, undefined, testConfig());
 		await sm.create("s1", { systemPrompt: "SYS" });
-		const cfg = captured as { systemPrompt: (tc: unknown) => string; tools: Array<{ name: string }> };
-		assert.equal(cfg.systemPrompt(undefined), SYS_BASE);
+		const cfg = captured as { systemPrompt: (tc: unknown) => Promise<string>; tools: Array<{ name: string }> };
+		// M0：闭包 async 化 + 空集 index 为空串 ⇒ 输出仍逐字节等于 base（t_probe 无 guidelines）。
+		assert.equal(await cfg.systemPrompt(undefined), SYS_BASE);
 		assert.ok(!cfg.tools.some((t) => t.name === "load_skill"));
 	});
 
@@ -255,22 +259,30 @@ describe("SessionManager skills 注入（D-η' Task 4）", () => {
 			"",
 			undefined,
 			async (cfg: unknown) => {
-				captured = cfg;
-				return {
-					harness: {
-						events: { on: () => () => {} },
-						lane: async () => ({ prompt: async () => ({ ok: true }) }),
-						close: async () => {},
-					},
-				} as never;
-			},
-			undefined,
-			registry,
-			testConfig(),
-		);
-		await sm.create("s1", { systemPrompt: "SYS" });
-		const got = captured as { systemPrompt: (tc: unknown) => string; tools: Array<{ name: string }> };
-		assert.equal(got.systemPrompt(undefined), `SYS\n\n${registry.indexBlock}`);
+			captured = cfg;
+			return {
+				harness: {
+					events: { on: () => () => {} },
+					getResources: async () => buildSkillResources(registry.entries, (n) => registry.loadBody(n)),
+					lane: async () => ({ prompt: async () => ({ ok: true }) }),
+					close: async () => {},
+				},
+			} as never;
+		},
+		undefined,
+		registry,
+		testConfig(),
+	);
+	await sm.create("s1", { systemPrompt: "SYS" });
+		const got = captured as { systemPrompt: (tc: unknown) => Promise<string>; tools: Array<{ name: string }>; resources?: { skills: Array<{ name: string }> } };
+		// M0 W1（U-7/U-11）：create options 必须显式携带 resources（唯一注入点）。
+		assert.deepEqual(got.resources?.skills.map((s) => s.name), ["demo-skill"]);
+		// M0（§7.3-4）：index 每轮从 harness.getResources() 经上游 formatter 求值；
+		// B-3 顺序 index → <tool_guidelines>（probe 工具无 guidelines ⇒ 此处只有 index）。
+		const sp = await got.systemPrompt(undefined);
+		assert.ok(sp.includes("<available_skills>"), `应含上游 index：${sp.slice(0, 300)}`);
+		assert.ok(sp.includes("<name>demo-skill</name>"));
+		assert.ok(sp.startsWith("SYS"), "static base 段仍恒在最前");
 		const toolNames = got.tools.map((t) => t.name);
 		assert.ok(toolNames.includes("load_skill"));
 		assert.equal(toolNames.indexOf("load_skill"), toolNames.length - 1); // 尾部
@@ -286,22 +298,25 @@ describe("SessionManager skills 注入（D-η' Task 4）", () => {
 			"",
 			undefined,
 			async (cfg: unknown) => {
-				captured = cfg;
-				return {
-					harness: {
-						events: { on: () => () => {} },
-						lane: async () => ({ prompt: async () => ({ ok: true }) }),
-						close: async () => {},
-					},
-				} as never;
-			},
-			undefined,
-			registry,
-			testConfig(),
-		);
-		await sm.create("s1", {});
-		const cfg = captured as { systemPrompt: (tc: unknown) => string };
-		assert.equal(cfg.systemPrompt(undefined), `${registry.indexBlock}`);
+			captured = cfg;
+			return {
+				harness: {
+					events: { on: () => () => {} },
+					getResources: async () => buildSkillResources(registry.entries, (n) => registry.loadBody(n)),
+					lane: async () => ({ prompt: async () => ({ ok: true }) }),
+					close: async () => {},
+				},
+			} as never;
+		},
+		undefined,
+		registry,
+		testConfig(),
+	);
+	await sm.create("s1", {});
+		const cfg = captured as { systemPrompt: (tc: unknown) => Promise<string> };
+		const sp = await cfg.systemPrompt(undefined);
+		assert.ok(sp.includes("<available_skills>"));
+		assert.ok(sp.includes("<name>demo-skill</name>"));
 	});
 });
 
