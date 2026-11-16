@@ -112,6 +112,7 @@ export class Metrics {
 	private planDecisions = new Map<string, number>(); // key: decision (execute|refine|keep|timeout|aborted)
 	private planGateBlocked = new Map<string, number>(); // key: tool——planPending 期间被拦的写工具
 	private planAssumptions = new Map<string, number>(); // A-3：key: present|absent —— assumptions 显式化观测
+	private toolsetGateNarrow = new Map<string, number>(); // B-1：key: narrow|restore —— 门禁态声明集收缩观测
 	private turnBudgetWarned = 0; // C2 预算将尽 steer 提醒次数
 	private turnBudgetExceeded = 0; // C2 超限硬停次数
 	private subagentSpawned = 0; // C4 spawn_subagent 成功受理次数
@@ -396,6 +397,12 @@ export class Metrics {
 	observePlanAssumptions(present: boolean): void {
 		const key = present ? "present" : "absent";
 		this.planAssumptions.set(key, (this.planAssumptions.get(key) ?? 0) + 1);
+	}
+
+	/** B-1（plan 2026-11-16-b1-gate-toolset-narrow-plan.md §2-D6）：门禁态声明集收缩观测。
+	 *  narrow = pending 期从 declared set 移除 gated 写工具；restore = 解锁/终态合并加回。 */
+	observeToolsetGateNarrow(kind: "narrow" | "restore"): void {
+		this.toolsetGateNarrow.set(kind, (this.toolsetGateNarrow.get(kind) ?? 0) + 1);
 	}
 
 	/** A1 propose 单飞门观测（2026-11-02 死循环护栏）：key = 拦截原因（latch/pending/in_flight/ssot_unavailable）。 */
@@ -729,6 +736,12 @@ export class Metrics {
 	lines.push("# TYPE pi_runtime_plan_assumptions_total counter");
 	for (const [present, count] of [...this.planAssumptions.entries()].sort()) {
 		lines.push(`pi_runtime_plan_assumptions_total{present="${esc(present)}"} ${count}`);
+	}
+
+	lines.push("# HELP pi_runtime_toolset_gate_narrow_total plan-gate declared-set narrowing by kind (B-1).");
+	lines.push("# TYPE pi_runtime_toolset_gate_narrow_total counter");
+	for (const [kind, count] of [...this.toolsetGateNarrow.entries()].sort()) {
+		lines.push(`pi_runtime_toolset_gate_narrow_total{kind="${esc(kind)}"} ${count}`);
 	}
 
 	lines.push("# HELP pi_runtime_plan_decisions_total Plan confirmation outcomes by decision.");
