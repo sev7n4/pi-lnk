@@ -8,6 +8,8 @@ import { readCover } from '../canvas/canvas-cover'
 import { sanitizeClientOps } from './sessions-canvas-patch'
 // SP-E 阶段 1：PATCH 主通道埋点（事务成功后记录，失败/异常不影响主流程）。
 import { canvasPatchMetrics, targetKeysOf } from './canvas-patch-metrics'
+// D-1 L1 失效传播：人工编辑 PATCH 与 agent 写路径共用同一纯函数（单一写者事务内就地变换）。
+import { changedNodeIdsFromOps, propagateStale } from '@lnkpi/shared/canvas/lineage.server'
 
 function parseCanvas(raw: string | null | undefined): CanvasData {
   if (!raw) return { nodes: [], edges: [] }
@@ -171,6 +173,11 @@ export class SessionsService {
         onSkipped: (type) => skips.push({ type }),
       })
       const merged: CanvasData = { ...current, ...updated }
+      // D-1 L1（spec §6.2 单一写者）：人工编辑内容变更同样触发下游 stale 传播，
+      // 与 agent-canvas-tools persist/commitStage 同一纯函数、同一事务唯一写点。
+      // stale/contentHash/version 已被客户端白名单禁止回灌（sessions-canvas-patch），
+      // 这里由服务端事务计算，二者不矛盾（计算 ≠ 回灌）。
+      propagateStale(merged, changedNodeIdsFromOps(sanitized))
       await tx.session.update({
         where: { id },
         data: { canvasData: JSON.stringify(merged) },

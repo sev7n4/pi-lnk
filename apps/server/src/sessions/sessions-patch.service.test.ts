@@ -259,6 +259,85 @@ describe('SessionsService.patchCanvas（C1a 端到端）', () => {
   })
 })
 
+describe('R2：人工编辑 PATCH 触发 stale 传播（与 agent 写路径同一实现）', () => {
+  let svc: SessionsService
+  let findUnique: ReturnType<typeof vi.fn>
+  let txFindUnique: ReturnType<typeof vi.fn>
+  let txUpdate: ReturnType<typeof vi.fn>
+
+  beforeEach(async () => {
+    findUnique = vi.fn()
+    txFindUnique = vi.fn()
+    txUpdate = vi.fn()
+    const tx = { session: { findUnique: txFindUnique, update: txUpdate } }
+    const moduleRef = await Test.createTestingModule({
+      providers: [
+        SessionsService,
+        {
+          provide: PrismaService,
+          useValue: {
+            session: { findUnique },
+            $transaction: vi.fn(async (fn: (tx: unknown) => Promise<unknown>) => fn(tx)),
+          },
+        },
+      ],
+    }).compile()
+    svc = moduleRef.get(SessionsService)
+  })
+
+  it('上游节点内容变更 ⇒ 自身 contentHash/version/stale:false，下游 BFS 全链 stale:true', async () => {
+    const raw = JSON.stringify({
+      nodes: [
+        { id: 'A', type: 'text', data: { title: '母版', prompt: 'p0' }, position: { x: 0, y: 0 } },
+        { id: 'B', type: 'image', data: { title: '下游1', prompt: 'b0' }, position: { x: 1, y: 0 } },
+        { id: 'C', type: 'image', data: { title: '下游2', prompt: 'c0' }, position: { x: 2, y: 0 } },
+      ],
+      edges: [ { id: 'ab', source: 'A', target: 'B' }, { id: 'bc', source: 'B', target: 'C' } ],
+    })
+    findUnique.mockResolvedValue({ id: 's1', userId: 'u1', canvasData: raw, stagedActions: null })
+    txFindUnique.mockResolvedValue({ canvasData: raw, stagedActions: null })
+    txUpdate.mockResolvedValue({ id: 's1' })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await svc.patchCanvas('s1', 'u1', [
+      { type: 'update_node', payload: { id: 'A', data: { title: '新母版' } } },
+    ])
+
+    const saved = JSON.parse(txUpdate.mock.calls[0][0].data.canvasData)
+    const a = saved.nodes.find((n: { id: string }) => n.id === 'A')
+    const b = saved.nodes.find((n: { id: string }) => n.id === 'B')
+    const c = saved.nodes.find((n: { id: string }) => n.id === 'C')
+    expect(a.data.title).toBe('新母版')
+    expect(a.data.contentHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(a.data.version).toBe(1)
+    expect(a.data.stale).toBe(false)
+    expect(b.data.stale).toBe(true)
+    expect(c.data.stale).toBe(true) // A→B→C 传递闭包
+    warn.mockRestore()
+  })
+
+  it('同内容重复 PATCH ⇒ 幂等不重刷（hash 未变，version 不自增）', async () => {
+    const raw = JSON.stringify({
+      nodes: [
+        { id: 'A', type: 'text', data: { title: 'T', prompt: 'p' }, position: { x: 0, y: 0 } },
+        { id: 'B', type: 'image', data: { title: 'D', prompt: 'b' }, position: { x: 1, y: 0 } },
+      ],
+      edges: [ { id: 'ab', source: 'A', target: 'B' } ],
+    })
+    findUnique.mockResolvedValue({ id: 's1', userId: 'u1', canvasData: raw, stagedActions: null })
+    txFindUnique.mockResolvedValue({ canvasData: raw, stagedActions: null })
+    txUpdate.mockResolvedValue({ id: 's1' })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    await svc.patchCanvas('s1', 'u1', [
+      { type: 'update_node', payload: { id: 'A', data: { title: 'T', prompt: 'p' } } },
+    ])
+    const saved = JSON.parse(txUpdate.mock.calls[0][0].data.canvasData)
+    expect(saved.nodes[0].data.contentHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(saved.nodes[1].data.stale).toBe(true) // 首次写入仍传播
+    warn.mockRestore()
+  })
+})
+
 describe('SessionsService.update → PUT canvasData 写入关闭（C2②）', () => {
   it('带 canvasData ⇒ 打 canvas_put_rejected 且不落库；title-only ⇒ 不打', async () => {
     let svc: SessionsService
