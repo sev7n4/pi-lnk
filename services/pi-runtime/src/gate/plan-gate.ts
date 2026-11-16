@@ -12,6 +12,11 @@ export type PlanDecision = "execute" | "refine" | "keep" | "timeout" | "aborted"
 interface PlanSessionState {
 	pending: boolean;
 	executedThisRun: boolean;
+	/** B-1 门禁态声明集收缩（plan 2026-11-16-b1-gate-toolset-narrow-plan.md）：会话 lane
+	 *  当前是否处于「gated 写工具已从 declared set 移除」状态 + 被移除名单（还原合并加回用）。
+	 *  还原一律 getActiveTools 现算差分 + 本名单合并，不持跨会话快照（fork 陷阱，plan D3）。 */
+	toolsetNarrowed: boolean;
+	narrowedRemoved: string[];
 }
 
 const store = new Map<string, PlanSessionState>();
@@ -20,7 +25,7 @@ const STORE_CAP = 1000;
 function stateFor(key: string): PlanSessionState {
 	let s = store.get(key);
 	if (!s) {
-		s = { pending: false, executedThisRun: false };
+		s = { pending: false, executedThisRun: false, toolsetNarrowed: false, narrowedRemoved: [] };
 		store.set(key, s);
 		if (store.size > STORE_CAP) {
 			const first = store.keys().next().value;
@@ -63,6 +68,21 @@ export function clearPlanRunFlag(key: string): void {
 
 export function resetPlanState(key: string): void {
 	store.delete(key);
+}
+
+/** B-1 声明集收缩记账（plan §2-D1）：收缩/还原完成后由 wiring 回写；
+ *  before_run/after_tool 幂等判定读这里。removed 传 undefined = 保持原名单（只翻状态位）。 */
+export function setToolsetNarrow(key: string, narrowed: boolean, removed?: string[]): void {
+	const s = stateFor(key);
+	s.toolsetNarrowed = narrowed;
+	if (removed !== undefined) s.narrowedRemoved = removed;
+}
+
+export function getToolsetNarrow(
+	key: string,
+): { narrowed: boolean; removed: string[] } {
+	const s = stateFor(key);
+	return { narrowed: s.toolsetNarrowed, removed: s.narrowedRemoved };
 }
 
 /** 拦截判定：planPending 且 tier ∈ gated 且未豁免。tier 未知（注册表外工具）放行——
