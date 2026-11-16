@@ -25,7 +25,7 @@ import {
 	setToolsetNarrow,
 	getToolsetNarrow,
 } from "./plan-gate.js";
-import { computeNarrow, computeRestore } from "./toolset-overlay.js";
+import { computeConverged, computeNarrow, computeRestore } from "./toolset-overlay.js";
 
 /** 与 session-manager.ts 的 MAIN_LANE 同值。刻意本地声明：wiring 不 import session-manager
  * （避免巨模块依赖面 + 潜在循环）；两处语义锚定 vendor lane 名 "main"，漂移会被行为级
@@ -240,4 +240,50 @@ export function registerPlanGateHooks(
 	});
 	// before_run_end 已迁移到 registerRunEndHooks（subagent-barrier.ts）——统一合成
 	// plan-gate 续跑 + barrier 结果回注，避开上游 hooks.js 多 handler last-write-wins。
+}
+
+/** 无序集合相等（长度相等 + 互含；重复项折叠语义与 computeConverged 的去重输出对齐）。 */
+function sameMembers(a: readonly string[], b: readonly string[]): boolean {
+	if (a.length !== b.length) return false;
+	const set = new Set(a);
+	return b.every((n) => set.has(n));
+}
+
+/** B-1 修复（#906 重启泄漏）：resume 声明集治愈——`narrowedRemoved` 记账是进程内存态
+ *  （plan-gate store LRU），重启即失；盘上 lane config 的收缩态被 vendor `pi.lane.config`
+ *  持久化。旧逻辑在「重启 + transcript 末条 keep/refine」形态下重收缩会把 removed 覆成空
+ *  ⇒ execute 还原 `computeRestore(current, [])` 原样放回收缩集 ⇒ gated 写工具**永久**
+ *  不可见（写工具在常驻集，tool_search 无法找回）；「execute 决策后、restore 前死亡」窗口
+ *  同理（pending=false ⇒ before_run 不动作）。
+ *  治愈：resume 时无条件收敛声明集到 `base ∪ activated`（激活从 transcript 累计恢复——
+ *  D4「合并加回」的同源镜像），随后 before_run 依据播种 pending 重差分并正确记账 removed。
+ *  单写者纪律：host 侧 declared set 写点仍只有本文件（session-manager resume 调本函数）。
+ *  fail-open：失败只 warn，before_tool 拦截仍在；零偏差零写（cache 零扰动）。 */
+export async function healToolsetOnResume(
+	harness: AgentHarness<LnkpiToolContext>,
+	context: Context | undefined,
+	planKey: string,
+	base: readonly string[],
+	activated: readonly string[],
+	metrics?: Pick<Metrics, "observeToolsetGateNarrow">,
+): Promise<void> {
+	try {
+		if (!context) return;
+		const desired = computeConverged(base, activated);
+		const lane = await harness.lane(MAIN_LANE, context);
+		const current = await lane.getActiveTools(context);
+		if (sameMembers(current, desired)) {
+			// 零偏差：只归零内存记账（重启后本就是 fresh，此处幂等），不写盘。
+			setToolsetNarrow(planKey, false, []);
+			return;
+		}
+		await lane.setActiveTools(desired, context);
+		setToolsetNarrow(planKey, false, []);
+		metrics?.observeToolsetGateNarrow("restore");
+	} catch (err) {
+		process.stderr.write(
+			`[plan-gate] toolset resume heal 失败（fail-open，before_tool 拦截仍在）：` +
+				`${err instanceof Error ? err.message : String(err)}\n`,
+		);
+	}
 }
