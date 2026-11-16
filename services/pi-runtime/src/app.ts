@@ -216,6 +216,11 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 				return reply.code(409).send({ error: "session busy" });
 			}
 			if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });
+			// M0 W3 收尾（2026-11-16 生产冒烟实证）：forceSkills 未知名抛 `InvalidInputError`
+			// （session-manager prompt 入口早拒），但本路由此前漏了映射 ⇒ 落 503「下游不可用」
+			// 语义，误导排障且污染上游错误指标。与 steer/followUp/collect 端点对齐：400。
+			// 必须在指标埋点**之前**返回 —— 客户端入参错误不是上游错误。
+			if (err instanceof InvalidInputError) return reply.code(400).send({ error: err.message });
 			const msg = (err as Error).message ?? "";
 			/**
 			 * 旧指标 `pi_runtime_llm_prompt_errors_total{reason}` **保留一个发布周期**，

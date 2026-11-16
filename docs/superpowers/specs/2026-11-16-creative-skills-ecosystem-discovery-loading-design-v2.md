@@ -428,6 +428,17 @@ VERDICT mutations_all_red=True baseline_11_0=True
 
 `module_fail=False` 逐条确认变异后**没有** `Cannot find module` / `ERR_MODULE_NOT_FOUND` / `SyntaxError` / `Transform failed`，即 RED 来自真实断言失败而非模块解析失败；`first_red` 与目标判据一致（M-U8c 预期同时打红 U2 与 U8，故 `first_red=U2 fail=2` 属预期）。恢复后基线 `pass=11 fail=0`。
 
+### 10.3.1 生产行为级冒烟（2026-11-16，镜像 `pi-runtime:cd5da2c1`）
+
+在 `/sessions` 直连 runtime 容器（`localhost:8100`）执行，两轮取证：
+
+| 轮次 | 请求 | 实测 | 结论 |
+|---|---|---|---|
+| 负例 | `POST /prompt` `forceSkills:["no-such-skill-xyz"]` | 入口早拒，`unknown skill: no-such-skill-xyz`，run 未启动、零 LLM 成本 | **W3 fail-closed 生产生效**；但状态码 503 而非本节 W3 声明的 400 —— 路由漏映射（见下） |
+| 正例 | `POST /prompt` `forceSkills:["task-decomposition"]` | 202 → run completed（$0.0049）；模型 thinking 逐字复述「这是关于任务拆解与清单维护规范（task-decomposition）的技能说明」 | **`lane.skill` 全文块注入生产可达**（U-7/U-8 行为级证据） |
+
+**冒烟暴露的缺口（M0 收尾刀修复）**：`/prompt` 路由 catch 只有 `BusyError→409 / NotFoundError→404 / else→503`，`InvalidInputError→400` 映射只在 steer/followUp/collect 端点存在 ⇒ 未知名技能落入「下游不可用」语义，误导排障且污染上游错误指标。修复：补映射（置于指标埋点之前，客户端入参错误不计 `prompt_errors`）；路由级 RED 测试（含指标不污染断言）+ 精准变异（仅删 /prompt 映射 → 恰 1 红）+ fake harness 补 `getResources`（此前缺失会让 forceSkills 解析阶段 TypeError→503，掩盖真实语义）。
+
 ### 10.4 M1 行为级验收判据（v1 §10.3 保留，观测点替换）
 
 M1-A1–A11 的**编号、语义、阳性样本、北极星映射逐字保留**（双通路归一、即时生效、回滚、自动触发、安全负例、启停矩阵、卸载、触发控制、目录与搜索约束、版本与免重启）。仅把以下观测点替换为 v2 机制：

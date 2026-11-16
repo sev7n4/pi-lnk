@@ -14,6 +14,10 @@ import { PendingToolRegistry } from "./pending-registry.js";
 const okFactory = (async () => ({
 	harness: {
 		events: { on: () => () => {} },
+		// M0 W1：resources 是 create options 注入的内存态 config，fake 需提供
+		// `getResources`（真 AgentHarness 原生有）——否则 forceSkills 解析阶段
+		// TypeError → 落 503 兜底，掩盖真实的 400 fail-closed 语义。
+		getResources: async () => ({ skills: [] }),
 		lane: async () => ({
 			prompt: async () => ({ ok: true }),
 			setThinkingLevel: async () => {},
@@ -32,6 +36,7 @@ function hangingFactory(gate: Promise<unknown>) {
 	return (async () => ({
 		harness: {
 			events: { on: () => () => {} },
+			getResources: async () => ({ skills: [] }),
 			lane: async () => ({
 				prompt: async () => {
 					await gate;
@@ -296,6 +301,34 @@ describe("POST /sessions/:key/prompt 契约", () => {
 			try {
 				const res = await app.inject({ method: "POST", url: "/sessions/nope/prompt", payload: { text: "你好" } });
 				assert.equal(res.statusCode, 404);
+			} finally {
+				await app.close();
+			}
+		});
+	});
+
+	it("forceSkills 未知名 → 400 fail-closed（M0 W3；不得落 503 下游错误语义，不污染上游错误指标）", async () => {
+		await withRoot("pi-runtime-app-", async (root) => {
+			const { app } = makeApp(root);
+			try {
+				await app.inject({ method: "POST", url: "/sessions", payload: { sessionId: "s1:t1", userId: "u1" } });
+				const before = await app.inject({ method: "GET", url: "/metrics" });
+				const res = await app.inject({
+					method: "POST",
+					url: "/sessions/s1:t1/prompt",
+					payload: { text: "你好", forceSkills: ["no-such-skill"] },
+				});
+				assert.equal(res.statusCode, 400);
+				assert.match(res.json().error, /unknown skill/);
+				const after = await app.inject({ method: "GET", url: "/metrics" });
+				// 客户端入参错误不是上游错误：prompt 错误计数必须纹丝不动。
+				for (const metric of ["pi_runtime_llm_prompt_errors_total", "pi_runtime_prompt_rejections_total"]) {
+					assert.deepEqual(
+						metricLines(after.body, metric).filter((l) => !l.endsWith(" 0")),
+						metricLines(before.body, metric).filter((l) => !l.endsWith(" 0")),
+						`${metric} 不应被 InvalidInputError 污染`,
+					);
+				}
 			} finally {
 				await app.close();
 			}
