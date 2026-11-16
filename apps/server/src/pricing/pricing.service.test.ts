@@ -387,20 +387,28 @@ describe('PricingService.quoteTextTokens（P2 T4）', () => {
     expect(q.breakdown).toEqual({ in: 13, cache: 0, out: 2 })
   })
 
-  it('③未知模型 → USD 兜底（缺省 marginBp 11000 + FX），不 throw、breakdown 键不出现', async () => {
-    const { prisma } = fakePrisma(entryMap({ text: 5 }))
-    const svc = new PricingService(prisma)
-    const q = await svc.quoteTextTokens(undefined, 'gpt-unknown-x', {
-      ...USAGE,
-      costUsd: 0.01,
-    })
-    expect(q.credits).toBe(8) // ceil(0.01 × 7.2 × 110)
-    expect(q.ruleVersion).toBe(RULE_VERSION_CONSTANTS_FALLBACK)
-    expect(q.breakdown).toBeUndefined()
-    expect(Object.keys(q)).not.toContain('breakdown')
+  it('③未知模型 → CNY 兜底（缺省 marginBp 11000，不含 FX 乘数——P2a 核对点 6），不 throw、breakdown 键不出现', async () => {
+    // 判据纪律（spec §4.4 核对点 6）：FX 用真实非 1 值注入（7.15），
+    // 断言 = computeCreditsFromCost(costCny, marginBp) 精确值——若实现仍乘 FX
+    // ⇒ ceil(0.02×7.15×110)=16 ≠ 3 ⇒ RED（数量级可见，mock 同值恒绿是伪判据）。
+    process.env.PRICING_FX_USD_CNY = '7.15'
+    try {
+      const { prisma } = fakePrisma(entryMap({ text: 5 }))
+      const svc = new PricingService(prisma)
+      const q = await svc.quoteTextTokens(undefined, 'gpt-unknown-x', {
+        ...USAGE,
+        costCny: 0.02,
+      })
+      expect(q.credits).toBe(3) // ceil(0.02 × 11000/100)=ceil(2.2)
+      expect(q.ruleVersion).toBe(RULE_VERSION_CONSTANTS_FALLBACK)
+      expect(q.breakdown).toBeUndefined()
+      expect(Object.keys(q)).not.toContain('breakdown')
+    } finally {
+      delete process.env.PRICING_FX_USD_CNY
+    }
   })
 
-  it('③b：无 costUsd 也兜底不 throw（min 1）', async () => {
+  it('③b：无 costCny 也兜底不 throw（min 1）', async () => {
     const { prisma } = fakePrisma(null)
     const svc = new PricingService(prisma)
     const q = await svc.quoteTextTokens(undefined, 'gpt-unknown-x', {
@@ -419,9 +427,9 @@ describe('PricingService.quoteTextTokens（P2 T4）', () => {
       inputTokens: 0,
       cacheReadTokens: 0,
       outputTokens: 0,
-      costUsd: 0.01,
+      costCny: 0.1,
     })
-    expect(q.credits).toBe(9) // ceil(0.01 × 7.2 × 120)
+    expect(q.credits).toBe(12) // ceil(0.1 × 12000/100)=ceil(12)
   })
 
   it('AC12：新增 model 级策略后 readCurrentMarginBp 仍 pin 到 global（11000，不被 3000 污染）', async () => {
@@ -441,11 +449,11 @@ describe('PricingService.quoteTextTokens（P2 T4）', () => {
       inputTokens: 0,
       cacheReadTokens: 0,
       outputTokens: 0,
-      costUsd: 0.01,
+      costCny: 0.1,
     })
     expect(q.ruleVersion).toBe(RULE_VERSION_CONSTANTS_FALLBACK)
-    // 11000bp 推导：ceil(0.01 × 7.2 × 110) = 8；若 model 级 3000bp 泄漏则应为 3。
-    expect(q.credits).toBe(8)
+    // 11000bp 推导：ceil(0.1 × 11000/100) = 11；若 model 级 3000bp 泄漏则应为 3。
+    expect(q.credits).toBe(11)
     // 真正可证伪点：防御读必须以 scope:'global' 查询，绝不捞到 model 级策略
     // （old 代码 orderBy createdAt desc 不传 where ⇒ 此断言 RED）。
     expect(marginFindFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { scope: 'global', status: 'active' } }))
@@ -484,7 +492,7 @@ describe('PricingService.quoteTextTokens（P2 T4）', () => {
     expect(q.breakdown).toEqual({ in: 4, cache: 3, out: 2 })
   })
 
-  it('⑥DB 抛错 → USD 兜底不 throw + warn', async () => {
+  it('⑥DB 抛错 → CNY 兜底不 throw + warn', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const { prisma } = fakePrisma(null, { throws: true })
     const svc = new PricingService(prisma)
@@ -492,23 +500,23 @@ describe('PricingService.quoteTextTokens（P2 T4）', () => {
       inputTokens: 10,
       cacheReadTokens: 0,
       outputTokens: 0,
-      costUsd: 0.01,
+      costCny: 0.02,
     })
-    expect(q.credits).toBe(8)
+    expect(q.credits).toBe(3)
     expect(q.ruleVersion).toBe(RULE_VERSION_CONSTANTS_FALLBACK)
     expect(warn).toHaveBeenCalled()
   })
 
-  it('⑥b：in/out 行缺 → 三行不齐走 USD 兜底（cache 缺行才是受支持形态）', async () => {
+  it('⑥b：in/out 行缺 → 三行不齐走 CNY 兜底（cache 缺行才是受支持形态）', async () => {
     const { prisma } = fakePrisma(entryMap({ 'text:step-3.5-flash:in': 1000 })) // out 缺
     const svc = new PricingService(prisma)
     const q = await svc.quoteTextTokens(undefined, 'step-3.5-flash', {
       inputTokens: 10,
       cacheReadTokens: 0,
       outputTokens: 0,
-      costUsd: 0.01,
+      costCny: 0.02,
     })
-    expect(q.credits).toBe(8)
+    expect(q.credits).toBe(3)
     expect(q.ruleVersion).toBe(RULE_VERSION_CONSTANTS_FALLBACK)
     expect(q.breakdown).toBeUndefined()
   })
@@ -533,7 +541,7 @@ describe('PricingService.quoteTextTokens（P2 T4）', () => {
     expect(q.grayReleaseId).toBe(GRAY_ID)
   })
 
-  it('⑥d：PRICING_SOURCE=constants 旁路 → USD 兜底（token 行无 legacy 常量）', async () => {
+  it('⑥d：PRICING_SOURCE=constants 旁路 → CNY 兜底（token 行无 legacy 常量）', async () => {
     process.env.PRICING_SOURCE = 'constants'
     const { prisma } = fakePrisma(entryMap({ ...TOKEN_RATIOS }))
     const svc = new PricingService(prisma)
@@ -541,9 +549,9 @@ describe('PricingService.quoteTextTokens（P2 T4）', () => {
       inputTokens: 10,
       cacheReadTokens: 0,
       outputTokens: 0,
-      costUsd: 0.01,
+      costCny: 0.02,
     })
-    expect(q.credits).toBe(8)
+    expect(q.credits).toBe(3)
     expect(q.ruleVersion).toBe(RULE_VERSION_CONSTANTS_FALLBACK)
   })
 

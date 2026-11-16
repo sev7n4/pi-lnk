@@ -32,6 +32,7 @@ describe('AgentService pi-runtime switch (B4)', () => {
   const idempotencyRecordFindUnique = vi.fn()
   const idempotencyRecordUpdateMany = vi.fn()
   const idempotencyRecordDeleteMany = vi.fn()
+  const costRateFindMany = vi.fn()
 
   let service: AgentService
 
@@ -51,6 +52,7 @@ describe('AgentService pi-runtime switch (B4)', () => {
     idempotencyRecordFindUnique.mockResolvedValue(null)
     idempotencyRecordUpdateMany.mockResolvedValue({ count: 1 })
     idempotencyRecordDeleteMany.mockResolvedValue({ count: 0 })
+    costRateFindMany.mockResolvedValue([])
 
     service = new AgentService(
       {
@@ -68,6 +70,7 @@ describe('AgentService pi-runtime switch (B4)', () => {
           deleteMany: idempotencyRecordDeleteMany,
         },
         userAiPreferences: { findUnique: vi.fn().mockResolvedValue(null) },
+        costRate: { findMany: costRateFindMany },
       } as never,
       { createFromAgent: vi.fn() } as never,
       { resolveForGeneration: vi.fn() } as never,
@@ -124,6 +127,8 @@ describe('AgentService pi-runtime switch (B4)', () => {
     afterEach(() => {
       delete process.env.PI_LLM_PASSTHROUGH
       delete process.env.PI_LLM_PLATFORM_PASSTHROUGH
+      delete process.env.PI_SESSION_COST_SOURCE
+      delete process.env.PRICING_FX_USD_CNY
     })
 
     it('BYOK 模型 → create body 带 llm（source=user + 能力字段）', async () => {
@@ -246,13 +251,14 @@ describe('AgentService pi-runtime switch (B4)', () => {
           { name: 'deepseek-flash', capability: 'text', pricing: { inputPerM: 0.27, outputPerM: 1.1 } },
         ]),
       })
+      process.env.PRICING_FX_USD_CNY = '7.15'
       const opts = await runTurn('ch_byok::deepseek-flash')
-      expect((opts?.llm as Record<string, unknown> | undefined)?.cost).toEqual({
-        input: 0.27,
-        output: 1.1,
-        cacheRead: 0,
-        cacheWrite: 0,
-      })
+      // P2a：出口统一币种——渠道源 USD ×FX 折 CNY（0.27×7.15=1.9305）
+      const cost = (opts?.llm as Record<string, { input: number; output: number } | undefined> | undefined)?.cost
+      expect(cost?.input).toBeCloseTo(1.9305, 12)
+      expect(cost?.output).toBeCloseTo(7.865, 12)
+      expect(cost?.cacheRead).toBe(0)
+      expect(cost?.cacheWrite).toBe(0)
     })
 
     it('BYOK 渠道无 pricing → llm 不带 cost 字段（行为不变）', async () => {
@@ -273,6 +279,93 @@ describe('AgentService pi-runtime switch (B4)', () => {
       setResolver(BYOK_RESOLVED)
       const opts = await runTurn(undefined)
       expect(opts?.llm).toBeUndefined()
+    })
+
+    // ---- P2a 会话成本（CostRate · CNY 出口统一币种，spec §4.2）----
+    it('P2a：cost_rate 源且 CostRate 三档命中 → cost 来自成本行（CNY 值，渠道 pricing 不消费）', async () => {
+      process.env.PI_SESSION_COST_SOURCE = 'cost_rate'
+      process.env.PRICING_FX_USD_CNY = '7.15'
+      setResolver({
+        ...BYOK_RESOLVED,
+        channelModelsJson: JSON.stringify([
+          { name: 'deepseek-flash', capability: 'text', pricing: { inputPerM: 0.27, outputPerM: 1.1 } },
+        ]),
+      })
+      costRateFindMany.mockResolvedValue(        [
+          { channel: 'platform', modelKey: 'deepseek-flash', spec: 'per_1m_tokens_in', unit: 'per_1m_tokens', unitQuantity: 1e6, costYuan: 0.7, provisional: false, effectiveFrom: null, effectiveTo: null },
+          { channel: 'platform', modelKey: 'deepseek-flash', spec: 'per_1m_tokens_out', unit: 'per_1m_tokens', unitQuantity: 1e6, costYuan: 2.1, provisional: false, effectiveFrom: null, effectiveTo: null },
+          { channel: 'platform', modelKey: 'deepseek-flash', spec: 'per_1m_tokens_cache', unit: 'per_1m_tokens', unitQuantity: 1e6, costYuan: 0.14, provisional: false, effectiveFrom: null, effectiveTo: null },
+        ])
+      const opts = await runTurn('ch_byok::deepseek-flash')
+      expect((opts?.llm as Record<string, unknown> | undefined)?.cost).toEqual({
+        input: 0.7,
+        output: 2.1,
+        cacheRead: 0.14,
+        cacheWrite: 0,
+      })
+      expect(costRateFindMany).toHaveBeenCalledWith({ where: { channel: 'platform', modelKey: 'deepseek-flash' } })
+    })
+
+    it('P2a：cost_rate 源缺档 → 回落渠道源 ×FX 折 CNY（G3 fail-soft）', async () => {
+      process.env.PI_SESSION_COST_SOURCE = 'cost_rate'
+      process.env.PRICING_FX_USD_CNY = '7.15'
+      setResolver({
+        ...BYOK_RESOLVED,
+        channelModelsJson: JSON.stringify([
+          { name: 'deepseek-flash', capability: 'text', pricing: { inputPerM: 0.27, outputPerM: 1.1 } },
+        ]),
+      })
+      costRateFindMany.mockResolvedValue([]) // 缺档
+      const opts = await runTurn('ch_byok::deepseek-flash')
+      const cost = (opts?.llm as Record<string, { input: number; output: number } | undefined> | undefined)?.cost
+      expect(cost?.input).toBeCloseTo(1.9305, 12)
+      expect(cost?.output).toBeCloseTo(7.865, 12)
+    })
+
+    it('P2a：channel（默认）→ 只用渠道源 ×FX 折 CNY（CostRate 在场也不消费；出口币种一致性核对点 5）', async () => {
+      delete process.env.PI_SESSION_COST_SOURCE
+      process.env.PRICING_FX_USD_CNY = '7.15'
+      setResolver({
+        ...BYOK_RESOLVED,
+        channelModelsJson: JSON.stringify([
+          { name: 'deepseek-flash', capability: 'text', pricing: { inputPerM: 0.27, outputPerM: 1.1 } },
+        ]),
+      })
+      costRateFindMany.mockResolvedValue(        [
+          { channel: 'platform', modelKey: 'deepseek-flash', spec: 'per_1m_tokens_in', unit: 'per_1m_tokens', unitQuantity: 1e6, costYuan: 0.7, provisional: false, effectiveFrom: null, effectiveTo: null },
+          { channel: 'platform', modelKey: 'deepseek-flash', spec: 'per_1m_tokens_out', unit: 'per_1m_tokens', unitQuantity: 1e6, costYuan: 2.1, provisional: false, effectiveFrom: null, effectiveTo: null },
+          { channel: 'platform', modelKey: 'deepseek-flash', spec: 'per_1m_tokens_cache', unit: 'per_1m_tokens', unitQuantity: 1e6, costYuan: 0.14, provisional: false, effectiveFrom: null, effectiveTo: null },
+        ])
+      const opts = await runTurn('ch_byok::deepseek-flash')
+      const cost = (opts?.llm as Record<string, { input: number; output: number } | undefined> | undefined)?.cost
+      expect(cost?.input).toBeCloseTo(1.9305, 12)
+      expect(cost?.output).toBeCloseTo(7.865, 12)
+      expect(costRateFindMany).not.toHaveBeenCalled()
+    })
+
+    it('P2a：两源皆无 → 无 cost 字段（行为不变）', async () => {
+      process.env.PI_SESSION_COST_SOURCE = 'cost_rate'
+      setResolver(BYOK_RESOLVED)
+      const opts = await runTurn('ch_byok::deepseek-flash')
+      const llm = opts?.llm as Record<string, unknown> | undefined
+      expect(llm).toBeDefined()
+      expect('cost' in (llm as object)).toBe(false)
+    })
+
+    it('P2a：prisma.costRate 查询 throw → fail-soft 回落渠道源（不阻断会话）', async () => {
+      process.env.PI_SESSION_COST_SOURCE = 'cost_rate'
+      process.env.PRICING_FX_USD_CNY = '7.15'
+      setResolver({
+        ...BYOK_RESOLVED,
+        channelModelsJson: JSON.stringify([
+          { name: 'deepseek-flash', capability: 'text', pricing: { inputPerM: 0.27, outputPerM: 1.1 } },
+        ]),
+      })
+      costRateFindMany.mockRejectedValue(new Error('db down'))
+      const opts = await runTurn('ch_byok::deepseek-flash')
+      const cost = (opts?.llm as Record<string, { input: number; output: number } | undefined> | undefined)?.cost
+      expect(cost?.input).toBeCloseTo(1.9305, 12)
+      expect(cost?.output).toBeCloseTo(7.865, 12)
     })
   })
 

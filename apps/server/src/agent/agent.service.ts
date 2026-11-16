@@ -22,6 +22,7 @@ import {
   type LinkedCanvasOutput,
   type PersistedExecutionEvent,
   type SidebarAttachment,
+  modelOptionName,
 } from '@lnkpi/shared'
 import {
   listModels,
@@ -95,7 +96,7 @@ import {
   type PiQueueContext,
 } from './pi-runtime/pi-runtime.client'
 import { resolveModelCapability, resolveVisionInputSupport } from '../provider/model-capability'
-import { resolveChannelModelCost } from '../provider/model-cost'
+import { resolveChannelModelCost, resolveCostRateModelCost, withFxToCny, type OverrideModelCost } from '../provider/model-cost'
 import {
   formatParseContextBlock,
   getCachedParseBlock,
@@ -121,7 +122,7 @@ import {
   type PendingInterruptionSummary,
 } from './pending-interruption.service'
 import { SubagentTaskService, type SubagentTaskSummary } from './subagent-task.service'
-import { estimateCreditsFromUsdCost, resolveFxUsdCny } from '../pricing/pricing.core'
+import { estimateCreditsFromCnyCost, resolveFxUsdCny } from '../pricing/pricing.core'
 import { InsufficientPointsError, PointsService } from '../points/points.service'
 import { PricingService } from '../pricing/pricing.service'
 import type { PointTxMeta } from '../points/point-tx.types'
@@ -2818,9 +2819,22 @@ export class AgentService implements OnModuleInit {
     }
     if (ctx.source !== 'user' && !this.piLlmPlatformPassthroughEnabled()) return undefined
     const cap = resolveModelCapability(ctx.providerRef)
-    // P1 cost 接线：渠道 models[].pricing → override.cost（vendor calculateCost
-    // 据此算 usage.cost）。未配置 pricing → undefined → 字段不出现，行为不变。
-    const cost = resolveChannelModelCost(ctx.channelModelsJson, ctx.model)
+    // P2a（spec 2026-11-15-p2-session-cost-cny-migration-design §4.2 出口统一币种）：
+    // override.cost 恒 CNY——CostRate 直出（kill switch=cost_rate 时优先，缺档回落
+    // 渠道）；渠道源 USD ×FX 折 CNY（withFxToCny，FX 单点复用 resolveFxUsdCny）。
+    // kill switch 只切来源不切币种；默认 channel 行为=纯渠道源（数值口径变 CNY，
+    // 开关语义不变）。prisma 防御读：查询 throw/无行 → 视为缺档回落（G3 fail-soft）。
+    let cost: OverrideModelCost | undefined
+    const channelCostCny = (): OverrideModelCost | undefined => {
+      const c = resolveChannelModelCost(ctx.channelModelsJson, ctx.model)
+      return c ? withFxToCny(c, resolveFxUsdCny(process.env as NodeJS.ProcessEnv)) : undefined
+    }
+    if ((process.env.PI_SESSION_COST_SOURCE ?? 'channel') === 'cost_rate') {
+      const rateCost = await this.resolveCostRateSessionCost(ctx.model).catch(() => undefined)
+      cost = rateCost ?? channelCostCny()
+    } else {
+      cost = channelCostCny()
+    }
     return {
       model: ctx.model,
       apiKey: ctx.apiKey,
@@ -2834,6 +2848,19 @@ export class AgentService implements OnModuleInit {
       supportsVision: this.resolveOverrideSupportsVision(ctx),
       ...(cost ? { cost } : {}),
     }
+  }
+
+  /**
+   * P2a：定价中心 CostRate（platform 渠道）→ 会话成本四元组（CNY）。
+   * modelKey 归一与 resolveChannelModelCost 同源同形（modelOptionName + trim +
+   * toLowerCase，核对点 4）；provisional/期限窗口/畸形由 resolveCostRateModelCost
+   * 统一判缺（宁可少算不错算）。调用方 .catch(() => undefined) 兜底（G3）。
+   */
+  private async resolveCostRateSessionCost(model?: string): Promise<OverrideModelCost | undefined> {
+    const name = modelOptionName(model ?? '').trim().toLowerCase()
+    if (!name) return undefined
+    const rows = await this.prisma.costRate.findMany({ where: { channel: 'platform', modelKey: name } })
+    return resolveCostRateModelCost(rows as never, name, new Date())
   }
 
   /**
@@ -3767,12 +3794,10 @@ export class AgentService implements OnModuleInit {
         return 11000
       }
     }
-    const [marginBp, fxUsdCny] = await Promise.all([
-      readMarginBp(),
-      Promise.resolve(resolveFxUsdCny(process.env as NodeJS.ProcessEnv)),
-    ])
+    const marginBp = await readMarginBp()
     // v2 单一真相源修复（2026-11-03）：流式预估与回合结算**同引擎**。此前预估走
-    // estimateCreditsFromUsdCost（USD 成本折算），结算走 quoteTextTokens（token 反比率）
+    // estimateCreditsFromCnyCost（CNY 成本折算，P2a 后 usage.cost 恒 CNY），结算走
+    // quoteTextTokens（token 反比率）
     // ——两套公式 ⇒ 用户看到「≈1 积分（预估）」而账单实扣 14/7。现在回合开始时预读
     // 一次价目表 token 比率（prepareTextTokenQuote），流式中途用与结算同一纯公式同步
     // 估算（computeTextTokenCredits）——「≈N 积分（预估）」与「对话回合结算」同源同式，
@@ -3806,7 +3831,7 @@ export class AgentService implements OnModuleInit {
         return hasTokens ? credits : null
       }
       return totals.cost && totals.cost > 0
-        ? estimateCreditsFromUsdCost(totals.cost, marginBp, fxUsdCny)
+        ? estimateCreditsFromCnyCost(totals.cost, marginBp)
         : null
     }
     const usageAccumulator = createUsageAccumulator(estimateTurnCredits)
@@ -4334,14 +4359,14 @@ export class AgentService implements OnModuleInit {
       } else {
         try {
           // credits 来自实际 usage（turn_usage 折叠值直取，cacheWrite 并入 in 项
-          // 计费——终审 C-2；costUsd 传 cost——缺行 USD 兜底时尽量真实，缺 costUsd
-          // 兜底只结 1 分）。
+          // 计费——终审 C-2；costCny 传 cost（P2a：usage.cost 恒 CNY）——缺行 CNY
+          // 兜底时尽量真实，缺 costCny 兜底只结 1 分）。
           const quote = await this.pricing.quoteTextTokens(userId, billingModelKey, {
             inputTokens: usage.inputTokens ?? 0,
             cacheReadTokens: usage.cacheReadTokens ?? 0,
             cacheWriteTokens: usage.cacheWriteTokens ?? 0,
             outputTokens: usage.outputTokens ?? 0,
-            ...(usage.cost !== undefined ? { costUsd: usage.cost } : {}),
+            ...(usage.cost !== undefined ? { costCny: usage.cost } : {}),
           })
           const credits = Math.max(1, Math.ceil(quote.credits))
           try {
@@ -4724,7 +4749,7 @@ export class AgentService implements OnModuleInit {
     try {
       // 典型回合口径（终审 C-2 修订）：8K in + 0.8K cacheWrite + 0.5K out ——
       // 真实回合普遍含缓存写入（system prompt 折叠），预扣口径与结算计费口径同构
-      // （cacheWrite 并入 in 项）。costUsd 不传：回合发起时 vendor cost 尚不可得
+      // （cacheWrite 并入 in 项）。costCny 不传：回合发起时 vendor cost 尚不可得
       // （cost 只在 message_end 后产出），传猜测值反而失真——degraded 时接受 min1 兜底。
       const quote = await this.pricing.quoteTextTokens(userId, modelKey, {
         inputTokens: 8000,

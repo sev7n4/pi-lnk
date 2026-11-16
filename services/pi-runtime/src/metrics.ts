@@ -805,7 +805,7 @@ export class Metrics {
 		lines.push(`pi_runtime_usage_tokens_total{kind="${kind}"} ${v}`);
 	}
 
-	lines.push("# HELP pi_runtime_usage_cost_total LLM usage cost (USD) by kind; 0 until cost rates configured.");
+	lines.push("# HELP pi_runtime_usage_cost_total LLM usage cost (CNY, P2a: Nest 出口统一币种) by kind; 0 until cost rates configured.");
 	lines.push("# TYPE pi_runtime_usage_cost_total counter");
 	for (const [kind, v] of [...this.usageCost.entries()].sort()) {
 		lines.push(`pi_runtime_usage_cost_total{kind="${kind}"} ${v.toFixed(6)}`);
