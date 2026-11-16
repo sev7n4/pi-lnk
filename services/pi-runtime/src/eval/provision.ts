@@ -121,6 +121,40 @@ export async function createEvalCanvas(
 }
 
 /**
+ * 种子节点（2026-11-15 run-4 首跑实证缺口）：自动新建画布 0 节点，
+ * `requiresCanvasNodes` 下界类 case（decomp-06/n3 ≥3、tool-discovery-001 ≥10）
+ * 必然 fail-fast——供给若不播种子，P1 等于废掉下界类 case。
+ * 固定 12 个通用文本节点：确定性（跨 run 同种子 ⇒ 同门可比）且满足全部下界。
+ * 失败即抛（与 D3 同口径：画布未就绪不该跑）。
+ */
+export const EVAL_SEED_NODE_COUNT = 12;
+
+export async function seedEvalCanvas(
+	nest: NestEndpoint,
+	sessionId: string,
+	userId: string,
+	opts: { count?: number; fetchImpl?: typeof fetch } = {},
+): Promise<{ seeded: number }> {
+	const count = opts.count ?? EVAL_SEED_NODE_COUNT;
+	const items = Array.from({ length: count }, (_, i) => {
+		const n = String(i + 1).padStart(2, "0");
+		return {
+			key: `eval-seed-${n}`,
+			targetType: "text" as const,
+			title: `评测种子节点 ${n}`,
+			prompt: `评测种子内容 ${n}：通用占位文本，供画布规模类判据（requiresCanvasNodes）与排版类话术使用。`,
+		};
+	});
+	await postInternal(
+		nest,
+		"/agent/internal/add-nodes-batch",
+		{ sessionId, userId, items },
+		opts.fetchImpl ?? fetch,
+	);
+	return { seeded: count };
+}
+
+/**
  * D2 归档：run 结束把本轮画布改名 `eval-used-<runStamp>`（不删，保留取证现场）。
  * 归档失败**不抛**——运行结论已产出，归档只是命名 hygiene；返回错误信息给 CLI 记 warning。
  */

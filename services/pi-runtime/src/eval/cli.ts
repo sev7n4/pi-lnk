@@ -30,7 +30,7 @@
  */
 import { runL1 } from "./runner.js";
 import { loadEvalByokOverride } from "./byok.js";
-import { archiveEvalCanvas, createEvalCanvas, decideProvisioning, type NestEndpoint } from "./provision.js";
+import { archiveEvalCanvas, createEvalCanvas, decideProvisioning, seedEvalCanvas, type NestEndpoint } from "./provision.js";
 
 function parseArgs(argv: string[]): {
 	only?: string[];
@@ -88,13 +88,16 @@ async function main(): Promise<void> {
 	const nest: NestEndpoint | undefined =
 		nestBaseUrl && nestToken ? { baseUrl: nestBaseUrl, token: nestToken } : undefined;
 	const decision = decideProvisioning({ canvasSessionId, userId, nest });
-	let provisioned: { sessionId: string; title: string; archiveTitle: string } | undefined;
+	let provisioned: { sessionId: string; title: string; archiveTitle: string; seeded: number } | undefined;
 	if (decision.provision && nest && userId) {
 		try {
-			provisioned = await createEvalCanvas(nest, userId);
+			provisioned = { ...(await createEvalCanvas(nest, userId)), seeded: 0 };
 			canvasSessionId = provisioned.sessionId;
+			// ⭐ 种子节点（run-4 首跑实证缺口）：自动新建画布 0 节点 ⇒ requiresCanvasNodes
+			// 下界类 case（≥3/≥10）必然 fail-fast。固定 12 个种子，确定性可比。
+			provisioned.seeded = (await seedEvalCanvas(nest, provisioned.sessionId, userId)).seeded;
 			process.stderr.write(
-				`画布已新建：${provisioned.title} → ${provisioned.sessionId}（run 结束归档为 ${provisioned.archiveTitle}，不删除）\n`,
+				`画布已新建：${provisioned.title} → ${provisioned.sessionId}（种子 ${provisioned.seeded} 个；run 结束归档为 ${provisioned.archiveTitle}，不删除）\n`,
 			);
 		} catch (err) {
 			// D3 fail-fast：建画布失败就整 run error，不回落共享画布
@@ -152,6 +155,7 @@ async function main(): Promise<void> {
 						? {
 								canvasProvisioned: true,
 								canvasTitle: provisioned.title,
+								canvasSeeded: provisioned.seeded,
 								canvasArchivedAs: provisioned.archiveTitle,
 							}
 						: {}),
