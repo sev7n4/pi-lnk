@@ -7,7 +7,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { summarize, verdictOf, type CaseResult, type RunSummary } from "./runner.js";
+import { collectAttemptUsage, pickRunUsage, summarize, verdictOf, type CaseResult, type RunSummary } from "./runner.js";
 import type { GoldenCase } from "./golden-cases.js";
 import type { EvalTranscript } from "./transcript.js";
 
@@ -715,5 +715,41 @@ describe("summarize cache 汇总（eval usage 对照小刀 2026-11-16）", () =>
 		]);
 		assert.equal(without.totalCacheReadTokens, undefined);
 		assert.equal(without.report.includes("cache_read"), false);
+	});
+});
+
+describe("pickRunUsage（eval usage 报告链断点修复 2026-11-16）", () => {
+	it("driver 顶层 usage 优先（snapshot 投影真实产出）", () => {
+		const usage = { input: 833, output: 531, total: 33236, cacheRead: 31872, cacheWrite: 0 };
+		assert.deepEqual(
+			pickRunUsage({
+				transcript: transcriptOf({}),
+				usage,
+			} as never),
+			usage,
+		);
+	});
+
+	it("driver 未带 usage 时回落 transcript（历史 SSE usage 事件）", () => {
+		const usage = { input: 10, output: 5, total: 15 };
+		assert.deepEqual(
+			pickRunUsage({
+				transcript: transcriptOf({ usage }),
+			} as never),
+			usage,
+		);
+	});
+});
+
+describe("collectAttemptUsage（多数表决后的成本不丢失）", () => {
+	it("汇总所有 attempt（含补跑 error）而非只取多数票那次", () => {
+		assert.deepEqual(
+			collectAttemptUsage([
+				{ usage: { input: 10, output: 5, total: 15, cacheRead: 900 } },
+				{ usage: { input: 20, output: 8, total: 28, cacheRead: 300 } },
+				{ usage: { input: 2, output: 1, total: 3 } },
+			]),
+			{ input: 32, output: 14, total: 46, cacheRead: 1200 },
+		);
 	});
 });
