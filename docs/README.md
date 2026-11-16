@@ -90,6 +90,9 @@
 | [`superpowers/specs/2026-11-10-historical-failure-scope-design.md`](./superpowers/specs/2026-11-10-historical-failure-scope-design.md) | **历史失败分窗与「忽略/不再提示」**——生产取证（4 条真失败、92/92 无产物且已退费）+ 根因链（加载期对账 `failed→error` 触发 toast）+ `failureScope` 三态契约 + 12 条行为级用例 / 8 组变异 + 端到端浏览器复测为闭环前置；含 #815 回滚定位 | 活资产 —— 实现依据 |
 | [`superpowers/plans/2026-11-10-historical-failure-scope.md`](./superpowers/plans/2026-11-10-historical-failure-scope.md) | **历史失败分窗实施计划**——Task 0 回滚 #815 → Task 1–4 纯函数/对账/UI TDD → Task 5 门禁 → Task 6 合并部署与端到端复测；含 Review Focus 与回滚顺序 | 活资产 —— 实现依据 |
 | [`ops/2026-11-10-historical-failure-scope-prod-verify.md`](./ops/2026-11-10-historical-failure-scope-prod-verify.md) | **生产端到端复测 runbook**——复用 `scripts/prod-cdp-smoke.mjs` 自签 JWT 只读通道；黄条计数 0 / 静态标记 4 / 诊断可查 / 忽略刷新不复发；区分 A 级 DOM 证据与 B/C 级推断证据 | 活资产 —— 生产取证 |
+| [`adr/0016-creative-skills-ecosystem-compatibility.md`](./adr/0016-creative-skills-ecosystem-compatibility.md) | **ADR-0016 创作类 Skills 生态兼容**——生态化从阶段四提前；双通路归一 + 三档兼容 C0/C1/C2/C3 + 服务端确定性安装；agent 不执行前置步骤；以 WorkBuddy 为行为北极星、复刻契约不复制信任模型 | Accepted —— 方向/决策来源 |
+| [`superpowers/specs/2026-11-10-creative-skills-ecosystem-discovery-loading-design.md`](./superpowers/specs/2026-11-10-creative-skills-ecosystem-discovery-loading-design.md) | **创作类 Skills 生态兼容：技能发现与双通路加载设计规格（13 章）**——完整分析事实依据（含 §3.9 WorkBuddy 北极星实现解剖 F38–F55）与既有判断显式修订/推翻清单、§4.7 逐能力复刻裁决、4 张结构图、M0/M1 行为级验收判据与可转红负例、M0–M4 路标与两个北极星验收线 | 活资产 —— 待评审，实施依据 |
+| [`superpowers/specs/2026-11-16-creative-skills-ecosystem-discovery-loading-design-v2.md`](./superpowers/specs/2026-11-16-creative-skills-ecosystem-discovery-loading-design-v2.md) | **创作类 Skills 生态兼容规格 v2（上游原语接线修订稿，13 章）**——§0 逐节差异表（v1 13 节逐条处置）；§3.1 上游原语清单事实基座 U-1…U-11；§10 M0 可达性探针判据 M0-P1–P11 与可转红负例；附录 A 探针全文 / B 实跑 stdout（11/11 GREEN、变异 4/4 RED）/ C 原语速查。⭐ 实证 `setResources` 不落盘 ⇒ resume/fork 必须重注入 | 活资产 —— **执行面以此稿为准**，待评审 |
 
 ## 保留的目录
 
