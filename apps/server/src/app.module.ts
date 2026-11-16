@@ -19,6 +19,7 @@ import { ProviderModule } from './provider/provider.module'
 import { MediaModule } from './media/media.module'
 import { StorageModule } from './storage/storage.module'
 import { ShareModule } from './share/share.module'
+import { SkillsModule } from './skills/skills.module'
 
 @Module({
   imports: [
@@ -43,6 +44,8 @@ import { ShareModule } from './share/share.module'
     AdminModule,
     MediaModule,
     ShareModule,
+    // M1-1 技能控制面（ADR-0016 / 规格 v2 §5.4）：三表十端点，双通路归一
+    SkillsModule,
   ],
 })
 export class AppModule {}

@@ -9,6 +9,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { Metrics, routeLabel } from "./metrics.js";
 import { graphTurnObserver } from "./graph-observation/observer-instance.js";
 import { parseLlmOverride } from "./llm-override.js";
+import { parseIncomingResources, type IncomingSkill } from "./skills/inject.js";
 import {
 	BusyError,
 	ConflictError,
@@ -146,6 +147,12 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 			thinkingLevel?: string;
 			/** K-1：BYOK 会话级模型覆盖（畸形 → 400，不静默兜底） */
 			llm?: unknown;
+			/**
+			 * M1-2（契约 1）：Nest `buildSkillResources(userId)` 组装的用户技能集。
+			 * 语义：提供 = 全量换集 + 落盘（重启恢复源）；缺省 = 读 sidecar（resume 不重发 payload）。
+			 * 畸形 → 400（fail-closed，不静默丢弃）；空集 {skills:[]} 合法（M0 行为不变）。
+			 */
+			resources?: unknown;
 		};
 	}>("/sessions", async (request, reply) => {
 		const threadKey = request.body?.sessionId ?? crypto.randomUUID();
@@ -159,6 +166,13 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 		if (llm.state === "invalid") {
 			return reply.code(400).send({ error: "invalid llm override: 必填字段缺失或类型错误" });
 		}
+		// M1-2（契约 1）：用户技能集校验。缺省（undefined）不进 opts——保持 resume 读 sidecar 语义。
+		let userResources: { skills: IncomingSkill[] } | undefined;
+		if (request.body?.resources !== undefined) {
+			const parsed = parseIncomingResources(request.body.resources);
+			if (!parsed.ok) return reply.code(400).send({ error: `invalid resources: ${parsed.error}` });
+			userResources = { skills: parsed.skills };
+		}
 		try {
 			const result = await manager.create(threadKey, {
 				systemPrompt: request.body?.systemPrompt,
@@ -170,6 +184,7 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 				focusNodeId: request.body?.focusNodeId,
 				thinkingLevel: request.body?.thinkingLevel,
 				llm: llm.state === "ok" ? llm.value : undefined,
+				resources: userResources,
 			});
 			// K-1 观测：只打 providerId（哈希）+ model id —— 不打 apiKey / baseUrl（密钥红线）。
 			// 出现 byok-* 即证明本会话走了 BYOK 覆盖，agnes 表示 env 装配。
@@ -188,6 +203,28 @@ export function buildApp(manager: SessionManager, deps: AppDeps): FastifyInstanc
 			return reply.code(503).send({ error: (err as Error).message });
 		}
 	});
+
+	/**
+	 * M1-2（契约 3，内部端点）：用户技能**全量换集**（U-6 harness.setResources）。
+	 * Nest 在启停/回滚/重装后携全量新 `Skill[]` 调用；不做增量 diff——旧名自然 `UnknownSkill`。
+	 * body `resources` 必填（`{}` = 显式清空用户技能集）；会话不存在 404 / busy 409 / 畸形 400。
+	 */
+	app.post<{ Params: { sessionId: string }; Body: { resources?: unknown } }>(
+		"/sessions/:sessionId/resources",
+		async (request, reply) => {
+			const { sessionId } = request.params;
+			const parsed = parseIncomingResources(request.body?.resources);
+			if (!parsed.ok) return reply.code(400).send({ error: `invalid resources: ${parsed.error}` });
+			try {
+				const result = await manager.setUserResources(sessionId, parsed.skills);
+				return reply.code(200).send({ sessionId, ...result });
+			} catch (err) {
+				if (err instanceof NotFoundError) return reply.code(404).send({ error: err.message });
+				if (err instanceof BusyError) return reply.code(409).send({ error: err.message });
+				return reply.code(503).send({ error: (err as Error).message });
+			}
+		},
+	);
 
 	app.post<{
 		Params: { sessionId: string };
