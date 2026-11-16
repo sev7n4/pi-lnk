@@ -232,7 +232,7 @@ defineExpose({
           <el-option v-for="v in drafts" :key="v.id" :label="`${v.version}（${v.entryCount} 条）`" :value="v.id" />
         </el-select>
         <span v-if="!hasDraft" class="text-sm text-warning" data-test="no-draft-hint">
-          当前无 draft 版本——灰度对象必须是 draft（草案）。请先在「价目发布流」页复制 active 建草案；发布后 draft 会被消耗，无法再对该版本灰度。
+          当前无 draft 版本——灰度对象必须是 draft（草案）。请先在「定价中心」页点「生成价目表」出草案；发布后 draft 会被消耗，无法再对该版本灰度。
         </span>
       </div>
       <el-input

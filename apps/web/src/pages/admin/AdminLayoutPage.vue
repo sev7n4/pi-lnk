@@ -57,13 +57,16 @@ async function submitToken() {
         <el-sub-menu index="/admin/pricing-engine">
           <template #title>渠道定价</template>
           <el-menu-item index="/admin/pricing-hub">定价中心</el-menu-item>
-          <el-menu-item index="/admin/pricing-subjects">原始数据：主体（高级）</el-menu-item>
-          <el-menu-item index="/admin/pricing-cost">原始数据：成本（高级）</el-menu-item>
-          <el-menu-item index="/admin/pricing-margin">原始数据：利润（高级）</el-menu-item>
+          <!-- P3-B：「原始数据：主体/成本/利润（高级）」三页已下线（运营确认从未使用，
+               日常改数走「定价中心」卡片）。后端接口保留，需要时可恢复本行 + router 行。 -->
         </el-sub-menu>
         <el-menu-item index="/admin/pricing">平台渠道定价</el-menu-item>
+        <!-- P3-B：以下两项能力已上收到「定价中心」发布面板（diff/发布/回滚/公告），
+             菜单先藏、文件与路由保留（回滚逃生口 + 灰度设施），需要时取消注释即可恢复。 -->
+        <!--
         <el-menu-item index="/admin/pricing-versions">价目发布流</el-menu-item>
         <el-menu-item index="/admin/gray-release">灰度发布</el-menu-item>
+        -->
         <el-menu-item index="/admin/audit">审计日志</el-menu-item>
         <el-menu-item index="/admin/guide">使用说明</el-menu-item>
       </el-menu>

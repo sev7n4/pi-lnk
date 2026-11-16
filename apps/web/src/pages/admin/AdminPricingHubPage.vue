@@ -351,7 +351,7 @@ defineExpose({ reload, saveRecord, refreshPricing, syncPreviewRun, syncApply, sy
       <el-button :loading="loading" @click="reload()">刷新</el-button>
       <el-button :loading="syncing" @click="syncPreviewRun">同步上游价目</el-button>
       <el-button type="primary" :loading="refreshing" @click="refreshPricing">生成价目表</el-button>
-      <router-link to="/admin/pricing-versions" class="text-sm text-accent">价目表（只读）→</router-link>
+      <router-link to="/admin/pricing-versions" class="text-sm text-accent">价目表版本 →</router-link>
     </header>
 
     <!-- P3-A 发布面板：上收 diff/发布/回滚（发布流页保留作回滚逃生口，零删除） -->
@@ -522,7 +522,7 @@ defineExpose({ reload, saveRecord, refreshPricing, syncPreviewRun, syncApply, sy
     <div v-if="lastMaterialize" class="mt-3 rounded border border-line-subtle bg-surface-base p-3 text-sm">
       <h3 class="mb-1 font-semibold text-fg">本次物化摘要</h3>
       <p class="text-fg-2">新增 {{ lastMaterialize.added }} / 变更 {{ lastMaterialize.changed }} / 不变 {{ lastMaterialize.unchanged }}</p>
-      <p v-if="lastReadinessOk === true" class="text-success">发布门禁：通过，可到「价目表（只读）」页发布</p>
+      <p v-if="lastReadinessOk === true" class="text-success">发布门禁：通过，可在本页「发布」面板发布</p>
       <p v-else-if="lastReadinessOk === false" class="text-danger">发布门禁：未通过（见顶部提示）</p>
     </div>
   </section>

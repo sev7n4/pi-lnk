@@ -103,9 +103,8 @@ const router = createRouter({
         { path: 'pricing', name: 'admin-pricing', component: () => import('@/pages/admin/AdminPricingPage.vue') },
         { path: 'pricing-hub', name: 'admin-pricing-hub', component: () => import('@/pages/admin/AdminPricingHubPage.vue') },
         { path: 'pricing-versions', name: 'admin-pricing-versions', component: () => import('@/pages/admin/AdminPricingVersionsPage.vue') },
-        { path: 'pricing-subjects', name: 'admin-pricing-subjects', component: () => import('@/pages/admin/AdminPricingSubjectsPage.vue') },
-        { path: 'pricing-cost', name: 'admin-pricing-cost', component: () => import('@/pages/admin/AdminCostRatesPage.vue') },
-        { path: 'pricing-margin', name: 'admin-pricing-margin', component: () => import('@/pages/admin/AdminMarginPoliciesPage.vue') },
+        // P3-B：三张「原始数据·高级」页已下线（运营确认从未使用，日常改数走定价中心）。
+        // 路由行一并移除；后端 controller 与 admin-api 接口全保留（逃生口，见 admin-pricing-pages.guard.test.ts）。
         { path: 'gray-release', name: 'admin-gray-release', component: () => import('@/pages/admin/AdminGrayReleasePage.vue') },
         { path: 'audit', name: 'admin-audit', component: () => import('@/pages/admin/AdminAuditPage.vue') },
         { path: 'guide', name: 'admin-guide', component: () => import('@/pages/admin/AdminGuidePage.vue') },
