@@ -66,6 +66,8 @@ import { buildToolEnsemble } from "./tools/tiering.js";
 import { seedTodoState, getTodoState } from "./tools/todo.js";
 import { pickLatestSnapshot, renderTodoBlock } from "./tools/task-state.js";
 import { pickLatestPlanDecision, seedPlanState } from "./gate/plan-gate.js";
+import { healToolsetOnResume } from "./gate/plan-gate-wiring.js";
+import { pickActivatedBySearch } from "./gate/toolset-overlay.js";
 import {
 	applyReportTruncation,
 	isSubagentTool,
@@ -1546,6 +1548,18 @@ export class SessionManager {
 						{ onMismatch: () => this.metrics?.observeTaskEntryMismatch?.("plan") },
 					);
 					if (planDecision) seedPlanState(todoKey, planDecision);
+					// B-1 修复（#906 重启泄漏）：resume 声明集治愈——盘上 lane config 残留收缩态
+					// 且 narrowedRemoved 内存态已失（重启）⇒ 无条件收敛到 base∪activated（激活从
+					// transcript 累计恢复）；pending 态由 before_run 依据播种重差分并正确记账 removed。
+					// 块内最后一步（fail-soft，wiring 内部已兜）；子会话不进本分支（外层守卫）。
+					await healToolsetOnResume(
+						harness,
+						this.context,
+						todoKey,
+						this.getToolEnsemble().activeToolNames,
+						pickActivatedBySearch(Array.isArray(entries) ? entries : []),
+						this.metrics,
+					);
 				}
 			} catch (err) {
 				console.warn("[todo-resume] transcript seeding failed (fail-soft):", err);
