@@ -79,7 +79,6 @@ export class Metrics {
 	/** key: tool|kind —— Nest 侧结构化错误分类（计数职责在事件层，这里只留精确分类通道）。 */
 	private toolErrorKinds = new Map<string, number>();
 	private sessionResumes = new Map<string, number>(); // key: outcome (new|memory|disk|rebuilt)
-	private userSkillSwaps = new Map<string, number>(); // M1-2: outcome (ok|busy|error)
 	private compactions = new Map<string, number>(); // key: result (ok|error)
 	/** key: 未触发压缩的理由（disabled|no_window|no_usage|below_threshold|nothing_to_compact|lane_busy|closed|unknown）。 */
 	private compactionSkips = new Map<string, number>();
@@ -279,11 +278,6 @@ export class Metrics {
 	/** P0-① 会话 create 结果：new（新建）/ memory（内存复用）/ disk（磁盘恢复）/ rebuilt（身份变更重建）。 */
 	observeSessionResume(outcome: "memory" | "disk" | "new" | "rebuilt"): void {
 		this.sessionResumes.set(outcome, (this.sessionResumes.get(outcome) ?? 0) + 1);
-	}
-
-	/** M1-2：用户技能全量换集结果（契约 3；busy=与 prompt 同口径拒绝，不区分 running/compacting）。 */
-	observeUserSkillsSwap(outcome: "ok" | "busy" | "error"): void {
-		this.userSkillSwaps.set(outcome, (this.userSkillSwaps.get(outcome) ?? 0) + 1);
 	}
 
 	/**
@@ -705,12 +699,6 @@ export class Metrics {
 		lines.push("# TYPE pi_runtime_prompt_rejections_total counter");
 		for (const [reason, count] of [...this.promptRejections.entries()].sort()) {
 			lines.push(`pi_runtime_prompt_rejections_total{reason="${esc(reason)}"} ${count}`);
-		}
-
-		lines.push("# HELP pi_runtime_user_skills_swap_total User skill set full swaps by outcome (M1-2).");
-		lines.push("# TYPE pi_runtime_user_skills_swap_total counter");
-		for (const [outcome, count] of [...this.userSkillSwaps.entries()].sort()) {
-			lines.push(`pi_runtime_user_skills_swap_total{outcome="${esc(outcome)}"} ${count}`);
 		}
 
 		lines.push(
