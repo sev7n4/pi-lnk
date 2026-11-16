@@ -28,9 +28,13 @@
 | [0013-mobile-node-interaction-mode-and-carriers.md](./0013-mobile-node-interaction-mode-and-carriers.md) | **Accepted** | 移动端节点交互分模式①agent 驱动（主战场）/ ②用户主动 FAB+（次要）；模式① 三载体=类型原生查看器 + 轻量「提示词+意见」编辑器（参数只读）+ 生成权归 agent；标注=手指自由圈选出一张带标记的整图；锚=双向连接器与统一载荷信封，标注经「⚓ 带回对话」回传 |
 | [0014-edge-validation-dag-and-unified-channel.md](./0014-edge-validation-dag-and-unified-channel.md) | **Accepted** | 画布连线校验收口服务端统一通道（shared `validateEdgeAdditions` 原语 + 浏览器侧 `POST /agent/canvas/connect-nodes` 委托同一 `connectNodes`）；画布定为 DAG：禁环/禁自环（服务端权威判环，前端只做廉价本地拦截）；手拉边不再整份 PUT 直存 |
 | [0015-unified-single-conversation-identity.md](./0015-unified-single-conversation-identity.md) | **Accepted** | 多端单会话：对话身份恒定=sessionId，threadId 退内部细节（共享线程/服务端活跃叶子两来源）；重跑分支内部化走上游 forkSession；退役多对话 UI；J5=legacy backfill 是部署门禁 |
+| [0016-creative-skills-ecosystem-compatibility.md](./0016-creative-skills-ecosystem-compatibility.md) | **Accepted** | 创作类 Skills 生态兼容：生态化从阶段四提前；双通路归一到 UserInstalledSkill + 三档兼容 C0/C1/C2/C3 + 服务端确定性安装；agent 不执行前置步骤；正文内容寻址存控制面不写容器 |
 
 > ⚠️ **编号说明**：本 ADR 编为 `0013`（承接 `0012-enter-creation-anchor-ritual`，该 ADR 已在另一分支待合入）。
 > 若 `0012` 在本 ADR 合入前尚未进 master，合并时需按实际顺序重编号或一并补入索引。
+> `0016` 承接当前 master 上最大的 `0015`；`0012` 状态不变（仍在另一分支待合入），合入时按实际顺序统一重编号或补入索引。
+>
+> **2026-11-16 修订（R1）**：[0016](./0016-creative-skills-ecosystem-compatibility.md) 追加「修订记录」章节 —— 经 true master 干净树 M0 探针实证（11/11 GREEN、变异 4/4 RED），`pi-agent-core@0.99.2` 已原生提供 skills 原语，故**推翻执行面「`skillBodies` 每轮注入」、撤回「不承诺 `setTools`」的纠正、新增「吃满上游原语」与「`resources` 不落盘须每次 create 重注入」两条决定**；方向/双通路/三档兼容/P0 安全/WorkBuddy 北极星均保留。配套 v2 规格：`superpowers/specs/2026-11-16-creative-skills-ecosystem-discovery-loading-design-v2.md`。
 
 ## 模板
 
