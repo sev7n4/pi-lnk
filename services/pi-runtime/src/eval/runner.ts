@@ -55,6 +55,28 @@ import { loadStaticPromptForEval, PLAN_CONVENTION_TAIL, type StaticPromptResult 
 import type { EvalTranscript } from "./transcript.js";
 
 /**
+ * usage 取数单源（2026-11-16 生产复测修复）：driver 的 snapshot 投影落在 `run.usage`，
+ * 历史 SSE usage 事件落在 `run.transcript.usage`；顶层优先、transcript 回落。
+ * 生产复测实证：snapshot `{cacheRead:31872}` 真实存在，但旧 runner 只读 transcript
+ * ⇒ 报告无 cache 字段，成本对照链静默断裂。
+ */
+export function pickRunUsage(
+	run: Pick<RuntimeRunResult, "usage" | "transcript">,
+): EvalTranscript["usage"] | undefined {
+	return run.usage ?? run.transcript.usage;
+}
+
+/**
+ * 多次执行（含 error 补跑）的 usage 汇总：成本按**真实执行次数**计费，
+ * 多数表决后的 CaseResult 必须带全部 attempt 的消耗，否则报告 token 归零。
+ */
+export function collectAttemptUsage(
+	results: readonly Pick<CaseResult, "usage">[],
+): EvalTranscript["usage"] | undefined {
+	return sumUsage(results.map((r) => r.usage));
+}
+
+/**
  * 单条 case 的判定。
  *
  * ⭐ `error` / `fail` / `skipped` **三态分离**，每一态都对应完全不同的处置：
@@ -667,6 +689,8 @@ export async function runL1(options: L1RunOptions): Promise<RunSummary> {
 			verdict,
 			failures: verdict === "pass" ? [] : failures,
 			durationMs: Date.now() - started,
+			// 成本按全部真实执行求和（含补跑 error），不随多数表决丢失
+			usage: collectAttemptUsage([...attemptResults, ...errorResults]),
 			//工具序列取「与最终判定一致的那次」，便于人工核对失败原因。
 			// ⚠️ 兜底链必须有：补跑开启后，**全 error** 的 case 在 attemptResults 里
 			// 一张票都没有（都进了 errorResults）⇒ 只写下标 [0] 会 TypeError。
@@ -787,7 +811,7 @@ async function runOneAttempt(
 			failures: v.failures,
 			durationMs: Date.now() - started,
 			toolNames: run.transcript.toolNames,
-			usage: run.transcript.usage,
+			usage: pickRunUsage(run),
 			...(run.model ? { model: run.model } : {}),
 			...(run.provider ? { provider: run.provider } : {}),
 		};
@@ -824,6 +848,7 @@ async function runStepsAttempt(
 	const steps = testCase.steps as readonly GoldenStep[];
 	const sessionId = `eval-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 	const transcripts: EvalTranscript[] = [];
+	const usages: NonNullable<EvalTranscript["usage"]>[] = [];
 	let model: string | undefined;
 	let provider: string | undefined;
 	try {
@@ -844,6 +869,8 @@ async function runStepsAttempt(
 			if (!model && run.model) model = run.model;
 			if (!provider && run.provider) provider = run.provider;
 			transcripts.push(run.transcript);
+			const usage = pickRunUsage(run);
+			if (usage) usages.push(usage);
 			if (process.env.PI_EVAL_DEBUG) {
 				process.stderr.write(
 					`[debug] ${testCase.id} step[${i}] errors=${JSON.stringify(run.errors)} tools=[${run.transcript.toolNames.join(",")}]\n`,
@@ -886,7 +913,7 @@ async function runStepsAttempt(
 		failures: v.failures,
 		durationMs: Date.now() - started,
 		toolNames: transcripts.flatMap((t) => t.toolNames),
-		usage: sumUsage(transcripts),
+		usage: sumUsage(usages),
 		...(model ? { model } : {}),
 		...(provider ? { provider } : {}),
 		identityBroken: v.identity.broken,
@@ -896,20 +923,20 @@ async function runStepsAttempt(
 	};
 }
 
-/** 多步 usage 求和（各步独立 transcript，报告要的是整条 case 的总成本）。 */
-function sumUsage(transcripts: readonly EvalTranscript[]): EvalTranscript["usage"] | undefined {
-	const withUsage = transcripts.filter((t) => t.usage);
+/** 多步 usage 求和（各步独立 usage，报告要的是整条 case 的总成本）。 */
+function sumUsage(usages: readonly (EvalTranscript["usage"] | undefined)[]): EvalTranscript["usage"] | undefined {
+	const withUsage = usages.filter((u): u is NonNullable<EvalTranscript["usage"]> => Boolean(u));
 	if (withUsage.length === 0) return undefined;
 	return withUsage.reduce(
-		(acc, t) => ({
-			input: (acc.input ?? 0) + (t.usage?.input ?? 0),
-			output: (acc.output ?? 0) + (t.usage?.output ?? 0),
-			total: (acc.total ?? 0) + (t.usage?.total ?? 0),
-			...(t.usage?.cacheRead !== undefined || acc.cacheRead !== undefined
-				? { cacheRead: (acc.cacheRead ?? 0) + (t.usage?.cacheRead ?? 0) }
+		(acc, u) => ({
+			input: (acc.input ?? 0) + (u.input ?? 0),
+			output: (acc.output ?? 0) + (u.output ?? 0),
+			total: (acc.total ?? 0) + (u.total ?? 0),
+			...(u.cacheRead !== undefined || acc.cacheRead !== undefined
+				? { cacheRead: (acc.cacheRead ?? 0) + (u.cacheRead ?? 0) }
 				: {}),
-			...(t.usage?.cacheWrite !== undefined || acc.cacheWrite !== undefined
-				? { cacheWrite: (acc.cacheWrite ?? 0) + (t.usage?.cacheWrite ?? 0) }
+			...(u.cacheWrite !== undefined || acc.cacheWrite !== undefined
+				? { cacheWrite: (acc.cacheWrite ?? 0) + (u.cacheWrite ?? 0) }
 				: {}),
 		}),
 		{} as NonNullable<EvalTranscript["usage"]>,
