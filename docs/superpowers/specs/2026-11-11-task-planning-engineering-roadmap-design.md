@@ -88,11 +88,13 @@
 
 **G3 · 上游原生能力没吃满（「不重复造轮子」的反面）**
 生产代码 0 命中的上游原语：`appendCustomEntry` + `EntryProjector`（`agent-harness.ts:544`、`session/types.ts:59-62`）、`promptSnippet` / `promptGuidelines`（`coding-agent/docs/extensions.md:1917-1921`）、`setActiveTools` 只读切换（官方 `plan-mode/index.ts:104-112`）、`before_navigation` + branch summarization（`agent-harness.ts:496-499`）、`terminate: true`（`agent/src/types.ts:375`）、`before_run` / `before_drive` / `after_response`（`agent-harness.ts:431-438,460-463`）、官方 `subagent/` 编排模板。已吃满部分（11 个 HookMap 钩子、Dynamic Tool Loading、`before_compaction`、`transform_context`、`lane.findEntries` 分支扫描、`details` 快照重放、steer/followUp）不必再动。
+> **2026-11-16 收尾状态回填（G3，只追加不改上文）**：「0 命中」清单中两项已接线——`appendCustomEntry` 由 B-2 #912 在 `plan-gate-wiring.ts` 一等写入 `lnkpi.task`；`setActiveTools` / `getActiveTools` 由 B-1 #906 在 `toolset-overlay.ts` 双向收敛声明集。`EntryProjector` 注册按 B-2 plan §3-D1 裁决有意不做（C1 §3.4 systemPrompt 每 turn 重求值已解决模型视图跨压缩）；其余候选维持原判。
 
 **G4 · 生产落地与可观测性断层**
 ① C4「源码在、运行时不在」（§2.3）；因此**总纲 §5 的 C1-B 触发条件①「C4 子代理落地出现并行清单需求」至今未满足**——C1-B「未立项」是门禁生效，不是遗漏。② 交付清单 14 项全未勾选，生产取证与指标基线未回填。③ 生产镜像落后 master 17 提交。④ 规划链路指标未暴露到 Nest `/metrics`；`plan-gate-design.md:114` 记 `plan_decision_total`（单数）与实际渲染 `plan_decisions_total`（复数）不一致。
 
 > **2026-11-11 复核纠偏**：①中「C4 源码在、运行时不在」被同日 B-4 调查刀证伪（取证范围漏了 pi-runtime K3s 独立部署单元）——真实状态：**C4 已进入生产运行时且已注册，零调用为用量缺口（prompt/skill 零点名）**；触发条件①证据面更新为「C4 已落地但零调用」，判定结论不变（仍未满足），C1-B「未立项」仍是门禁生效。详见 §2.3 复核纠偏条。
+> **2026-11-16 收尾状态回填（G4，只追加不改上文）**：②已清——交付清单第二次快照 #917→#919：8 项中 6 项有生产证据、2 项如实记欠（resume 逐例归 A-6、fork 生产零用例），指标基线同步建档（采用率 19.2% / 多 in_progress 4.85% / 跨压缩存活 3/3 / 抖动率撕裂对 20.7% 登记观测）。③旧快照失效——pi-runtime pod 现 @`c686329`（= master 代码树，#919 恢复后零差异），「落后 17 提交」只对 2026-11-10 时点成立。④部分转化——Nest `/metrics` 仍无 `pi_runtime_*`（事实不变），但 pi-runtime 侧已注册 `plan_decisions_total`、B-1 `pi_runtime_toolset_gate_narrow_total`、B-2 `pi_runtime_task_entry_*` 三计数器，eval 侧 usage 聚合已上线；单复数命名不一致已按 §12.2 就地纠正。①C4 触发条件不变。
 
 **G5 · 规格-实现漂移与上游升级悬崖**
 状态自相矛盾：总纲 `:3` 头「待评审」但 §3 记 C1 已上线；`plan-gate-design.md:6` `draft-review` 但代码已合 #329；C4 spec 写「PR 待合并」但源码已在 master。文档债：早期四份 Python 侧规格（`intent-planning-guard` / `codex-style-tool-plan-harness` / `workflow-recipe-planner` / `planner-confirm-instantiate-gate`）有设计无实现（`services/agent-runtime/**` 工作树与 HEAD 均不存在），其中 codex harness spec 自身 §0 已标注 V7 废止、`select_narrow_write_tools` 退役——易被误读为「规划层从未设计」或「已实现」。上游 1.0.0 breaking（harness → `pi-durable`）使一切绑定 harness hook 的新工程带重映射成本（总纲 §1 坑位 3 / §7 维护规则 2）。
@@ -203,6 +205,7 @@ master `task-state.ts` 现状（逐行核实）：
 ### 9.4 G2 成为最大真缺口 → C-1 提前
 
 v1 §5.2 把 eval 排在阶段 C，理由是「先补契约与可达性」。现状重算后该前提反转：可达性（G3/G4）已收口，而**拆解质量仍是零工程保障**——prompt 契约仅一行且 L6/L2 预算双双贴线（#858 后余 3），`propose_plan`/`todo_write` ≈ 15% 的使用比说明拆解时机与粒度无门禁可言。⇒ **C-1 提前为当前最高优先级刀**，立项 spec：`2026-11-12-c1-canvas-decomposition-eval-design.md`（同日立项，只观测与门禁、不自动 replan——阶段 C 原文边界不变）。
+> **2026-11-16 收尾状态回填（§9.4）**：C-1 提前裁决已兑现——C-1a eval 集 #861 / C-1b 规格 #862 已合入；run-4c 产出第 1 个有效数据点（pass 16 / 有效 26 ≈ 61.5%）。G2 缺口形态从「零工程保障」转为「阈值未拍」，拍板口径入 C-1b spec §12（≥3 独立 run 累积区间，agnes 429 解封后补齐 9 条 case）。
 
 ### 9.5 Skill SOP 刀补进立项队列（v1 盲点）
 
@@ -242,6 +245,8 @@ No-Go 清单（§5.3）全部维持不变；「观测期内禁改动」类纪律
 | 验收器（不接受模型自述完成） | plan-gate + CAS 终态 + C-2 queued | **同构**，C-2 是正解 |
 | 预算化 replan 控制器 | D6 观测规则 + turnBudget + 阶段 C「只观测不自动 replan」 | **哲学同构、其粒度更细**；触发三分类/停滞检测/max_replans 吸收为设计输入（见 10.3-3），不改变「先观测后立项」 |
 | 横向设施（工具总线/权限/压缩/human hooks） | tiering + plan-gate + ask_user + compaction 存活 | **基本吃满**；压缩存活等 8 项证据回填仍欠（§9 既有欠账不变） |
+
+> **2026-11-16 收尾状态回填（§10.2 表末行）**：「8 项证据回填仍欠」已清——#917/#919 第二次快照完成，跨压缩存活拿到生产逐例实证（会话 `cmwiwqqq50…` 当日 10 次 threshold compaction，有任务活动 3 次全部存活）；抖动率撕裂对 20.7% 转为观测信号登记。
 
 **总判定**：第二轮框架与 v1.1 在四个关键裁决上完全一致——契约下沉 schema（非 prompt）、验收器不接受自述、replan 先观测后立项、不建独立 Planner——且本项目各裁决持有更硬的一手证据（Anthropic / Claude Code / Codex 官方文档 + 生产取证）。**方向经第二轮冲击成立，无需方向性修订**；v1.2 只落以下四点增量校准。
 
@@ -431,6 +436,8 @@ schema 层最低强度约束（不靠 prompt）：generation 二选一——显�
 | C-2b canvas_state 扩展 | ✅ 已合并上线 | PR #868 → squash `b5088ed6` → 双单元取证 + 生产复测（pass 边界 / 同组 reject 优先 / 跨 kind 聚合）；指标 `declared=4/pass=1/fail_closed=3/fail_open=0` |
 | C-2c 基线建档 + 阈值提案 | 🟡 立项规格已落档，未闭环 | PR #869 合并（`93a87efb`）；规格 `2026-11-14-c2c-acceptance-observation-baseline-design.md`；四 gate（G1 写入率基准 / G2 拦截率 / G3 健康度 / G4 真实流量分级）未达，只读采集器 + 阈值拍板待 429 墙解封后人为执行 |
 
+> **2026-11-16 收尾状态回填（§14.6）**：C-2a/b 已合入上线（证据见上两行）；C-2c 仍待 agnes 429 实名墙解封后人工执行采集器与阈值拍板——属「等外部条件」，不是未交付刀。
+
 > 注：C-2c 规格经 PM/架构师对抗审核，修订三处事实引用（events.jsonl 真实路径 `/data/sessions/sessions/*`、会话 TTL=30min⇒采样≤7min、`/data/sessions` 为 pod PVC 须 `kubectl exec`）+ 补流量分级与人工拍板 playbook；含 33% 写入率失真（活指标 `tool_calls_total` 作分母误用）已登记为独立小刀，不在本刀范围。
 
 ---
@@ -480,6 +487,8 @@ schema 层最低强度约束（不靠 prompt）：generation 二选一——显�
 | ④ 验收器 | ✅ 充分吸收（最大增量） | §14 fail-closed/fail-open + after_tool 机检 + 防游戏化 + golden-cases 纪律 | 「验收固化成脚本」字面落地：acceptance 与 C-1 eval 共享同一份判据 DSL |
 | ⑤ 预算化 replan 控制器 | ✅ 观测级吸收、实现按纪律后置 | §12（三分类 + 停滞 N=3 + 倾向率基线）+ turnBudget=120 + D6 | 「双预算帽」哲学进入：步骤帽已有，replan 帽转基线先行，数值等数据 |
 | ⑥ 横向设施 | ✅ 基本吃满，**一处欠账** | tiering（#841 §7 同构）+ plan-gate + ask_user + compaction 设计 | 欠账：压缩存活等 8 项交付清单证据待回填（§9.6 优先级 5 清单刀），是六支柱唯一未闭环项 |
+
+> **2026-11-16 收尾状态回填（§16.1 支柱⑥）**：「一处欠账 / 六支柱唯一未闭环项」已清——#917/#919 第二次快照：6 项有证据、2 项如实记欠；多 in_progress 4.85% < 10% 维持软校验，抖动率 20.7% 登记观测。支柱⑥由「一处欠账」转为「已闭环 + 观测登记」。
 
 ### 16.2 ② 的判词修正——「不吸收」改为「已吸收真实形态，引擎双方皆无」
 
@@ -532,6 +541,8 @@ schema 层最低强度约束（不靠 prompt）：generation 二选一——显�
 
 **裁决：scope 并入阶段 A-3 队列项**，表述修订为「propose_plan 增结构化 `assumptions[]`（前提假设）+ `scope`（改动边界声明）」——两者同为方案边界契约、同刀落成本最低；且 C-2 acceptance 未来可引用 scope 做对照锚（改了什么 vs 说了要改什么）。不现在加的理由同 dependsOn：等 A-2'/C-1a 数据先行，且 propose_plan schema 改动须与 #831/#839 可见性链合并评审。
 
+> **2026-11-16 收尾状态回填（§16.5）**：表中 `acceptance_criteria`「已落档待实施」已闭环——C-2a #866 / C-2b #868 均已合入上线（`acceptance.ts` 在 master 21.8KB）。scope「尚未实施」判定已过时——A-3 #876 已在 `propose-plan.ts` 落 `assumptions[]` + `scope{inScope,outOfScope}` 及 `observePlanAssumptions` 打点，半缺口已兑现。
+
 **子项 2 · 落盘与版本化——机制层全覆盖**：`pipeline-state.yaml` ↔ todo 快照 + `pickLatestSnapshot` 播种；版本化 ↔ **executionEvents append-only 账本**（#845–847，比 md 文件更强：可查询/可投影/防篡改）；SKILL 文件与记忆 Markdown ↔ 研发流程层已逐条照抄；用户可审计 ↔ 前端 todo 卡片 + 时间线 + `plan_proposed` 一等事件卡（#839）。
 
 **子项 3 · 目标层→任务层降维——充分吸收（含判词修正）**：拆解粒度自适应 ↔ C-1 Q2 + Skill SOP（§13 条文↔判据映射）；「保证 DAG 而非线性列表」↔ §16.2 已裁决双方真实形态均为线性清单 + 模型自律，DAG 引擎双方皆无；「规划器只产出制品、不直接动手」↔ plan-gate（PLAN_GATED_TIERS 拦写）即该语义，#841 §7 已有 Claude Code plan mode 对标。
@@ -566,6 +577,7 @@ schema 层最低强度约束（不靠 prompt）：generation 二选一——显�
 **子项 3 · 人类介入的接口化——充分吸收且比引文更具体**：定目标 ↔ 用户输入 + `propose_plan` 方案确认（#839 一等事件）；纠偏 ↔ ask_user 决策原语 + 澄清矩阵；审批 ↔ plan-gate + propose_generation 确认闸；验收 ↔ C-2 acceptance（待实施 §14）；「显式 hook/状态出口，不靠人读聊天记录猜」↔ **生产实证最强对应**：`plan_proposed` 一等事件卡 + ask_user 终态卡三态（已回答/已超时/已跳过）+ PendingInterruption durable（#846/#848 W1c）——介入状态是结构化持久化对象，前端刷新/重连可重建。
 
 **本节总判定**：三子项全部有落点、无新缺口；§16.1「⑥ 充分吸收、一处欠账（压缩证据回填）」经子项级复核成立。**至此六支柱子项级审计全部完成**：①②③⑤⑥ 已分解核查，④ 经 §16.1 整支柱判定充分（acceptance DSL 与 C-1 共享判据函数即为子项级证据）。
+> **2026-11-16 收尾状态回填（§16.7）**：子项 2「8 项交付清单证据待回填」已由 #917/#919 清账（跨压缩存活逐例实证成立）；子项 3「C-2 acceptance（待实施 §14）」已由 C-2a/b 合入上线闭环。§16.6 SOP 条文候选仍按 C-1a 数据触发（Skill SOP 刀 #864 已交付），未触发不算欠账。
 
 ### 16.8 部署形态演进澄清——客户端 APP 的两种形态与 §16.3 触发条件接线（2026-11-13，用户澄清事项）
 
@@ -741,3 +753,4 @@ schema 层最低强度约束（不靠 prompt）：generation 二选一——显�
 ### 19.6 本轮总判定
 
 极简哲学：运行时设计面全绿，一处字段级违背（`note`）已砍；内部冲突四处全修复（一处实质：§18.2 触发机制）；重复三处两澄清一保留；遗漏一处实质（A-2' 行为观测）已登记。**结论与方向不变**，推送就绪状态维持——§19.5 冻结提案拍板后可与本次推送一并定夺（先推后冻结、或拍板后一并推，均由用户定）。
+> **2026-11-16 主线收尾状态总表（只追加，不改上文）**：规格立项队列 12 刀全部合入（A-2' #863 / A-3 #876 / C-1a #861 / C-1b #862 / SOP #864 / C-2a #866 / C-2b #868 / C-2c 规格 #869 / B-1 #906 / B-2 #910+#912 / 阶段 C③ #918→#919 / 交付清单证据 #917→#919），A/B/C 三阶段代码与规格资产交付完毕；上文 G3/G4/§9.4/§10.2/§14.6/§16.1/§16.5/§16.7 过时状态行已按本轮标记逐一更新。剩余项全部归三类：①等外部条件（agnes 实名认证 → C-2c 采集 + G2 阈值 + isError §6.5 复测 + eval usage 验证；7 天观察期 → B-2 fallback 退场、spawned 复核；A-6 真机走查）；②规格明文「登记不立项」候选（按定义非欠账）；③观测信号（抖动率 20.7% 待 case 级归因）。**本规格据此转入收尾 / 观测期，不宣告 ALL_PASS**；新证据按 §19.5 触发条款重审，细化进各自立项 spec。
