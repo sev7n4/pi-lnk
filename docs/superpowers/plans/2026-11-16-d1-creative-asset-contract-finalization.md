@@ -1,6 +1,7 @@
 # D-1 创作资产契约 · 复审定稿全量实施计划
 
 - **状态**：待用户审阅（先审产物内容；合并 / 部署 / 生产复测按既有总授权推进）
+- **状态（2026-11-17 收尾回填，只追加）**：R0/R1/R2 三刀全闭环——R0 #921 入库、R1 经核对已在 #900/#901 实现（撤销新刀）、R2 #923 合入上线 + 部署 + 生产探针全绿；第一原则已入 AGENTS.md（#926）。详见文末「实施记录回填」。
 - **SSOT**：`docs/superpowers/specs/2026-11-15-creative-domain-harness-quality-gates-design.md` 附录 D（第一原则 + 收敛裁决）+ `docs/superpowers/specs/2026-11-15-d1-creative-asset-contract-design.md` 附录 D.1–D.7
 - **触发**：#916 入库的三份规格被 #919「恢复 master 到 #915 代码树」回退（当前 master `bcbe771b` 三份 404）；用户 2026-11-16 拍板「先复审定稿 + 排全量计划 + 一次性实施」，并把「吃满上游、不重复造轮子」定为第一原则。
 - **取证基准**：master `bcbe771b`（#919 后），#900/#901 D-1 代码刀已合入；生产 K3s `d5c262cd` / Nest 代码树随 #919 恢复。
@@ -126,3 +127,13 @@
 - 缺口实证：`apps/server/src/sessions/sessions.service.ts:patchCanvas`（人工编辑侧车 PATCH）`$transaction` 内 `applyCanvasActions` → 写回，**未调用 `applyStalePropagation`**；而 agent 写路径 persist/commitStage 有。`CLIENT_FORBIDDEN_NODE_DATA_KEYS`（`sessions-canvas-patch.ts:26-27`）只禁客户端回灌 stale 字段，不等于服务端会计算——二者不矛盾（计算 ≠ 回灌）。
 - 实现（吃满上游、单一真相源）：把 `computeNodeContentHash` / `changedNodeIdsFromOps` / `propagateStale` 提取到 `packages/shared/src/canvas/lineage.server.ts`（复用既有 `computeContentHash` / `downstreamClosure` / `shouldPropagate`）；agent-canvas 私有 `applyStalePropagation` 与 sessions.service.patchCanvas 共用同一纯函数，零重复实现、零字段/migration。
 - 测试：shared lineage 单测 11/11（新增 propagateStale 3 例）+ server patch 集成 14/14（新增 R2 2 例）+ agent lineage 回归 6/6；变异 2/2 RED（下游 `stale:true→false` / patchCanvas 接线切除）。
+
+### 部署与生产复测 · 完成（2026-11-16 深夜，只追加）
+- PR **#923** squash 合并 `de30e8f8`（合并树 `d2e35aca` == CI head 树、6/6 blob KEPT、parent 核验过）；Deploy run 43865523998 success。
+- 生产行为级探针（canary JWT + 既有用户，只读取证 + 探针节点清理）：canary 会话画布 A→B→C 链 PATCH 改 A 后 BFS 传递闭包 B/C `stale=true`、A `contentHash` 变更且 `version=2`（add_node 建档 v1 + update v2，与 agent 写路径同口径）、重复 PATCH 幂等（contentHash 不再变化）、探针节点已清理。
+- 结论：客户端 PATCH 写路径与 agent 写路径共用同一 ratchet（R2 判据全过），人工编辑 stale 闭环在生产成立。
+
+### 收尾结论（2026-11-17，只追加）
+- 三刀全闭环：R0 完成（#921）；R1 经逐文件核对已在 #900/#901 实现（本计划 R1-1～R1-4 撤销，改判「已实现」）；R2 完成（#923 + 部署 + 生产探针全绿）。
+- 第一原则「吃满上游、不重复造轮子」已入 `AGENTS.md`（#926 合 `9cc0e1c5`），此后规格与实施计划强制携带该原则与等价物检索结论。
+- 诚实边界维持：三 oracle 生产声明率仍为零（fail-closed 属诚实拒绝，非缺陷）；D-0 声明率观测归 C-2c，真实声明数据出现前不宣告 oracle 生效；本计划不宣告 ALL_PASS。

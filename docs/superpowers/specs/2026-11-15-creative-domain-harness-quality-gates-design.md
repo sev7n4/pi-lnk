@@ -555,3 +555,13 @@ curl -s --noproxy '*' http://127.0.0.1:30100/metrics \
 ### D.4 诚实边界
 
 本附录是**复审裁决**，不是实施结论；三 oracle 在重新锚定 + 生产复测前不宣告生效，`durationBudget` 门在存量会话上仍恒 fail-closed（诚实拒绝）。429 墙 / A-6 真机走查 / 429 后 judge 校准等既有欠账不受本附录影响。
+
+### D.5 收尾状态回填（2026-11-17，只追加）
+
+D.3 收敛后的三刀执行结果（实施记录 SSOT = `docs/superpowers/plans/2026-11-16-d1-creative-asset-contract-finalization.md` 文末回填）：
+
+- **R0 完成**：四份定稿文档基于 `bcbe771b` 重新入库，PR **#921** squash 合并 `ce5cd887`（合并树 == CI head 树 `e2419a16`、7/7 blob KEPT、parent=`bcbe771b`）；门禁 spec-figures ×2 / claims 7/7 / links 0 全绿。
+- **R1 无新增刀**：实施前按「判据先贴真实记录求值」逐文件核对 master `ce5cd887`，三 oracle 判定器（`judgeIdClosure` / `judgeAuthorityRef` / `judgeDurationBudget`）与快照端点装配已在 #900/#901 以**既有锚点形态**实现——与 D-1 spec D.7 锚点表逐字一致；全量计划 R1 任务撤销，改判「已实现」。
+- **R2 完成**：客户端 PATCH stale 传播经 PR **#923** 合并 `de30e8f8` 上线——`propagateStale` / `computeNodeContentHash` / `changedNodeIdsFromOps` 提取至 `packages/shared/src/canvas/lineage.server.ts`，agent 写路径与 `sessions.service.patchCanvas` 共用同一纯函数（零重复实现、零 migration）；部署后生产探针全绿（B/C BFS stale 传递 / version=2 / 幂等 / 清理）。
+- **第一原则落规**：「吃满上游、不重复造轮子」已写入 `AGENTS.md`（#926 合 `9cc0e1c5`），含三条硬判据与执行纪律（规格 / 实施计划强制携带原则 + 等价物检索结论表）。
+- 诚实边界不变：三 oracle 生产声明率仍为零，fail-closed 属诚实拒绝；D-0 归 C-2c；本附录不宣告 ALL_PASS。

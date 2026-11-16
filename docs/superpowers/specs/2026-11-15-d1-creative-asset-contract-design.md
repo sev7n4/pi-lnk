@@ -463,3 +463,13 @@ C-2c 四 gate 未达 · agnes 通道 8 条 429 未解 · 交付清单 8 项证�
 **被作废方案清单**：D.2 `Shot` 加 dialogue 列 · D.5 `dialogueChars` 新字段 · prompt 派生台词字数 · D.6 `D-1-DATA` 三字段真实写者 · F3 空证据语义改写（根因は数据面非语义）。F1 原 plan `2026-11-16-d1f1-dialogue-structured-source.md` 作废。
 
 **诚实边界**：三 oracle 在 R1 重锚 + 生产复测前不宣告生效；生产 `acceptance` 零声明（复审规格 C.8 #4）⇒ R1 前先做 D-0 声明率观测（归 C-2c，只读），kill switch + 指标随判据自带（复审规格 §5.3）。
+
+### D.8 实施收尾（2026-11-17，只追加）
+
+D.7 收敛后的三刀执行结果（实施记录 SSOT = `docs/superpowers/plans/2026-11-16-d1-creative-asset-contract-finalization.md` 文末回填）：
+
+- **R0**：三份定稿 + 全量计划重新入库，PR **#921** squash 合并 `ce5cd887`（合并树 == CI head 树 `e2419a16`、7/7 blob KEPT）。
+- **R1 · oracle 重锚**：实施前逐文件核对发现三判定器 + 快照端点既有锚点装配已在 #900/#901 完成（`assetOracle.inspect()` 挂载；`registeredIds` / `referencedIds` / `authorities` / `durationRows` 全按 D.7 锚点表接线；`dialogueChars` 缺结构化源走 `missing` ⇒ 诚实 fail-closed）⇒ **零新增代码刀**，与 D.7 收敛裁决一致。
+- **R2 · stale 传播**：PR **#923** squash 合并 `de30e8f8`——`propagateStale` / `computeNodeContentHash` / `changedNodeIdsFromOps` 提取至 `packages/shared/src/canvas/lineage.server.ts`，agent 写路径与 `sessions.service.patchCanvas` 共用同一实现（零重复、零 migration、零新字段）；部署后生产探针全绿（B/C BFS stale / version=2 / 幂等 / 探针节点清理）。
+- **第一原则落规**：D.1 三硬判据已入 `AGENTS.md`（#926 合 `9cc0e1c5`）。
+- 诚实边界：三 oracle 生产声明率仍为零（空证据 vacuous 现状保持，D.6 裁决不变）；真实声明数据出现后按 #815 用真实记录校准语义；本附录不宣告 oracle 生效。
