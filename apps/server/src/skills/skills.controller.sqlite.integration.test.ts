@@ -325,4 +325,34 @@ describe('SkillsController（M1-1 行为级，真实 sqlite）', () => {
     const inv2 = await controller.invoke({ user: { sub: 'userA' } }, imp2.data.id, { intent: 'explicit' })
     expect(inv2.data.mode).toBe('explicit')
   })
+
+  // ─── M1-3 发起方接线：buildSkillResources(userId) ─────────────────────────────
+
+  it('A2 前置: buildSkillResources 只含该用户已启用技能，content 逐字等于 body', async () => {
+    const text = CLEAN_SKILL('resume-skill', '# 逐字正文\n含尾随空格  \n')
+    const imp = await controller.import({ user: { sub: 'userA' } }, { text })
+    // 默认 enabled=false ⇒ 组装为空
+    expect(await service.buildSkillResources('userA')).toEqual([])
+    // 启用后可见，content 逐字等于落库 body（不 trim——上游 parse 保留的前后换行也照搬）
+    await controller.setEnabled({ user: { sub: 'userA' } }, imp.data.id, { enabled: true })
+    const pkg = await prisma.skillPackage.findUnique({ where: { contentHash: imp.data.packageHash } })
+    const skills = await service.buildSkillResources('userA')
+    expect(skills).toHaveLength(1)
+    expect(skills[0]).toMatchObject({ name: 'resume-skill', content: pkg!.body })
+    expect(skills[0].content).not.toBe(pkg!.body.trim())
+    expect(skills[0].filePath).toBe('<virtual>/resume-skill/SKILL.md')
+    // 跨用户隔离：userB 组装为空
+    expect(await service.buildSkillResources('userB')).toEqual([])
+  })
+
+  it('A2 负例: 包正文被篡改（contentHash 不符）→ 跳过该技能不注入（fail-closed）', async () => {
+    const imp = await controller.import({ user: { sub: 'userA' } }, { text: CLEAN_SKILL('tamper-skill') })
+    await controller.setEnabled({ user: { sub: 'userA' } }, imp.data.id, { enabled: true })
+    // 直接篡改包正文，制造 hash 与正文不符
+    await prisma.skillPackage.update({
+      where: { contentHash: imp.data.packageHash },
+      data: { body: 'TAMPERED' },
+    })
+    expect(await service.buildSkillResources('userA')).toEqual([])
+  })
 })

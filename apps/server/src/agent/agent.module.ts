@@ -30,6 +30,7 @@ import { TurnStateService } from './turn-state.service'
 import { PendingInterruptionService } from './pending-interruption.service'
 import { SubagentTaskService } from './subagent-task.service'
 import { AutomationModule } from '../automation/automation.module'
+import { SkillsModule } from '../skills/skills.module'
 
 @Module({
   imports: [
@@ -43,6 +44,8 @@ import { AutomationModule } from '../automation/automation.module'
     PricingModule,
     // P2 待确认门 durable：过期扫描挂既有统一调度器（不新起 timer，G1 纪律）。
     AutomationModule,
+    // M1-3：用户技能发起方接线（SkillsModule 仅依赖 @Global PrismaModule，无环）。
+    SkillsModule,
   ],
   controllers: [AgentController, AgentCanvasToolsController, DeliveryMetricsController],
   providers: [

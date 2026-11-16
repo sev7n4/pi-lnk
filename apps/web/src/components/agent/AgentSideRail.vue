@@ -117,7 +117,10 @@ import {
   AGENT_SKILLS,
   agentInputPlaceholder,
   getAgentSkill,
+  mergeAgentSkills,
+  type AgentSkillDef,
 } from '@/constants/agentSkillMap'
+import { skillApi } from '@/services/skill-api'
 import { PRODUCT_VISUAL_GUIDANCE } from '@/constants/productVisualCopy'
 import {
   buildDraftFromUtterance,
@@ -945,8 +948,23 @@ function setPlanningThinkingLevel(level: ThinkingLevel) {
  * 选中即关闭菜单并写回 activeSkillId。原 composer 独立 chip（P2-5.1 skillMenuMode）已退役。 */
 const activeSkillId = ref<string | null>(null)
 const skillSubmenuOpen = ref(false)
-const activeSkill = computed(() => getAgentSkill(activeSkillId.value))
+// M1-3：内置技能 + 用户已启用技能动态并入下拉；加载失败 fail-soft 保留内置（不阻断对话）。
+const dockSkills = ref<AgentSkillDef[]>([...AGENT_SKILLS])
+async function loadDockSkills() {
+  try {
+    const mine = await skillApi.mine()
+    dockSkills.value = mergeAgentSkills(AGENT_SKILLS, mine)
+  } catch {
+    dockSkills.value = [...AGENT_SKILLS]
+  }
+}
+// activeSkill 查合并后的列表（用户技能选中后 placeholder 也能正确显示）；
+// getAgentSkill 兜底保证内置技能在异步加载完成前即可解析（M0 行为不回退）。
+const activeSkill = computed(
+  () => dockSkills.value.find((s) => s.id === activeSkillId.value) ?? getAgentSkill(activeSkillId.value),
+)
 const isProductVisualSkill = computed(() => activeSkillId.value === 'product-visual')
+onMounted(() => { void loadDockSkills() })
 const inputPlaceholder = computed(() =>
   agentInputPlaceholder(activeSkill.value),
 )
@@ -4268,7 +4286,7 @@ defineExpose({
                           </span>
                         </button>
                         <button
-                          v-for="skill in AGENT_SKILLS"
+                          v-for="skill in dockSkills"
                           :key="skill.id"
                           type="button"
                           class="neo-popover-item agent-popover-skill-item flex w-full items-start gap-2 px-3 py-2 text-left"
@@ -4285,7 +4303,7 @@ defineExpose({
                             <span class="block truncate text-[10px] opacity-60">{{ skill.desc }}</span>
                           </span>
                         </button>
-                        <p v-if="!AGENT_SKILLS.length" class="px-3 py-2 text-[10px] opacity-50">暂无已安装技能</p>
+                        <p v-if="!dockSkills.length" class="px-3 py-2 text-[10px] opacity-50">暂无已安装技能</p>
                       </div>
                       <button
                         type="button"

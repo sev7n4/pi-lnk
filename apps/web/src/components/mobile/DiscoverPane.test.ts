@@ -116,19 +116,31 @@ describe('DiscoverPane — 发现 = 社区精选', () => {
     expect(wrapper.findAllComponents(WorkCard)).toHaveLength(2)
   })
 
-  it('⑦ 能力预留位保留且置灰（专家 / 技能 / 连接器），社区流仍是主位', async () => {
+  it('⑦ 预留位：专家/连接器仍置灰，技能已激活（M1-3）；社区流仍是主位', async () => {
     const wrapper = await mountPane()
     const soon = wrapper.findAll('.soon .row-item')
     expect(soon).toHaveLength(3)
     expect(soon.map((b) => b.text()).join()).toContain('专家')
     expect(soon.map((b) => b.text()).join()).toContain('技能')
     expect(soon.map((b) => b.text()).join()).toContain('连接器')
-    for (const b of soon) {
-      expect(b.attributes('disabled')).toBeDefined()
-    }
+    // 专家/连接器仍 disabled；技能不再 disabled
+    expect(wrapper.find('[data-testid="soon-experts"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="soon-connectors"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-testid="soon-skills"]').attributes('disabled')).toBeUndefined()
     // 结构上：作品流在「敬请期待」区块之前（社区是主叙事）
     const html = wrapper.html()
     expect(html.indexOf('discover-work-grid')).toBeLessThan(html.indexOf('soon-title'))
+  })
+
+  it('⑨ M1-3：点「技能」入口展开技能发现面板（市场区 + 我的技能区）', async () => {
+    const wrapper = await mountPane()
+    expect(wrapper.find('[data-testid="discover-skills-panel"]').exists()).toBe(false)
+    await wrapper.find('[data-testid="soon-skills"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="discover-skills-panel"]').exists()).toBe(true)
+    // 面板内含市场区/我的技能区两个 tab
+    expect(wrapper.text()).toContain('技能市场')
+    expect(wrapper.text()).toContain('我的技能')
   })
 
   it('⑧ IA v4：社区化后不再有「资料库」跨页签入口与项目空间行', async () => {

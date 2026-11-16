@@ -82,13 +82,15 @@ import {
   type ProviderContext,
 } from '../provider/provider-context'
 import { ProviderResolverService } from '../provider/provider-resolver.service'
-import { mapUiSkillId } from './agent-skill-map'
+import { resolveDockSkillTarget, withUserSkillNames } from './agent-skill-map'
+import { SkillsService } from '../skills/skills.service'
 import { sanitizeAgentMessageContent } from './agentMessageSanitize'
 import {
   PiRuntimeClient,
   PiRuntimeError,
   type CreateSessionResult,
   type PiPromptInfo,
+  type UserSkillResources,
   type PiRetentionState,
   type PiSessionLlmOverride,
   type QueueCancelOutcome,
@@ -424,6 +426,11 @@ export class AgentService implements OnModuleInit {
     @Optional()
     @Inject(SubagentTaskService)
     private readonly subagentTasks?: SubagentTaskService,
+    // M1-3（用户技能发起方接线）：@Optional 保持既有按位置构造的单测零破坏；
+    // 缺省（未装配 SkillsModule）= 不注入用户技能，M0 内置 registry 行为逐字节不变。
+    @Optional()
+    @Inject(SkillsService)
+    private readonly skills?: SkillsService,
   ) {}
 
   /**
@@ -3527,9 +3534,13 @@ export class AgentService implements OnModuleInit {
         } as AgentStreamEvent
       }
     }
+    // M1-3：组装该用户已启用技能 → create 时注入 runtime（下一轮 index 含行）。
+    // fail-open：技能是增强能力，查库失败不得阻断对话——降级为空集（M0 内置 registry 行为）。
+    const userSkillResources = await this.buildUserSkillResources(userId)
     const created = await this.ensurePiSession(client, sessionKey, {
       systemPrompt: staticPrompt,
       userId,
+      resources: userSkillResources,
       // D-T1：老 UI effort 两档映射为 pi 档位，逐请求透传
       thinkingLevel: mapThinkingLevel(thinkingOpts?.thinking, thinkingOpts?.thinkingEffort),
       // K-1：BYOK 渠道覆盖（undefined → pi-runtime env 装配）
@@ -3570,18 +3581,22 @@ export class AgentService implements OnModuleInit {
     }
     // 可观测性专项 ④ + P1 skillId 转接：文本 /skill 命令优先，dock skillId 兜底；未知名 fail-soft 原文发送。
     // listSkills 仅在可能需要校验时调用（有命令或有 skillId），失败降级 null（fail-soft）
-    // P1 标尺④修复：dock 传的是 UI 短 id（canvas/product-visual），须先经 mapUiSkillId 映射为
-    // runtime skill 名再进 resolveForceSkills 白名单校验（与老 LangGraph 路径 :597 对齐；
-    // 未接入占位 id 映射为 undefined → fail-soft，与 T2-3 语义一致）
+    // P1 标尺④修复 + M1-3：dock 传的 UI 短 id（canvas/product-visual）先经内置映射，
+    // 未命中再走用户已装技能名 pass-through（resolveDockSkillTarget）；白名单并入用户技能名。
+    // 两者都不命中 → fail-soft 原文发送（T2-3 语义不变）。
     const skillCmd = parseSkillCommand(userMessage)
+    // M1-3：用户已装技能名并入白名单 + dock skillId pass-through 兜底（内置映射仍优先）。
+    const userSkillNames = userSkillResources?.skills.map((s) => s.name) ?? []
     const known =
       skillCmd || skillId?.trim()
         ? await client.listSkills().catch(() => null)
         : null
+    const builtinNames = known?.skills ?? null
+    const knownNames = builtinNames ? withUserSkillNames(builtinNames, userSkillNames) : null
     const { forceSkills, promptText } = resolveForceSkills(
-      mapUiSkillId(skillId),
+      resolveDockSkillTarget(skillId, userSkillNames),
       userMessage,
-      known?.skills ?? null,
+      knownNames,
     )
     // P0-①：每轮世界状态（画布/侧栏）随本轮 prompt 求值，不进对话历史
     const turnContext = {
@@ -4636,6 +4651,24 @@ export class AgentService implements OnModuleInit {
    * 内部按 LLM 身份判定 —— Nest 侧不再有「删了重建」路径（`createSessionReplacingStale` 已退役）。
    * 返回 status 供调用方区分 created / resumed / rebuilt。
    */
+  /**
+   * M1-3：组装用户技能给 runtime create 注入。fail-open——
+   * SkillsService 未装配（单测/旧装配）或查库异常时返回 undefined（= M0 内置行为，不阻断对话）。
+   */
+  private async buildUserSkillResources(
+    userId: string | undefined,
+  ): Promise<UserSkillResources | undefined> {
+    if (!this.skills || !userId) return undefined
+    try {
+      const skills = await this.skills.buildSkillResources(userId)
+      if (!skills.length) return undefined
+      return { skills }
+    } catch (err) {
+      this.piLogger.warn(`user skills assemble failed (fail-open): ${String(err)}`)
+      return undefined
+    }
+  }
+
   private async ensurePiSession(
     client: PiRuntimeClient,
     sessionKey: string,
@@ -4649,6 +4682,8 @@ export class AgentService implements OnModuleInit {
       canvasSessionId?: string
       /** P0-3 / L-2：prompt 版本指纹，落 meta.json 供磁盘 resume 比对 */
       promptInfo?: PiPromptInfo
+      /** M1-3：Nest 组装的用户技能，create 时注入 runtime harness */
+      resources?: UserSkillResources
     },
   ): Promise<CreateSessionResult> {
     return client.createSession(sessionKey, {
@@ -4659,6 +4694,8 @@ export class AgentService implements OnModuleInit {
       llm: opts?.llm,
       // 画布会话 id 随会话创建注入 → pi-runtime 存进 entry，toolContext 取它而非哈希键
       canvasSessionId: opts?.canvasSessionId,
+      // M1-3：用户技能注入（缺省不传 = M0 行为）
+      resources: opts?.resources,
     })
   }
 
