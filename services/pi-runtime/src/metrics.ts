@@ -405,6 +405,24 @@ export class Metrics {
 		this.toolsetGateNarrow.set(kind, (this.toolsetGateNarrow.get(kind) ?? 0) + 1);
 	}
 
+	/** B-2（plan 2026-11-16-b2-task-contract-custom-entry-plan.md §3-D4）：任务契约一等化观测。
+	 *  taskEntry = 一等写入计数；truncated = 32KB 截断；mismatch = 双轨两源不一致（人工裁决）。 */
+	private taskEntry = new Map<string, number>();
+	private taskEntryTruncated = new Map<string, number>();
+	private taskEntryMismatch = new Map<string, number>();
+
+	observeTaskEntry(kind: "todo" | "plan"): void {
+		this.taskEntry.set(kind, (this.taskEntry.get(kind) ?? 0) + 1);
+	}
+
+	observeTaskEntryTruncated(kind: "todo" | "plan"): void {
+		this.taskEntryTruncated.set(kind, (this.taskEntryTruncated.get(kind) ?? 0) + 1);
+	}
+
+	observeTaskEntryMismatch(kind: "todo" | "plan"): void {
+		this.taskEntryMismatch.set(kind, (this.taskEntryMismatch.get(kind) ?? 0) + 1);
+	}
+
 	/** A1 propose 单飞门观测（2026-11-02 死循环护栏）：key = 拦截原因（latch/pending/in_flight/ssot_unavailable）。 */
 	private proposeGateBlocked = new Map<string, number>();
 
@@ -742,6 +760,22 @@ export class Metrics {
 	lines.push("# TYPE pi_runtime_toolset_gate_narrow_total counter");
 	for (const [kind, count] of [...this.toolsetGateNarrow.entries()].sort()) {
 		lines.push(`pi_runtime_toolset_gate_narrow_total{kind="${esc(kind)}"} ${count}`);
+	}
+
+	lines.push("# HELP pi_runtime_task_entry_total Task contract custom-entry writes by kind (B-2).");
+	lines.push("# TYPE pi_runtime_task_entry_total counter");
+	for (const [kind, count] of [...this.taskEntry.entries()].sort()) {
+		lines.push(`pi_runtime_task_entry_total{kind="${esc(kind)}"} ${count}`);
+	}
+	lines.push("# HELP pi_runtime_task_entry_truncated_total Task entries truncated at 32KB by kind (B-2).");
+	lines.push("# TYPE pi_runtime_task_entry_truncated_total counter");
+	for (const [kind, count] of [...this.taskEntryTruncated.entries()].sort()) {
+		lines.push(`pi_runtime_task_entry_truncated_total{kind="${esc(kind)}"} ${count}`);
+	}
+	lines.push("# HELP pi_runtime_task_entry_mismatch_total Dual-track source disagreement by kind (B-2 observation window).");
+	lines.push("# TYPE pi_runtime_task_entry_mismatch_total counter");
+	for (const [kind, count] of [...this.taskEntryMismatch.entries()].sort()) {
+		lines.push(`pi_runtime_task_entry_mismatch_total{kind="${esc(kind)}"} ${count}`);
 	}
 
 	lines.push("# HELP pi_runtime_plan_decisions_total Plan confirmation outcomes by decision.");

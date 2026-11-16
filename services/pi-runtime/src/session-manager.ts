@@ -221,6 +221,16 @@ export interface LaneSnapshotProjection {
 		text?: string;
 		stopReason?: string;
 	}>;
+	/** 会话累计 token 用量（vendor LaneSnapshot.stats.usage 防御式投影；eval usage 对照小刀
+	 *  2026-11-16：SSE 流不透传 usage 事件 ⇒ 这是唯一的会话级 usage HTTP 读数）。
+	 *  字段全可选：vendor Usage 字段随 provider 上报漂移，缺哪个省哪个键。 */
+	usage?: {
+		input?: number;
+		output?: number;
+		cacheRead?: number;
+		cacheWrite?: number;
+		totalTokens?: number;
+	};
 }
 
 const TRANSCRIPT_TAIL_LIMIT = 16;
@@ -310,6 +320,28 @@ export function projectLaneSnapshot(snap: LaneSnapshot): LaneSnapshotProjection 
 				: { kind: q.kind },
 		),
 		transcriptTail: tail,
+		...(projectUsage(snap.stats?.usage) ? { usage: projectUsage(snap.stats?.usage)! } : {}),
+	};
+}
+
+/** usage 投影（防御式：字段非有限数值 ⇒ 键省略；三主字段全缺 ⇒ undefined）。 */
+function projectUsage(
+	u: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number } | undefined,
+): LaneSnapshotProjection["usage"] | undefined {
+	if (!u || typeof u !== "object") return undefined;
+	const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+	const input = num(u.input);
+	const output = num(u.output);
+	const cacheRead = num(u.cacheRead);
+	const cacheWrite = num(u.cacheWrite);
+	const totalTokens = num(u.totalTokens);
+	if (input === undefined && output === undefined && cacheRead === undefined) return undefined;
+	return {
+		...(input !== undefined ? { input } : {}),
+		...(output !== undefined ? { output } : {}),
+		...(cacheRead !== undefined ? { cacheRead } : {}),
+		...(cacheWrite !== undefined ? { cacheWrite } : {}),
+		...(totalTokens !== undefined ? { totalTokens } : {}),
 	};
 }
 
@@ -1493,7 +1525,14 @@ export class SessionManager {
 				const todoKey = entry.storeScopeKey ?? (entry.canvasSessionId ?? key);
 				const lane = await harness.lane(MAIN_LANE, this.context);
 				const entries = (await lane.findEntries({ order: "oldestFirst" }, this.context)) as readonly unknown[];
-				seedTodoState(todoKey, pickLatestSnapshot(Array.isArray(entries) ? entries : []));
+				// B-2 双轨观察期（plan 2026-11-16-b2-task-contract-custom-entry-plan.md §5）：
+				// 一等源（custom entry）与 fallback（toolResult details）不一致时打点不告警，人工裁决。
+				seedTodoState(
+					todoKey,
+					pickLatestSnapshot(Array.isArray(entries) ? entries : [], {
+						onMismatch: () => this.metrics?.observeTaskEntryMismatch?.("todo"),
+					}),
+				);
 				// C3（spec §3.5）：plan 状态播种——SSOT = transcript 末条 propose_plan details。
 				// 无 propose_plan 记录（老会话）不播种，保持默认 idle。
 				// kill switch 同门控（终审 Critical #1）：off 时恢复旧行为，存量 planPending
@@ -1501,10 +1540,13 @@ export class SessionManager {
 				// C4（评审 I1）：子会话**跳过 plan 播种**——plan 状态键与主会话共享
 				// （storeScopeKey 之外的闸门状态域），fork 快照回灌会回退主会话刚做的
 				// 确认/拒绝决策；且子代理无 propose_plan（白名单排除），闸门对子无意义。
-				const planDecision = opts.subagentTools
-					? undefined
-					: pickLatestPlanDecision(Array.isArray(entries) ? entries : []);
-				if (planDecision && planGateEnabled()) seedPlanState(todoKey, planDecision);
+				if (!opts.subagentTools && planGateEnabled()) {
+					const planDecision = pickLatestPlanDecision(
+						Array.isArray(entries) ? entries : [],
+						{ onMismatch: () => this.metrics?.observeTaskEntryMismatch?.("plan") },
+					);
+					if (planDecision) seedPlanState(todoKey, planDecision);
+				}
 			} catch (err) {
 				console.warn("[todo-resume] transcript seeding failed (fail-soft):", err);
 			}

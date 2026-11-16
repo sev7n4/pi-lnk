@@ -690,3 +690,30 @@ describe("L1 runner · ⭐⭐ error（限流）补跑 —— 别让环境废票�
 		});
 	});
 });
+
+describe("summarize cache 汇总（eval usage 对照小刀 2026-11-16）", () => {
+	function resultOf(partial: Partial<CaseResult>): CaseResult {
+		return {
+			caseId: "c",
+			verdict: "pass",
+			failures: [],
+			durationMs: 100,
+			toolNames: [],
+			...partial,
+		};
+	}
+	it("case 带 cacheRead ⇒ 汇总产出 totalCacheReadTokens；全无数据 ⇒ undefined", () => {
+		const withCache = summarize([
+			resultOf({ caseId: "a", verdict: "pass", usage: { input: 10, output: 5, total: 15, cacheRead: 900, cacheWrite: 7 } }),
+			resultOf({ caseId: "b", verdict: "pass", usage: { input: 10, output: 5, total: 15, cacheRead: 300, cacheWrite: 0 } }),
+		]);
+		assert.equal(withCache.totalCacheReadTokens, 1200);
+		assert.equal(withCache.totalCacheWriteTokens, 7);
+		assert.match(withCache.report, /cache_read 1200/);
+		const without = summarize([
+			resultOf({ caseId: "a", verdict: "pass", usage: { input: 10, output: 5, total: 15 } }),
+		]);
+		assert.equal(without.totalCacheReadTokens, undefined);
+		assert.equal(without.report.includes("cache_read"), false);
+	});
+});

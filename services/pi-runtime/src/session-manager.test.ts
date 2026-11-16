@@ -1812,3 +1812,41 @@ describe("projectLaneSnapshot（lane.watch 快照投影，2026-10-18 上游对�
 		assert.equal(out.transcriptTail[15]?.seq, 30);
 	});
 });
+
+describe("projectLaneSnapshot usage 投影（eval usage 对照小刀 2026-11-16）", () => {
+	it("stats.usage 数值字段全投影；totalTokens 映射保持原键名", () => {
+		const snap = {
+			lane: "main",
+			tipId: "t",
+			faulted: false,
+			operation: null,
+			queues: [],
+			transcript: [],
+			stats: { messageCount: 3, usage: { input: 100, output: 50, cacheRead: 900, cacheWrite: 0, totalTokens: 1050 } },
+		} as never;
+		const out = projectLaneSnapshot(snap);
+		assert.deepEqual(out.usage, { input: 100, output: 50, cacheRead: 900, cacheWrite: 0, totalTokens: 1050 });
+	});
+
+	it("stats 缺失 / usage 非法 / 全 NaN ⇒ 不带 usage 键（防御式）", () => {
+		for (const stats of [undefined, {}, { usage: null }, { usage: { input: "x" } }]) {
+			const snap = { lane: "main", tipId: null, faulted: false, operation: null, queues: [], transcript: [], stats } as never;
+			const out = projectLaneSnapshot(snap);
+			assert.equal(out.usage, undefined, `stats=${JSON.stringify(stats)}`);
+		}
+	});
+
+	it("部分字段合法 ⇒ 只投影合法键", () => {
+		const snap = {
+			lane: "main",
+			tipId: null,
+			faulted: false,
+			operation: null,
+			queues: [],
+			transcript: [],
+			stats: { usage: { input: 10, cacheRead: 5, output: "bad" } },
+		} as never;
+		const out = projectLaneSnapshot(snap);
+		assert.deepEqual(out.usage, { input: 10, cacheRead: 5 });
+	});
+});

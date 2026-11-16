@@ -96,4 +96,36 @@ describe("pickLatestPlanDecision", () => {
 		assert.equal(pickLatestPlanDecision([{ toolName: "todo_write", details: { todo: {} } }]), undefined);
 		assert.equal(pickLatestPlanDecision([]), undefined);
 	});
+
+	// ═══ B-2 一等源（plan 2026-11-16-b2-task-contract-custom-entry-plan.md §3-D3）═══
+	it("B-2: custom entry（lnkpi.task kind=plan）为首选源，非法 decision 忽略", () => {
+		const custom = { type: "custom", customType: "lnkpi.task", data: { v: 1, kind: "plan", decision: "execute" } };
+		assert.equal(pickLatestPlanDecision([custom]), "execute");
+		// v≠1 忽略 ⇒ 回落 fallback
+		const stale = { type: "custom", customType: "lnkpi.task", data: { v: 2, kind: "plan", decision: "execute" } };
+		const fallback = { toolName: "propose_plan", details: { plan: { decision: "keep" } } };
+		assert.equal(pickLatestPlanDecision([stale, fallback]), "keep");
+		// 最新胜出：fallback 在 custom 之后 ⇒ fallback 赢
+		const customOld = { type: "custom", customType: "lnkpi.task", data: { v: 1, kind: "plan", decision: "keep" } };
+		assert.equal(pickLatestPlanDecision([customOld, { toolName: "propose_plan", details: { plan: { decision: "refine" } } }]), "refine");
+		// 两源各自最新值不同 ⇒ mismatch 打点（与时间序谁赢无关——不一致即观测，plan §5）
+		let calls = 0;
+		pickLatestPlanDecision(
+			[
+				{ type: "custom", customType: "lnkpi.task", data: { v: 1, kind: "plan", decision: "keep" } },
+				{ toolName: "propose_plan", details: { plan: { decision: "execute" } } },
+			],
+			{ onMismatch: () => calls++ },
+		);
+		assert.equal(calls, 1, "keep vs execute 不同 ⇒ 打点");
+		// 两源值相同 ⇒ 不打点
+		pickLatestPlanDecision(
+			[
+				{ type: "custom", customType: "lnkpi.task", data: { v: 1, kind: "plan", decision: "keep" } },
+				{ toolName: "propose_plan", details: { plan: { decision: "keep" } } },
+			],
+			{ onMismatch: () => calls++ },
+		);
+		assert.equal(calls, 1, "同值不打点");
+	});
 });

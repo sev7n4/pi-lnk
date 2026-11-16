@@ -101,8 +101,9 @@ export interface EvalTranscript {
 	completed: boolean;
 	/** 收到的 error 事件原文。 */
 	errors: string[];
-	/** token 用量（若 runtime 上报）。 */
-	usage?: { input?: number; output?: number; total?: number };
+	/** token 用量（若 runtime 上报）。B-1 cache 对照小刀（2026-11-16）：补 cacheRead/cacheWrite
+	 *  ——vendor usage 事件原生携带（metrics.observeUsage 同源字段），历史 run 无此字段（可选）。 */
+	usage?: { input?: number; output?: number; total?: number; cacheRead?: number; cacheWrite?: number };
 }
 
 /**

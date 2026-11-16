@@ -7,7 +7,19 @@
  * 语义铁律（spec §3.1）：execute 是唯一解锁路径；refine/keep/timeout/aborted 全部 fail-closed
  * 保持拦写；pending 不因新用户轮自动清空（确认前绝不执行）。
  */
+// B-2 一等账本条目读取（plan 2026-11-16-b2-task-contract-custom-entry-plan.md §3-D3）。
+// task-state 只依赖 tools/acceptance，无循环。
+import { readTaskEntry } from "../tools/task-state.js";
+
 export type PlanDecision = "execute" | "refine" | "keep" | "timeout" | "aborted";
+
+const PLAN_DECISION_SET: ReadonlySet<string> = new Set([
+	"execute",
+	"refine",
+	"keep",
+	"timeout",
+	"aborted",
+]);
 
 interface PlanSessionState {
 	pending: boolean;
@@ -98,27 +110,61 @@ export function shouldBlockForPlan(toolName: string, tier: string | undefined, k
 	return PLAN_GATED_TIERS.has(tier ?? "");
 }
 
-/** transcript 反向扫描最后一条 propose_plan 的 decision（task-state.ts pickLatestSnapshot 同构
- * 防御式解析：2026-10-09 生产 probe 实测形态为 message 包裹层，保留官方同构顶层形态兼容）。 */
-export function pickLatestPlanDecision(entries: readonly unknown[]): PlanDecision | undefined {
+/** transcript 反向扫描最后一条 propose_plan 的 decision。
+ * B-2 起两源并存、**最新条目胜出**（plan 2026-11-16-b2-task-contract-custom-entry-plan.md §3-D3）：
+ * ① 首选源：custom entry（customType "lnkpi.task"，kind="plan"，v===1）；
+ * ② fallback：toolResult details 副作用（防御式解析：2026-10-09 生产 probe 实测形态为
+ *    message 包裹层，保留官方同构顶层形态兼容，观察期后退役）。两源不一致触发 onMismatch。 */
+export function pickLatestPlanDecision(
+	entries: readonly unknown[],
+	opts?: { onMismatch?: () => void },
+): PlanDecision | undefined {
+	let customHit: PlanDecision | undefined;
+	let fallbackHit: PlanDecision | undefined;
+	let customHitIndex = -1;
+	let fallbackHitIndex = -1;
 	for (let i = entries.length - 1; i >= 0; i--) {
-		const e = entries[i] as {
+		const e = entries[i];
+		if (!e) continue;
+		// ① 一等源（custom entry）
+		const task = readTaskEntry(e);
+		if (task && task.kind === "plan" && PLAN_DECISION_SET.has(task.decision as string)) {
+			if (!customHit) {
+				customHit = task.decision as PlanDecision;
+				customHitIndex = i;
+			}
+			continue;
+		}
+		if (customHit && fallbackHit) break;
+		// ② fallback：toolResult details 副作用（原样保留）
+		const o = e as {
 			toolName?: string;
 			details?: unknown;
 			result?: { details?: unknown };
 			message?: { toolName?: string; details?: unknown; result?: { details?: unknown } };
 		} | null;
-		if (!e) continue;
+		if (!o) continue;
 		let raw: unknown;
-		if (e.toolName === "propose_plan") {
-			raw = e.details ?? e.result?.details;
-		} else if (e.message?.toolName === "propose_plan") {
-			raw = e.message.details ?? e.message.result?.details;
+		if (o.toolName === "propose_plan") {
+			raw = o.details ?? o.result?.details;
+		} else if (o.message?.toolName === "propose_plan") {
+			raw = o.message.details ?? o.message.result?.details;
 		} else {
 			continue;
 		}
 		const d = (raw as { plan?: { decision?: unknown } } | undefined)?.plan?.decision;
-		if (d === "execute" || d === "refine" || d === "keep" || d === "timeout" || d === "aborted") return d;
+		if (d === "execute" || d === "refine" || d === "keep" || d === "timeout" || d === "aborted") {
+			if (!fallbackHit) {
+				fallbackHit = d;
+				fallbackHitIndex = i;
+			}
+		}
 	}
-	return undefined;
+	if (customHit && fallbackHit && customHit !== fallbackHit) {
+		opts?.onMismatch?.();
+	}
+	const customLater = customHitIndex >= fallbackHitIndex;
+	return customHit && fallbackHit
+		? (customLater ? customHit : fallbackHit)
+		: (customHit ?? fallbackHit);
 }
