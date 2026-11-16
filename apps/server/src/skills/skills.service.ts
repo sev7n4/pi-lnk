@@ -3,7 +3,8 @@
 // 判据锚：M1-A1（跨用户隔离）/ A3（两通路归一）/ A6（七类拒绝+审计）/ A8（卸载守卫）/ A10（目录与搜索）。
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
-import { parseSkillPackageText } from './skills-parse.js'
+import { parseSkillPackageText, sha256Hex } from './skills-parse.js'
+import { assembleSkillResources, type SkillResourceRow } from './skills-resources.js'
 import {
   assertUninstallGuard,
   evaluateCompatibility,
@@ -417,6 +418,43 @@ export class SkillsService {
       throw new ForbiddenException(`技能当前不可被${intent === 'implicit' ? '自动' : '显式'}调用`)
     }
     return { ...ENVELOPE, data: { mode, skill: pkg.skill, packageHash: pkg.contentHash } }
+  }
+
+  // ─── M1-3 发起方接线：buildSkillResources(userId) ──────────────────────────────
+
+  /**
+   * 组装该用户当前已启用的技能为上游 `Skill[]`（计划 §2 决策 1 / v2 §5.4）。
+   * Nest 在 `/sessions` create 时调用，结果放进 body.resources.skills 透传给 runtime；
+   * runtime 不查 Nest、不出网。contentHash 逐字校验（正文被篡改 ⇒ 跳过，fail-closed）。
+   *
+   * ⚠️ 只查 enabled=true 且未卸载的行；返回直接是可 JSON 序列化的上游 Skill[]（能在 4MB bodyLimit 内）。
+   */
+  async buildSkillResources(userId: string): Promise<Array<import('@earendil-works/pi-agent-core').Skill>> {
+    const rows = await this.prisma.userInstalledSkill.findMany({
+      where: { userId, uninstalledAt: null },
+      orderBy: { installedAt: 'desc' },
+    })
+    if (rows.length === 0) return []
+    const hashes = [...new Set(rows.map((r) => r.pinnedHash))]
+    const packages = await this.prisma.skillPackage.findMany({ where: { contentHash: { in: hashes } } })
+    const pkgByHash = new Map(packages.map((p) => [p.contentHash, p]))
+    const resRows: SkillResourceRow[] = []
+    for (const r of rows) {
+      const pkg = pkgByHash.get(r.pinnedHash)
+      if (!pkg) continue
+      // contentHash 协议（计划 §8.1）：sha256("v1:"+skill+":"+body.trimEnd())；不符 = 正文被篡改 ⇒ 跳过。
+      if (sha256Hex(`v1:${pkg.skill}:${pkg.body.trimEnd()}`) !== pkg.contentHash) continue
+      resRows.push({
+        skill: pkg.skill,
+        displayName: pkg.displayName,
+        summary: pkg.summary,
+        body: pkg.body,
+        disableModelInvocation: pkg.disableModelInvocation,
+        enabled: r.enabled,
+        installedAt: r.installedAt,
+      })
+    }
+    return assembleSkillResources(resRows)
   }
 
   // ─── 详情（兼容评分与不可用动作清单，§6.6）─────────────────────────────────────

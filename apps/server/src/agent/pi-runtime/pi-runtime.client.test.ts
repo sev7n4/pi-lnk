@@ -145,6 +145,40 @@ describe("B8 PiRuntimeClient", () => {
 		expect(body.llm).toBeUndefined();
 	});
 
+	it("M1-3：createSession 透传 resources.skills（Nest 组装的用户技能注入 runtime）", async () => {
+		const calls: Array<{ url: string; init: RequestInit }> = [];
+		const client = new PiRuntimeClient({
+			baseUrl: "http://x",
+			fetchImpl: (async (url: string, init?: RequestInit) => {
+				calls.push({ url, init: init as RequestInit });
+				return new Response(JSON.stringify({ sessionId: "s1", provider: "agnes", model: "m", status: "created" }), {
+					status: 201,
+				});
+			}) as typeof fetch,
+		});
+		const skills = [
+			{ name: "task-decomposition", description: "拆任务", content: "# 正文", filePath: "<virtual>/task-decomposition/SKILL.md", disableModelInvocation: false },
+		];
+		await client.createSession("s1", { resources: { skills } });
+		const body = JSON.parse(String(calls[0].init.body));
+		expect(body.resources).toEqual({ skills });
+	});
+
+	it("M1-3 负例：不传 resources 时 body 无 resources 键（M0 行为逐字节不变）", async () => {
+		let captured = "";
+		const client = new PiRuntimeClient({
+			baseUrl: "http://x",
+			fetchImpl: (async (_url: string, init?: RequestInit) => {
+				captured = String(init?.body);
+				return new Response(JSON.stringify({ sessionId: "s1", provider: "agnes", model: "m" }), {
+					status: 201,
+				});
+			}) as typeof fetch,
+		});
+		await client.createSession("s1");
+		expect(JSON.parse(captured).resources).toBeUndefined();
+	});
+
 	it("hotfix：createSession 透传 canvasSessionId（画布会话 id 与 pi 会话键解耦）", async () => {
 		// 回归锁（2026-09-29）：pi 会话键（第一个参数）可能是 `${画布id}:${后缀}` 的复合键，
 		// 而工具要拿**画布** id 回查 Nest /agent/internal/*。必须单独透传，否则全部画布工具 404。

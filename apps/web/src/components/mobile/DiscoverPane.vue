@@ -25,6 +25,7 @@ import type { Work } from '@lnkpi/shared'
 import { WORK_CATEGORIES } from '@lnkpi/shared'
 import { api } from '@/services/api'
 import WorkCard from '@/components/works/WorkCard.vue'
+import SkillDiscoverPanel from '@/components/skills/SkillDiscoverPanel.vue'
 
 const router = useRouter()
 const works = ref<Work[]>([])
@@ -81,12 +82,20 @@ function viewShare(workId: string) {
   router.push(`/share/${workId}`)
 }
 
-/** 能力预留位（置灰不可点）：尚未定义的能力，不与社区作品流抢主位 */
+/**
+ * 能力预留位：专家/连接器仍置灰（未定义）；「技能」M1-3 已激活——点击展开技能发现面板。
+ * 不与社区作品流抢主位：技能面板作为「敬请期待」区内的内嵌展开区。
+ */
 const soonRows = [
-  { key: 'experts', label: '专家', icon: 'experts' },
-  { key: 'skills', label: '技能', icon: 'skills' },
-  { key: 'connectors', label: '连接器', icon: 'connectors' },
+  { key: 'experts', label: '专家', icon: 'experts', disabled: true },
+  { key: 'skills', label: '技能', icon: 'skills', disabled: false },
+  { key: 'connectors', label: '连接器', icon: 'connectors', disabled: true },
 ] as const
+const skillsOpen = ref(false)
+
+function onSoonClick(row: (typeof soonRows)[number]) {
+  if (row.key === 'skills') skillsOpen.value = !skillsOpen.value
+}
 
 onMounted(fetchWorks)
 </script>
@@ -158,8 +167,11 @@ onMounted(fetchWorks)
           v-for="row in soonRows"
           :key="row.key"
           type="button"
-          class="row-item is-disabled"
-          disabled
+          class="row-item"
+          :class="{ 'is-disabled': row.disabled }"
+          :disabled="row.disabled"
+          :data-testid="`soon-${row.key}`"
+          @click="onSoonClick(row)"
         >
           <span class="row-icon" aria-hidden="true">
             <!-- 专家：星徽 -->
@@ -178,8 +190,11 @@ onMounted(fetchWorks)
             </svg>
           </span>
           <span class="row-label">{{ row.label }}</span>
+          <span v-if="row.key === 'skills'" class="row-caret" aria-hidden="true">{{ skillsOpen ? '▾' : '▸' }}</span>
         </button>
       </div>
+      <!-- M1-3：技能入口激活后内嵌发现面板（市场区 + 我的技能区） -->
+      <SkillDiscoverPanel v-if="skillsOpen" data-testid="discover-skills-panel" />
     </section>
   </div>
 </template>

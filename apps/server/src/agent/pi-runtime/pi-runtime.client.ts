@@ -146,6 +146,22 @@ export interface CreateSessionOptions {
 	canvasSessionId?: string;
 	/** P0-3 / L-2：建会话时的 prompt 版本指纹，落 meta.json 供 resume 比对。 */
 	promptInfo?: PiPromptInfo;
+	/**
+	 * M1-3：Nest 组装的用户技能（上游 Skill[]），create 时透传给 runtime 注入 harness。
+	 * runtime 侧 parseIncomingResources 校验形状；不传 = M0 内置 registry 行为。
+	 */
+	resources?: UserSkillResources;
+}
+
+/** M1-3：注入 runtime 的用户技能集合（上游 Skill 的可 JSON 序列化子集）。 */
+export interface UserSkillResources {
+	skills: Array<{
+		name: string;
+		description: string;
+		content: string;
+		filePath?: string;
+		disableModelInvocation?: boolean;
+	}>;
 }
 
 /**
@@ -273,6 +289,8 @@ export class PiRuntimeClient {
 				...(opts.canvasSessionId ? { canvasSessionId: opts.canvasSessionId } : {}),
 				// P0-3 / L-2：prompt 版本指纹（runtime 落meta.json，磁盘 resume 时比对）
 				...(opts.promptInfo ? { promptInfo: opts.promptInfo } : {}),
+				// M1-3：Nest 组装的用户技能注入（不传则 M0 内置行为逐字节不变）
+				...(opts.resources ? { resources: opts.resources } : {}),
 			}),
 		});
 		if (status >= 400 || !body || body.error) {

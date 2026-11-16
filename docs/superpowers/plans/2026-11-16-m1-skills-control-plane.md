@@ -109,3 +109,39 @@ M1 全绿 **不得**表述为「已复刻 WorkBuddy 技能系统」或「生态�
 - 变异 3/3 转红：合并优先级反转（1 红）/ 去 busy 检查（2 红）/ resume 不读 sidecar（1 红）；恢复后 76/76。
 
 **吃满上游的落点**：形状=`Skill`/`Resources`/`setResources(resources, context)` 全部上游原语，宿主只做校验+合并+sidecar；解析/索引/显式调用/未知名拒绝零重写（§4.8）。Nest 侧 `buildSkillResources(userId)` 组装属 M1-2 的 Nest 半刀（本刀只铺 runtime 受端；Nest→runtime 调用方接线随 M1-3 web 双面刀一并评估——届时 Nest 发起方才有真实调用场景，避免空转接线）。
+
+---
+
+## 8.4 M1-3 实施记录（2026-11-16，web 双面 + Nest 发起方接线）
+
+### 8.4.1 开工评估（计划 §8.3「随本刀一并评估」的裁决）
+
+M1-1 只落控制面数据/端点、M1-2 只铺 runtime 受端，**Nest 发起方接线**（`buildSkillResources` + create 透传）在 master 上完全缺位（`grep buildSkillResources apps/server/src` 零命中）。若本刀只做 web UI，用户「一键启用」后模型永远看不到该技能（空转接线）——正是计划 §8.3 要避免的。故裁决：**本刀补齐发起方接线**。
+
+另一裁决：**不调 `setResources` 即时生效**。计划 §7.2 已把「会话中途启停是否立即重算 index」降级为产品选择，启停后「下一轮新会话重建」自然生效即可；runtime 的 `POST /sessions/:id/resources`（M1-2 已铺）留作后续产品选择，本刀不触碰活跃会话，降低竞态面。
+
+### 8.4.2 交付清单
+
+**server（发起方接线）**
+- `skills/skills-resources.ts`（新建）：纯函数 `assembleSkillResources(rows) → Skill[]`——跳过 `enabled=false`、按 `name` 去重（installedAt 新者胜出）、按 installedAt 降序裁剪 ≤12、`description=summary||displayName||skill`（runtime 非空校验）、虚拟 `filePath=<virtual>/<name>/SKILL.md`、`disableModelInvocation` 逐字透传。
+- `skills/skills.service.ts`：`buildSkillResources(userId)`——查 `UserInstalledSkill(uninstalledAt=null)` ⋈ `SkillPackage(pinnedHash)`，`sha256("v1:"+skill+":"+body.trimEnd())` 逐字校验（不符跳过 = fail-closed），再喂纯函数。
+- `agent/pi-runtime/pi-runtime.client.ts`：`CreateSessionOptions.resources?: UserSkillResources` + createSession body 透传（不传则 body 无该键，M0 行为逐字节不变）。
+- `agent/agent.service.ts`：@Optional 注入 `SkillsService`（AgentModule imports SkillsModule，无环——后者仅依赖 @Global PrismaModule）；会话创建前 `buildUserSkillResources(userId)`（fail-open：未装配/查库异常/空集 → undefined），结果透传 ensurePiSession → createSession；dock skillId 命中链路用 `resolveDockSkillTarget`（内置映射优先 + 用户技能名 pass-through）+ `withUserSkillNames`（known 白名单并入用户技能名），未知名仍 fail-soft（P1 T2-3 语义不变）。
+
+**web（双面）**
+- `services/skill-api.ts`（新建）：用户侧 api 实例 + 信封 unwrap（`code!==0` 抛 `SkillApiError`），对齐 Nest 11 端点；DELETE 的 confirmed 走 query 字符串 `'true'`。
+- `components/skills/SkillDiscoverPanel.vue`（新建）：发现页双区——市场区（catalog 卡片 + 兼容评分/版本/发布者 + 安装）与我的技能区（mine 启停/回滚/卸载）；**单一确认弹窗**（cancel 不触发 DELETE、仅 ok 调 remove）。只用 `--lnk-*` design tokens，不动 z-index 语义阶梯。
+- `components/mobile/DiscoverPane.vue`：「敬请期待」里的「技能」置灰行激活为可点击，展开 SkillDiscoverPanel；专家/连接器仍置灰，社区流仍为主叙事。
+- `constants/agentSkillMap.ts`：纯函数 `mergeAgentSkills(builtin, installed)`——内置打头 + 用户已启用技能追加（`runtimeSkillId=技能名`），跳过 `enabled=false`/`disableModelInvocation=true`，按 runtimeSkillId 去重保留内置。
+- `components/agent/AgentSideRail.vue`：技能二级下拉数据源从静态 `AGENT_SKILLS` 改为 `dockSkills` ref（onMounted 拉 `/skills/mine` 合并；失败 fail-soft 回退静态）。静态导入保留，M0 默认技能在异步加载前即可解析。
+
+### 8.4.3 门禁
+
+- server 全量 **2988/2988**（master 2968 + 新增 20：组装纯函数 7 / 发起方接线包装 4 / client 透传 2 / 集成 buildSkillResources 2 / agent-skill-map 5）；web 全量 **511 文件 / 4314/4314**（新增 skill-api 10 / 发现页组件 7 / DiscoverPane +1 / agentSkillMap +5 / 动态下拉接线 3）；design-token 门禁 **126/126**；两端 tsc 干净。
+- 变异 3/3 转红：① 去组装 enabled 过滤 → 关闭态测试 1 红；② 去 client resources 透传 → client 测试 1 红；③ 去 web 合并的 enabled 过滤 → 关闭态/隐式拒测试 2 红。恢复后目标测试全绿。
+
+### 8.4.4 诚实边界
+
+- 本刀让「装/启/停/卸/滚」在 UI 与服务端组装层闭环，**未做** golden SKILL.md 重写（M1-4，触发 runtime-deploy，单独授权）；M1-A1–A11 全序列与 M1-N1–N13 逐条转红记录属 M1-4 收口，本刀不宣告全绿。
+- 用户技能显式调用链：`dock skillId → resolveDockSkillTarget（pass-through）→ forceSkills → runtime lane.skill`；runtime 侧从 `getResources()` 解析（M0 U-7），未知名由 `UnknownSkill` fail-closed。隐式调用走 `formatSkillsForSystemPrompt`（每轮从 getResources 求值）。
+- 不调 setResources 即时生效：当前会话已注入的技能在本轮不撤回（§7.2 矩阵），启停从下一轮新会话生效。
