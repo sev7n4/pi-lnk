@@ -25,9 +25,8 @@ import {
   TEXT_TOKEN_MODELS,
   buildMatchKey,
   buildTextTokenMatchKey,
-  estimateCreditsFromUsdCost,
+  estimateCreditsFromCnyCost,
   legacyPriceOf,
-  resolveFxUsdCny,
   type PricingQuery,
   type PricingQuote,
   type TextTokenSpec,
@@ -359,8 +358,9 @@ export class PricingService implements OnModuleInit {
   // —— P2 T4：文本 token 反比率计价（Task 6 回合结算消费）——
 
   /**
-   * P2 文本 token 计费的 usage 口径。costUsd = vendor usage.cost 求和（Task 6 传入），
-   * 仅 degraded 兜底消费；计划原文表述为「usage.cost 求和」，落为可选字段。
+   * P2 文本 token 计费的 usage 口径。costCny = vendor usage.cost 求和（Task 6 传入；
+   * P2a 后 usage.cost 恒 CNY——Nest 出口统一币种），仅 degraded 兜底消费；计划原文
+   * 表述为「usage.cost 求和」，落为可选字段。
    */
   async quoteTextTokens(
     userId: string | undefined,
@@ -371,7 +371,7 @@ export class PricingService implements OnModuleInit {
       /** 终审 C-2：T5 后四列独立，cacheWrite 不再被上游折入 input——此处并入 in 项计费。 */
       cacheWriteTokens?: number
       outputTokens: number
-      costUsd?: number
+      costCny?: number
     },
   ): Promise<PricingQuote & { breakdown?: { in: number; cache: number; out: number } }> {
     try {
@@ -461,7 +461,7 @@ export class PricingService implements OnModuleInit {
    * 预解析文本 token 报价计划（v2 单一真相源修复 2026-11-03）。
    *
    * 用途：SSE 流式预估（usage_delta / turn_usage 的 estimatedCredits）。此前预估走
-   * `estimateCreditsFromUsdCost`（USD 成本×FX×毛利），与结算的 token 反比率两套公式
+   * `estimateCreditsFromCnyCost`（CNY 成本×毛利，P2a 后 usage.cost 恒 CNY），与结算的 token 反比率两套公式
    * ⇒ 用户看到「≈1 积分（预估）」而账单实扣 14/7。现在回合开始时预读一次价目表比率，
    * 流式中途用 `compute()`（与 quoteTextTokens 同一纯公式 `computeTextTokenCredits`）
    * 同步估算——预估与结算同源同式，只差流式中途的 token 收敛；结算仍是权威终值。
@@ -585,20 +585,18 @@ export class PricingService implements OnModuleInit {
   }
 
   /**
-   * degraded 兜底（Q2 展示预估同款公式）：usage.costUsd（vendor cost 求和）× FX
-   * × 当前生效阶段 marginBp。marginBp 照 agent.service Q2 预估的防御读模式
-   * （mock 替身缺 marginPolicy / 表读失败都不炸，缺省 11000bp）。min 1。
+   * degraded 兜底（Q2 展示预估同款公式）：usage.costCny（vendor cost 求和；P2a 后
+   * 恒 CNY，出口统一币种）× 当前生效阶段 marginBp，**不含 FX 乘数**（FX 折算已
+   * 单点收敛在 Nest 出口 withFxToCny）。marginBp 照 agent.service Q2 预估的防御读
+   * 模式（mock 替身缺 marginPolicy / 表读失败都不炸，缺省 11000bp）。min 1。
    */
   private async degradedTextTokenQuote(usage: {
-    costUsd?: number
+    costCny?: number
   }): Promise<PricingQuote> {
-    const [marginBp, fxUsdCny] = await Promise.all([
-      this.readCurrentMarginBp(),
-      Promise.resolve(resolveFxUsdCny(process.env as NodeJS.ProcessEnv)),
-    ])
-    const costUsd = positiveTokens(usage.costUsd ?? 0)
+    const marginBp = await this.readCurrentMarginBp()
+    const costCny = positiveTokens(usage.costCny ?? 0)
     return {
-      credits: Math.max(1, estimateCreditsFromUsdCost(costUsd, marginBp, fxUsdCny)),
+      credits: Math.max(1, estimateCreditsFromCnyCost(costCny, marginBp)),
       ruleVersion: RULE_VERSION_CONSTANTS_FALLBACK,
     }
   }

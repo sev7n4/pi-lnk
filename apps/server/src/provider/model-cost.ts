@@ -76,3 +76,72 @@ export function resolveChannelModelCost(
   }
   return seen ? out : undefined
 }
+
+// ---------------------------------------------------------------------------
+// P2a（spec 2026-11-15-p2-session-cost-cny-migration-design §4.1/§4.4）：
+// CostRate（定价中心，CNY 权威源）→ 会话成本读取面。与 resolveChannelModelCost
+// 同纪律：任一必需档（in/out）缺失/畸形/过期/provisional → undefined（宁可少算
+// 不错算）；cache 档缺失是受支持形态补 0；cacheWrite 无对应维度恒 0（核对点 1）。
+// channel 限定由调用方 where 传入、此处再防御（BYOK 成本不进平台 CostRate）。
+// 期限过滤语义与 pricing-unit-cost 的 affordable 对齐（effectiveFrom<=at<effectiveTo；
+// null=无限）。unitQuantity 非 1e6 时按「元/百万 token」归一。
+// ---------------------------------------------------------------------------
+
+export type CostRateRow = {
+  channel: string
+  modelKey: string
+  spec: string
+  unit: string
+  unitQuantity: number | null
+  costYuan: number
+  provisional: boolean
+  effectiveFrom: Date | null
+  effectiveTo: Date | null
+}
+
+const CR_SPEC_KEYS = {
+  per_1m_tokens_in: 'input',
+  per_1m_tokens_out: 'output',
+  per_1m_tokens_cache: 'cacheRead',
+} as const satisfies Record<string, keyof OverrideModelCost>
+
+export function resolveCostRateModelCost(
+  rates: CostRateRow[],
+  modelKey: string,
+  at: Date,
+): OverrideModelCost | undefined {
+  const name = modelKey?.trim().toLowerCase() ?? ''
+  if (!name) return undefined
+  const out: OverrideModelCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  const seen = new Set<keyof OverrideModelCost>()
+  for (const r of rates) {
+    if (r.provisional) continue
+    if (r.channel !== 'platform') continue
+    if (r.modelKey?.trim().toLowerCase() !== name) continue
+    const key = CR_SPEC_KEYS[r.spec as keyof typeof CR_SPEC_KEYS]
+    if (!key) continue
+    if (r.unit !== 'per_1m_tokens') continue
+    if (r.effectiveFrom && r.effectiveFrom > at) continue
+    if (r.effectiveTo && r.effectiveTo <= at) continue
+    if (!isNonNegativeFinite(r.costYuan)) return undefined
+    const q = r.unitQuantity
+    if (typeof q !== 'number' || !Number.isFinite(q) || q <= 0) return undefined
+    out[key] = (r.costYuan * 1e6) / q
+    seen.add(key)
+  }
+  if (!seen.has('input') || !seen.has('output')) return undefined
+  return out
+}
+
+/**
+ * 出口统一币种（核对点 5）：渠道源 USD/百万 → ×FX 折 CNY/百万。
+ * FX 单点复用 resolveFxUsdCny（调用方取值），本函数不做任何汇率假设。
+ */
+export function withFxToCny(cost: OverrideModelCost, fxUsdCny: number): OverrideModelCost {
+  return {
+    input: cost.input * fxUsdCny,
+    output: cost.output * fxUsdCny,
+    cacheRead: cost.cacheRead * fxUsdCny,
+    cacheWrite: cost.cacheWrite * fxUsdCny,
+  }
+}

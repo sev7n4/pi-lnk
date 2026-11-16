@@ -35,7 +35,7 @@ function optionalPositiveInt(v: unknown): number | undefined | null {
 }
 
 /**
- * 可选 cost（渠道费率，USD / 百万 token）。P1 接线：Nest 侧从渠道
+ * 可选 cost（费率，CNY / 百万 token；P2a 后 Nest 出口统一币种）。P1 接线：Nest 侧从渠道
  * `models[].pricing` 解析后随 override 下发，model-assembly 填进 Model.cost，
  * vendor calculateCost 在响应时自动算出 usage.cost。
  *

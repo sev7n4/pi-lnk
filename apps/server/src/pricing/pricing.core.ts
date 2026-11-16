@@ -285,14 +285,8 @@ export function computeCreditsFromCost(costYuan: number, marginBp: number): numb
 }
 
 /**
- * 展示层预估（Q2 2026-10-14，spec §6.5/§6.7 呈现口径的先行实现）：
- * vendor usage.cost（USD，渠道 models[].pricing 四元组经 vendor calculateCost 算出）
- * → 元（× FX）→ 积分（复用 §5.1 公式 + MarginPolicy.marginBp）。
- *
- * ⚠️ 定位：**纯展示预估**，不落账、不扣分、不是 P2 §3.4 的权威 token 结算——
- * P2 价目表（每模型反比率行）落地后由 turn_settled 权威值覆盖。FX 只是 USD 计价
- * 渠道成本折元的近似，配置化（PRICING_FX_USD_CNY，默认 7.2）；CostRate 有该模型
- * token 行时应走元口径（那是官方实证成本），USD 路径是渠道 pricing 存在时的兜底。
+ * FX 常量与解析（P2a 后唯一消费点 = Nest 出口折算 withFxToCny：
+ * 渠道源 USD 成本 ×FX 折 CNY 再装 override.cost）。
  */
 export const DEFAULT_FX_USD_CNY = 7.2
 
@@ -302,10 +296,12 @@ export function resolveFxUsdCny(env: { PRICING_FX_USD_CNY?: string } | undefined
   return Number.isFinite(v) && v > 0 ? v : DEFAULT_FX_USD_CNY
 }
 
-export function estimateCreditsFromUsdCost(
-  costUsd: number,
-  marginBp: number,
-  fxUsdCny = DEFAULT_FX_USD_CNY,
-): number {
-  return computeCreditsFromCost(costUsd * fxUsdCny, marginBp)
+/**
+ * 展示层预估 / degraded 兜底（P2a 改标，spec 2026-11-15-p2-session-cost-cny-migration-design
+ * §4.3）：usage.cost 恒 CNY（Nest 出口统一币种——CostRate 直出 / 渠道源 ×FX 折算，
+ * 见 resolvePiSessionLlm），此处直接按人民币成本积分，**不再乘 FX**。
+ * FX 折算单点收敛在出口（withFxToCny），resolveFxUsdCny 仅供出口使用。
+ */
+export function estimateCreditsFromCnyCost(costCny: number, marginBp: number): number {
+  return computeCreditsFromCost(costCny, marginBp)
 }

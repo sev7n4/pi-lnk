@@ -707,7 +707,7 @@ describe('AgentService turn billing (P2 T6)', () => {
       cacheWriteTokens: 800, // 终审 C-2：典型回合含缓存写入
       outputTokens: 500,
     })
-    // 结算 quote：turn_usage 折叠值直取 + costUsd=cost + cacheWrite 透传（并入 in 项计费）
+    // 结算 quote：turn_usage 折叠值直取 + costCny=cost（P2a：usage.cost 恒 CNY）+ cacheWrite 透传（并入 in 项计费）
     expect(quoteTextTokens).toHaveBeenCalledTimes(2)
     const settleCall = quoteTextTokens.mock.calls[1]
     expect(settleCall?.[0]).toBe('u1')
@@ -716,7 +716,7 @@ describe('AgentService turn billing (P2 T6)', () => {
       cacheReadTokens: 0,
       cacheWriteTokens: 0,
       outputTokens: 500,
-      costUsd: 0.02,
+      costCny: 0.02,
     })
     expect(settleFromHold).toHaveBeenCalledTimes(1)
     expect(settleFromHold).toHaveBeenCalledWith(
