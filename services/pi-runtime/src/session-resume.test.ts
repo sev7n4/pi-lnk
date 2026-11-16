@@ -262,7 +262,7 @@ describe("SessionManager.create 幂等 resume-or-create", () => {
 			await sm.create("s1:t1", { userId: "u1", systemPrompt: "RULES" });
 			await sm.create("s1:t1", { userId: "u1", systemPrompt: "TAMPERED" });
 			// resume 沿用磁盘里的静态段：就是 RULES 本身（2026-10-02 起不再挂插话约定段）
-			assert.equal(captured?.systemPrompt(undefined), "RULES");
+			assert.equal(await captured?.systemPrompt(undefined), "RULES");
 		});
 	});
 

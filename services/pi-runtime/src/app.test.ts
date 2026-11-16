@@ -179,7 +179,7 @@ describe("POST /sessions 幂等契约", () => {
 				const cfg = sink.cfg as { systemPrompt: (t: unknown) => string; toolContext: (t: unknown) => Record<string, unknown> };
 				// systemPrompt = RULES 逐字节（2026-10-02 起取消了插话约定段 QUEUE_GUIDANCE，
 				// 见 session-manager.ts 顶部说明）。
-				assert.equal(cfg.systemPrompt(undefined), "RULES");
+				assert.equal(await cfg.systemPrompt(undefined), "RULES");
 				const tc = cfg.toolContext(undefined);
 				assert.deepEqual(tc.mentionedKeys, ["I1"]);
 				assert.deepEqual(tc.refOrder, ["n1"]);
@@ -270,7 +270,7 @@ describe("POST /sessions/:key/prompt 契约", () => {
 				});
 				assert.equal(res.statusCode, 202);
 				assert.equal(res.json().accepted, true);
-				assert.equal(manager.resolveSystemPromptForTest("s1:t1"), "RULES\n\n当前画布摘要：{}");
+				assert.equal(await manager.resolveSystemPromptForTest("s1:t1"), "RULES\n\n当前画布摘要：{}");
 			} finally {
 				await app.close();
 			}

@@ -38,10 +38,10 @@ describe("setTurnContext", () => {
 		try {
 			const { sm, captured } = makeManager(root);
 			await sm.create("s1:t1", {});
-			assert.equal(captured().systemPrompt(), STATIC_BASE);
+			assert.equal(await captured().systemPrompt(), STATIC_BASE);
 			const changed = sm.setTurnContext("s1:t1", { dynamicBlocks: ["当前画布摘要：{}"], mentionedKeys: ["I1"] });
 			assert.equal(changed, true);
-			assert.equal(captured().systemPrompt(), `${STATIC_BASE}\n\n当前画布摘要：{}`);
+			assert.equal(await captured().systemPrompt(), `${STATIC_BASE}\n\n当前画布摘要：{}`);
 			assert.deepEqual(captured().toolContext().mentionedKeys, ["I1"]);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
@@ -67,9 +67,9 @@ describe("setTurnContext", () => {
 			const { sm, captured } = makeManager(root);
 			await sm.create("s1:t1", {});
 			sm.setTurnContext("s1:t1", { dynamicBlocks: ["A"] });
-			assert.equal(captured().systemPrompt(), `${STATIC_BASE}\n\nA`);
+			assert.equal(await captured().systemPrompt(), `${STATIC_BASE}\n\nA`);
 			assert.equal(sm.setTurnContext("s1:t1", { dynamicBlocks: [] }), true);
-			assert.equal(captured().systemPrompt(), STATIC_BASE);
+			assert.equal(await captured().systemPrompt(), STATIC_BASE);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -88,8 +88,8 @@ describe("setTurnContext", () => {
 			const { sm, captured } = makeManager(root);
 			await sm.create("s1:t1", {});
 			sm.setTurnContext("s1:t1", { dynamicBlocks: ["A", "B"] });
-			assert.equal(sm.resolveSystemPromptForTest("s1:t1"), captured().systemPrompt());
-			assert.equal(sm.resolveSystemPromptForTest("s1:t1"), `${STATIC_BASE}\n\nA\n\nB`);
+			assert.equal(await sm.resolveSystemPromptForTest("s1:t1"), await captured().systemPrompt());
+			assert.equal(await sm.resolveSystemPromptForTest("s1:t1"), `${STATIC_BASE}\n\nA\n\nB`);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -140,7 +140,7 @@ describe("轮次覆盖语义（复核 Important #1：spec §5.4「整体覆盖�
 			const { sm, captured } = makeManager(root);
 			await sm.create("s1:t1", {});
 			await sm.prompt("s1:t1", "你好", "main", { turnContext: { dynamicBlocks: ["画布摘要：A"] } });
-			assert.equal(captured().systemPrompt(), `${STATIC_BASE}\n\n画布摘要：A`);
+			assert.equal(await captured().systemPrompt(), `${STATIC_BASE}\n\n画布摘要：A`);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -224,7 +224,7 @@ describe("busy 守卫（复核 Important #2/#5：TOCTOU 与被拒请求不污染
 				(err: Error) => err instanceof BusyError,
 			);
 			// 在跑 run 的下一次 LLM 调用仍读第一轮的快照，绝不能看到被拒请求的
-			assert.equal(captured().systemPrompt(), `${STATIC_BASE}\n\n画布快照：第一轮`);
+			assert.equal(await captured().systemPrompt(), `${STATIC_BASE}\n\n画布快照：第一轮`);
 			release(undefined);
 			await new Promise((r) => setTimeout(r, 0));
 		} finally {
@@ -375,7 +375,7 @@ describe("dynamicBlocks 预算（T3 接线）", () => {
 			await sm.create("s1:t1", {});
 			const big = "当前画布摘要：\n" + "长".repeat(1000);
 			sm.setTurnContext("s1:t1", { dynamicBlocks: [big] });
-			const sp = sm.resolveSystemPromptForTest("s1:t1");
+			const sp = await sm.resolveSystemPromptForTest("s1:t1");
 			assert.ok(sp.includes("已截断"), "截断尾注必须出现");
 			assert.ok(sp.length < big.length, "超长块被截短");
 			const out = metrics.render(0, "t");
@@ -405,7 +405,7 @@ describe("dynamicBlocks 预算（T3 接线）", () => {
 			await sm.create("s1:t1", {});
 			const big = "[自定义标记]" + "长".repeat(1000);
 			sm.setTurnContext("s1:t1", { dynamicBlocks: [big] });
-			assert.equal(sm.resolveSystemPromptForTest("s1:t1"), `STATIC\n\n${big}`);
+			assert.equal(await sm.resolveSystemPromptForTest("s1:t1"), `STATIC\n\n${big}`);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -437,7 +437,7 @@ describe("systemPromptBytes gauge（T3 观测）", () => {
 			sm.setTurnContext("s1:t1", { dynamicBlocks: ["当前画布摘要：{}"] });
 			assert.match(metrics.render(0, "t"), /pi_runtime_system_prompt_bytes 0/); // 未生成前为 0
 			// captured.systemPrompt 即 session-manager.ts:734 挂进 harness 的真实生成闭包
-			const sp = captured.systemPrompt();
+			const sp = await captured.systemPrompt();
 			assert.ok(sp.length > 0);
 			const m = /pi_runtime_system_prompt_bytes (\d+)/.exec(metrics.render(0, "t"));
 			assert.ok(m && Number(m[1]) > 0, `bytes 应 >0，实际: ${m?.[1]}`);

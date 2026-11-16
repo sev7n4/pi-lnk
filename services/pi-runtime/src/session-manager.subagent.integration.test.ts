@@ -73,9 +73,9 @@ function makeE2e(
 	const modelFactory = () => ({ models, model: faux.getModel(), providerId: faux.provider.id });
 	const harnessFactory = async (...args: Parameters<typeof AgentHarness.create>) => {
 		const cfg = args[0];
-		// systemPrompt 是惰性函数（() => composeEntryAndObserve(entry)），此处求值快照。
-		const sp = (cfg as { systemPrompt?: string | (() => string) }).systemPrompt;
-		const systemPrompt = typeof sp === "function" ? sp() : (sp ?? "");
+		// systemPrompt 是惰性函数（M0 起为 async () => composeEntryAndObserve(entry)），此处求值快照。
+		const sp = (cfg as { systemPrompt?: string | (() => string | Promise<string>) }).systemPrompt;
+		const systemPrompt = typeof sp === "function" ? await sp() : (sp ?? "");
 		captured.push({
 			tools: (cfg as { tools: Array<{ name: string }> }).tools,
 			activeToolNames: (cfg as { activeToolNames: string[] }).activeToolNames,

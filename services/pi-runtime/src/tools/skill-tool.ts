@@ -17,9 +17,9 @@ export function createSkillTools(entries: SkillIndexEntry[], metrics: Metrics): 
 			name: "load_skill",
 			label: "加载技能说明",
 			description:
-				"Load the full instructions of a skill by name. Call this when the user's intent matches a skill listed in the 可用技能 section, then follow the returned instructions.",
+				"Load the full instructions of a skill by name. Call this when the user's intent matches a skill listed in <available_skills>, then follow the returned instructions.",
 			parameters: Type.Object({
-				name: Type.String({ description: "Skill name, exactly as listed in 可用技能" }),
+				name: Type.String({ description: "Skill name, exactly as listed in <available_skills>" }),
 			}),
 			execute: async (_id, p: { name: string }) => {
 				const entry = byName.get(p.name);
