@@ -66,3 +66,29 @@
 ## 7. 诚实边界
 
 M1 全绿 **不得**表述为「已复刻 WorkBuddy 技能系统」或「生态兼容完成」；产出北极星在 M2（四类真实社区 skill 端到端画布产出）；Won't 四类（P16–P19）永久偏离。M1 完成口径 = §10.4 的 M1-A1–A11 全通过 + M1-N1–N13 可转红 + v1 §4.7 Must 无判据空项。
+
+---
+
+## 8. M1-1 实施记录（2026-11-16）
+
+### 8.1 两条实施期裁决（对规格/上游的显式修正，回填本计划）
+
+1. **contentHash 公式勘误（对 v1 §4.3）**：`contentHash = sha256(\`v1:${skill}:${body.trimEnd()}\`)`，不再纯 body。
+   理由：contentHash 是 `SkillPackage` 主键，必须含技能身份——纯 body 公式下「不同技能名、相同正文」哈希碰撞
+   （PK 冲突 + 错误复用包行，集成测试 A8/A9 首跑实证）。保留判据性质：正文改一字 ⇒ hash 变（M1-A4）；同名同正文幂等。
+2. **vendor ESM 消费（对 v2 §8「委托上游 loadSkills」的落地方式）**：生产 Nest 是纯 CJS 运行时
+   （Dockerfile 把 workspace 包统一转 CJS 后 tsc 产出 dist），vendor `pi-agent-core@0.99.2` 是 ESM-only
+   且 exports map 无 require 条件 ⇒ 直 require 报 `ERR_PACKAGE_PATH_NOT_EXPORTED`。
+   处置：扩展既有 pnpm patch（`patches/@earendil-works__pi-agent-core@0.99.2.patch`），给 exports
+   根入口与 `./dist/*` 加 `require`/`default` 条件，Node ≥22.12 require(esm) 加载（生产 lnkpi-api
+   实测 node v22.23.5；`@lnkpi/agent|shared` 同为 ESM 先例）。解析仍全权委托上游 `loadSkills` +
+   `NodeExecutionEnv`（临时目录范式），平台只补「name 缺失拒绝」（上游会按目录名派生 name，
+   对查找键不可接受）与白名单校验。
+
+### 8.2 交付清单
+
+- `prisma/schema.prisma`：`SkillPackage` / `SkillCatalog` / `UserInstalledSkill` 三表 + migration `20261116160000_skills_control_plane`。
+- `apps/server/src/skills/`：`skills-parse.ts`（上游 loadSkills 委托 + hash）/ `skills-pure.ts`（六纯函数）/ `skills.service.ts` / `skills.controller.ts`（十端点）/ `skills.module.ts`。
+- `apps/server/package.json`：+`@earendil-works/pi-agent-core@0.99.2`、+`yaml@2.9.0`（与 vendor 同 pin）。
+- 测试：`skills-pure.test.ts` 28 例 + `skills.controller.sqlite.integration.test.ts` 9 例（M1-A1/A3/A4/A6/A8/A9/A10 服务端行为级）。
+- 门禁：server 全量 2968/2968；tsc 干净；CJS dist 构建冒烟（require(esm) 实跑解析成功）；变异 3/3 转红（N2 跨用户 / A8 confirmed / N5 注入规则短路）。
