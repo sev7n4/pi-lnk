@@ -1,7 +1,7 @@
 // 文件：apps/server/src/skills/skills.service.ts
 // M1-1 技能控制面服务（规格 v1 §5.4 十端点 / §7.1 三表 / §7.2 状态机 / ADR-0016）。
 // 判据锚：M1-A1（跨用户隔离）/ A3（两通路归一）/ A6（七类拒绝+审计）/ A8（卸载守卫）/ A10（目录与搜索）。
-import { BadGatewayException, BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common'
+import { BadGatewayException, BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
 import { PiRuntimeClient } from '../agent/pi-runtime/pi-runtime.client'
 import { parseSkillPackageText, sha256Hex } from './skills-parse.js'
@@ -44,8 +44,10 @@ export interface SkillLifecycleRow {
 export class SkillsService {
   constructor(
     private readonly prisma: PrismaService,
-    /** 可选运行时客户端；缺省按既有形态从 PI_RUNTIME_URL 现场构造（同 generation-reaper）。 */
-    private readonly runtime?: RuntimeSkillsClient,
+    /** 可选运行时客户端；缺省按既有形态从 PI_RUNTIME_URL 现场构造（同 generation-reaper）。
+     *  ⚠️ 必须带 @Optional()：无装饰时 Nest 把 RuntimeSkillsClient 当必需 provider 解析，
+     *  容器启动即崩（本地手工 new 绕过 DI 测不到，#929 部署事故实证）。 */
+    @Optional() private readonly runtime?: RuntimeSkillsClient,
   ) {}
 
   private async audit(action: string, resource: string, before: unknown, after: unknown, actor = 'system'): Promise<void> {
