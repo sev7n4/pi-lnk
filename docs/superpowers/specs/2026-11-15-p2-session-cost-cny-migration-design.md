@@ -238,3 +238,19 @@ costCny = resolveCostRateModelCost(costRates, ctx.model, now)          // CostRa
 1. 指标名：`usage_cost_total` 保留名改口径，还是新增 `usage_cost_cny_total`（涉及面板迁移）。建议保留名改口径，减少破坏。
 2. `provisional` 不一致处理（§4.4 核对点 2）。
 3. kill switch 默认值与灰度节奏。
+
+---
+
+## 10. 状态回填（只追加，2026-11-16）
+
+**§9.3 已拍板并执行（2026-11-16 13:15 用户确认）**：生产 `PI_SESSION_COST_SOURCE=cost_rate` 已切换生效。
+
+生产取证（镜像 sha 未变 `1d2cefa15bcd`，零代码变更，容器 recreate 应用 env）：
+
+- 容器内 `printenv PI_SESSION_COST_SOURCE` = `cost_rate`；`PRICING_FX_USD_CNY` 未设（默认 7.2）。
+- 生产 DB + 生产 dist 求值：`agnes-2.5-flash` cost_rate 分支 → `{input:0.06, output:0.15, cacheRead:0.005}` CNY（切换前渠道口径 0.36/1.08/0.036，≈7.2x 虚高由此修除）；`agnes-2.0-flash` 三档 provisional=1 → cost_rate 分支 undefined（严格过滤生效，运行时自动回落渠道源）。
+- `pi_runtime_usage_cost_total` 切换后基线全 0；真实流量单价验证（≈0.06 元/MTok 形态）并入 P3-A 浏览器走查会话顺带核。
+- 回滚：`/opt/lnkpi/.env` 删 `PI_SESSION_COST_SOURCE`（或改回 `channel`）+ `docker compose -f docker-compose.prod.yml up -d --no-build api`，瞬时生效。
+- 备份：DB `/root/lnkpi-db-backups/lnkpi.db.before-cost-rate-switch-20261116-1252.db`；env `/opt/lnkpi/.env.before-cost-rate-switch-20261116`。
+
+数值口径说明（预期跳变，非故障）：切换后 Nest 会话成本预估从渠道口径（in ≈4 分/百万）变为 CostRate 口径（in ≈1 分/百万）；权威结算走反比率行仍为 ≈7 分/百万——两条公式固有差异，非本刀引入。
