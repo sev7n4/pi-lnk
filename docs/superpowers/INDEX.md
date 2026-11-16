@@ -1,6 +1,6 @@
 # superpowers 文档索引
 
-> 全部 **447 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
+> 全部 **565 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
 > **文档正文未改动** —— 本索引只做导航与状态标注。
 
 ## 怎么用这份索引
@@ -13,43 +13,56 @@
 
 | 状态 | 份数 | 含义 |
 |---|---|---|
-| 🟢 living | 149 | 仍在演进，改动前先看这份 |
-| 🔒 frozen | 289 | 内容已定稿或功能已落地，作为历史依据 |
-| ⛔ superseded | 9 | 已被后续决策取代，勿再参考 |
+| 🟢 living | 187 | 仍在演进，改动前先看这份 |
+| 🔒 frozen | 365 | 内容已定稿或功能已落地，作为历史依据 |
+| ⛔ superseded | 13 | 已被后续决策取代，勿再参考 |
 
 ## 主题分布
 
 | 主题 | 份数 | 其中 living |
 |---|---|---|
-| 其他 | 106 | 28 |
-| 画布工具与交互 | 75 | 33 |
-| 生成管线（图像/视频/3D） | 43 | 9 |
+| 其他 | 167 | 43 |
+| 画布工具与交互 | 89 | 42 |
+| 生成管线（图像/视频/3D） | 45 | 9 |
+| 工具与运行时内核 | 44 | 12 |
 | 画布产品能力（原子/意图/neowow） | 34 | 8 |
-| Agent 交互与可见性 | 32 | 15 |
+| Agent 交互与可见性 | 34 | 17 |
+| 规划与执行计划 | 30 | 6 |
 | 图片编辑器与精修台 | 30 | 5 |
-| 工具与运行时内核 | 25 | 6 |
-| 规划与执行计划 | 20 | 5 |
+| 工作流导入导出 | 21 | 4 |
+| UI 交互细节 | 18 | 9 |
 | 账号/登录/会员 | 18 | 4 |
-| 工作流导入导出 | 18 | 4 |
-| UI 交互细节 | 15 | 8 |
 | 长期记忆 | 11 | 8 |
-| 视觉输入（识图） | 7 | 6 |
-| 部署与基础设施 | 5 | 2 |
-| 上下文工程 | 4 | 4 |
+| 视觉输入（识图） | 8 | 7 |
+| 部署与基础设施 | 6 | 3 |
+| 上下文工程 | 6 | 6 |
 | 提示词注册表 | 4 | 4 |
 
 ---
 
 ## 按主题浏览
 
-### 其他（106 份）
+### 其他（167 份）
 
-<details><summary>🟢 living · 28 份</summary>
+<details><summary>🟢 living · 43 份</summary>
 
+- `docs/superpowers/specs/2026-11-15-p3-admin-page-consolidation-design.md` ★design
+- `docs/superpowers/specs/2026-11-15-b123-upstream-primitives-design.md` ★design
+- `docs/superpowers/plans/2026-11-14-c2b-and-iserror-implementation-plan.md`
+- `docs/superpowers/plans/2026-11-13-c1b-fullset-multiturn-eval-plan.md`
+- `docs/superpowers/specs/2026-11-12-outbound-io-hermetic-agent-loop-design.md` ★design
+- `docs/superpowers/specs/2026-11-10-is-mobile-layout-migration-batch3-design.md` ★design
+- `docs/superpowers/specs/2026-11-10-historical-failure-scope-design.md` ★design
+- `docs/superpowers/specs/2026-11-10-creative-skills-ecosystem-discovery-loading-design.md` ★design
+- `docs/superpowers/specs/2026-11-09-is-mobile-layout-scope-gate-design.md` ★design
+- `docs/superpowers/specs/2026-11-09-is-mobile-layout-migration-batch2-design.md` ★design
+- `docs/superpowers/specs/2026-11-09-is-mobile-layout-migration-batch1-design.md` ★design
+- `docs/superpowers/specs/2026-11-08-web-dist-incremental-upload-design.md` ★design
+- `docs/superpowers/specs/2026-11-08-follow-up-tail-abort-rejection-design.md` ★design
+- `docs/superpowers/specs/2026-11-08-agent-siderail-p4-gates-design.md` ★design
 - `docs/superpowers/plans/2026-11-04-e2a-ghost-delivery-summary.md`
 - `docs/superpowers/specs/2026-11-04-e2a-ghost-delivery-summary-design.md` ★design
-- `docs/superpowers/plans/2026-11-05-canvas-digest.md`
-- `docs/superpowers/specs/2026-11-05-canvas-digest-design.md` ★design
+- `docs/superpowers/specs/2026-11-04-conversation-turn-share-and-feedback-icons.md` ★design
 - `docs/superpowers/specs/2026-11-02-points-display-single-source.md` ★design
 - `docs/superpowers/plans/2026-11-02-delivery-card-v1.md`
 - `docs/superpowers/specs/2026-10-28-askuser-mobile-multi-question-redesign.md` ★design
@@ -79,12 +92,56 @@
 
 </details>
 
-<details><summary>🔒 frozen · 76 份</summary>
+<details><summary>🔒 frozen · 120 份</summary>
 
+- `docs/superpowers/plans/2026-11-16-m1-skills-control-plane.md`
+- `docs/superpowers/plans/2026-11-16-m0-upstream-skills-wiring.md`
+- `docs/superpowers/specs/2026-11-16-creative-skills-ecosystem-discovery-loading-design-v2.md` ★design
+- `docs/superpowers/specs/2026-11-16-c3-durable-migration-eval-design.md` ★design
+- `docs/superpowers/specs/2026-11-16-b2-task-contract-custom-entry-plan.md` ★design
+- `docs/superpowers/specs/2026-11-15-p2-session-cost-cny-migration-design.md` ★design
+- `docs/superpowers/specs/2026-11-15-eval-observation-fix-design.md` ★design
+- `docs/superpowers/plans/2026-11-15-d1-creative-asset-contract.md`
+- `docs/superpowers/specs/2026-11-15-d1-creative-asset-contract-design.md` ★design
+- `docs/superpowers/plans/2026-11-14-s1-pricing-subject-profit-engine.md`
+- `docs/superpowers/specs/2026-11-14-pricing-profit-billing-e2e-design.md` ★design
+- `docs/superpowers/specs/2026-11-14-iserror-rejection-flag-design.md` ★design
+- `docs/superpowers/specs/2026-11-14-c2c-acceptance-observation-baseline-design.md` ★design
+- `docs/superpowers/specs/2026-11-13-c1b-fullset-multiturn-eval-design.md` ★design
+- `docs/superpowers/plans/2026-11-13-c1a-seed-eval-implementation-plan.md`
+- `docs/superpowers/specs/2026-11-13-c1a-seed-eval-implementation-design.md` ★design
+- `docs/superpowers/plans/2026-11-13-a2-model-side-id-contract-plan.md`
+- `docs/superpowers/specs/2026-11-13-a2-model-side-id-contract-design.md` ★design
+- `docs/superpowers/plans/2026-11-12-spawn-baseline-fix-plan.md`
+- `docs/superpowers/plans/2026-11-12-outbound-io-hermetic-agent-loop.md`
+- `docs/superpowers/plans/2026-11-11-sse-session-resume-p0-p2.md`
+- `docs/superpowers/plans/2026-11-11-sse-p1c-ledger-projection-metadata-shrink.md`
+- `docs/superpowers/plans/2026-11-11-sse-event-firstclass-p1b-swap-read.md`
+- `docs/superpowers/plans/2026-11-11-sse-event-firstclass-p1a.md`
+- `docs/superpowers/specs/2026-11-10-pr5-mobile-isMobile-layout-convergence-design.md` ★design
+- `docs/superpowers/plans/2026-11-10-is-mobile-layout-migration-batch3.md`
+- `docs/superpowers/plans/2026-11-10-historical-failure-scope.md`
+- `docs/superpowers/plans/2026-11-09-prod-cdp-smoke-runbook.md`
+- `docs/superpowers/specs/2026-11-09-prod-cdp-smoke-runbook-design.md` ★design
+- `docs/superpowers/plans/2026-11-09-is-mobile-layout-scope-gate.md`
+- `docs/superpowers/plans/2026-11-09-is-mobile-layout-migration-batch2.md`
+- `docs/superpowers/plans/2026-11-09-is-mobile-layout-migration-batch1.md`
+- `docs/superpowers/plans/2026-11-08-web-dist-incremental-upload.md`
+- `docs/superpowers/plans/2026-11-08-follow-up-tail-abort-rejection.md`
+- `docs/superpowers/plans/2026-11-08-agent-siderail-p4-gates.md`
+- `docs/superpowers/plans/2026-11-08-agent-siderail-p1-denoise.md`
+- `docs/superpowers/specs/2026-11-08-agent-siderail-p1-denoise-design.md` ★design
+- `docs/superpowers/plans/2026-11-08-agent-observer-refusal-exempt.md`
+- `docs/superpowers/specs/2026-11-08-agent-observer-refusal-exempt-design.md` ★design
+- `docs/superpowers/specs/2026-11-05-sse-conversation-view-unification-design.md` ★design
+- `docs/superpowers/plans/2026-11-05-multi-device-consistency-p4-projection-seq.md`
+- `docs/superpowers/plans/2026-11-05-multi-device-consistency-p3-ack-delivery.md`
 - `docs/superpowers/plans/2026-11-04-unified-channel-event-projection.md`
 - `docs/superpowers/specs/2026-11-04-unified-channel-event-projection-design.md` ★design
+- `docs/superpowers/plans/2026-11-04-multi-device-consistency-p2-durable.md`
 - `docs/superpowers/plans/2026-11-04-multi-device-consistency-p0-p1.md`
 - `docs/superpowers/plans/2026-11-04-e2-delivery-card-v1.md`
+- `docs/superpowers/plans/2026-11-04-conversation-turn-share.md`
 - `docs/superpowers/specs/2026-11-03-proposal-card-credits-and-turn-estimate-ssot.md` ★design
 - `docs/superpowers/specs/2026-11-03-credit-consumption-display-design.md` ★design
 - `docs/superpowers/plans/2026-11-02-points-display-single-source.md`
@@ -160,17 +217,28 @@
 
 </details>
 
-<details><summary>⛔ superseded · 2 份</summary>
+<details><summary>⛔ superseded · 4 份</summary>
 
+- `docs/superpowers/plans/2026-11-16-d1-creative-asset-contract-finalization.md`
+- `docs/superpowers/plans/2026-11-10-pr5-mobile-isMobile-layout-convergence.md`
 - `docs/superpowers/specs/2026-10-28-agent-history-recovery-h0-h1-design.md` ★design
 - `docs/superpowers/specs/2026-10-26-project-gallery-consolidation-design.md` ★design
 
 </details>
 
-### 画布工具与交互（75 份）
+### 画布工具与交互（89 份）
 
-<details><summary>🟢 living · 33 份</summary>
+<details><summary>🟢 living · 42 份</summary>
 
+- `docs/superpowers/plans/2026-11-15-a3-propose-plan-assumptions.md`
+- `docs/superpowers/specs/2026-11-15-a3-propose-plan-assumptions-design.md` ★design
+- `docs/superpowers/plans/2026-11-11-propose-plan-visibility.md`
+- `docs/superpowers/plans/2026-11-11-propose-plan-visibility-p1.md`
+- `docs/superpowers/specs/2026-11-09-sp-e-canvas-cas-decision-gate-design.md` ★design
+- `docs/superpowers/plans/2026-11-09-pc-canvas-legacy-adjudication.md`
+- `docs/superpowers/specs/2026-11-09-pc-canvas-legacy-adjudication-design.md` ★design
+- `docs/superpowers/plans/2026-11-06-visp-phase2-validate-canvas-layout.md`
+- `docs/superpowers/plans/2026-11-05-canvas-digest.md`
 - `docs/superpowers/plans/2026-10-30-propose-confirm-execution-unity.md`
 - `docs/superpowers/plans/2026-10-28-text-node-html-artifact.md`
 - `docs/superpowers/specs/2026-10-28-text-node-html-artifact-design.md` ★design
@@ -207,8 +275,13 @@
 
 </details>
 
-<details><summary>🔒 frozen · 41 份</summary>
+<details><summary>🔒 frozen · 46 份</summary>
 
+- `docs/superpowers/specs/2026-11-14-c2b-acceptance-canvas-state-design.md` ★design
+- `docs/superpowers/specs/2026-11-11-propose-plan-visibility-design.md` ★design
+- `docs/superpowers/specs/2026-11-10-mobile-node-connect-enhancement-design.md` ★design
+- `docs/superpowers/specs/2026-11-05-canvas-digest-design.md` ★design
+- `docs/superpowers/specs/2026-11-05-agent-canvas-visual-perception-design.md` ★design
 - `docs/superpowers/plans/2026-11-02-propose-card-ux-optimization.md`
 - `docs/superpowers/specs/2026-11-02-propose-card-ux-optimization-design.md` ★design
 - `docs/superpowers/specs/2026-10-30-propose-confirm-execution-unity-design.md` ★design
@@ -259,7 +332,7 @@
 
 </details>
 
-### 生成管线（图像/视频/3D）（43 份）
+### 生成管线（图像/视频/3D）（45 份）
 
 <details><summary>🟢 living · 9 份</summary>
 
@@ -275,8 +348,10 @@
 
 </details>
 
-<details><summary>🔒 frozen · 34 份</summary>
+<details><summary>🔒 frozen · 36 份</summary>
 
+- `docs/superpowers/plans/2026-11-14-c2a-acceptance-generation-oracle-plan.md`
+- `docs/superpowers/specs/2026-11-14-c2a-acceptance-generation-oracle-design.md` ★design
 - `docs/superpowers/specs/2026-11-04-generation-terminal-projection-design.md` ★design
 - `docs/superpowers/plans/2026-11-03-e1-generation-terminal-write-tap.md`
 - `docs/superpowers/specs/2026-11-01-p1b-generation-job-design.md` ★design
@@ -311,6 +386,67 @@
 - `docs/superpowers/specs/2026-07-19-c2-canvas-generation-adapter-design.md` ★design
 - `docs/superpowers/plans/2026-07-19-byok-provider-channels.md`
 - `docs/superpowers/specs/2026-07-19-byok-provider-channels-design.md` ★design
+
+</details>
+
+### 工具与运行时内核（44 份）
+
+<details><summary>🟢 living · 12 份</summary>
+
+- `docs/superpowers/plans/2026-11-15-subagent-pending-work-barrier-plan.md`
+- `docs/superpowers/specs/2026-11-15-subagent-pending-work-barrier-design.md` ★design
+- `docs/superpowers/specs/2026-11-12-spawn-subagent-trigger-strategy.md` ★design
+- `docs/superpowers/specs/2026-11-11-subagent-tier-promotion-design.md` ★design
+- `docs/superpowers/specs/2026-11-11-subagent-result-delivery-design.md` ★design
+- `docs/superpowers/specs/2026-11-09-pc-visual-regression-harness-design.md` ★design
+- `docs/superpowers/specs/2026-10-02-pi-runtime-capability-fullfillment-design.md` ★design
+- `docs/superpowers/plans/2026-09-29-persistent-harness-session.md`
+- `docs/superpowers/specs/2026-09-16-sse-tool-call-emit-design.md` ★design
+- `docs/superpowers/specs/2026-09-14-codex-style-tool-plan-harness-design.md` ★design
+- `docs/superpowers/specs/2026-08-04-loop-engineering-design.md` ★design
+- `docs/superpowers/specs/2026-07-23-agent-runtime-langgraph-design.md` ★design
+
+</details>
+
+<details><summary>🔒 frozen · 30 份</summary>
+
+- `docs/superpowers/specs/2026-11-16-b1-gate-toolset-narrow-plan.md` ★design
+- `docs/superpowers/plans/2026-11-14-subagent-contract-d2-nonblock-plan.md`
+- `docs/superpowers/specs/2026-11-14-subagent-contract-d2-nonblock-design.md` ★design
+- `docs/superpowers/plans/2026-11-12-subagent-task-ledger.md`
+- `docs/superpowers/specs/2026-11-12-subagent-task-ledger-design.md` ★design
+- `docs/superpowers/plans/2026-11-11-subagent-tier-promotion.md`
+- `docs/superpowers/plans/2026-11-11-subagent-result-delivery.md`
+- `docs/superpowers/specs/2026-11-11-subagent-invocation-escalation-design.md` ★design
+- `docs/superpowers/plans/2026-11-11-queue-user-bubble-context-verify.md`
+- `docs/superpowers/specs/2026-11-11-queue-user-bubble-context-verify-design.md` ★design
+- `docs/superpowers/plans/2026-11-09-pc-visual-regression-harness.md`
+- `docs/superpowers/plans/2026-10-12-tool-details-contract-p0.md`
+- `docs/superpowers/specs/2026-10-12-tool-details-contract-design.md` ★design
+- `docs/superpowers/plans/2026-10-10-c4-subagent.md`
+- `docs/superpowers/specs/2026-10-10-c4-subagent-design.md` ★design
+- `docs/superpowers/plans/2026-10-09-task-tool-todo-write.md`
+- `docs/superpowers/specs/2026-10-09-task-tool-design.md` ★design
+- `docs/superpowers/plans/2026-10-02-pi-runtime-capability-fullfillment.md`
+- `docs/superpowers/specs/2026-09-29-persistent-harness-session-design.md` ★design
+- `docs/superpowers/plans/2026-09-28-agent-tool-p0-web-and-delete.md`
+- `docs/superpowers/specs/2026-09-28-agent-tool-p0-web-and-delete-design.md` ★design
+- `docs/superpowers/plans/2026-09-24-ui-command-tools-impl.md`
+- `docs/superpowers/plans/2026-09-24-b5-b3-gen-lifecycle-tools.md`
+- `docs/superpowers/plans/2026-09-24-b2-write-tools.md`
+- `docs/superpowers/plans/2026-09-23-p1-tool-usage-evidence.md`
+- `docs/superpowers/plans/2026-09-16-sse-tool-call-emit.md`
+- `docs/superpowers/plans/2026-09-14-codex-style-tool-plan-harness.md`
+- `docs/superpowers/specs/2026-09-14-agent-atomic-as-tools-design.md` ★design
+- `docs/superpowers/specs/2026-08-09-explore-tool-reliability-phase2-design.md` ★design
+- `docs/superpowers/plans/2026-07-24-agent-runtime-langgraph.md`
+
+</details>
+
+<details><summary>⛔ superseded · 2 份</summary>
+
+- `docs/superpowers/specs/2026-11-15-b3-tool-guidelines-design.md` ★design
+- `docs/superpowers/plans/2026-11-11-subagent-invocation-escalation.md`
 
 </details>
 
@@ -365,10 +501,12 @@
 
 </details>
 
-### Agent 交互与可见性（32 份）
+### Agent 交互与可见性（34 份）
 
-<details><summary>🟢 living · 15 份</summary>
+<details><summary>🟢 living · 17 份</summary>
 
+- `docs/superpowers/plans/2026-11-15-composer-paste-text-chip.md`
+- `docs/superpowers/specs/2026-11-15-composer-paste-text-chip-design.md` ★design
 - `docs/superpowers/plans/2026-10-13-sidebar-ref-bind-pr-a.md`
 - `docs/superpowers/specs/2026-10-13-sidebar-ref-bind-invariant-design.md` ★design
 - `docs/superpowers/plans/2026-09-30-ask-user-blocking.md`
@@ -414,6 +552,53 @@
 
 </details>
 
+### 规划与执行计划（30 份）
+
+<details><summary>🟢 living · 6 份</summary>
+
+- `docs/superpowers/specs/2026-11-09-phase2-l1-command-scope-clarification-design.md` ★design
+- `docs/superpowers/specs/2026-09-16-agent-atomic-phase-2d3-design.md` ★design
+- `docs/superpowers/specs/2026-09-15-agent-atomic-phase-2d2-design.md` ★design
+- `docs/superpowers/specs/2026-09-14-agent-atomic-phase-2c-design.md` ★design
+- `docs/superpowers/specs/2026-08-03-agent-phase-c2-dock-model-skillid-design.md` ★design
+- `docs/superpowers/specs/2026-07-24-agent-chat-ux-phase1-design.md` ★design
+
+</details>
+
+<details><summary>🔒 frozen · 23 份</summary>
+
+- `docs/superpowers/plans/2026-11-11-task-planning-engineering-roadmap.md`
+- `docs/superpowers/specs/2026-11-11-task-planning-engineering-roadmap-design.md` ★design
+- `docs/superpowers/plans/2026-11-09-sp-e-phase1-observability.md`
+- `docs/superpowers/plans/2026-11-09-phase4-delete-scope-rebaseline.md`
+- `docs/superpowers/specs/2026-11-09-phase4-delete-scope-rebaseline-design.md` ★design
+- `docs/superpowers/plans/2026-11-09-phase2-l1-command-scope-clarification.md`
+- `docs/superpowers/specs/2026-11-08-agent-siderail-phase3-closeout.md` ★design
+- `docs/superpowers/plans/2026-11-06-sse-conversation-view-unification-phase0-1.md`
+- `docs/superpowers/plans/2026-11-05-visp-phase1a-read-media.md`
+- `docs/superpowers/specs/2026-11-04-e-series-presence-roadmap-design.md` ★design
+- `docs/superpowers/specs/2026-10-31-p1-root-cure-roadmap-design.md` ★design
+- `docs/superpowers/plans/2026-10-10-plan-gate.md`
+- `docs/superpowers/specs/2026-10-10-plan-gate-design.md` ★design
+- `docs/superpowers/plans/2026-09-16-agent-atomic-phase-2d3.md`
+- `docs/superpowers/plans/2026-09-15-agent-atomic-phase-2d2.md`
+- `docs/superpowers/plans/2026-09-15-agent-atomic-phase-2d.md`
+- `docs/superpowers/specs/2026-09-15-agent-atomic-phase-2d-design.md` ★design
+- `docs/superpowers/plans/2026-09-14-agent-atomic-phase-2c3.md`
+- `docs/superpowers/plans/2026-09-14-agent-atomic-phase-2c2.md`
+- `docs/superpowers/plans/2026-09-14-agent-atomic-phase-2c1.md`
+- `docs/superpowers/plans/2026-09-14-agent-atomic-phase-2b.md`
+- `docs/superpowers/plans/2026-08-03-agent-phase-c2-dock-model-skillid.md`
+- `docs/superpowers/plans/2026-07-24-agent-chat-ux-phase1.md`
+
+</details>
+
+<details><summary>⛔ superseded · 1 份</summary>
+
+- `docs/superpowers/plans/2026-09-14-agent-atomic-phase-2a.md`
+
+</details>
+
 ### 图片编辑器与精修台（30 份）
 
 <details><summary>🟢 living · 5 份</summary>
@@ -456,77 +641,71 @@
 
 </details>
 
-### 工具与运行时内核（25 份）
+### 工作流导入导出（21 份）
 
-<details><summary>🟢 living · 6 份</summary>
+<details><summary>🟢 living · 4 份</summary>
 
-- `docs/superpowers/specs/2026-10-02-pi-runtime-capability-fullfillment-design.md` ★design
-- `docs/superpowers/plans/2026-09-29-persistent-harness-session.md`
-- `docs/superpowers/specs/2026-09-16-sse-tool-call-emit-design.md` ★design
-- `docs/superpowers/specs/2026-09-14-codex-style-tool-plan-harness-design.md` ★design
-- `docs/superpowers/specs/2026-08-04-loop-engineering-design.md` ★design
-- `docs/superpowers/specs/2026-07-23-agent-runtime-langgraph-design.md` ★design
+- `docs/superpowers/specs/2026-09-17-composition-land-production-gaps.md` ★design
+- `docs/superpowers/specs/2026-09-15-workflow-recipe-planner-design.md` ★design
+- `docs/superpowers/specs/2026-09-12-dock-guide-scene-label-design.md` ★design
+- `docs/superpowers/specs/2026-09-11-wave-a-a2-export-pack-design.md` ★design
 
 </details>
 
-<details><summary>🔒 frozen · 19 份</summary>
+<details><summary>🔒 frozen · 15 份</summary>
 
-- `docs/superpowers/plans/2026-10-12-tool-details-contract-p0.md`
-- `docs/superpowers/specs/2026-10-12-tool-details-contract-design.md` ★design
-- `docs/superpowers/plans/2026-10-10-c4-subagent.md`
-- `docs/superpowers/specs/2026-10-10-c4-subagent-design.md` ★design
-- `docs/superpowers/plans/2026-10-09-task-tool-todo-write.md`
-- `docs/superpowers/specs/2026-10-09-task-tool-design.md` ★design
-- `docs/superpowers/plans/2026-10-02-pi-runtime-capability-fullfillment.md`
-- `docs/superpowers/specs/2026-09-29-persistent-harness-session-design.md` ★design
-- `docs/superpowers/plans/2026-09-28-agent-tool-p0-web-and-delete.md`
-- `docs/superpowers/specs/2026-09-28-agent-tool-p0-web-and-delete-design.md` ★design
-- `docs/superpowers/plans/2026-09-24-ui-command-tools-impl.md`
-- `docs/superpowers/plans/2026-09-24-b5-b3-gen-lifecycle-tools.md`
-- `docs/superpowers/plans/2026-09-24-b2-write-tools.md`
-- `docs/superpowers/plans/2026-09-23-p1-tool-usage-evidence.md`
-- `docs/superpowers/plans/2026-09-16-sse-tool-call-emit.md`
-- `docs/superpowers/plans/2026-09-14-codex-style-tool-plan-harness.md`
-- `docs/superpowers/specs/2026-09-14-agent-atomic-as-tools-design.md` ★design
-- `docs/superpowers/specs/2026-08-09-explore-tool-reliability-phase2-design.md` ★design
-- `docs/superpowers/plans/2026-07-24-agent-runtime-langgraph.md`
+- `docs/superpowers/plans/2026-11-13-skill-sop-task-decomposition-plan.md`
+- `docs/superpowers/specs/2026-11-13-skill-sop-task-decomposition-design.md` ★design
+- `docs/superpowers/specs/2026-11-12-c1-canvas-decomposition-eval-design.md` ★design
+- `docs/superpowers/plans/2026-09-17-composition-source-bind.md`
+- `docs/superpowers/plans/2026-09-16-planner-confirm-instantiate-gate.md`
+- `docs/superpowers/plans/2026-09-16-import-default-along-edges.md`
+- `docs/superpowers/plans/2026-09-15-workflow-recipe-planner.md`
+- `docs/superpowers/plans/2026-09-13-explore-import-workflow-placement.md`
+- `docs/superpowers/specs/2026-09-13-explore-import-workflow-placement-design.md` ★design
+- `docs/superpowers/plans/2026-09-12-workflow-import-placement.md`
+- `docs/superpowers/specs/2026-09-12-workflow-import-placement-design.md` ★design
+- `docs/superpowers/plans/2026-09-12-dock-guide-scene-label.md`
+- `docs/superpowers/plans/2026-09-12-agent-import-workflow.md`
+- `docs/superpowers/specs/2026-09-12-agent-import-workflow-design.md` ★design
+- `docs/superpowers/plans/2026-09-11-wave-a-a2-export-pack.md`
 
 </details>
 
-### 规划与执行计划（20 份）
+<details><summary>⛔ superseded · 2 份</summary>
 
-<details><summary>🟢 living · 5 份</summary>
-
-- `docs/superpowers/specs/2026-09-16-agent-atomic-phase-2d3-design.md` ★design
-- `docs/superpowers/specs/2026-09-15-agent-atomic-phase-2d2-design.md` ★design
-- `docs/superpowers/specs/2026-09-14-agent-atomic-phase-2c-design.md` ★design
-- `docs/superpowers/specs/2026-08-03-agent-phase-c2-dock-model-skillid-design.md` ★design
-- `docs/superpowers/specs/2026-07-24-agent-chat-ux-phase1-design.md` ★design
+- `docs/superpowers/specs/2026-09-17-composition-source-bind-design.md` ★design
+- `docs/superpowers/specs/2026-09-16-planner-confirm-instantiate-gate-design.md` ★design
 
 </details>
 
-<details><summary>🔒 frozen · 14 份</summary>
+### UI 交互细节（18 份）
 
-- `docs/superpowers/specs/2026-11-04-e-series-presence-roadmap-design.md` ★design
-- `docs/superpowers/specs/2026-10-31-p1-root-cure-roadmap-design.md` ★design
-- `docs/superpowers/plans/2026-10-10-plan-gate.md`
-- `docs/superpowers/specs/2026-10-10-plan-gate-design.md` ★design
-- `docs/superpowers/plans/2026-09-16-agent-atomic-phase-2d3.md`
-- `docs/superpowers/plans/2026-09-15-agent-atomic-phase-2d2.md`
-- `docs/superpowers/plans/2026-09-15-agent-atomic-phase-2d.md`
-- `docs/superpowers/specs/2026-09-15-agent-atomic-phase-2d-design.md` ★design
-- `docs/superpowers/plans/2026-09-14-agent-atomic-phase-2c3.md`
-- `docs/superpowers/plans/2026-09-14-agent-atomic-phase-2c2.md`
-- `docs/superpowers/plans/2026-09-14-agent-atomic-phase-2c1.md`
-- `docs/superpowers/plans/2026-09-14-agent-atomic-phase-2b.md`
-- `docs/superpowers/plans/2026-08-03-agent-phase-c2-dock-model-skillid.md`
-- `docs/superpowers/plans/2026-07-24-agent-chat-ux-phase1.md`
+<details><summary>🟢 living · 9 份</summary>
+
+- `docs/superpowers/plans/2026-11-11-sse-p2-durable-interruption.md`
+- `docs/superpowers/specs/2026-09-28-agent-conversation-ux-p0-p2-design.md` ★design
+- `docs/superpowers/specs/2026-08-12-agent-mid-run-interrupt-design.md` ★design
+- `docs/superpowers/specs/2026-08-07-agent-conversation-isolation-design.md` ★design
+- `docs/superpowers/plans/2026-07-25-agent-topology-preview-hitl.md`
+- `docs/superpowers/specs/2026-07-25-agent-topology-preview-hitl-design.md` ★design
+- `docs/superpowers/plans/2026-07-25-agent-consistency-chains.md`
+- `docs/superpowers/specs/2026-07-25-agent-consistency-chains-design.md` ★design
+- `docs/superpowers/specs/2026-07-25-agent-confirm-loop-hardening-design.md` ★design
 
 </details>
 
-<details><summary>⛔ superseded · 1 份</summary>
+<details><summary>🔒 frozen · 9 份</summary>
 
-- `docs/superpowers/plans/2026-09-14-agent-atomic-phase-2a.md`
+- `docs/superpowers/plans/2026-11-12-sse-p2-web-interruption-state.md`
+- `docs/superpowers/specs/2026-11-12-sse-p2-web-interruption-state-design.md` ★design
+- `docs/superpowers/plans/2026-09-28-agent-conversation-ux-p0-p2.md`
+- `docs/superpowers/plans/2026-09-16-canvas-operator-2e1-hitl.md`
+- `docs/superpowers/plans/2026-09-06-agent-mid-run-interrupt-pv.md`
+- `docs/superpowers/specs/2026-08-10-ui-p1-p2-interactions-design.md` ★design
+- `docs/superpowers/specs/2026-08-10-ui-p0-interactions-design.md` ★design
+- `docs/superpowers/plans/2026-08-07-agent-conversation-isolation.md`
+- `docs/superpowers/plans/2026-07-25-agent-confirm-loop-hardening.md`
 
 </details>
 
@@ -560,68 +739,6 @@
 
 </details>
 
-### 工作流导入导出（18 份）
-
-<details><summary>🟢 living · 4 份</summary>
-
-- `docs/superpowers/specs/2026-09-17-composition-land-production-gaps.md` ★design
-- `docs/superpowers/specs/2026-09-15-workflow-recipe-planner-design.md` ★design
-- `docs/superpowers/specs/2026-09-12-dock-guide-scene-label-design.md` ★design
-- `docs/superpowers/specs/2026-09-11-wave-a-a2-export-pack-design.md` ★design
-
-</details>
-
-<details><summary>🔒 frozen · 12 份</summary>
-
-- `docs/superpowers/plans/2026-09-17-composition-source-bind.md`
-- `docs/superpowers/plans/2026-09-16-planner-confirm-instantiate-gate.md`
-- `docs/superpowers/plans/2026-09-16-import-default-along-edges.md`
-- `docs/superpowers/plans/2026-09-15-workflow-recipe-planner.md`
-- `docs/superpowers/plans/2026-09-13-explore-import-workflow-placement.md`
-- `docs/superpowers/specs/2026-09-13-explore-import-workflow-placement-design.md` ★design
-- `docs/superpowers/plans/2026-09-12-workflow-import-placement.md`
-- `docs/superpowers/specs/2026-09-12-workflow-import-placement-design.md` ★design
-- `docs/superpowers/plans/2026-09-12-dock-guide-scene-label.md`
-- `docs/superpowers/plans/2026-09-12-agent-import-workflow.md`
-- `docs/superpowers/specs/2026-09-12-agent-import-workflow-design.md` ★design
-- `docs/superpowers/plans/2026-09-11-wave-a-a2-export-pack.md`
-
-</details>
-
-<details><summary>⛔ superseded · 2 份</summary>
-
-- `docs/superpowers/specs/2026-09-17-composition-source-bind-design.md` ★design
-- `docs/superpowers/specs/2026-09-16-planner-confirm-instantiate-gate-design.md` ★design
-
-</details>
-
-### UI 交互细节（15 份）
-
-<details><summary>🟢 living · 8 份</summary>
-
-- `docs/superpowers/specs/2026-09-28-agent-conversation-ux-p0-p2-design.md` ★design
-- `docs/superpowers/specs/2026-08-12-agent-mid-run-interrupt-design.md` ★design
-- `docs/superpowers/specs/2026-08-07-agent-conversation-isolation-design.md` ★design
-- `docs/superpowers/plans/2026-07-25-agent-topology-preview-hitl.md`
-- `docs/superpowers/specs/2026-07-25-agent-topology-preview-hitl-design.md` ★design
-- `docs/superpowers/plans/2026-07-25-agent-consistency-chains.md`
-- `docs/superpowers/specs/2026-07-25-agent-consistency-chains-design.md` ★design
-- `docs/superpowers/specs/2026-07-25-agent-confirm-loop-hardening-design.md` ★design
-
-</details>
-
-<details><summary>🔒 frozen · 7 份</summary>
-
-- `docs/superpowers/plans/2026-09-28-agent-conversation-ux-p0-p2.md`
-- `docs/superpowers/plans/2026-09-16-canvas-operator-2e1-hitl.md`
-- `docs/superpowers/plans/2026-09-06-agent-mid-run-interrupt-pv.md`
-- `docs/superpowers/specs/2026-08-10-ui-p1-p2-interactions-design.md` ★design
-- `docs/superpowers/specs/2026-08-10-ui-p0-interactions-design.md` ★design
-- `docs/superpowers/plans/2026-08-07-agent-conversation-isolation.md`
-- `docs/superpowers/plans/2026-07-25-agent-confirm-loop-hardening.md`
-
-</details>
-
 ### 长期记忆（11 份）
 
 <details><summary>🟢 living · 8 份</summary>
@@ -650,10 +767,11 @@
 
 </details>
 
-### 视觉输入（识图）（7 份）
+### 视觉输入（识图）（8 份）
 
-<details><summary>🟢 living · 6 份</summary>
+<details><summary>🟢 living · 7 份</summary>
 
+- `docs/superpowers/specs/2026-11-15-eval-canvas-provisioning-design.md` ★design
 - `docs/superpowers/plans/2026-09-29-vision-self-refine-loop.md`
 - `docs/superpowers/specs/2026-09-29-vision-self-refine-loop-design.md` ★design
 - `docs/superpowers/specs/2026-09-27-sidebar-vision-into-pi-design.md` ★design
@@ -669,10 +787,11 @@
 
 </details>
 
-### 部署与基础设施（5 份）
+### 部署与基础设施（6 份）
 
-<details><summary>🟢 living · 2 份</summary>
+<details><summary>🟢 living · 3 份</summary>
 
+- `docs/superpowers/specs/2026-11-15-creative-domain-harness-quality-gates-design.md` ★design
 - `docs/superpowers/plans/2026-09-23-p1-tool-registry-skeleton.md`
 - `docs/superpowers/specs/2026-09-19-pi-lnk-fast-ramp-k3s-design.md` ★design
 
@@ -686,10 +805,12 @@
 
 </details>
 
-### 上下文工程（4 份）
+### 上下文工程（6 份）
 
-<details><summary>🟢 living · 4 份</summary>
+<details><summary>🟢 living · 6 份</summary>
 
+- `docs/superpowers/specs/2026-11-15-text-token-reprice-link-design.md` ★design
+- `docs/superpowers/plans/2026-11-15-t1-text-token-reprice-link.md`
 - `docs/superpowers/plans/2026-10-15-p2-token-precise-billing.md`
 - `docs/superpowers/plans/2026-10-01-context-engineering-p0-fixes.md`
 - `docs/superpowers/plans/2026-09-30-compaction-wiring.md`
