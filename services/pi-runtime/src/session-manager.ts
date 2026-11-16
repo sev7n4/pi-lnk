@@ -38,6 +38,13 @@ import {
 	formatSkillsForSystemPrompt,
 } from "@earendil-works/pi-agent-core";
 import { buildSkillResources } from "./skills/resources.js";
+import {
+	mergeSkillResources,
+	readUserSkills,
+	writeUserSkills,
+	type IncomingSkill,
+} from "./skills/inject.js";
+import type { Skill } from "@earendil-works/pi-agent-core";
 import { withTelemetryContext } from "@earendil-works/pi-agent-core/harness/context";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import {
@@ -679,6 +686,11 @@ interface SessionEntry {
 	 * 运维排障可据此答「用户那条旧指令为什么没被执行」——它确实被显式丢弃了。
 	 */
 	staleDropped: Array<{ entryId: string; text: string; enqueuedAt: number; droppedAt: number }>;
+	/**
+	 * M1-2（契约 1/2）：本会话用户技能集（Nest 透传，create body / resources 端点全量换集）。
+	 * harness resources 不落盘（U-11）⇒ 宿主落 user-skills.json sidecar + 每次重注入。
+	 */
+	userSkills: IncomingSkill[];
 }
 
 const BUFFER_LIMIT = 500;
@@ -839,6 +851,11 @@ export interface CreateOptions {
 	subagentTools?: boolean;
 	/** C4 内部：per-entry turn 预算覆盖（子代理 = SUBAGENT_TURN_BUDGET）。 */
 	turnBudgetLimit?: number;
+	/**
+	 * M1-2（契约 1）：Nest 组装的用户技能集（`/sessions` create body `resources.skills`）。
+	 * 语义：提供 = 全量换集 + 落 sidecar；缺省 = 读 sidecar 恢复（U-11，重启后 Nest 不重发 payload）。
+	 */
+	resources?: { skills?: IncomingSkill[] };
 }
 
 export interface CreateResult {
@@ -1366,6 +1383,17 @@ export class SessionManager {
 		const repo = existingFs?.repo ?? new JsonlSessionRepo({ fileSystem: env, sessionsRoot: join(cwd, "sessions") });
 		const session = existingFs?.session ?? (await repo.create({ cwd }, this.context));
 
+		// M1-2（契约 1/2 + U-11）：用户技能集两层持久化。create 带 resources.skills ⇒ 采信 +
+		// 落 sidecar；resume/重建不带 ⇒ 读 sidecar 恢复（重启后 Nest 不会重发 create payload，
+		// 磁盘是唯一恢复源）。fork 子会话无 sidecar → 内置集（子会话不消费用户技能，C4 白名单同理）。
+		let userSkills: IncomingSkill[];
+		if (opts.resources) {
+			userSkills = opts.resources.skills ?? [];
+			await writeUserSkills(cwd, userSkills);
+		} else {
+			userSkills = await readUserSkills(cwd);
+		}
+
 		const thinkingLevel = resolveThinkingLevel(opts.thinkingLevel);
 		const entry: SessionEntry = {
 			id: key,
@@ -1397,6 +1425,8 @@ export class SessionManager {
 			// toolContext.sessionId 直接覆写主会话的 C1 清单，fork 隔离被击穿。
 			// canvasSessionId 本身保留：画布读工具（get_canvas_summary 等）仍靠它查 Nest。
 			storeScopeKey: opts.subagentTools ? key : (opts.canvasSessionId ?? key),
+			// M1-2：本会话用户技能集（见上方解析逻辑；注入点在 harnessFactory resources）。
+			userSkills,
 		queuedEnqueueAt: new Map(),
 		staleDropped: [],
 			turn: normalizeTurnContext({
@@ -1469,9 +1499,8 @@ export class SessionManager {
 				// created/rebuilt/resume/fork 四条路径；resources 是 harness 内存 config
 				// **不落盘**（探针 RESUME_RESOURCES_PERSISTED=false），故每次 create 必须
 				// 显式重注入，禁止依赖 setResources 做持久化。禁自建 index/正文通道（§4.8）。
-				resources: buildSkillResources(this.skills?.entries ?? [], (name) =>
-					this.skills?.loadBody(name),
-				),
+				// M1-2（契约 2）：合并语义 = 内置 ∪ 用户传入（后者覆盖同名内置，用户显式安装优先）。
+				resources: { skills: mergeSkillResources(this.builtinSkillList(), userSkills) },
 				// 函数形态（spec §5.3/§5.4）：harness 在每次 LLM 调用前求值，读到的是最新 turn。
 				// ⚠️ `sessionId` 语义 = **画布会话 id**（Nest 用它查库），不是 pi 会话键 `key`。
 				// 取值优先级：本轮/建会话时传入的 canvasSessionId → 会话内已存值 → 回落 pi 会话键
@@ -2624,6 +2653,50 @@ export class SessionManager {
 	 * （generation.js:18-27，签名 `string | Promise<string>`）。
 	 * B-3 顺序恒定：index → <tool_guidelines>；二者是静态语义段，**不进 dynamic-budget**
 	 * （未识别块按 general 份额 0 截到 80 字保底 —— 静态段截断=静默丢能力）。
+	 */
+	/** 内置 registry → 上游 Skill[]（M0 buildSkillResources 唯一转换层，复用不重写，§4.8）。 */
+	private builtinSkillList(): Skill[] {
+		return buildSkillResources(
+			this.skills?.entries ?? [],
+			(name) => this.skills?.loadBody(name),
+		).skills;
+	}
+
+	/**
+	 * M1-2（契约 3）：全量换集用户技能（U-6 harness.setResources，不做增量 diff——旧名自然
+	 * `UnknownSkill`）。Nest 在启停/回滚/重装后携**全量新集**调用本端点。
+	 *
+	 * @throws NotFoundError 会话不存在（端点映 404）
+	 * @throws BusyError run 在途 / 压缩在途（与 prompt 同口径，端点映 409）
+	 */
+	async setUserResources(
+		threadKey: string,
+		skills: readonly IncomingSkill[],
+	): Promise<{ applied: number }> {
+		const key = toSessionKey(threadKey);
+		const entry = this.sessions.get(key);
+		if (!entry) throw new NotFoundError(threadKey);
+		if (entry.prompting || entry.compacting) {
+			this.metrics?.observeUserSkillsSwap("busy");
+			throw new BusyError(key, entry.compacting ? "compacting" : "running");
+		}
+		const userSkills = [...skills];
+		const merged = mergeSkillResources(this.builtinSkillList(), userSkills);
+		try {
+			await entry.harness.setResources({ skills: merged }, this.context);
+		} catch (err) {
+			this.metrics?.observeUserSkillsSwap("error");
+			throw err;
+		}
+		entry.userSkills = userSkills;
+		// setResources 成功是持久化前置：落盘失败 warn-only 不回滚内存集（磁盘落后一拍可接受，
+		// 反向——内存已回退而盘上还是新集——会让 resume 恢复出比当前更旧的集合）。
+		await writeUserSkills(entry.sessionMeta.cwd, userSkills);
+		this.metrics?.observeUserSkillsSwap("ok");
+		return { applied: userSkills.length };
+	}
+
+	/**
 	 * 无 skills 时 index 为空串 ⇒ appendPromptBlocks 过滤 ⇒ 输出与既有行为逐字节一致。 */
 	private async composeEntryAndObserve(entry: SessionEntry): Promise<string> {
 		const index = await this.assembleSkillIndexBlock(entry);
