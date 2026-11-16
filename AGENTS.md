@@ -64,6 +64,27 @@
 > 已可消费；拆分真正落地时必须同步回写本条并复核配套静态契约。本状态注零代码改动、
 > 零行为变更，不改章节名、不删原文、不动冻结边界。
 
+## 第一原则：吃满上游、不重复造轮子（最高优先级）
+
+**任何新增判据 / 工具 / 数据字段 / 引擎，立项前必须先回答三条，缺一即驳回：**
+
+1. **等价物检索**：上游内核（`@earendil-works/pi-agent-core`，版本见
+   [`docs/agent/architecture.md`](./docs/agent/architecture.md)）与本项目既有代码
+   （hook / 纯函数 / 数据面 / 定价 gate / 既有 model 列）中是否存在可复用等价物。
+   判「不存在」必须 `grep -E` + 已知词反向对照取证，禁止凭印象。
+2. **接线优先于新建**：存在等价物 ⇒ 只做**接线 / 重新锚定**；判据优先锚到**已存在的
+   结构化数据面**（节点 id + `refOrder`、`SidebarAttachment.role`、`parentVersionId` 链、
+   `generateVideo.duration` 入参 + `pricing.quote` 时点），**不为「让门可判定」新造
+   无人写入的字段**。
+3. **禁造数 / 禁自报**：不得把生成指令（`prompt`）、模型自报数字冒充判据证据
+   （#815 教训；实证：`prompt` 是生成指令不是台词文本，2655 个媒体节点零 duration 字段、
+   7 条 Material 零 authority metadata——2026-11-16 生产取证）。
+
+**执行纪律**：**每份规格与实施计划必须显式携带本原则**（声明 + 逐项「等价物检索」结论表），
+复审时对违反本条的方案一律驳回。实证案例：`docs/superpowers/specs/2026-11-15-d1-creative-asset-contract-design.md`
+附录 D.7——`Shot` 加列 / `dialogueChars` 新字段 / prompt 派生台词 / D-1-DATA 造三字段
+四个中间方案全部作废，三条 oracle 重锚既有锚点（零 migration 落地）。
+
 ## 项目目标
 
 **打造以 `pi-agent-core` 为内核的 canvas agent，驱动画布的超创平台 lnk π。**
