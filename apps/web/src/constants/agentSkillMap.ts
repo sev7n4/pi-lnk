@@ -28,7 +28,8 @@ export function getAgentSkill(id: string | null | undefined): AgentSkillDef | un
   return AGENT_SKILLS.find((s) => s.id === id)
 }
 
-/** 用户已装技能的最小形状（来自 /skills/mine，避免 constants 层依赖 service 层类型）。
+/**
+ * 用户已装技能的最小形状（来自 /skills/mine，避免 constants 层依赖 service 层类型）。
  *  summary 可选：Nest mine 端点不返回 summary，desc 回退到 skill 名。 */
 export interface InstalledSkillLike {
   skill: string
@@ -36,11 +37,39 @@ export interface InstalledSkillLike {
   summary?: string
   enabled: boolean
   disableModelInvocation: boolean
+  /** P12/F54：false 不作为用户点选命令出现（仍可被平台路由触发）。 */
+  userInvocable: boolean
+}
+
+/** 运行时内置技能最小形状（来自 /skills/runtime，与 pi-runtime GET /skills 对齐）。 */
+export interface RuntimeSkillLike {
+  name: string
+  description: string
+}
+
+/**
+ * 内置技能可发现（本刀）：运行时技能适配成 InstalledSkillLike 后**复用 mergeAgentSkills**——
+ * 去重/过滤/内置兜底逻辑全部白拿，不新造第二套合并（规格 §4.5 吃满上游硬约束）。
+ *  - 内置技能默认可点选（userInvocable: true）：控制字段未解析（诚实边界 §5.3），G3 golden
+ *    重写后经 Nest 解析收紧；disableModelInvocation=false 同理。
+ *  - label/desc 直取运行时 name/description，零硬编码（B7 动态性判据）。
+ */
+export function runtimeSkillsToInstalled(runtime: RuntimeSkillLike[]): InstalledSkillLike[] {
+  return runtime
+    .filter((r) => Boolean(r.name))
+    .map((r) => ({
+      skill: r.name,
+      displayName: r.name,
+      summary: r.description,
+      enabled: true,
+      disableModelInvocation: false,
+      userInvocable: true,
+    }))
 }
 
 /**
  * M1-3：内置技能打头 + 用户已启用技能动态并入 dock 下拉。
- *  - enabled=false / disableModelInvocation=true 不进（关闭态与隐式拒）
+ *  - enabled=false / disableModelInvocation=true / userInvocable=false 不进（关闭态、隐式拒、不可点选）
  *  - runtimeSkillId = 技能名本身（dock 选中后 skillId 走 server pass-through → forceSkills）
  *  - 同 runtimeSkillId 去重、保留内置（内置是事实源，防用户装同名内置项把默认顶掉）
  *  - 入参空 ⇒ 原样返回内置（M0 行为逐字节不变）
@@ -52,7 +81,7 @@ export function mergeAgentSkills(
   const seen = new Set(builtin.map((s) => s.runtimeSkillId))
   const merged: AgentSkillDef[] = [...builtin]
   for (const s of installed) {
-    if (!s.enabled || s.disableModelInvocation || !s.skill) continue
+    if (!s.enabled || s.disableModelInvocation || s.userInvocable === false || !s.skill) continue
     if (seen.has(s.skill)) continue
     seen.add(s.skill)
     merged.push({

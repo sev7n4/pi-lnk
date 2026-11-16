@@ -84,6 +84,12 @@ export interface CatalogParams {
   limit?: string
 }
 
+/** 运行时内置技能（与 pi-runtime GET /skills / Nest GET /skills/runtime data 逐字对齐）。 */
+export interface RuntimeSkill {
+  name: string
+  description: string
+}
+
 export const skillApi = {
   /** GET /skills/catalog —— 唯一无 AuthGuard 的读端点。 */
   catalog: (params?: CatalogParams) =>
@@ -91,6 +97,10 @@ export const skillApi = {
 
   /** GET /skills/mine —— 当前用户已装技能（含 enabled / pinnedHash）。 */
   mine: () => unwrapSkillEnvelope<MineItem[]>(api.get('/skills/mine')),
+
+  /** GET /skills/runtime —— 运行时内置技能清单（薄转发 pi-runtime /skills；失败 → SkillApiError，调用处 fail-soft）。 */
+  runtimeList: () =>
+    unwrapSkillEnvelope<{ skills: RuntimeSkill[] }>(api.get('/skills/runtime')).then((d) => d.skills),
 
   /** GET /skills/search?q= —— 平台精选内搜索。 */
   search: (q: string) =>
@@ -137,7 +147,7 @@ export const skillApi = {
     ),
 
   /** POST /skills/:id/invoke —— 显式调用裁决（denied → 403）。 */
-  invoke: (id: string, intent: 'implicit' | 'explicit' = 'explicit') =>
+  invoke: (id: string, intent: 'implicit' | 'explicit' | 'routed' = 'explicit') =>
     unwrapSkillEnvelope<{ mode: string; skill: string; packageHash: string }>(
       api.post(`/skills/${encodeURIComponent(id)}/invoke`, { intent }),
     ),

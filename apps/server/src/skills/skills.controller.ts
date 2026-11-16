@@ -36,8 +36,8 @@ class UninstallBatchDto {
 
 class InvokeDto {
   @IsOptional()
-  @IsIn(['implicit', 'explicit'])
-  intent?: 'implicit' | 'explicit'
+  @IsIn(['implicit', 'explicit', 'routed'])
+  intent?: 'implicit' | 'explicit' | 'routed'
 }
 
 @Controller('skills')
@@ -61,6 +61,13 @@ export class SkillsController {
   @UseGuards(AuthGuard)
   async getMine(@Req() req: { user: { sub: string } }) {
     return this.skills.getMine(req.user.sub)
+  }
+
+  /** 运行时内置技能清单（薄转发 pi-runtime /skills；⚠️ 必须排在 @Get(':id') 之前，否则被吞）。 */
+  @Get('runtime')
+  @UseGuards(AuthGuard)
+  async getRuntime(@Req() _req: { user: { sub: string } }) {
+    return this.skills.listRuntimeSkills()
   }
 
   /** 自定义加载：粘贴 SKILL.md（M1-A1 写入面）。 */

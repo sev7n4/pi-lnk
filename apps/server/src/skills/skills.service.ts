@@ -1,8 +1,9 @@
 // 文件：apps/server/src/skills/skills.service.ts
 // M1-1 技能控制面服务（规格 v1 §5.4 十端点 / §7.1 三表 / §7.2 状态机 / ADR-0016）。
 // 判据锚：M1-A1（跨用户隔离）/ A3（两通路归一）/ A6（七类拒绝+审计）/ A8（卸载守卫）/ A10（目录与搜索）。
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common'
+import { BadGatewayException, BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '../prisma/prisma.service'
+import { PiRuntimeClient } from '../agent/pi-runtime/pi-runtime.client'
 import { parseSkillPackageText, sha256Hex } from './skills-parse.js'
 import { assembleSkillResources, type SkillResourceRow } from './skills-resources.js'
 import {
@@ -16,6 +17,11 @@ import {
 } from './skills-pure.js'
 
 const ENVELOPE = { code: 0, message: 'ok' } as const
+
+/** 运行时技能客户端最小面（PiRuntimeClient 的结构子集，测试可注入假实现——同 late-generation-notify 形态）。 */
+export interface RuntimeSkillsClient {
+  listSkills(): Promise<{ skills: Array<{ name: string; description: string }> }>
+}
 
 export interface SkillLifecycleRow {
   id: string
@@ -36,7 +42,11 @@ export interface SkillLifecycleRow {
 
 @Injectable()
 export class SkillsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    /** 可选运行时客户端；缺省按既有形态从 PI_RUNTIME_URL 现场构造（同 generation-reaper）。 */
+    private readonly runtime?: RuntimeSkillsClient,
+  ) {}
 
   private async audit(action: string, resource: string, before: unknown, after: unknown, actor = 'system'): Promise<void> {
     await this.prisma.adminAuditLog.create({
@@ -148,6 +158,26 @@ export class SkillsService {
 
   // ─── 我的技能（M1-A1 跨用户隔离的读取面）─────────────────────────────────────
 
+  /** 运行时内置技能清单（内置技能可发现：事实源=pi-runtime /skills，薄转发零新协议）。
+   *  不落库、不进 catalog/mine 两区——内置 ≠ 用户安装（规格 §2.2）。 */
+  async listRuntimeSkills() {
+    if (!this.runtime) {
+      const baseUrl = process.env.PI_RUNTIME_URL?.trim()
+      if (!baseUrl) throw new BadRequestException('技能运行时未配置（PI_RUNTIME_URL 缺失）')
+      return this.forwardRuntimeList(new PiRuntimeClient({ baseUrl }))
+    }
+    return this.forwardRuntimeList(this.runtime)
+  }
+
+  private async forwardRuntimeList(client: RuntimeSkillsClient) {
+    try {
+      const { skills } = await client.listSkills()
+      return { ...ENVELOPE, data: { skills } }
+    } catch (err) {
+      throw new BadGatewayException(`技能运行时不可达：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
   async getMine(userId: string) {
     const rows = await this.prisma.userInstalledSkill.findMany({
       // N2 变异锚：where 必须带 userId —— 跨用户隔离（M1-A1）。
@@ -225,7 +255,9 @@ export class SkillsService {
         license: typeof pkg.frontmatter.license === 'string' ? pkg.frontmatter.license : null,
         source: sourceType,
         disableModelInvocation: pkg.disableModelInvocation,
-        userInvocable: pkg.frontmatter.userInvocable !== false,
+        // 北极星 F54 的真实 frontmatter 键是 user-invocable；camelCase 仅作兼容兜底。
+        userInvocable:
+          pkg.frontmatter['user-invocable'] !== false && pkg.frontmatter.userInvocable !== false,
         allowedCapabilities: JSON.stringify(
           Array.isArray(pkg.frontmatter.capabilities) ? pkg.frontmatter.capabilities : [],
         ),
@@ -415,7 +447,8 @@ export class SkillsService {
     )
     if (mode === 'denied') {
       await this.audit('skills.invoke.reject', `skill-user:${id}`, null, { intent, skill: pkg.skill })
-      throw new ForbiddenException(`技能当前不可被${intent === 'implicit' ? '自动' : '显式'}调用`)
+      const intentLabel = intent === 'implicit' ? '自动' : intent === 'routed' ? '路由' : '显式'
+      throw new ForbiddenException(`技能当前不可被${intentLabel}调用`)
     }
     return { ...ENVELOPE, data: { mode, skill: pkg.skill, packageHash: pkg.contentHash } }
   }

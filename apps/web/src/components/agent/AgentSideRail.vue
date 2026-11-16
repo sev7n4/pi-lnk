@@ -118,6 +118,7 @@ import {
   agentInputPlaceholder,
   getAgentSkill,
   mergeAgentSkills,
+  runtimeSkillsToInstalled,
   type AgentSkillDef,
 } from '@/constants/agentSkillMap'
 import { skillApi } from '@/services/skill-api'
@@ -948,21 +949,28 @@ function setPlanningThinkingLevel(level: ThinkingLevel) {
  * 选中即关闭菜单并写回 activeSkillId。原 composer 独立 chip（P2-5.1 skillMenuMode）已退役。 */
 const activeSkillId = ref<string | null>(null)
 const skillSubmenuOpen = ref(false)
-// M1-3：内置技能 + 用户已启用技能动态并入下拉；加载失败 fail-soft 保留内置（不阻断对话）。
+// M1-3：动态并入下拉；内置技能可发现（本刀）：数据源=运行时 /skills/runtime ∪ 用户已装技能，
+// 合并/去重/过滤全部复用 mergeAgentSkills（runtimeSkillsToInstalled 仅做形状适配）。
+// fail-soft：runtime 失败 → 空数组（回退内置兜底）；mine 失败 → 空数组；均不阻断对话。
 const dockSkills = ref<AgentSkillDef[]>([...AGENT_SKILLS])
 async function loadDockSkills() {
-  try {
-    const mine = await skillApi.mine()
-    dockSkills.value = mergeAgentSkills(AGENT_SKILLS, mine)
-  } catch {
-    dockSkills.value = [...AGENT_SKILLS]
-  }
+  const runtime = await skillApi.runtimeList().catch(() => [])
+  const mine = await skillApi.mine().catch(() => [])
+  dockSkills.value = mergeAgentSkills(AGENT_SKILLS, [...runtimeSkillsToInstalled(runtime), ...mine])
 }
 // activeSkill 查合并后的列表（用户技能选中后 placeholder 也能正确显示）；
 // getAgentSkill 兜底保证内置技能在异步加载完成前即可解析（M0 行为不回退）。
 const activeSkill = computed(
   () => dockSkills.value.find((s) => s.id === activeSkillId.value) ?? getAgentSkill(activeSkillId.value),
 )
+// `/` 技能候选（本刀）：与 `+` 下拉同一 dockSkills 数据源——单一事实源，不另造列表（规格 §4.5）。
+const slashSkillOptions = computed(() =>
+  dockSkills.value.map((s) => ({ id: s.id, label: s.label, desc: s.desc })),
+)
+/** `/` 候选选中：与 `+` 菜单同一 activeSkillId 出口（B4 判据）。 */
+function onSlashSkillSelect(option: { id: string }) {
+  activeSkillId.value = option.id
+}
 const isProductVisualSkill = computed(() => activeSkillId.value === 'product-visual')
 onMounted(() => { void loadDockSkills() })
 const inputPlaceholder = computed(() =>
@@ -4084,11 +4092,13 @@ defineExpose({
                   :leading-inset="readOnly || isUploading || !canvasRefEntryVisible ? 0 : COMPOSER_PICK_INSET"
                   :mobile-enter-newline="!isDesktopDock"
                   :prediction-history="predictionHistory"
+                  :slash-options="slashSkillOptions"
                   submit-on-enter
                   :paste-text-policy="composer.pasteTextPolicy"
                   :can-undo-paste="composer.canUndoPaste"
                   @paste-text-chip="composer.promotePasteToTextChip"
                   @undo-paste="composer.undoPromotedPaste"
+                  @slash-select="onSlashSkillSelect"
                   @submit="onComposerSubmit"
                 />
                   <button
