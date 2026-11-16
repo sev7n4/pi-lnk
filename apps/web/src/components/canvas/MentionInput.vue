@@ -10,6 +10,13 @@ export interface MentionOption {
   type?: string
 }
 
+/** `/` 技能候选（内置技能可发现：与 `+` 下拉同一数据源；不传 = 不启用 `/` 触发，既有使用点零影响）。 */
+export interface SlashOption {
+  id: string
+  label: string
+  desc?: string
+}
+
 const props = defineProps<{
   modelValue: string
   mentions: MentionOption[]
@@ -27,6 +34,8 @@ const props = defineProps<{
   pasteTextPolicy?: (probe: PasteTextProbe) => boolean
   /** 存在可撤销的粘贴提升时，⌘/Ctrl+Z 交宿主还原 */
   canUndoPaste?: boolean
+  /** `/` 技能候选列表；不传 = `/` 触发关闭（零回归） */
+  slashOptions?: SlashOption[]
 }>()
 
 const emit = defineEmits<{
@@ -34,6 +43,8 @@ const emit = defineEmits<{
   submit: []
   'paste-text-chip': [text: string]
   'undo-paste': []
+  /** `/` 候选选中：宿主回写技能选择（与 `+` 菜单同一 activeSkillId 出口，不伪造文本命令） */
+  'slash-select': [option: SlashOption]
 }>()
 
 const textareaRef = ref<HTMLTextAreaElement>()
@@ -42,6 +53,8 @@ const showMenu = ref(false)
 const filterText = ref('')
 const selectedIndex = ref(0)
 const mentionStart = ref(-1)
+/** 候选菜单模式：`@` 画布引用 / `/` 技能——同一列框、同一键盘导航，按触发字符分支。 */
+const menuMode = ref<'mention' | 'slash'>('mention')
 
 /** P2-4.1 listbox 语义：选项 id 与 aria-activedescendant 跟随高亮项 */
 const MENTION_LISTBOX_ID = 'mention-candidate-listbox'
@@ -83,6 +96,19 @@ const filteredMentions = computed(() => {
   ).slice(0, 8)
 })
 
+const filteredSlashes = computed(() => {
+  if (menuMode.value !== 'slash') return []
+  const q = filterText.value.toLowerCase()
+  return (props.slashOptions ?? []).filter((o) =>
+    o.label.toLowerCase().includes(q) || o.id.toLowerCase().includes(q),
+  ).slice(0, 8)
+})
+
+/** 当前生效的候选集合（键盘导航与渲染统一走它，两模式共享同一列框）。 */
+const activeOptions = computed(() =>
+  menuMode.value === 'mention' ? filteredMentions.value : filteredSlashes.value,
+)
+
 function updateValue(value: string) {
   emit('update:modelValue', value)
 }
@@ -103,16 +129,29 @@ function syncBackdropScroll() {
 function detectMention(el: HTMLTextAreaElement) {
   const cursor = el.selectionStart ?? 0
   const before = el.value.slice(0, cursor)
-  const match = before.match(/@([^\s@]*)$/)
-  if (match) {
+  const at = before.match(/@([^\s@]*)$/)
+  if (at) {
+    menuMode.value = 'mention'
     showMenu.value = true
-    filterText.value = match[1]
-    mentionStart.value = cursor - match[0].length
+    filterText.value = at[1]
+    mentionStart.value = cursor - at[0].length
     selectedIndex.value = 0
-  } else {
-    showMenu.value = false
-    mentionStart.value = -1
+    return
   }
+  // `/` 技能触发：仅行首或空白后的 `/`（避免把 URL 路径误判为命令）；过滤词允许中文（候选 label 是中文）。
+  const slash = props.slashOptions?.length
+    ? before.match(/(?:^|\s)\/([^\s/]*)$/)
+    : null
+  if (slash) {
+    menuMode.value = 'slash'
+    showMenu.value = true
+    filterText.value = slash[1]
+    mentionStart.value = cursor - slash[1].length - 1
+    selectedIndex.value = 0
+    return
+  }
+  showMenu.value = false
+  mentionStart.value = -1
 }
 
 function onInput(e: Event) {
@@ -150,6 +189,24 @@ function insertMention(option: MentionOption) {
     el.setSelectionRange(pos, pos)
     syncBackdropScroll()
   })
+}
+
+/** `/` 候选选中：把 `/xxx` 从草稿移除（不插文本命令），交宿主回写技能选择。 */
+function selectSlash(option: SlashOption) {
+  const el = textareaRef.value
+  if (!el || mentionStart.value < 0) return
+  const cursor = el.selectionStart ?? el.value.length
+  const before = el.value.slice(0, mentionStart.value)
+  const after = el.value.slice(cursor)
+  updateValue(`${before}${after}`)
+  showMenu.value = false
+  emit('slash-select', option)
+}
+
+/** 统一选中入口：键盘 Enter/Tab 与鼠标点击都走这里，按当前菜单模式分支。 */
+function chooseActive(option: MentionOption | SlashOption) {
+  if (menuMode.value === 'slash') selectSlash(option as SlashOption)
+  else insertMention(option as MentionOption)
 }
 
 function insertText(text: string) {
@@ -209,16 +266,16 @@ function onKeydown(e: KeyboardEvent) {
     emit('undo-paste')
     return
   }
-  if (showMenu.value && filteredMentions.value.length) {
+  if (showMenu.value && activeOptions.value.length) {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      selectedIndex.value = (selectedIndex.value + 1) % filteredMentions.value.length
+      selectedIndex.value = (selectedIndex.value + 1) % activeOptions.value.length
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
-      selectedIndex.value = (selectedIndex.value - 1 + filteredMentions.value.length) % filteredMentions.value.length
+      selectedIndex.value = (selectedIndex.value - 1 + activeOptions.value.length) % activeOptions.value.length
     } else if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault()
-      insertMention(filteredMentions.value[selectedIndex.value])
+      chooseActive(activeOptions.value[selectedIndex.value])
     } else if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
@@ -300,23 +357,24 @@ function onKeydown(e: KeyboardEvent) {
     </div>
 
     <ul
-      v-if="showMenu && filteredMentions.length"
+      v-if="showMenu && activeOptions.length"
       role="listbox"
       :aria-activedescendant="optionId(selectedIndex)"
       class="neo-popover absolute bottom-full left-0 z-20 mb-1 max-h-48 w-full overflow-y-auto rounded-xl py-1"
     >
       <li
-        v-for="(item, idx) in filteredMentions"
+        v-for="(item, idx) in activeOptions"
         :id="optionId(idx)"
         :key="item.id"
         role="option"
         :aria-selected="idx === selectedIndex"
         class="neo-popover-item cursor-pointer px-3 py-2 text-sm"
         :class="idx === selectedIndex ? '!bg-[var(--lnk-hi-bg)] !text-[var(--lnk-hi-text)]' : ''"
-        @mousedown.prevent="insertMention(item)"
+        @mousedown.prevent="chooseActive(item)"
       >
-        <span class="opacity-50">@</span>{{ item.label }}
-        <span v-if="item.type" class="ml-2 text-[10px] opacity-45">{{ item.type }}</span>
+        <span class="opacity-50">{{ menuMode === 'slash' ? '/' : '@' }}</span>{{ item.label }}
+        <span v-if="menuMode === 'slash' && (item as SlashOption).desc" class="ml-2 text-[10px] opacity-45">{{ (item as SlashOption).desc }}</span>
+        <span v-else-if="menuMode === 'mention' && (item as MentionOption).type" class="ml-2 text-[10px] opacity-45">{{ (item as MentionOption).type }}</span>
       </li>
     </ul>
   </div>

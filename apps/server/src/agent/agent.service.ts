@@ -3593,8 +3593,9 @@ export class AgentService implements OnModuleInit {
         : null
     const builtinNames = known?.skills ?? null
     const knownNames = builtinNames ? withUserSkillNames(builtinNames, userSkillNames) : null
+    const runtimeNames = builtinNames?.map((s) => s.name) ?? []
     const { forceSkills, promptText } = resolveForceSkills(
-      resolveDockSkillTarget(skillId, userSkillNames),
+      resolveDockSkillTarget(skillId, userSkillNames, runtimeNames),
       userMessage,
       knownNames,
     )

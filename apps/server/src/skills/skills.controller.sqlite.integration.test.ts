@@ -326,6 +326,23 @@ describe('SkillsController（M1-1 行为级，真实 sqlite）', () => {
     expect(inv2.data.mode).toBe('explicit')
   })
 
+  it('A9: user-invocable:false 不进点选但隐式/路由可达', async () => {
+    const text = CLEAN_SKILL('routed-only').replace('license: MIT', 'license: MIT\nuser-invocable: false')
+    const imp = await controller.import({ user: { sub: 'userA' } }, { text })
+    await controller.setEnabled({ user: { sub: 'userA' } }, imp.data.id, { enabled: true })
+
+    const pkg = await prisma.skillPackage.findUnique({ where: { contentHash: imp.data.packageHash } })
+    expect(pkg?.userInvocable).toBe(false)
+
+    await expect(controller.invoke({ user: { sub: 'userA' } }, imp.data.id, { intent: 'explicit' })).rejects.toThrow(
+      ForbiddenException,
+    )
+    const implicit = await controller.invoke({ user: { sub: 'userA' } }, imp.data.id, { intent: 'implicit' })
+    expect(implicit.data.mode).toBe('implicit')
+    const routed = await controller.invoke({ user: { sub: 'userA' } }, imp.data.id, { intent: 'routed' })
+    expect(routed.data.mode).toBe('explicit')
+  })
+
   // ─── M1-3 发起方接线：buildSkillResources(userId) ─────────────────────────────
 
   it('A2 前置: buildSkillResources 只含该用户已启用技能，content 逐字等于 body', async () => {
@@ -354,5 +371,48 @@ describe('SkillsController（M1-1 行为级，真实 sqlite）', () => {
       data: { body: 'TAMPERED' },
     })
     expect(await service.buildSkillResources('userA')).toEqual([])
+  })
+
+  // ─── 内置技能可发现：GET /skills/runtime（薄转发 pi-runtime /skills，事实源唯一）───
+
+  it('B1: runtime 端点桩注入 → code:0 逐名返回运行时技能（生产实测 11 项对照）', async () => {
+    const runtimeNames = [
+      'drama-audio-design', 'drama-character-design', 'drama-motion-video', 'drama-qc-review',
+      'drama-scene-worldview', 'drama-script-writing', 'drama-storyboard',
+      'ecommerce-product-photo', 'html-craft', 'research-delegate', 'task-decomposition',
+    ]
+    const stub = new SkillsService(prisma as never, {
+      listSkills: async () => ({ skills: runtimeNames.map((name) => ({ name, description: `${name} 描述` })) }),
+    })
+    const stubController = new SkillsController(stub)
+    const res = await stubController.getRuntime({ user: { sub: 'userA' } })
+    expect(res.code).toBe(0)
+    expect(res.data.skills.map((s: { name: string }) => s.name)).toEqual(runtimeNames)
+  })
+
+  it('B1 负例: 运行时不可达 → BadGatewayException（web 侧 fail-soft 回退）', async () => {
+    const stub = new SkillsService(prisma as never, {
+      listSkills: async () => {
+        throw new Error('connect ECONNREFUSED')
+      },
+    })
+    const stubController = new SkillsController(stub)
+    await expect(stubController.getRuntime({ user: { sub: 'userA' } })).rejects.toMatchObject({
+      status: 502,
+    })
+  })
+
+  it('B1 负例: 无桩且 PI_RUNTIME_URL 缺失 → BadRequestException（配置面快速失败）', async () => {
+    const saved = process.env.PI_RUNTIME_URL
+    delete process.env.PI_RUNTIME_URL
+    try {
+      const bare = new SkillsService(prisma as never)
+      const bareController = new SkillsController(bare)
+      await expect(bareController.getRuntime({ user: { sub: 'userA' } })).rejects.toMatchObject({
+        status: 400,
+      })
+    } finally {
+      if (saved !== undefined) process.env.PI_RUNTIME_URL = saved
+    }
   })
 })

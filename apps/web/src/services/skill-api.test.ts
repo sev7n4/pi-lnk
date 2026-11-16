@@ -43,6 +43,21 @@ describe('skillApi — 端点路径与字段名对齐 Nest', () => {
     expect(apiGet).toHaveBeenCalledWith('/skills/mine')
   })
 
+  it('runtimeList 无参 GET /skills/runtime，解包 skills 数组', async () => {
+    apiGet.mockResolvedValue({
+      data: { code: 0, message: 'ok', data: { skills: [{ name: 'html-craft', description: 'HTML 规范' }] } },
+      status: 200,
+    })
+    const out = await skillApi.runtimeList()
+    expect(apiGet).toHaveBeenCalledWith('/skills/runtime')
+    expect(out).toEqual([{ name: 'html-craft', description: 'HTML 规范' }])
+  })
+
+  it('runtimeList 业务失败（code!==0）抛 SkillApiError（不静默当成功）', async () => {
+    apiGet.mockResolvedValue({ data: { code: 502, message: '技能运行时不可达', data: null }, status: 200 })
+    await expect(skillApi.runtimeList()).rejects.toBeInstanceOf(SkillApiError)
+  })
+
   it('install 用 packageHash 路径，无 body', async () => {
     await skillApi.install('abc123')
     expect(apiPost).toHaveBeenCalledWith('/skills/abc123/install')

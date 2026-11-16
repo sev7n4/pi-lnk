@@ -47,6 +47,35 @@ describe('resolveDockSkillTarget（M1-3 用户技能 pass-through）', () => {
   })
 })
 
+describe('resolveDockSkillTarget（内置技能可发现：运行时名 pass-through 第三参）', () => {
+  const runtimeNames = [
+    'drama-audio-design', 'drama-character-design', 'drama-motion-video', 'drama-qc-review',
+    'drama-scene-worldview', 'drama-script-writing', 'drama-storyboard',
+    'ecommerce-product-photo', 'html-craft', 'research-delegate', 'task-decomposition',
+  ]
+
+  it('内置映射优先于运行时名（product-visual 仍映射 ecommerce-product-photo）', () => {
+    expect(resolveDockSkillTarget('product-visual', [], runtimeNames)).toBe('ecommerce-product-photo')
+  })
+
+  it('内置无映射但命中运行时名 → pass-through（drama-* 等内置技能可显式 forceSkills）', () => {
+    expect(resolveDockSkillTarget('drama-script-writing', [], runtimeNames)).toBe('drama-script-writing')
+    expect(resolveDockSkillTarget('html-craft', [], runtimeNames)).toBe('html-craft')
+    expect(resolveDockSkillTarget('research-delegate', [], runtimeNames)).toBe('research-delegate')
+  })
+
+  it('用户名优先级不受影响（用户装的同名技能与运行时名行为一致）', () => {
+    expect(resolveDockSkillTarget('task-decomposition', ['task-decomposition'], runtimeNames)).toBe('task-decomposition')
+  })
+
+  it('三处都不命中 → undefined（fail-soft 原文发送语义不变）', () => {
+    expect(resolveDockSkillTarget('unknown', [], runtimeNames)).toBeUndefined()
+    expect(resolveDockSkillTarget('drama-script-writing', [], [])).toBeUndefined()
+    expect(resolveDockSkillTarget('drama-script-writing', [])).toBeUndefined()
+    expect(resolveDockSkillTarget(undefined, [], runtimeNames)).toBeUndefined()
+  })
+})
+
 describe('withUserSkillNames（M1-3 known 白名单并入用户技能）', () => {
   it('内置 known + 用户技能名合并去重', () => {
     const out = withUserSkillNames([{ name: 'ecommerce-product-photo' }], ['task-decomposition', 'ecommerce-product-photo'])
