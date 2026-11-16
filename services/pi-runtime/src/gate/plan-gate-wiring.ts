@@ -13,7 +13,7 @@
  * - before_run_end 已迁移到 registerRunEndHooks（subagent-barrier.ts）——统一合成
  *   plan-gate 续跑 + barrier 结果回注，避开上游 hooks.js 多 handler last-write-wins。
  */
-import type { AgentHarness, Context } from "@earendil-works/pi-agent-core";
+import type { AgentHarness, Context, JsonValue } from "@earendil-works/pi-agent-core";
 import type { LnkpiToolContext } from "../tools/types.js";
 import type { Metrics } from "../metrics.js";
 import { getTodoState } from "../tools/todo.js";
@@ -39,6 +39,86 @@ const PLAN_DECISIONS: ReadonlySet<string> = new Set([
 	"timeout",
 	"aborted",
 ]);
+
+// ⭐ B-2 任务契约一等化（plan 2026-11-16-b2-task-contract-custom-entry-plan.md §3-D1/D2）。
+const TASK_ENTRY_CUSTOM_TYPE = "lnkpi.task";
+const TASK_ENTRY_MAX_BYTES = 32 * 1024;
+
+/** B-2 payload 32KB 上限截断（plan §3-D2）：依次丢 snapshot 尾部条目 → diff → snapshot 全量，
+ *  仍超则整条放弃；截断打点 truncated（观测层可见），**从不静默膨胀**。 */
+function truncateTaskPayload(
+	payload: { v: 1; kind: "todo" | "plan"; snapshot?: unknown[]; diff?: unknown; decision?: string },
+	metrics: Pick<Metrics, "observeTaskEntryTruncated">,
+): { v: 1; kind: "todo" | "plan"; snapshot?: unknown[]; diff?: unknown; decision?: string } | undefined {
+	const fits = (p: unknown) => Buffer.byteLength(JSON.stringify(p), "utf8") <= TASK_ENTRY_MAX_BYTES;
+	if (fits(payload)) return payload;
+	metrics.observeTaskEntryTruncated(payload.kind);
+	if (Array.isArray(payload.snapshot)) {
+		let snap = [...payload.snapshot];
+		while (snap.length > 0 && !fits({ ...payload, snapshot: snap })) snap = snap.slice(0, -1);
+		if (fits({ ...payload, snapshot: snap })) return { ...payload, snapshot: snap };
+	}
+	const { diff: _diff, ...noDiff } = payload; // diff 体积次之，先弃
+	if (fits(noDiff)) return noDiff;
+	const { snapshot: _snap, ...decisionOnly } = noDiff;
+	if (fits(decisionOnly)) return decisionOnly;
+	return undefined; // 极端（decision 文案本身就超限）：整条放弃，宁缺不炸
+}
+
+/** B-2 一等写入（plan §3-D1）：todo_write / propose_plan 成功终态 → appendCustomEntry("lnkpi.task")。
+ *  挂 after_tool wiring 而非工具层：details 已在 event、context 可达 harness，工具层零触碰。
+ *  fail-open：账本写入是增强不是正确性依赖（读取侧 fallback 反扫仍在，观察期双轨）。 */
+async function appendTaskEntry(
+	harness: AgentHarness<LnkpiToolContext>,
+	context: Context | undefined,
+	event: { toolName: string; details?: unknown },
+	metrics: Pick<Metrics, "observeTaskEntry" | "observeTaskEntryTruncated">,
+): Promise<void> {
+	try {
+		if (!context) return;
+		const details = event.details as
+			| {
+					todo?: { snapshot?: unknown; diff?: unknown; rejected?: unknown };
+					plan?: { decision?: unknown; steps?: unknown };
+			  }
+			| undefined;
+		if (!details || typeof details !== "object") return;
+		let kind: "todo" | "plan";
+		let snapshot: unknown[] | undefined;
+		let diff: unknown;
+		let decision: string | undefined;
+		if (event.toolName === "todo_write") {
+			const t = details.todo;
+			// rejected=true 是 isError 语义补正（硬拒绝回执）：不是真实清单变更，不落账本
+			if (!t || t.rejected === true || !Array.isArray(t.snapshot)) return;
+			kind = "todo";
+			snapshot = t.snapshot;
+			diff = t.diff;
+		} else if (event.toolName === "propose_plan") {
+			const d = details.plan?.decision;
+			if (typeof d !== "string" || !PLAN_DECISIONS.has(d)) return;
+			kind = "plan";
+			decision = d;
+			if (Array.isArray(details.plan?.steps)) snapshot = details.plan.steps as unknown[];
+		} else {
+			return;
+		}
+		const payload = truncateTaskPayload({ v: 1, kind, snapshot, diff, decision }, metrics);
+		if (!payload) return;
+		// details 来源是 unknown ⇒ JSON 往返归一为 JsonValue（截断判定本就基于同一条序列化，
+		// 往返不引入第二次形态漂移）。
+		const jsonPayload = JSON.parse(JSON.stringify(payload)) as JsonValue;
+		// appendCustomEntry 在 AgentLane（非 harness 根面）——main lane 与 B-1 声明集同域。
+		const lane = await harness.lane(MAIN_LANE, context);
+		await lane.appendCustomEntry(TASK_ENTRY_CUSTOM_TYPE, jsonPayload, context);
+		metrics.observeTaskEntry(kind);
+	} catch (err) {
+		process.stderr.write(
+			`[task-entry] appendCustomEntry 失败（fail-open，fallback 反扫仍在）：` +
+				`${err instanceof Error ? err.message : String(err)}\n`,
+		);
+	}
+}
 
 /** B-1 声明集收缩/还原的单次应用（plan §2-D1/D2）。fail-open：声明集是优化不是正确性
  *  （before_tool 拦截仍在），任何 lane 访问失败只 warning，不阻塞 run。 */
@@ -99,7 +179,13 @@ export function registerPlanGateHooks(
 		 * 急切捕获会让「晚绑定画布会话」的门禁静默 fail-open（终审 Important #2）。 */
 		planKey: string | (() => string);
 		tiers: ReadonlyMap<string, string | undefined>;
-		metrics: Pick<Metrics, "observePlanGateBlocked" | "observeToolsetGateNarrow">;
+		metrics: Pick<
+			Metrics,
+			| "observePlanGateBlocked"
+			| "observeToolsetGateNarrow"
+			| "observeTaskEntry"
+			| "observeTaskEntryTruncated"
+		>;
 	},
 ): void {
 	// kill switch 三面全关（终审 Critical #1）：off ⇒ 不注册（拦/注入自然不存在）。
@@ -119,11 +205,15 @@ export function registerPlanGateHooks(
 			},
 		};
 	});
-	// ⭐ B-1 双挂点（plan §2-D1）：
+	// ⭐ B-1 双挂点（plan §2-D1）+ B-2 一等写入（plan §3-D1）：
 	// - after_tool（run 内即时双向）：propose_plan 终态即切——execute 同点还原（确认当轮就
 	//   要写画布，收缩态带到 run 剩余部分 = 「确认了却写不了」严重回归）；refine/keep/
 	//   timeout/aborted 同点收缩（fail-closed 的声明集化，run 内后续步立即看不到写工具）。
+	//   B-2 同点一等写入：todo_write/propose_plan 成功终态落 lnkpi.task 账本（fail-open）。
 	harness.hooks.on("after_tool", async (event, context) => {
+		if (event.toolName === "todo_write" || event.toolName === "propose_plan") {
+			await appendTaskEntry(harness, context, event, metrics);
+		}
 		if (event.toolName !== "propose_plan") return undefined;
 		const decision = (event.details as { plan?: { decision?: unknown } } | undefined)?.plan
 			?.decision;

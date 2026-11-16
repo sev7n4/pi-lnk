@@ -31,6 +31,8 @@ async function startFakeRuntime(
 		omitAgentEnd?: boolean;
 		subscribeBeforePrompt?: boolean;
 		failCreate?: boolean;
+		/** /snapshot 返回的 usage 投影（undefined = 404，默认） */
+		snapshotUsage?: Record<string, unknown>;
 	} = { events: [] },
 ): Promise<FakeServer> {
 	const calls: FakeServer["calls"] = [];
@@ -97,6 +99,15 @@ async function startFakeRuntime(
 					};
 					tick();
 				}
+				return;
+			}
+			if (path.match(/^\/sessions\/[^/]+\/snapshot$/) && req.method === "GET") {
+				if (opts.snapshotUsage === undefined) {
+					res.writeHead(404).end("{}");
+					return;
+				}
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end(JSON.stringify({ lane: "main", tipId: null, faulted: false, operation: null, queues: [], transcriptTail: [], usage: opts.snapshotUsage }));
 				return;
 			}
 			res.writeHead(404).end("{}");
@@ -477,6 +488,38 @@ describe("⭐⭐ 订阅『就绪』竞态：`from=now` 会吞掉登记前的所�
 		} finally {
 			server.closeAllConnections();
 			await new Promise<void>((r) => server.close(() => r()));
+		}
+	});
+});
+
+describe("fetchSessionUsage（eval usage 对照小刀 2026-11-16）", () => {
+	it("snapshot 带 usage ⇒ runEvalCase 返回合并后的 cacheRead/cacheWrite/total", async () => {
+		const server = await startFakeRuntime({
+			events: [],
+			snapshotUsage: { input: 100, output: 50, cacheRead: 900, cacheWrite: 0, totalTokens: 1050 },
+		});
+		try {
+			const res = await runEvalCase({ baseUrl: server.url }, { text: "hi" });
+			assert.deepEqual(res.usage, { input: 100, output: 50, cacheRead: 900, cacheWrite: 0, total: 1050 });
+		} finally {
+			await server.close();
+		}
+	});
+
+	it("snapshot 404 / usage 非法 ⇒ usage fail-soft（undefined），case 不红", async () => {
+		const server = await startFakeRuntime({ events: [] });
+		try {
+			const res = await runEvalCase({ baseUrl: server.url }, { text: "hi" });
+			assert.equal(res.usage, undefined);
+		} finally {
+			await server.close();
+		}
+		const server2 = await startFakeRuntime({ events: [], snapshotUsage: { input: "bad" } });
+		try {
+			const res = await runEvalCase({ baseUrl: server2.url }, { text: "hi" });
+			assert.equal(res.usage, undefined);
+		} finally {
+			await server2.close();
 		}
 	});
 });

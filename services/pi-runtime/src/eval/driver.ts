@@ -205,7 +205,7 @@ export async function runEvalCase(
 		return {
 			transcript,
 			events: collected,
-			usage: transcript.usage,
+			usage: mergeUsage(transcript.usage, await fetchSessionUsage(base, sessionId)),
 			errors: [...transcript.errors, err instanceof Error ? err.message : String(err)],
 			...(createdModel ? { model: createdModel } : {}),
 			...(createdProvider ? { provider: createdProvider } : {}),
@@ -218,7 +218,7 @@ export async function runEvalCase(
 		return {
 			transcript,
 			events: collected,
-			usage: transcript.usage,
+			usage: mergeUsage(transcript.usage, await fetchSessionUsage(base, sessionId)),
 			errors: [...transcript.errors, "stream ended without agent_end"],
 			...(createdModel ? { model: createdModel } : {}),
 			...(createdProvider ? { provider: createdProvider } : {}),
@@ -227,7 +227,7 @@ export async function runEvalCase(
 	return {
 		transcript,
 		events: collected,
-		usage: transcript.usage,
+		usage: mergeUsage(transcript.usage, await fetchSessionUsage(base, sessionId)),
 		errors: transcript.errors,
 		...(createdModel ? { model: createdModel } : {}),
 		...(createdProvider ? { provider: createdProvider } : {}),
@@ -344,6 +344,51 @@ async function postJson(
 		body: JSON.stringify(body),
 	});
 	return { status: res.status, body: await res.text() };
+}
+
+/** 会话累计 usage（eval usage 对照小刀 2026-11-16）：GET /sessions/:id/snapshot 的
+ *  `usage` 投影（vendor LaneSnapshot.stats.usage）。fail-soft：会话没了/网络抖动返回
+ *  undefined——usage 是对照元信息，不是判据，绝不因它红 case。 */
+async function fetchSessionUsage(
+	base: string,
+	sessionId: string,
+): Promise<NonNullable<EvalTranscript["usage"]> | undefined> {
+	try {
+		const res = await fetch(`${base}/sessions/${encodeURIComponent(sessionId)}/snapshot`);
+		if (!res.ok) return undefined;
+		const body = JSON.parse(await res.text()) as {
+			usage?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; totalTokens?: number };
+		};
+		const u = body.usage;
+		if (!u || typeof u !== "object") return undefined;
+		const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
+		const input = num(u.input);
+		const output = num(u.output);
+		const cacheRead = num(u.cacheRead);
+		const cacheWrite = num(u.cacheWrite);
+		const totalTokens = num(u.totalTokens);
+		if (input === undefined && output === undefined && cacheRead === undefined) return undefined;
+		return {
+			...(input !== undefined ? { input } : {}),
+			...(output !== undefined ? { output } : {}),
+			...(cacheRead !== undefined ? { cacheRead } : {}),
+			...(cacheWrite !== undefined ? { cacheWrite } : {}),
+			...(totalTokens !== undefined ? { total: totalTokens } : {}),
+		};
+	} catch {
+		return undefined;
+	}
+}
+
+/** usage 合并：transcript 事件源（历史上恒 undefined，保留兼容）与 snapshot 读数按字段并。 */
+function mergeUsage(
+	a: EvalTranscript["usage"],
+	b: NonNullable<EvalTranscript["usage"]> | undefined,
+): NonNullable<EvalTranscript["usage"]> | undefined {
+	if (!b) return a;
+	return { ...b, ...Object.fromEntries(Object.entries(a ?? {}).filter(([, v]) => v !== undefined)) } as NonNullable<
+		EvalTranscript["usage"]
+	>;
 }
 
 /**

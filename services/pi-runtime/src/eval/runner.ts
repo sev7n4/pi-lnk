@@ -135,6 +135,9 @@ export interface RunSummary {
 	degraded: boolean;
 	totalTokens: number;
 	totalOutputTokens: number;
+	/** B-1 cache 对照（小刀 2026-11-16）：全 run cache_read 汇总；无数据省略为 undefined。 */
+	totalCacheReadTokens?: number;
+	totalCacheWriteTokens?: number;
 	/** 人类可读报告。 */
 	report: string;
 	/** 结构化明细，供 baseline vs candidate 对比。 */
@@ -268,6 +271,14 @@ export function summarize(
 	const passRate = judged === 0 ? 0 : pass / judged;
 	const totalTokens = results.reduce((sum, r) => sum + (r.usage?.total ?? 0), 0);
 	const totalOutputTokens = results.reduce((sum, r) => sum + (r.usage?.output ?? 0), 0);
+	// cache 汇总（可选字段聚合：任一 case 带数据即产出，全无则 undefined 不进报告）
+	const withCache = results.filter((r) => r.usage?.cacheRead !== undefined || r.usage?.cacheWrite !== undefined);
+	const totalCacheReadTokens = withCache.some((r) => r.usage?.cacheRead !== undefined)
+		? withCache.reduce((sum, r) => sum + (r.usage?.cacheRead ?? 0), 0)
+		: undefined;
+	const totalCacheWriteTokens = withCache.some((r) => r.usage?.cacheWrite !== undefined)
+		? withCache.reduce((sum, r) => sum + (r.usage?.cacheWrite ?? 0), 0)
+		: undefined;
 	const degraded = isDegraded(pass, fail, error);
 	const failures = results
 		.filter((r) => r.failures.length > 0)
@@ -333,7 +344,8 @@ export function summarize(
 	const lines = [
 		header,
 		`L1 行为回归：${pass}/${judged} 通过（${(passRate * 100).toFixed(1)}%）· fail ${fail} · error ${error} · skip ${skipped}`,
-		`token：total ${totalTokens}（output ${totalOutputTokens}）`,
+		`token：total ${totalTokens}（output ${totalOutputTokens}）` +
+			(totalCacheReadTokens !== undefined ? `；cache_read ${totalCacheReadTokens}` : ""),
 		...(meta?.staticPrompt
 			? [
 					`规则集：registry ${meta.staticPrompt.registryVersion} hash=${meta.staticPrompt.registryHash} ` +
@@ -371,6 +383,8 @@ export function summarize(
 		degraded,
 		totalTokens,
 		totalOutputTokens,
+		...(totalCacheReadTokens !== undefined ? { totalCacheReadTokens } : {}),
+		...(totalCacheWriteTokens !== undefined ? { totalCacheWriteTokens } : {}),
 		report: lines.join("\n"),
 		results,
 		failures,
@@ -891,6 +905,12 @@ function sumUsage(transcripts: readonly EvalTranscript[]): EvalTranscript["usage
 			input: (acc.input ?? 0) + (t.usage?.input ?? 0),
 			output: (acc.output ?? 0) + (t.usage?.output ?? 0),
 			total: (acc.total ?? 0) + (t.usage?.total ?? 0),
+			...(t.usage?.cacheRead !== undefined || acc.cacheRead !== undefined
+				? { cacheRead: (acc.cacheRead ?? 0) + (t.usage?.cacheRead ?? 0) }
+				: {}),
+			...(t.usage?.cacheWrite !== undefined || acc.cacheWrite !== undefined
+				? { cacheWrite: (acc.cacheWrite ?? 0) + (t.usage?.cacheWrite ?? 0) }
+				: {}),
 		}),
 		{} as NonNullable<EvalTranscript["usage"]>,
 	);

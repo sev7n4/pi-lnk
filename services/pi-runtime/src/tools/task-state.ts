@@ -97,52 +97,109 @@ export function reduce(prev: readonly TodoItemWithId[], next: readonly TodoItemI
 	return { updates };
 }
 
+/** B-2 一等账本条目形态（plan 2026-11-16-b2-task-contract-custom-entry-plan.md §3-D1）。
+ * `v !== 1` 的条目忽略（向前兼容：未来版本字段变更时旧 reader 不误读）。 */
+export interface TaskEntryPayload {
+	v: 1;
+	kind: "todo" | "plan";
+	snapshot?: TodoItemWithId[];
+	decision?: string;
+	diff?: unknown;
+}
+
+const TASK_ENTRY_CUSTOM_TYPE = "lnkpi.task";
+
+/** 从单条 entry 提取 B-2 一等任务条目（customType 命中 + v===1）。不命中返回 undefined。 */
+export function readTaskEntry(e: unknown): TaskEntryPayload | undefined {
+	const o = e as { type?: unknown; customType?: unknown; data?: unknown } | null;
+	if (o?.type !== "custom" || o.customType !== TASK_ENTRY_CUSTOM_TYPE) return undefined;
+	const d = o.data as TaskEntryPayload | undefined;
+	if (!d || typeof d !== "object" || d.v !== 1) return undefined;
+	if (d.kind !== "todo" && d.kind !== "plan") return undefined;
+	return d;
+}
+
+/** 规范化快照条目（与 fallback 分支同规则：content/id 必填，status 收敛三态）。 */
+function normalizeSnapshotItems(snap: readonly unknown[]): TodoItemWithId[] {
+	const items: TodoItemWithId[] = [];
+	for (const it of snap) {
+		const o = it as { id?: unknown; content?: unknown; status?: unknown; activeForm?: unknown };
+		if (typeof o?.content !== "string" || typeof o?.id !== "string") continue;
+		const status = o.status === "completed" || o.status === "in_progress" ? o.status : "pending";
+		items.push({
+			id: o.id,
+			content: o.content,
+			status,
+			...(typeof o.activeForm === "string" ? { activeForm: o.activeForm } : {}),
+		});
+	}
+	return items;
+}
+
 /** 从会话 transcript 条目（任意形态）反向扫描最后一个任务清单快照。
- * 防御式字段访问：vendor entry 形态随版本可能变化——2026-10-09 生产 probe 实测形态为
- * `{type:"message", message:{role:"toolResult", toolName, details}}`（message 包裹层），
- * 同时保留官方 todo.ts 同构的顶层 `{toolName, details}` 与 `{result:{details}}` 兼容。
- * P1-2（spec 2026-11-11-propose-plan-visibility-design.md §8）：propose_plan 经 overwriteTodos
- * 落清单但**不写 todo_write transcript 条目**——不识别它，重启/重连后 seedTodoState 播种为空
- * ⇒ 任务卡消失且门状态无从恢复。识别 propose_plan 的 details.todo.snapshot（P0 形态），
- * 兜底 details.plan.steps（同形 TodoItemWithId[]）。反向扫描「最新条目胜出」天然满足三态：
- * 仅 todo_write / 仅 propose_plan / 二者皆有取时间序最新。 */
-export function pickLatestSnapshot(entries: readonly unknown[]): TodoItemWithId[] {
+ * B-2 起两源并存、**最新条目胜出**（plan §3-D3）：
+ * ① 首选源：`custom` entry（customType "lnkpi.task"，v===1）——一等写入，形态自持；
+ * ② fallback：toolResult details 副作用反扫（防御式三层兼容，观察期后退役——退场判据
+ *    见 plan §5：custom 连续 7 天覆盖全部终态）。
+ * P1-2 背景（spec 2026-11-11-propose-plan-visibility-design.md §8）：propose_plan 经
+ * overwriteTodos 落清单但不写 todo_write transcript 条目——fallback 识别
+ * details.todo.snapshot（P0 形态）兜底 details.plan.steps。两源不一致时触发
+ * `opts.onMismatch`（观测层打点不告警，人工裁决，plan §5）。 */
+export function pickLatestSnapshot(
+	entries: readonly unknown[],
+	opts?: { onMismatch?: () => void },
+): TodoItemWithId[] {
+	let customHit: TodoItemWithId[] | undefined;
+	let fallbackHit: TodoItemWithId[] | undefined;
+	let customHitIndex = -1;
+	let fallbackHitIndex = -1;
 	for (let i = entries.length - 1; i >= 0; i--) {
-		const e = entries[i] as {
+		const e = entries[i];
+		if (!e) continue;
+		// ① 一等源（custom entry）
+		const task = readTaskEntry(e);
+		if (task && Array.isArray(task.snapshot)) {
+			if (!customHit) {
+				customHit = normalizeSnapshotItems(task.snapshot);
+				customHitIndex = i;
+			}
+			continue;
+		}
+		if (customHit && fallbackHit) break; // 两源最新都已命中，再扫无增益
+		// ② fallback：toolResult details 副作用（原有三层防御式形态，原样保留）
+		const o = e as {
 			toolName?: string;
 			details?: unknown;
 			result?: { details?: unknown };
 			message?: { toolName?: string; details?: unknown; result?: { details?: unknown } };
 		} | null;
-		if (!e) continue;
+		if (!o) continue;
 		let raw: unknown;
-		if (e.toolName === "todo_write" || e.toolName === "propose_plan") {
-			raw = e.details ?? e.result?.details;
-		} else if (e.message?.toolName === "todo_write" || e.message?.toolName === "propose_plan") {
-			raw = e.message.details ?? e.message.result?.details;
+		if (o.toolName === "todo_write" || o.toolName === "propose_plan") {
+			raw = o.details ?? o.result?.details;
+		} else if (o.message?.toolName === "todo_write" || o.message?.toolName === "propose_plan") {
+			raw = o.message.details ?? o.message.result?.details;
 		} else {
 			continue;
 		}
-		const o = raw as { todo?: { snapshot?: unknown }; plan?: { steps?: unknown } } | undefined;
+		const p = raw as { todo?: { snapshot?: unknown }; plan?: { steps?: unknown } } | undefined;
 		const snap =
-			(Array.isArray(o?.todo?.snapshot) ? o?.todo?.snapshot : undefined) ??
-			(Array.isArray(o?.plan?.steps) ? o?.plan?.steps : undefined);
+			(Array.isArray(p?.todo?.snapshot) ? p?.todo?.snapshot : undefined) ??
+			(Array.isArray(p?.plan?.steps) ? p?.plan?.steps : undefined);
 		if (!Array.isArray(snap)) continue;
-		const items: TodoItemWithId[] = [];
-		for (const it of snap) {
-			const o = it as { id?: unknown; content?: unknown; status?: unknown; activeForm?: unknown };
-			if (typeof o?.content !== "string" || typeof o?.id !== "string") continue;
-			const status = o.status === "completed" || o.status === "in_progress" ? o.status : "pending";
-			items.push({
-				id: o.id,
-				content: o.content,
-				status,
-				...(typeof o.activeForm === "string" ? { activeForm: o.activeForm } : {}),
-			});
+		if (!fallbackHit) {
+			fallbackHit = normalizeSnapshotItems(snap);
+			fallbackHitIndex = i;
 		}
-		return items;
 	}
-	return [];
+	if (customHit && fallbackHit && JSON.stringify(customHit) !== JSON.stringify(fallbackHit)) {
+		opts?.onMismatch?.();
+	}
+	// 「最新胜出」：索引更大 = 时间序更晚（反扫不改判定方向）。
+	const customLater = customHitIndex >= fallbackHitIndex;
+	return customHit && fallbackHit
+		? (customLater ? customHit : fallbackHit)
+		: (customHit ?? fallbackHit ?? []);
 }
 
 /** 模型可见返回值：紧凑摘要（spec §3.1——禁回显全量 JSON）。

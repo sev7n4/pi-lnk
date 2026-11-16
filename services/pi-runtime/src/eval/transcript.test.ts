@@ -171,6 +171,14 @@ describe("foldRuntimeEvents（流式事件折叠）", () => {
 		assert.deepEqual(t.usage, { input: 100, output: 50, total: 150 });
 	});
 
+	it("usage 事件带 cacheRead/cacheWrite 时一并采集（B-1 cache 对照小刀 2026-11-16）", () => {
+		const t = foldRuntimeEvents([
+			{ type: "usage", data: { usage: { input: 100, output: 50, total: 150, cacheRead: 900, cacheWrite: 0 } } },
+			{ type: "agent_end", data: { status: "completed" } },
+		]);
+		assert.deepEqual(t.usage, { input: 100, output: 50, total: 150, cacheRead: 900, cacheWrite: 0 });
+	});
+
 	it("未知事件类型被忽略（向前兼容，不因新事件崩掉）", () => {
 		const t = foldRuntimeEvents([
 			{ type: "brand_new_event_from_vendor", data: { whatever: true } },

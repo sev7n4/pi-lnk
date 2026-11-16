@@ -17,7 +17,6 @@ import { Metrics } from "./metrics.js";
 import type { RuntimeConfig } from "./runtime-config.js";
 import { COMPACTION_RETENTION_INSTRUCTIONS } from "./compaction-summary.js";
 import { SkillRegistry } from "./skills/registry.js";
-import { buildSkillResources } from "./skills/resources.js";
 import { Closed } from "@earendil-works/pi-agent-core";
 
 /**
@@ -95,12 +94,11 @@ describe("SessionManager harnessFactory 注入缝", () => {
 			focusNodeId: "node-1",
 		});
 		const cfg = captured as {
-			systemPrompt: (tc: unknown) => Promise<string>;
+			systemPrompt: (tc: unknown) => string;
 			toolContext: (tc: unknown) => Record<string, unknown>;
 			thinkingLevel?: string;
 		};
-		// M0：systemPrompt 闭包为 async（每轮 await harness.getResources()），vendor 原生 await。
-		assert.equal(await cfg.systemPrompt(undefined), SYS_BASE);
+		assert.equal(cfg.systemPrompt(undefined), SYS_BASE);
 		assert.equal(cfg.thinkingLevel, "medium");
 		const tc = cfg.toolContext(undefined);
 		assert.equal(tc.userId, "u1");
@@ -235,7 +233,6 @@ describe("SessionManager skills 注入（D-η' Task 4）", () => {
 			return {
 				harness: {
 					events: { on: () => () => {} },
-					getResources: async () => ({ skills: [] }),
 					lane: async () => ({ prompt: async () => ({ ok: true }) }),
 					close: async () => {},
 				},
@@ -243,9 +240,8 @@ describe("SessionManager skills 注入（D-η' Task 4）", () => {
 		};
 		const sm = new SessionManager([{ name: "t_probe" } as never], "", undefined, factory, undefined, undefined, testConfig());
 		await sm.create("s1", { systemPrompt: "SYS" });
-		const cfg = captured as { systemPrompt: (tc: unknown) => Promise<string>; tools: Array<{ name: string }> };
-		// M0：闭包 async 化 + 空集 index 为空串 ⇒ 输出仍逐字节等于 base（t_probe 无 guidelines）。
-		assert.equal(await cfg.systemPrompt(undefined), SYS_BASE);
+		const cfg = captured as { systemPrompt: (tc: unknown) => string; tools: Array<{ name: string }> };
+		assert.equal(cfg.systemPrompt(undefined), SYS_BASE);
 		assert.ok(!cfg.tools.some((t) => t.name === "load_skill"));
 	});
 
@@ -259,30 +255,22 @@ describe("SessionManager skills 注入（D-η' Task 4）", () => {
 			"",
 			undefined,
 			async (cfg: unknown) => {
-			captured = cfg;
-			return {
-				harness: {
-					events: { on: () => () => {} },
-					getResources: async () => buildSkillResources(registry.entries, (n) => registry.loadBody(n)),
-					lane: async () => ({ prompt: async () => ({ ok: true }) }),
-					close: async () => {},
-				},
-			} as never;
-		},
-		undefined,
-		registry,
-		testConfig(),
-	);
-	await sm.create("s1", { systemPrompt: "SYS" });
-		const got = captured as { systemPrompt: (tc: unknown) => Promise<string>; tools: Array<{ name: string }>; resources?: { skills: Array<{ name: string }> } };
-		// M0 W1（U-7/U-11）：create options 必须显式携带 resources（唯一注入点）。
-		assert.deepEqual(got.resources?.skills.map((s) => s.name), ["demo-skill"]);
-		// M0（§7.3-4）：index 每轮从 harness.getResources() 经上游 formatter 求值；
-		// B-3 顺序 index → <tool_guidelines>（probe 工具无 guidelines ⇒ 此处只有 index）。
-		const sp = await got.systemPrompt(undefined);
-		assert.ok(sp.includes("<available_skills>"), `应含上游 index：${sp.slice(0, 300)}`);
-		assert.ok(sp.includes("<name>demo-skill</name>"));
-		assert.ok(sp.startsWith("SYS"), "static base 段仍恒在最前");
+				captured = cfg;
+				return {
+					harness: {
+						events: { on: () => () => {} },
+						lane: async () => ({ prompt: async () => ({ ok: true }) }),
+						close: async () => {},
+					},
+				} as never;
+			},
+			undefined,
+			registry,
+			testConfig(),
+		);
+		await sm.create("s1", { systemPrompt: "SYS" });
+		const got = captured as { systemPrompt: (tc: unknown) => string; tools: Array<{ name: string }> };
+		assert.equal(got.systemPrompt(undefined), `SYS\n\n${registry.indexBlock}`);
 		const toolNames = got.tools.map((t) => t.name);
 		assert.ok(toolNames.includes("load_skill"));
 		assert.equal(toolNames.indexOf("load_skill"), toolNames.length - 1); // 尾部
@@ -298,25 +286,22 @@ describe("SessionManager skills 注入（D-η' Task 4）", () => {
 			"",
 			undefined,
 			async (cfg: unknown) => {
-			captured = cfg;
-			return {
-				harness: {
-					events: { on: () => () => {} },
-					getResources: async () => buildSkillResources(registry.entries, (n) => registry.loadBody(n)),
-					lane: async () => ({ prompt: async () => ({ ok: true }) }),
-					close: async () => {},
-				},
-			} as never;
-		},
-		undefined,
-		registry,
-		testConfig(),
-	);
-	await sm.create("s1", {});
-		const cfg = captured as { systemPrompt: (tc: unknown) => Promise<string> };
-		const sp = await cfg.systemPrompt(undefined);
-		assert.ok(sp.includes("<available_skills>"));
-		assert.ok(sp.includes("<name>demo-skill</name>"));
+				captured = cfg;
+				return {
+					harness: {
+						events: { on: () => () => {} },
+						lane: async () => ({ prompt: async () => ({ ok: true }) }),
+						close: async () => {},
+					},
+				} as never;
+			},
+			undefined,
+			registry,
+			testConfig(),
+		);
+		await sm.create("s1", {});
+		const cfg = captured as { systemPrompt: (tc: unknown) => string };
+		assert.equal(cfg.systemPrompt(undefined), `${registry.indexBlock}`);
 	});
 });
 
@@ -1810,5 +1795,43 @@ describe("projectLaneSnapshot（lane.watch 快照投影，2026-10-18 上游对�
 		assert.equal(out.transcriptTail.length, 16);
 		assert.equal(out.transcriptTail[0]?.seq, 15);
 		assert.equal(out.transcriptTail[15]?.seq, 30);
+	});
+});
+
+describe("projectLaneSnapshot usage 投影（eval usage 对照小刀 2026-11-16）", () => {
+	it("stats.usage 数值字段全投影；totalTokens 映射保持原键名", () => {
+		const snap = {
+			lane: "main",
+			tipId: "t",
+			faulted: false,
+			operation: null,
+			queues: [],
+			transcript: [],
+			stats: { messageCount: 3, usage: { input: 100, output: 50, cacheRead: 900, cacheWrite: 0, totalTokens: 1050 } },
+		} as never;
+		const out = projectLaneSnapshot(snap);
+		assert.deepEqual(out.usage, { input: 100, output: 50, cacheRead: 900, cacheWrite: 0, totalTokens: 1050 });
+	});
+
+	it("stats 缺失 / usage 非法 / 全 NaN ⇒ 不带 usage 键（防御式）", () => {
+		for (const stats of [undefined, {}, { usage: null }, { usage: { input: "x" } }]) {
+			const snap = { lane: "main", tipId: null, faulted: false, operation: null, queues: [], transcript: [], stats } as never;
+			const out = projectLaneSnapshot(snap);
+			assert.equal(out.usage, undefined, `stats=${JSON.stringify(stats)}`);
+		}
+	});
+
+	it("部分字段合法 ⇒ 只投影合法键", () => {
+		const snap = {
+			lane: "main",
+			tipId: null,
+			faulted: false,
+			operation: null,
+			queues: [],
+			transcript: [],
+			stats: { usage: { input: 10, cacheRead: 5, output: "bad" } },
+		} as never;
+		const out = projectLaneSnapshot(snap);
+		assert.deepEqual(out.usage, { input: 10, cacheRead: 5 });
 	});
 });

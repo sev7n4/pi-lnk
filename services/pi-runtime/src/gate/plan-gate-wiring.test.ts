@@ -271,3 +271,146 @@ test("B-1 fail-open：lane 访问异常不阻塞 run", async () => {
 	assert.deepEqual(current, ["fake_write"], "失败时声明集不变");
 	resetPlanState("b1x");
 });
+
+// ═══ B-2 一等写入（plan 2026-11-16-b2-task-contract-custom-entry-plan.md §3-D1/D2）═══
+
+/** 带 lane.appendCustomEntry 捕获的 stub。 */
+function b2Harness() {
+	const appended: Array<{ customType: string; data: unknown }> = [];
+	let throwOnAppend = false;
+	const { harness, handlers } = stubHarness({
+		getActiveTools: () => [],
+		setActiveTools: () => {},
+	});
+	// 覆写 lane：stubHarness 的 laneImpl 不含 appendCustomEntry，这里重建
+	(harness as { lane: unknown }).lane = async () => ({
+		getActiveTools: async () => [] as string[],
+		setActiveTools: async () => {},
+		appendCustomEntry: async (customType: string, data: unknown) => {
+			if (throwOnAppend) throw new Error("boom");
+			appended.push({ customType, data });
+			return "id";
+		},
+	});
+	const b2Metrics = {
+		observePlanGateBlocked() {},
+		observeTaskEntry() {},
+		observeTaskEntryTruncated() {},
+	} as never;
+	const runAfterTool = (toolName: string, details: unknown) =>
+		handlers.get("after_tool")!( { toolName, toolCallId: "t", args: {}, content: [], details } as never, {} as never);
+	return { harness, handlers, appended, runAfterTool, b2Metrics, setThrow: (v: boolean) => (throwOnAppend = v) };
+}
+
+const B2_TIERS = new Map<string, string>([["fake_write", "write_heavy"]]);
+
+test("B-2 写侧：todo_write 成功终态 → appendCustomEntry('lnkpi.task', v1 payload)", async () => {
+	process.env.PI_RUNTIME_PLAN_GATE = "on";
+	try {
+		const { harness, handlers, appended, runAfterTool, b2Metrics } = b2Harness();
+		registerPlanGateHooks(harness, { planKey: "b2", tiers: B2_TIERS, metrics: b2Metrics });
+		await runAfterTool("todo_write", { todo: { snapshot: [{ id: "a", content: "X", status: "pending" }], diff: { updates: [] } } });
+		assert.equal(appended.length, 1);
+		assert.equal(appended[0].customType, "lnkpi.task");
+		// JSON 往返归一：undefined 字段（decision）被丢弃 ⇒ payload 只含实有键
+		assert.deepEqual(appended[0].data, {
+			v: 1,
+			kind: "todo",
+			snapshot: [{ id: "a", content: "X", status: "pending" }],
+			diff: { updates: [] },
+		});
+	} finally {
+		delete process.env.PI_RUNTIME_PLAN_GATE;
+	}
+});
+
+test("B-2 写侧：todo_write rejected=true（硬拒绝回执）不落账本", async () => {
+	process.env.PI_RUNTIME_PLAN_GATE = "on";
+	try {
+		const { harness, appended, runAfterTool, b2Metrics } = b2Harness();
+		registerPlanGateHooks(harness, { planKey: "b2", tiers: B2_TIERS, metrics: b2Metrics });
+		await runAfterTool("todo_write", { todo: { snapshot: [], diff: { updates: [] }, rejected: true } });
+		assert.equal(appended.length, 0);
+	} finally {
+		delete process.env.PI_RUNTIME_PLAN_GATE;
+	}
+});
+
+test("B-2 写侧：propose_plan 终态 → kind=plan（decision + steps 可选）", async () => {
+	process.env.PI_RUNTIME_PLAN_GATE = "on";
+	try {
+		const { harness, appended, runAfterTool, b2Metrics } = b2Harness();
+		registerPlanGateHooks(harness, { planKey: "b2", tiers: B2_TIERS, metrics: b2Metrics });
+		await runAfterTool("propose_plan", { plan: { decision: "keep", steps: [{ id: "s1", content: "S", status: "pending" }] } });
+		assert.equal(appended.length, 1);
+		assert.deepEqual(appended[0].data, {
+			v: 1,
+			kind: "plan",
+			snapshot: [{ id: "s1", content: "S", status: "pending" }],
+			decision: "keep",
+		});
+		// 无 steps 的终态也写（decision-only）
+		await runAfterTool("propose_plan", { plan: { decision: "execute" } });
+		assert.equal(appended.length, 2);
+		assert.equal((appended[1].data as { snapshot?: unknown }).snapshot, undefined);
+		assert.equal((appended[1].data as { decision?: string }).decision, "execute");
+	} finally {
+		delete process.env.PI_RUNTIME_PLAN_GATE;
+	}
+});
+
+test("B-2 写侧：非法 decision / 非目标工具不写", async () => {
+	process.env.PI_RUNTIME_PLAN_GATE = "on";
+	try {
+		const { harness, appended, runAfterTool, b2Metrics } = b2Harness();
+		registerPlanGateHooks(harness, { planKey: "b2", tiers: B2_TIERS, metrics: b2Metrics });
+		await runAfterTool("propose_plan", { plan: { decision: "bogus" } });
+		await runAfterTool("get_canvas_summary", { whatever: true });
+		assert.equal(appended.length, 0);
+	} finally {
+		delete process.env.PI_RUNTIME_PLAN_GATE;
+	}
+});
+
+test("B-2 写侧：appendCustomEntry 抛错 fail-open（不炸 handler，钩子链继续）", async () => {
+	process.env.PI_RUNTIME_PLAN_GATE = "on";
+	try {
+		const { harness, runAfterTool, b2Metrics, setThrow } = b2Harness();
+		registerPlanGateHooks(harness, { planKey: "b2", tiers: B2_TIERS, metrics: b2Metrics });
+		setThrow(true);
+		await runAfterTool("todo_write", { todo: { snapshot: [{ id: "a", content: "X", status: "pending" }] } });
+		// 不抛 = fail-open 成立；B-1 声明集逻辑同点共存（propose_plan 时）也不受影响
+	} finally {
+		delete process.env.PI_RUNTIME_PLAN_GATE;
+	}
+});
+
+test("B-2 写侧：32KB 截断——超限 snapshot 逐条丢弃至 fit + 打点 truncated", async () => {
+	process.env.PI_RUNTIME_PLAN_GATE = "on";
+	try {
+		const { harness, appended, runAfterTool, b2Metrics } = b2Harness();
+		let truncated = 0;
+		registerPlanGateHooks(harness, {
+			planKey: "b2",
+			tiers: B2_TIERS,
+			metrics: { observePlanGateBlocked() {}, observeTaskEntry() {}, observeTaskEntryTruncated() { truncated++; } } as never,
+		});
+		// 200 项 × ~200B ≈ 40KB > 32KB
+		const big = Array.from({ length: 400 }, (_, i) => ({
+			id: `t${i}`,
+			content: `任务条目内容填充${i}`.padEnd(40, "填"),
+			status: "pending",
+		}));
+		await runAfterTool("todo_write", { todo: { snapshot: big, diff: { updates: [] } } });
+		assert.equal(truncated, 1, "截断打点");
+		assert.equal(appended.length, 1, "截断后仍写入（宁缺不炸）");
+		const data = appended[0].data as { snapshot?: unknown[] };
+		assert.ok(data.snapshot && data.snapshot.length < 400, "snapshot 被裁剪");
+		assert.ok(
+			Buffer.byteLength(JSON.stringify(appended[0].data), "utf8") <= 32 * 1024,
+			"写入 payload 不超 32KB",
+		);
+	} finally {
+		delete process.env.PI_RUNTIME_PLAN_GATE;
+	}
+});

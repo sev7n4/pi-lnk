@@ -313,3 +313,115 @@ test("A-2' ⑧b: content 兜底也能认领重复项其一（删除检测对兜�
 	assert.equal(diff.list![0].id, "plan-1");
 	assert.equal(diff.list![0].status, "in_progress");
 });
+
+// ═══ B-2 一等账本读取（plan 2026-11-16-b2-task-contract-custom-entry-plan.md §3-D3）═══
+
+import { readTaskEntry } from "./task-state.js";
+
+const item = (id: string, content: string, status = "pending") => ({ id, content, status });
+
+const customEntry = (data: unknown, _id = "e1") => ({ type: "custom", customType: "lnkpi.task", data });
+
+const fallbackEntry = (toolName: string, snapshot: unknown, wrapped = false) =>
+	wrapped
+		? { type: "message", message: { role: "toolResult", toolName, details: { todo: { snapshot } } } }
+		: { toolName, details: { todo: { snapshot } } };
+
+test("B-2 readTaskEntry: customType/v/kind 三重门——不匹配一律 undefined", () => {
+	assert.equal(readTaskEntry({ toolName: "todo_write", details: {} }), undefined, "type 非 custom");
+	assert.equal(
+		readTaskEntry({ type: "custom", customType: "other.task", data: { v: 1, kind: "todo" } }),
+		undefined,
+		"customType 不匹配",
+	);
+	assert.equal(
+		readTaskEntry({ type: "custom", customType: "lnkpi.task", data: { v: 2, kind: "todo" } }),
+		undefined,
+		"v≠1 忽略（向前兼容）",
+	);
+	assert.equal(
+		readTaskEntry({ type: "custom", customType: "lnkpi.task", data: { v: 1, kind: "bogus" } }),
+		undefined,
+		"kind 非法",
+	);
+	const ok = readTaskEntry(customEntry({ v: 1, kind: "todo", snapshot: [item("a", "x")] }));
+	assert.ok(ok, "合法条目命中");
+	assert.equal(ok!.kind, "todo");
+});
+
+test("B-2 pickLatestSnapshot: 一等源命中——custom entry 反扫胜出", () => {
+	const entries = [
+		fallbackEntry("todo_write", [item("old", "旧")]),
+		customEntry({ v: 1, kind: "todo", snapshot: [item("n1", "新1"), item("n2", "新2")] }),
+	];
+	assert.deepEqual(pickLatestSnapshot(entries), [
+		{ id: "n1", content: "新1", status: "pending" },
+		{ id: "n2", content: "新2", status: "pending" },
+	]);
+});
+
+test("B-2 pickLatestSnapshot: fallback 兼容——无 custom entry 时三层防御形态原样工作", () => {
+	// 顶层形态
+	assert.deepEqual(pickLatestSnapshot([fallbackEntry("todo_write", [item("a", "A")])]), [
+		{ id: "a", content: "A", status: "pending" },
+	]);
+	// message 包裹层（2026-10-09 生产 probe 形态）
+	assert.deepEqual(pickLatestSnapshot([fallbackEntry("todo_write", [item("a", "A")], true)]), [
+		{ id: "a", content: "A", status: "pending" },
+	]);
+	// propose_plan P0 兜底（details.plan.steps）
+	const planEntry = { toolName: "propose_plan", details: { plan: { steps: [item("p", "P")] } } };
+	assert.deepEqual(pickLatestSnapshot([planEntry]), [{ id: "p", content: "P", status: "pending" }]);
+	// status 收敛：非法值归 pending
+	assert.equal(pickLatestSnapshot([fallbackEntry("todo_write", [{ id: "x", content: "X", status: "bogus" }])])[0].status, "pending");
+});
+
+test("B-2 pickLatestSnapshot: 最新胜出——fallback 在 custom 之后 ⇒ fallback 赢", () => {
+	const entries = [
+		customEntry({ v: 1, kind: "todo", snapshot: [item("c", "custom侧")] }),
+		fallbackEntry("todo_write", [item("f", "fallback侧")]),
+	];
+	assert.deepEqual(pickLatestSnapshot(entries), [{ id: "f", content: "fallback侧", status: "pending" }]);
+});
+
+test("B-2 pickLatestSnapshot: 双轨一致不打 mismatch，不一致打点（观测层人工裁决）", () => {
+	const same = [
+		customEntry({ v: 1, kind: "todo", snapshot: [item("a", "同")] }),
+		fallbackEntry("todo_write", [item("a", "同")]),
+	];
+	let calls = 0;
+	pickLatestSnapshot(same, { onMismatch: () => calls++ });
+	assert.equal(calls, 0, "一致不打点");
+
+	const diff = [
+		customEntry({ v: 1, kind: "todo", snapshot: [item("a", "甲")] }),
+		fallbackEntry("todo_write", [item("a", "乙")]),
+	];
+	pickLatestSnapshot(diff, { onMismatch: () => calls++ });
+	assert.equal(calls, 1, "不一致打点一次");
+});
+
+test("B-2 compaction 存活（验收锚 1）：compaction entry 前后的 custom 条目反扫一致", () => {
+	// compaction 后视图会丢 cut 前 entry，但 ledger（findEntries）全保留——
+	// 重建读 ledger：compaction entry（无 snapshot 字段）天然 skip，cut 前 custom 仍命中。
+	const ledger = [
+		customEntry({ v: 1, kind: "todo", snapshot: [item("pre", "压缩前")] }),
+		{ type: "compaction", summary: "...", retainedTail: [] },
+		customEntry({ v: 1, kind: "todo", snapshot: [item("post", "压缩后")] }),
+	];
+	assert.deepEqual(pickLatestSnapshot(ledger), [{ id: "post", content: "压缩后", status: "pending" }]);
+	// 压缩后无新写入：cut 前（压缩前）最新条目仍可重建
+	const ledger2 = [
+		customEntry({ v: 1, kind: "todo", snapshot: [item("pre", "压缩前")] }),
+		{ type: "compaction", summary: "...", retainedTail: [] },
+	];
+	assert.deepEqual(pickLatestSnapshot(ledger2), [{ id: "pre", content: "压缩前", status: "pending" }]);
+});
+
+test("B-2 kind=plan 无 snapshot 的 entry 不抢 snapshot 源（P1-2 兜底语义不变）", () => {
+	const entries = [
+		{ toolName: "todo_write", details: { todo: { snapshot: [item("t", "真清单")] } } },
+		customEntry({ v: 1, kind: "plan", decision: "keep" }), // 无 snapshot
+	];
+	assert.deepEqual(pickLatestSnapshot(entries), [{ id: "t", content: "真清单", status: "pending" }]);
+});
