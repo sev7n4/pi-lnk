@@ -156,5 +156,21 @@
 ## 8. 已确认决策与待办
 
 1. ~~阶段 A 是否与文本断裂刀（T1）/P2（P2a）同批立项~~ → **已拍板（2026-11-15 22:15 对抗复审）**：P3-A 独立成刀，纯前端与后端定价刀不混批，风险面隔离。
-2. 阶段 B 三张高级页的「逃生口」是否接受丢失（运营如需改非 model scope 利润率/原始 CostRate 细分字段，需临时恢复页面）——**仍需运营确认**，B 阶段开工前完成。
+2. ~~阶段 B 三张高级页的「逃生口」是否接受丢失~~ → **已拍板（2026-11-16）**：运营答复「没用过。后续运营直接用新的页面（定价中心）即可。原来的下线。」⇒ 阶段 B 前置全绿并已实施（见 §9）。
 3. 收敛后菜单 6 项的文案定稿。
+
+---
+
+## 9. 状态回填（只追加，2026-11-16）
+
+**阶段 A 已上线并走查稳定**：P3-A 合入 `c86b1dbe`（PR #904），生产浏览器级走查 11/11 PASS（token 门 → 定价中心 → 草案 → diff 预览 → 发布弹窗含公告开关默认关 → 回滚弹窗），API 级 diff/发布/回滚全链复测通过。
+
+**阶段 B 已实施并上线**（PR #928，squash `9fa03b5`）：
+
+- **改动**：删 `AdminPricingSubjectsPage.vue` / `AdminCostRatesPage.vue` / `AdminMarginPoliciesPage.vue` 三页 + 三条路由；`AdminLayoutPage.vue` 删三菜单项、发布流/灰度菜单**注释保留**（隐藏但留源码，取消注释即恢复）；hub 改两处文案（发布入口指向已上收至本页的发布面板）、灰度页改一处引导文案（指向「定价中心」生成草案）。
+- **菜单 12→7**：模型目录·上游路由·健康探活·定价中心·平台渠道定价·审计日志·使用说明。⚠️ §2.1 G1 的「6 项」是 A+B+C **全链终态**（「平台渠道定价」属阶段 C 删除范围）——阶段 B 单独达成 7 项，C 完成后达 6 项。
+- **接线守卫（§4.2 落地）**：新增 `apps/web/src/pages/admin/admin-pricing-pages.guard.test.ts`——8 个后端定价 controller + `admin-api.ts` 三能力组 23 个关键方法全在 + 三页已删 + 三路由已删 + 发布流/灰度仍在。**变异自检 2/2 RED**（改 `pricingGray.promote` → 方法组 RED；移走 `pricing-margin.controller.ts` → controller RED）。
+- **验证**：CI 全量 **web 4321 / server 2990 / shared 697 / agent 385 = 8393 用例 0 失败**（web 512 文件全绿）；`vue-tsc -b` 0 错；残留引用扫描前端零残留。生产走查 **12/12 PASS**（侧栏 7 项、三页 URL 不可达、发布流页 URL 仍直达、hub 发布面板四能力在位）。产物判据：`AdminLayoutPage-*.js` 含 7 项菜单文案、零「原始数据：主体/成本/利润」与「价目发布流/灰度发布」。
+- **实施计划**：`docs/superpowers/plans/2026-11-16-p3b-admin-page-convergence.md`。
+
+**阶段 C 未启动**：硬前置「会话成本来源取证全部为 CostRate」尚未成立——`PI_SESSION_COST_SOURCE=cost_rate` 已于 2026-11-16 13:15 切换，但切换后 7h 内生产无真实 pi 会话 usage 累计（`pi_runtime_usage_cost_total` 无序列行），取证待真实流量产生后另行进行。
