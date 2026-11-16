@@ -34,7 +34,10 @@ import {
 	JsonlSessionRepo,
 	withCancel,
 	compact,
+	formatSkillInvocation,
+	formatSkillsForSystemPrompt,
 } from "@earendil-works/pi-agent-core";
+import { buildSkillResources } from "./skills/resources.js";
 import { withTelemetryContext } from "@earendil-works/pi-agent-core/harness/context";
 import { NodeExecutionEnv } from "@earendil-works/pi-agent-core/node";
 import {
@@ -592,9 +595,11 @@ interface SessionEntry {
 	droppedFromSeq: number;
 	/** 本轮已广播的 activity 步数（turn_start 归零），供 `activity.done` 使用。 */
 	activityStep: number;
-	/** create 时确定的静态段（规则 + skills index），会话期内不再变更。 */
+	/** create 时确定的静态段（base 规则段）。skills index 与 <tool_guidelines> 不再固化在
+	 *  这里：M0 起二者在 composeEntryAndObserve 每轮装配（index 随 harness.getResources()
+	 *  求值，§7.3-4 / U-8），B-3 顺序 index→guidelines 恒定。 */
 	staticPrompt: string;
-	/** 未装饰的 base prompt（不含 skills index / 延迟工具索引块）。fork 复用必须传它
+	/** 未装饰的 base prompt（不含 skills index / 工具引导段）。fork 复用必须传它
 	 *  而非 staticPrompt，否则 composeSystemPrompt 会把装饰块拼两份（评审 finding 1）。 */
 	basePrompt: string;
 	/** 会话身份（BYOK provider 哈希），用于 create 时判定是否需重建。 */
@@ -704,25 +709,6 @@ export type HarnessFactory = typeof AgentHarness.create;
 export interface SessionHooks {
 	onSessionCreated?(sessionId: string, harness: AgentHarness<LnkpiToolContext>): void;
 	onPrompt?(sessionId: string): void;
-}
-
-/** 可观测性专项 ④：显性 skill 调用——把 skill 正文作为指令前缀注入 prompt 文本。 */
-export function withForcedSkills(
-	text: string,
-	forceSkills: string[] | undefined,
-	resolveBody: (name: string) => string | undefined,
-): string {
-	if (!forceSkills || forceSkills.length === 0) return text;
-	const parts: string[] = [];
-	for (const name of forceSkills) {
-		const body = resolveBody(name);
-		parts.push(
-			body
-				? `[用户显式调用 skill: ${name}]\n请严格按以下指导执行：\n\n${body}`
-				: `[用户显式调用了未安装的 skill: ${name}；先告知用户该技能不存在，再按其原意尽力完成]`,
-		);
-	}
-	return `${parts.join("\n\n")}\n\n---\n用户请求：${text}`;
 }
 
 /** 每轮易变上下文（spec §5.3 T 层）：由 Nest 随 prompt 携带，不进对话历史。 */
@@ -1397,10 +1383,9 @@ export class SessionManager {
 			// ⚠️ base 必须回落到构造时的 systemPromptDefault：`POST /sessions` 的 systemPrompt 是可选
 			// 字段（app.ts:113），传空串 / 不传时这里**不能**退化成「没有 base prompt」——
 			// 否则默认系统提示被整段顶替掉（生产上表现为 agent 没有任何基础人设，只剩裸动态段）。
-			// 插话显化不再靠 system prompt（见文件顶部的取消说明），故这里是纯 base，无 guidance 段。
-			staticPrompt: this.composeSystemPrompt(
-				opts.systemPrompt || this.systemPromptDefault,
-			),
+			// M0（§7.3-4）：staticPrompt 只承载 base 规则段；skills index 与 <tool_guidelines>
+			// 在 composeEntryAndObserve 每轮装配（index 随 harness.getResources() 求值）。
+			staticPrompt: opts.systemPrompt || this.systemPromptDefault,
 			basePrompt: opts.systemPrompt ?? "",
 			identity,
 			userId: opts.userId,
@@ -1478,6 +1463,13 @@ export class SessionManager {
 				// 不变）；tiering off → registered=全量、activeToolNames=全量（逐字节现状）。
 				tools: toolEnsemble.registered,
 				activeToolNames: toolEnsemble.activeToolNames,
+				// M0 W1（规格 §7.3 / U-7/U-11）：resources 唯一注入点 —— build() 收敛
+				// created/rebuilt/resume/fork 四条路径；resources 是 harness 内存 config
+				// **不落盘**（探针 RESUME_RESOURCES_PERSISTED=false），故每次 create 必须
+				// 显式重注入，禁止依赖 setResources 做持久化。禁自建 index/正文通道（§4.8）。
+				resources: buildSkillResources(this.skills?.entries ?? [], (name) =>
+					this.skills?.loadBody(name),
+				),
 				// 函数形态（spec §5.3/§5.4）：harness 在每次 LLM 调用前求值，读到的是最新 turn。
 				// ⚠️ `sessionId` 语义 = **画布会话 id**（Nest 用它查库），不是 pi 会话键 `key`。
 				// 取值优先级：本轮/建会话时传入的 canvasSessionId → 会话内已存值 → 回落 pi 会话键
@@ -2578,11 +2570,8 @@ export class SessionManager {
 	}
 
 	/** 测试观测口：按会话当前 turn 求值 systemPrompt（与 harness 内部同一组合函数）。 */
-	resolveSystemPromptForTest(threadKey: string): string {
-		const entry = this.require(threadKey);
-		const sp = composeSystemPrompt(entry.staticPrompt, this.assembleDynamicBlocks(entry), this.dynamicBudgetOption());
-		this.metrics?.observeSystemPromptBytes(Buffer.byteLength(sp, "utf8")); // M2：utf8 字节（名字是 bytes，UTF-16 length 会低估 CJK 2~3x）
-		return sp;
+	async resolveSystemPromptForTest(threadKey: string): Promise<string> {
+		return this.composeEntryAndObserve(this.require(threadKey));
 	}
 
 	/** T3 预算选项：off（或未配）返回 undefined = 逐字节回退旧行为；on 时挂 metrics 回调。 */
@@ -2613,11 +2602,36 @@ export class SessionManager {
 	}
 
 	/** 组装 systemPrompt 并上报 bytes 水位（T3 观测）。闭包捕获 entry 而非 require(threadKey)：
-	 * harness 可能在会话注册进 this.sessions 之前就调用此闭包（create/fork 时序），require 会炸。 */
-	private composeEntryAndObserve(entry: SessionEntry): string {
-		const sp = composeSystemPrompt(entry.staticPrompt, this.assembleDynamicBlocks(entry), this.dynamicBudgetOption());
+	 * harness 可能在会话注册进 this.sessions 之前就调用此闭包（create/fork 时序），require 会炸。
+	 *
+	 * M0 W2（§7.3-4 / M0-P8，U-8）：skills index **每轮**从 `harness.getResources()` 求值
+	 * （上游 `formatSkillsForSystemPrompt`：空集→""、hidden 过滤、XML 转义全由上游负责），
+	 * 不假设 resources 自动进 systemPrompt。vendor `resolveSystemPrompt` 原生 await 本闭包
+	 * （generation.js:18-27，签名 `string | Promise<string>`）。
+	 * B-3 顺序恒定：index → <tool_guidelines>；二者是静态语义段，**不进 dynamic-budget**
+	 * （未识别块按 general 份额 0 截到 80 字保底 —— 静态段截断=静默丢能力）。
+	 * 无 skills 时 index 为空串 ⇒ appendPromptBlocks 过滤 ⇒ 输出与既有行为逐字节一致。 */
+	private async composeEntryAndObserve(entry: SessionEntry): Promise<string> {
+		const index = await this.assembleSkillIndexBlock(entry);
+		const staticPart = appendPromptBlocks(entry.staticPrompt, [
+			index,
+			renderToolGuidelinesBlock(this.getToolEnsemble().registered),
+		]);
+		const sp = composeSystemPrompt(staticPart, this.assembleDynamicBlocks(entry), this.dynamicBudgetOption());
 		this.metrics?.observeSystemPromptBytes(Buffer.byteLength(sp, "utf8")); // M2：utf8 字节（名字是 bytes，UTF-16 length 会低估 CJK 2~3x）
 		return sp;
+	}
+
+	/** M0 W2：skills index 块 = 上游 formatter(getResources().skills ?? [])。fail-soft：
+	 * getResources 异常只 warn 不阻断会话（对齐 journal open 的取舍），但必须留痕可观测。 */
+	private async assembleSkillIndexBlock(entry: SessionEntry): Promise<string> {
+		try {
+			const resources = await entry.harness.getResources(this.context);
+			return formatSkillsForSystemPrompt(resources.skills ?? []);
+		} catch (err) {
+			console.warn(`[pi-runtime] skills index assemble failed: ${err instanceof Error ? err.message : String(err)}`);
+			return "";
+		}
 	}
 
 	/**
@@ -2645,9 +2659,6 @@ export class SessionManager {
 		entry.lastProgressAt = Date.now();
 		if (opts?.turnContext) this.setTurnContext(threadKey, opts.turnContext);
 		try {
-			const effectiveText = withForcedSkills(text, opts?.forceSkills, (name) =>
-				this.skills?.loadBody(name),
-			);
 			this.hooks?.onPrompt?.(entry.id);
 			entry.lastActivityAt = Date.now();
 			// 每个 run 一个可取消的子 context：用户点「停止」时 abort 这一条链路。
@@ -2664,8 +2675,33 @@ export class SessionManager {
 				const tokensEst = (opts?.images ?? []).reduce((acc, img) => acc + estimateImageTokens(img.data ?? ""), 0);
 				this.metrics?.observeDirectImage("sent", tokensEst);
 			}
-			void lane
-				.prompt(effectiveText, directImages, run.context)
+			// M0 W3（§7.3 / U-7/U-8）：forceSkills 显式调用收敛到上游 `lane.skill()`——
+			// 正文块由上游 `formatSkillInvocation` 组装，不再走宿主自研装饰与 fail-soft 文案。
+			// 未知名 fail-closed：`InvalidInputError`（路由 400），取代旧的「告知不存在再尽力完成」
+			// （admission 未通过 ⇒ 零消息注入，与上游 UnknownSkill 硬拒语义一致）。
+			// 多技能：首个走 lane.skill 的 name，其余以上游 formatter 块并入 additionalInstructions。
+			// ⚠️ 带图例外：`lane.skill` 无 images 参数（vendor lane.js:884 签名）⇒ 带 directImages
+			// 时回落 `lane.prompt`，正文仍由上游 formatter 组装（不做宿主装饰）。
+			let skillInvocation: { name: string; instructions: string } | undefined;
+			const forced = opts?.forceSkills ?? [];
+			if (forced.length > 0) {
+				const resources = await entry.harness.getResources(this.context);
+				const byName = new Map((resources.skills ?? []).map((s) => [s.name, s] as const));
+				const missing = forced.filter((n) => !byName.has(n));
+				if (missing.length > 0) throw new InvalidInputError(`unknown skill: ${missing.join(", ")}`);
+				const blocks = forced.map((n) => formatSkillInvocation(byName.get(n)!, undefined));
+				if (directImages) {
+					console.warn(`[pi-runtime] forceSkills with direct images: falling back to lane.prompt (${forced.join(",")})`);
+					text = [...blocks, text].join("\n\n");
+				} else {
+					skillInvocation = { name: forced[0], instructions: [...blocks.slice(1), text].join("\n\n") };
+				}
+			}
+			const runRequest =
+				skillInvocation !== undefined
+					? lane.skill(skillInvocation.name, skillInvocation.instructions, run.context)
+					: lane.prompt(text, directImages, run.context);
+			void runRequest
 				.then((result) => {
 					if (!result.ok) {
 						// 1.5-a：主路径失败也进指标（此前只发 SSE、零指标）。
@@ -3502,18 +3538,6 @@ export class SessionManager {
 		if (!entry) throw new NotFoundError(threadKey);
 		return entry;
 	}
-/** D-η'：base 为空回退默认 prompt；skills index 块常驻尾部（无 skills 时原样返回）。 */
-	private composeSystemPrompt(base?: string): string {
-		const prompt = base || this.systemPromptDefault;
-		const index = this.skills?.indexBlock ?? "";
-		// 官方模式：不再注入延迟工具索引块（名单会诱使弱模型直调未激活工具；
-		// 发现能力由 tool_search 搜索语义承担，见 tools/tiering.ts 头注释）。
-		// B-3：`<tool_guidelines>` 段静态渲染（registered 全集，D-1），固定排在
-		// skills index 之后（§2.2：两块拼接顺序恒定，避免互扰缓存指纹）。
-		const guidelines = renderToolGuidelinesBlock(this.getToolEnsemble().registered);
-		return appendPromptBlocks(prompt, [index, guidelines]);
-	}
-
 /** 工具分层（审计 P0-④，懒计算一次）：官方模式两件套 registered / activeToolNames。 */
 	private toolEnsemble?: ReturnType<typeof buildToolEnsemble>;
 	private getToolEnsemble(): ReturnType<typeof buildToolEnsemble> {
