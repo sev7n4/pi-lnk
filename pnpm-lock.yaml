@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   '@earendil-works/pi-agent-core@0.99.2':
-    hash: chjyb3jtnudd5ho3imavxe5pae
+    hash: hj2bqmavansfllo42jhz3xmzza
     path: patches/@earendil-works__pi-agent-core@0.99.2.patch
   '@earendil-works/pi-ai@0.99.2':
     hash: as34dhfqajjtscd35aekpw4equ
@@ -34,6 +34,9 @@ importers:
       '@aws-sdk/s3-request-presigner':
         specifier: ^3.1131.0
         version: 3.1131.0
+      '@earendil-works/pi-agent-core':
+        specifier: 0.99.2
+        version: 0.99.2(patch_hash=hj2bqmavansfllo42jhz3xmzza)(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(undici@7.28.0)(ws@8.21.3)(zod@3.25.76)
       '@lnkpi/agent':
         specifier: workspace:*
         version: link:../../packages/agent
@@ -79,6 +82,9 @@ importers:
       sharp:
         specifier: ^0.33.5
         version: 0.33.5
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
       zod:
         specifier: ^3.23.8
         version: 3.25.76
@@ -296,7 +302,7 @@ importers:
     dependencies:
       '@earendil-works/pi-agent-core':
         specifier: 0.99.2
-        version: 0.99.2(patch_hash=chjyb3jtnudd5ho3imavxe5pae)(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(undici@7.28.0)(ws@8.21.3)(zod@3.25.76)
+        version: 0.99.2(patch_hash=hj2bqmavansfllo42jhz3xmzza)(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(undici@7.28.0)(ws@8.21.3)(zod@3.25.76)
       '@earendil-works/pi-ai':
         specifier: 0.99.2
         version: 0.99.2(patch_hash=as34dhfqajjtscd35aekpw4equ)(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(undici@7.28.0)(ws@8.21.3)(zod@3.25.76)
@@ -5221,7 +5227,7 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-agent-core@0.99.2(patch_hash=chjyb3jtnudd5ho3imavxe5pae)(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(undici@7.28.0)(ws@8.21.3)(zod@3.25.76)':
+  '@earendil-works/pi-agent-core@0.99.2(patch_hash=hj2bqmavansfllo42jhz3xmzza)(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(undici@7.28.0)(ws@8.21.3)(zod@3.25.76)':
     dependencies:
       '@earendil-works/chord': 0.99.2
       '@earendil-works/pi-ai': 0.99.2(patch_hash=as34dhfqajjtscd35aekpw4equ)(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(undici@7.28.0)(ws@8.21.3)(zod@3.25.76)
