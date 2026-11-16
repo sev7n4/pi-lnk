@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import { adminApi, AdminApiError, type CollectRunReport, type CostRecordRow, type CostRecordTier, type MaterializeResult } from '@/services/admin-api'
+import { computed, h, onMounted, reactive, ref } from 'vue'
+import { ElMessage, ElMessageBox, ElSwitch } from 'element-plus'
+import { adminApi, AdminApiError, type AdminDiffSummary, type CollectRunReport, type CostRecordRow, type CostRecordTier, type MaterializeResult } from '@/services/admin-api'
 
 /**
  * 定价中心（spec: docs/design/2026-11-15-pricing-console-redesign.md）：
@@ -25,6 +25,15 @@ const selectedTier = ref('')
 const refreshing = ref(false)
 const lastMaterialize = ref<MaterializeResult | null>(null)
 const lastReadinessOk = ref<boolean | null>(null)
+
+// P3-A 发布面板（spec 2026-11-15-p3-admin-page-consolidation 阶段 A）：
+// hub 上收 diff 预览 / publish（公告开关）/ rollback 三能力，纯增量零删除；
+// currentDraftId 由 refreshPricing 成功路径赋值（失败/异常不清空——旧 draft 仍在服务端）。
+const currentDraftId = ref<string | null>(null)
+const hubDiff = ref<AdminDiffSummary | null>(null)
+const diffLoading = ref(false)
+const publishing = ref(false)
+const rollingBack = ref(false)
 
 // 同步上游价目（成本自动采集，两段式：dryRun 预览 → 确认落库）
 const syncing = ref(false)
@@ -184,6 +193,7 @@ async function refreshPricing(): Promise<void> {
     }
     const mat = await adminApi.pricingS1.materializeDraft(draftId)
     lastMaterialize.value = mat
+    currentDraftId.value = draftId
     try {
       const r = await adminApi.pricingS1.getReadiness(draftId)
       lastReadinessOk.value = r.ok
@@ -227,9 +237,110 @@ async function syncApply(): Promise<void> {
   }
 }
 
+/** P3-A：影响面预览（对 currentDraftId；无草案早退）。 */
+async function loadDiff(): Promise<void> {
+  if (!currentDraftId.value) return
+  diffLoading.value = true
+  actionError.value = ''
+  try {
+    hubDiff.value = await adminApi.pricingVersions.diff(currentDraftId.value)
+  } catch (err) {
+    actionError.value = errMsg(err, 'diff 加载失败')
+  } finally {
+    diffLoading.value = false
+  }
+}
+
+/**
+ * P3-A：hub 发布（与发布流页 publish 同语义复制；差异点：draft 源 = currentDraftId，
+ * 成功后置空 draft + 门禁结果失效 + reload）。notifyUsers 默认 false，弹窗内开关显式勾选才推公告。
+ */
+async function publishFromHub(): Promise<void> {
+  if (!currentDraftId.value) return
+  actionError.value = ''
+  // 发布前强制拉取 diff：确认弹窗中展示最大涨幅 + 门禁违规提示（避免只看到涨跌漏门禁原因）
+  if (!hubDiff.value) await loadDiff()
+  const d = hubDiff.value
+  if (!d) return
+  const inc = d.maxIncrease
+  const incText = inc
+    ? `最大涨幅：${inc.matchKey} ${inc.from} → ${inc.to}（+${(inc.pct * 100).toFixed(1)}%）`
+    : '无条目上调'
+  const violationText =
+    d.floorViolations.length > 0 || d.missingCost.length > 0
+      ? `⚠ 门禁未过：地板违规 ${d.floorViolations.length} 条 / 成本缺失 ${d.missingCost.length} 条`
+      : ''
+  const box = reactive({ notifyUsers: false })
+  const previewText =
+    d.increaseCount > 0 || d.decreaseCount > 0 || d.newCount > 0
+      ? `涨价 ${d.increaseCount} 档 / 降价 ${d.decreaseCount} 档 / 新增 ${d.newCount} 档`
+      : '无用户可感知的 credit 变化'
+  const message = h('div', null, [
+    h('p', null, `确认发布 ${d.draftVersion} 为 active？${incText}`),
+    violationText ? h('p', { style: 'color:var(--el-color-danger);font-size:13px;' }, violationText) : null,
+    h(
+      'div',
+      { style: 'display:flex;align-items:center;gap:10px;margin-top:10px;' },
+      [
+        h(ElSwitch, {
+          modelValue: box.notifyUsers,
+          'onUpdate:modelValue': (v: string | number | boolean) => (box.notifyUsers = v === true),
+        }),
+        h('span', { style: 'font-size:13px;' }, `推送调价公告给用户（${previewText}）`),
+      ],
+    ),
+  ])
+  try {
+    await ElMessageBox.confirm(message, '发布确认', {
+      type: 'warning',
+      confirmButtonText: '发布',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  publishing.value = true
+  try {
+    const { version } = await adminApi.pricingVersions.publish(currentDraftId.value, box.notifyUsers)
+    ElMessage.success(box.notifyUsers ? `已发布 ${version}，公告已推送` : `已发布 ${version}（未推送公告）`)
+    currentDraftId.value = null
+    hubDiff.value = null
+    lastReadinessOk.value = null
+    await reload(true)
+  } catch (err) {
+    actionError.value = errMsg(err, '发布失败')
+  } finally {
+    publishing.value = false
+  }
+}
+
+/** P3-A：回滚当前 active（全局操作，不依赖 draft；与发布流页 rollback 同文案）。 */
+async function rollbackFromHub(): Promise<void> {
+  actionError.value = ''
+  try {
+    await ElMessageBox.confirm('回滚会把当前 active 换成最近一个已发布版本，确认回滚？', '回滚确认', {
+      type: 'warning',
+      confirmButtonText: '回滚',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  rollingBack.value = true
+  try {
+    const { version } = await adminApi.pricingVersions.rollback()
+    ElMessage.success(`已回滚到 ${version}`)
+    await reload(true)
+  } catch (err) {
+    actionError.value = errMsg(err, '回滚失败')
+  } finally {
+    rollingBack.value = false
+  }
+}
+
 onMounted(() => reload(false))
 
-defineExpose({ reload, saveRecord, refreshPricing, syncPreviewRun, syncApply, syncPreview, syncDialogVisible, records, selectedKey, tierValues, profitPctValue, lastMaterialize, actionError })
+defineExpose({ reload, saveRecord, refreshPricing, syncPreviewRun, syncApply, syncPreview, syncDialogVisible, records, selectedKey, tierValues, profitPctValue, lastMaterialize, actionError, currentDraftId, hubDiff, loadDiff, publishFromHub, rollbackFromHub })
 </script>
 
 <template>
@@ -242,6 +353,33 @@ defineExpose({ reload, saveRecord, refreshPricing, syncPreviewRun, syncApply, sy
       <el-button type="primary" :loading="refreshing" @click="refreshPricing">生成价目表</el-button>
       <router-link to="/admin/pricing-versions" class="text-sm text-accent">价目表（只读）→</router-link>
     </header>
+
+    <!-- P3-A 发布面板：上收 diff/发布/回滚（发布流页保留作回滚逃生口，零删除） -->
+    <div class="mt-3 rounded border border-line-subtle bg-surface-base p-3">
+      <div class="flex flex-wrap items-center gap-3">
+        <span class="text-sm font-semibold text-fg">发布</span>
+        <span class="text-xs" :class="currentDraftId ? 'text-warning' : 'text-fg-3'">
+          {{ currentDraftId ? '草案已生成、待发布' : '无草案——先点「生成价目表」出价' }}
+        </span>
+        <el-button size="small" :loading="diffLoading" :disabled="!currentDraftId" @click="loadDiff">影响面预览</el-button>
+        <el-button size="small" type="primary" :loading="publishing" :disabled="!currentDraftId" @click="publishFromHub">发布</el-button>
+        <el-button size="small" type="danger" plain :loading="rollingBack" @click="rollbackFromHub">回滚当前 active</el-button>
+      </div>
+      <div v-if="hubDiff" class="mt-2 text-xs">
+        <span class="text-fg-2">
+          草案 {{ hubDiff.draftVersion }} 对比 active {{ hubDiff.activeVersion ?? '—' }}：
+          涨价 {{ hubDiff.increaseCount }} 档 / 降价 {{ hubDiff.decreaseCount }} 档 / 新增 {{ hubDiff.newCount }} 档
+          （条目 {{ hubDiff.added + hubDiff.changed + hubDiff.unchanged }}）
+        </span>
+        <span v-if="hubDiff.maxIncrease" class="ml-2 text-warning">
+          最大涨幅 {{ hubDiff.maxIncrease.matchKey }}：{{ hubDiff.maxIncrease.from }} → {{ hubDiff.maxIncrease.to }}
+        </span>
+        <div v-if="hubDiff.floorViolations.length > 0" class="mt-1 text-danger">
+          地板违规 {{ hubDiff.floorViolations.length }} 条：{{ hubDiff.floorViolations.map((v) => `${v.matchKey} credits=${v.credits} ${v.kind === 'min' ? 'floor' : 'ceiling'}=${v.limit}`).join('；') }}
+        </div>
+        <div v-if="hubDiff.missingCost.length > 0" class="mt-1 text-danger">成本费率缺失：{{ hubDiff.missingCost.join('、') }}</div>
+      </div>
+    </div>
 
     <!-- 同步上游价目：dryRun 预览 → 人工确认才落库（两段式，D4） -->
     <el-dialog v-model="syncDialogVisible" title="同步上游价目（预览）" width="720px">
