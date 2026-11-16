@@ -66,3 +66,46 @@
 ## 7. 诚实边界
 
 M1 全绿 **不得**表述为「已复刻 WorkBuddy 技能系统」或「生态兼容完成」；产出北极星在 M2（四类真实社区 skill 端到端画布产出）；Won't 四类（P16–P19）永久偏离。M1 完成口径 = §10.4 的 M1-A1–A11 全通过 + M1-N1–N13 可转红 + v1 §4.7 Must 无判据空项。
+
+---
+
+## 8. M1-1 实施记录（2026-11-16）
+
+### 8.1 两条实施期裁决（对规格/上游的显式修正，回填本计划）
+
+1. **contentHash 公式勘误（对 v1 §4.3）**：`contentHash = sha256(\`v1:${skill}:${body.trimEnd()}\`)`，不再纯 body。
+   理由：contentHash 是 `SkillPackage` 主键，必须含技能身份——纯 body 公式下「不同技能名、相同正文」哈希碰撞
+   （PK 冲突 + 错误复用包行，集成测试 A8/A9 首跑实证）。保留判据性质：正文改一字 ⇒ hash 变（M1-A4）；同名同正文幂等。
+2. **vendor ESM 消费（对 v2 §8「委托上游 loadSkills」的落地方式）**：生产 Nest 是纯 CJS 运行时
+   （Dockerfile 把 workspace 包统一转 CJS 后 tsc 产出 dist），vendor `pi-agent-core@0.99.2` 是 ESM-only
+   且 exports map 无 require 条件 ⇒ 直 require 报 `ERR_PACKAGE_PATH_NOT_EXPORTED`。
+   处置：扩展既有 pnpm patch（`patches/@earendil-works__pi-agent-core@0.99.2.patch`），给 exports
+   根入口与 `./dist/*` 加 `require`/`default` 条件，Node ≥22.12 require(esm) 加载（生产 lnkpi-api
+   实测 node v22.23.5；`@lnkpi/agent|shared` 同为 ESM 先例）。解析仍全权委托上游 `loadSkills` +
+   `NodeExecutionEnv`（临时目录范式），平台只补「name 缺失拒绝」（上游会按目录名派生 name，
+   对查找键不可接受）与白名单校验。
+
+### 8.2 交付清单
+
+- `prisma/schema.prisma`：`SkillPackage` / `SkillCatalog` / `UserInstalledSkill` 三表 + migration `20261116160000_skills_control_plane`。
+- `apps/server/src/skills/`：`skills-parse.ts`（上游 loadSkills 委托 + hash）/ `skills-pure.ts`（六纯函数）/ `skills.service.ts` / `skills.controller.ts`（十端点）/ `skills.module.ts`。
+- `apps/server/package.json`：+`@earendil-works/pi-agent-core@0.99.2`、+`yaml@2.9.0`（与 vendor 同 pin）。
+- 测试：`skills-pure.test.ts` 28 例 + `skills.controller.sqlite.integration.test.ts` 9 例（M1-A1/A3/A4/A6/A8/A9/A10 服务端行为级）。
+- 门禁：server 全量 2968/2968；tsc 干净；CJS dist 构建冒烟（require(esm) 实跑解析成功）；变异 3/3 转红（N2 跨用户 / A8 confirmed / N5 注入规则短路）。
+
+### 8.3 M1-2 实施记录（2026-11-16，runtime 通道）
+
+**交付**（`services/pi-runtime/**`，手工 dispatch `runtime-deploy`）：
+
+- `skills/inject.ts`（新建）：`IncomingSkill`（上游 `Skill` 子集：name/description/content/filePath?/disableModelInvocation?）+ `parseIncomingResources`（畸形逐条 400：缺 name/description/content、重复名、超 24 条、content 超 64KB）+ `mergeSkillResources`（Map 按 name 去重，内置先入保序、传入后入覆盖同名——用户显式安装优先；覆盖项保持内置索引位置）+ `user-skills.json` sidecar 读写（U-11 两层持久化的磁盘侧）。
+- `session-manager.ts`：`CreateOptions.resources` 透传；`build()` 统一解析（create 带 resources ⇒ 采信+落 sidecar；resume/重建不带 ⇒ 读 sidecar 恢复——重启后 Nest 不会重发 payload，磁盘是唯一恢复源）；resources 注入点改为 `mergeSkillResources(builtinSkillList(), userSkills)`；新方法 `setUserResources`（全量换集 U-6，busy/compacting 拒绝与 prompt 同口径，先换内存集再落盘——磁盘落后一拍可接受、反向不可）。
+- `app.ts`：create body `resources`（缺省=resume 读 sidecar 语义；提供=全量换集）；新内部端点 `POST /sessions/:sessionId/resources`（body `resources` 必填，`{}`=显式清空；404/409/400/503 映射）。
+- `metrics.ts`：`pi_runtime_user_skills_swap_total{outcome=ok|busy|error}`。
+
+**验证**：
+
+- pi-runtime 全量 **2086/2086**（master 2052 + 新增 34：inject 15 + manager 8 + 路由 5 + okFactory 既有）；tsc 干净。
+- 行为级：A2 前置（create 注入含传入 Skill 且 content 逐字不 trim）/ 契约 2（同名覆盖：用户版替换内置行、不追加）/ U-11（新 manager 磁盘 resume 恢复用户技能集；负例=无 resources 仅内置）/ A11 前置（setUserResources 全量换集新名入旧名出 + sidecar 更新）/ busy 拒绝（manager 级含 metrics busy + 路由级 409 不触碰 harness）/ 显式空集清空（保留内置）。
+- 变异 3/3 转红：合并优先级反转（1 红）/ 去 busy 检查（2 红）/ resume 不读 sidecar（1 红）；恢复后 76/76。
+
+**吃满上游的落点**：形状=`Skill`/`Resources`/`setResources(resources, context)` 全部上游原语，宿主只做校验+合并+sidecar；解析/索引/显式调用/未知名拒绝零重写（§4.8）。Nest 侧 `buildSkillResources(userId)` 组装属 M1-2 的 Nest 半刀（本刀只铺 runtime 受端；Nest→runtime 调用方接线随 M1-3 web 双面刀一并评估——届时 Nest 发起方才有真实调用场景，避免空转接线）。
