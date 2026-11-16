@@ -103,3 +103,26 @@
 - 三 oracle 在 R1 重锚 + 生产复测前不宣告生效；存量 fail-closed 保持。
 - 生产 `acceptance` 零声明（C.8 #4）⇒ 即使 R1 完成，声明率未起前门仍零触发；不因此虚报闭环。
 - 429 墙 / A-6 / 交付清单证据 / spawned 复核等既有欠账不受本计划影响，不宣告 ALL_PASS。
+
+---
+
+## 实施记录回填（2026-11-16 19:5x，只追加）
+
+> 按「判据先贴真实记录求值」，R1 在实施前逐文件核对 master `ce5cd887` 代码，发现**R1 已在 #900/#901 完成**，无需新刀；R2 缺口真实存在并已实施。
+
+### R0 · 完成
+- 基于新基底 `bcbe771b` 重建四份定稿文档（复审规格附录 D / D-1 spec 附录 D.7 / D-1 plan / 本计划），README 插入 4 行登记、索引重跑 565 份。
+- 四门禁绿（spec-figures ×2 / claims 7/7 / links 0）→ PR **#921** CI 三绿 → squash 合并 `ce5cd887` → 合并树 == CI head 树 `e2419a16`、7/7 blob KEPT、parent=`bcbe771b`。
+
+### R1 · 已在 #900/#901 实现（撤销本计划的 R1 实施任务）
+代码实证（master `ce5cd887`）：
+- `services/pi-runtime/src/tools/todo.ts:254-282`：`assetOracle.inspect()` 已挂载，三判定器 `judgeIdClosure`/`judgeAuthorityRef`/`judgeDurationBudget` 全部接线。
+- `services/pi-runtime/src/tools/asset-oracle.ts`：三纯函数定义完整（单一真相源，golden cases 共用）。
+- `apps/server/src/agent/agent-canvas-tools.service.ts:3440-3523` 快照端点已把 `registeredIds`（节点 `data.assetId`）/ `referencedIds`（`pinnedAssetId`+`derivedFrom`）/ `authorities`（Material.metadata.authority+status+pinnedVersion）/ `durationRows`（`Shot.durationMs`）全部装配到**既有锚点**——与 D.7 收敛裁决逐字一致。
+- `dialogueChars` 无结构化源：快照端点注释 `:3435-3436` 明确「不造数」，`judgeDurationBudget` 对缺 dialogueChars 走 `missing` ⇒ 诚实 fail-closed（符合第一原则）。
+⇒ **R1 无新增代码刀**。本计划 R1-1～R1-4 任务作废，改列为「已实现」核对结论。
+
+### R2 · 已实施（本轮唯一代码刀）
+- 缺口实证：`apps/server/src/sessions/sessions.service.ts:patchCanvas`（人工编辑侧车 PATCH）`$transaction` 内 `applyCanvasActions` → 写回，**未调用 `applyStalePropagation`**；而 agent 写路径 persist/commitStage 有。`CLIENT_FORBIDDEN_NODE_DATA_KEYS`（`sessions-canvas-patch.ts:26-27`）只禁客户端回灌 stale 字段，不等于服务端会计算——二者不矛盾（计算 ≠ 回灌）。
+- 实现（吃满上游、单一真相源）：把 `computeNodeContentHash` / `changedNodeIdsFromOps` / `propagateStale` 提取到 `packages/shared/src/canvas/lineage.server.ts`（复用既有 `computeContentHash` / `downstreamClosure` / `shouldPropagate`）；agent-canvas 私有 `applyStalePropagation` 与 sessions.service.patchCanvas 共用同一纯函数，零重复实现、零字段/migration。
+- 测试：shared lineage 单测 11/11（新增 propagateStale 3 例）+ server patch 集成 14/14（新增 R2 2 例）+ agent lineage 回归 6/6；变异 2/2 RED（下游 `stale:true→false` / patchCanvas 接线切除）。

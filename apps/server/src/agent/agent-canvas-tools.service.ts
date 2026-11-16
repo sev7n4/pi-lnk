@@ -11,7 +11,6 @@ import {
   audioKindOf,
   computeImportTranslation,
   decodeChannelModel,
-  downstreamClosure,
   duplicateResultToCanvasActions,
   duplicateSubgraph,
   getGenerationScene,
@@ -26,7 +25,6 @@ import {
   resolveNodeRefs,
   resolveCanonicalVideoRequest,
   summarizePromptCompletion,
-  shouldPropagate,
   validateWorkflow,
   GROUP_COLOR_KEYS,
   parseGroupColorKey,
@@ -46,8 +44,8 @@ import {
   validateSidebarAttachments,
   wouldCreateCycle,
 } from '@lnkpi/shared'
-// D-1：node:crypto 版 computeContentHash 走 subpath（web-safe barrel 不含它）
-import { computeContentHash } from '@lnkpi/shared/canvas/lineage.server'
+// D-1：node:crypto 版失效传播纯函数走 subpath（web-safe barrel 不含它）
+import { changedNodeIdsFromOps, computeNodeContentHash as sharedComputeNodeContentHash, propagateStale } from '@lnkpi/shared/canvas/lineage.server'
 import { PrismaService } from '../prisma/prisma.service'
 import { PersistRemoteService } from '../assets/persist-remote.service'
 import { buildDigestUpsertActions } from './canvas-digest.service'
@@ -157,14 +155,10 @@ function nodeStatus(node: { data?: Record<string, unknown> | null }): string {
  * data 为 null/undefined 按空字段集处理——Task 1 前任务指针：不对 null 调
  * parseAssetNodeData（会 ok:false），直接字段读取，绝不抛错中断保存路径。
  */
-const CONTENT_HASH_FIELDS = ['title', 'prompt', 'assetId', 'pinnedVersion', 'derivedFrom'] as const
-
+// D-1 L1 单一真相源：hash 口径与失效传播均委托 shared/lineage.server；
+// 本导出为兼容既有测试与调用方而保留（逐字等同于共享实现）。
 export function computeNodeContentHash(data: Record<string, unknown> | null | undefined): string {
-  const fields: Record<string, unknown> = {}
-  for (const k of CONTENT_HASH_FIELDS) {
-    if (data?.[k] !== undefined) fields[k] = data[k]
-  }
-  return computeContentHash(fields)
+  return sharedComputeNodeContentHash(data)
 }
 
 /**
@@ -192,12 +186,9 @@ export function stripServerOwnedAssetFields(actions: CanvasAction[]): CanvasActi
   })
 }
 
-/** changedNodeIds 对账：persist / commitStage 共用的「本次事务写到哪些节点」口径。 */
+/** changedNodeIds 对账：persist / commitStage / patchCanvas 共用同一口径（shared 单一真相源）。 */
 function changedNodeIdsOf(actions: CanvasAction[]): string[] {
-  return actions
-    .filter((a) => a.type === 'update_node' || a.type === 'add_node')
-    .map((a) => (a.payload as { id?: unknown }).id)
-    .filter((id): id is string => typeof id === 'string' && id.length > 0)
+  return changedNodeIdsFromOps(actions)
 }
 
 /** update_node 的唯一可写字段集（spec §4.1）。改动此表必须同步 spec 与图 1。 */
@@ -4277,32 +4268,9 @@ export class AgentCanvasToolsService {
    * 全部在同一事务内落库。
    */
   private applyStalePropagation(canvas: CanvasData, changedNodeIds: readonly string[]): void {
-    if (changedNodeIds.length === 0) return
-    const propagating: string[] = []
-    for (const id of changedNodeIds) {
-      const node = canvas.nodes.find((n) => n.id === id)
-      if (!node) continue
-      // Task 1 前任务指针：data 可能 null/undefined——只做字段读取兜底，不调 parse，
-      // 绝不抛错中断整条保存路径。
-      const prevHash =
-        typeof node.data?.contentHash === 'string' ? node.data.contentHash : undefined
-      const nextHash = computeNodeContentHash(node.data)
-      if (!shouldPropagate(prevHash, nextHash)) continue
-      node.data = {
-        ...(node.data ?? {}),
-        contentHash: nextHash,
-        version: (Number(node.data?.version) || 0) + 1,
-        stale: false,
-      }
-      propagating.push(id)
-    }
-    if (propagating.length === 0) return
-    const downstreamIds = new Set(downstreamClosure(canvas.edges ?? [], propagating))
-    if (downstreamIds.size === 0) return
-    for (const node of canvas.nodes) {
-      if (!downstreamIds.has(node.id)) continue
-      node.data = { ...(node.data ?? {}), stale: true }
-    }
+    // 单一真相源：与 sessions.service.patchCanvas（人工编辑 PATCH）共用同一纯函数，
+    // 杜绝两条写路径各写一份失效传播逻辑（D-1 spec §6.2 单一写者 / 第一原则）。
+    propagateStale(canvas, changedNodeIds)
   }
 
   private async loadSession(sessionId: string): Promise<{

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { downstreamClosure, shouldPropagate } from "./lineage.js";
-import { computeContentHash } from "./lineage.server.js";
+import { changedNodeIdsFromOps, computeContentHash, computeNodeContentHash, propagateStale } from "./lineage.server.js";
 
 describe("computeContentHash", () => {
   it("相同字段集合（键序无关）⇒ 同哈希", () => {
@@ -46,3 +46,55 @@ describe("shouldPropagate", () => {
     expect(shouldPropagate("h1", undefined)).toBe(true);
   });
 });
+
+describe("propagateStale（R2 共享失效传播，agent 与人工 PATCH 同一实现）", () => {
+  type TestData = Record<string, unknown>
+  type TestNode = { id: string; type: string; data: TestData; position: { x: number; y: number } }
+  const mkCanvas = (): { nodes: TestNode[]; edges: { id: string; source: string; target: string }[] } => ({
+    nodes: [
+      { id: "A", type: "text", data: { title: "母版", prompt: "p0" }, position: { x: 0, y: 0 } },
+      { id: "B", type: "image", data: { title: "下游", prompt: "b0" }, position: { x: 1, y: 0 } },
+      { id: "C", type: "image", data: { title: "下游2", prompt: "c0" }, position: { x: 2, y: 0 } },
+    ],
+    edges: [
+      { id: "ab", source: "A", target: "B" },
+      { id: "bc", source: "B", target: "C" },
+    ],
+  })
+
+  it("changed 节点内容变更 ⇒ 自身 contentHash/version/stale:false，下游 stale:true（传递闭包）", () => {
+    const canvas = mkCanvas() as never
+    propagateStale(canvas, ["A"])
+    const nodes = (canvas as unknown as ReturnType<typeof mkCanvas>).nodes
+    expect(nodes[0]!.data.contentHash).toBe(computeNodeContentHash({ title: "母版", prompt: "p0" }))
+    expect(nodes[0]!.data.version).toBe(1)
+    expect(nodes[0]!.data.stale).toBe(false)
+    expect(nodes[1]!.data.stale).toBe(true)
+    expect(nodes[2]!.data.stale).toBe(true) // BFS 传递：A→B→C
+  })
+
+  it("hash 未变 ⇒ 幂等不写（防抖动，spec §8.2-4）", () => {
+    const canvas = mkCanvas() as never
+    // 先写一次建档
+    propagateStale(canvas, ["A"])
+    const nodes = (canvas as unknown as ReturnType<typeof mkCanvas>).nodes
+    const hashAfterFirst = nodes[0]!.data.contentHash
+    // 再写同内容：hash 未变 ⇒ version 不再自增、下游 stale 不被重刷
+    nodes[1]!.data.stale = false
+    propagateStale(canvas, ["A"])
+    expect(nodes[0]!.data.version).toBe(1)
+    expect(nodes[0]!.data.contentHash).toBe(hashAfterFirst)
+    expect(nodes[1]!.data.stale).toBe(false)
+  })
+
+  it("changedNodeIdsFromOps 只认 update_node/add_node，口径与 agent 写路径一致", () => {
+    const ops = [
+      { type: "update_node", payload: { id: "A" } },
+      { type: "add_node", payload: { id: "B" } },
+      { type: "remove_node", payload: { id: "C" } },
+      { type: "add_edge", payload: { id: "e" } },
+      { type: "update_node", payload: { id: 123 } },
+    ]
+    expect(changedNodeIdsFromOps(ops)).toEqual(["A", "B"])
+  })
+})
