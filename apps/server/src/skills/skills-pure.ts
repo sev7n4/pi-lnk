@@ -185,7 +185,7 @@ export const MAX_IMPORT_BYTES = 4 * 1024 * 1024
 
 // ─── resolveInvocationMode（P10/P11/P12/P17）────────────────────────────────────
 
-export type InvocationIntent = 'implicit' | 'explicit'
+export type InvocationIntent = 'implicit' | 'explicit' | 'routed'
 export type InvocationMode = 'implicit' | 'explicit' | 'denied'
 
 export interface InvocationSubject {
@@ -204,8 +204,13 @@ export function resolveInvocationMode(subject: InvocationSubject, intent: Invoca
     // disableModelInvocation=true：不进语义 index 但显式必达（上游 formatter 过滤 + 此处双保险）。
     return subject.disableModelInvocation || !subject.enabled ? 'denied' : 'implicit'
   }
-  // 显式：已关闭技能可被点名（P17 D 级口径的开关部分），但未审/已卸载一律拒绝。
-  if (!subject.reviewed && !subject.enabled) return 'denied'
+  if (intent === 'routed') {
+    // 平台路由触发：userInvocable=false 不作为用户命令出现，但路由必达（P12/F54）。
+    return !subject.reviewed && !subject.enabled ? 'denied' : 'explicit'
+  }
+  // 显式（用户点选/斜杠/指令点名）：已关闭技能可被点名（P17 D 级口径的开关部分），
+  // 但 user-invocable:false 不进用户点选列表，未审/已卸载一律拒绝。
+  if (!subject.userInvocable || (!subject.reviewed && !subject.enabled)) return 'denied'
   return 'explicit'
 }
 

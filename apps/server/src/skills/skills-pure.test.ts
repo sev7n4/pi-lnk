@@ -172,6 +172,15 @@ describe('resolveInvocationMode（P10/P11/P12/P17）', () => {
     expect(resolveInvocationMode({ ...subject, reviewed: false, enabled: false }, 'explicit')).toBe('denied')
     expect(resolveInvocationMode({ ...subject, reviewed: false, enabled: true }, 'explicit')).toBe('explicit')
   })
+
+  it('阴性：userInvocable=false 不进用户点选列表（P12）', () => {
+    expect(resolveInvocationMode({ ...subject, userInvocable: false }, 'explicit')).toBe('denied')
+  })
+
+  it('阳性：userInvocable=false 仍可隐式/路由触发（P12）', () => {
+    expect(resolveInvocationMode({ ...subject, userInvocable: false }, 'implicit')).toBe('implicit')
+    expect(resolveInvocationMode({ ...subject, userInvocable: false }, 'routed' as Parameters<typeof resolveInvocationMode>[1])).toBe('explicit')
+  })
 })
 
 describe('applySkillOverride（F47/F50）', () => {
