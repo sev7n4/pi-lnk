@@ -145,3 +145,20 @@ M1-1 只落控制面数据/端点、M1-2 只铺 runtime 受端，**Nest 发起�
 - 本刀让「装/启/停/卸/滚」在 UI 与服务端组装层闭环，**未做** golden SKILL.md 重写（M1-4，触发 runtime-deploy，单独授权）；M1-A1–A11 全序列与 M1-N1–N13 逐条转红记录属 M1-4 收口，本刀不宣告全绿。
 - 用户技能显式调用链：`dock skillId → resolveDockSkillTarget（pass-through）→ forceSkills → runtime lane.skill`；runtime 侧从 `getResources()` 解析（M0 U-7），未知名由 `UnknownSkill` fail-closed。隐式调用走 `formatSkillsForSystemPrompt`（每轮从 getResources 求值）。
 - 不调 setResources 即时生效：当前会话已注入的技能在本轮不撤回（§7.2 矩阵），启停从下一轮新会话生效。
+
+---
+
+## 8.5 M1-4 第 1 块实施记录（2026-11-16，验收走查）
+
+**产物**：`docs/superpowers/plans/2026-11-16-m1-skills-acceptance-walkthrough.md`（验收资产，零代码改动、零部署）。
+
+**方法**：以 master `de30e8f871` 真实源码树（`gh api contents?ref=master` 逐文件拉取，非本地陈旧 checkout）逐条核对 A1–A11 / N1–N13 / §4.7 Must，观测点按 v2 §10.4 替换。判据「测试存在」不等于「判据通过」。
+
+**结论**：**M1 尚不能宣告全绿**。按 §7 口径：
+- A1–A11：✅5（A1/A3/A4/A6/A8）/ ⚠️5（A2/A5/A7/A10/A11，其中 A2/A7 为规格 §7.2 允许的语义降级）/ ❌1（A9：userInvocable 判定链断点）。
+- N1–N13：完整转红实证仅 N2/N5；部分 N3/N9/N10/N13；**v2 §7.3 删除了 N1/N6/N11/N12 的 v1 变异靶点却未重定义等价靶点**（判据债务）；N4/N7/N8 未逐条实测。
+- Must：P3（自定义加载 UI 入口缺失，`skillApi.import` 零调用方）、P12（userInvocable 断点 + golden 未重写）有缺口；Won't P16/P18 有负例，P17/P19 部分。
+
+**七项缺口**（G1 userInvocable / G2 自定义 UI / G3 golden / G4 N 靶点债务 / G5 install 搜索确认 / G6 userModified / G7 已授权的 A2/A7 语义降级）与两条收尾路径见走查记录 §5–§6。本刀只收敛证据与缺口，不改代码、不改判据；G3（golden 重写）仍按计划 §5 单独授权。
+
+**诚实边界**：本刀不宣告 M1 收口；走查发现的是「规格完整契约未逐条闭合」，与三刀「各自实现正确、门禁全绿」不矛盾。
