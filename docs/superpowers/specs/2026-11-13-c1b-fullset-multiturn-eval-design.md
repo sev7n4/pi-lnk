@@ -203,3 +203,24 @@ q4-03 的价值：它是「三层点名模型」P3（系统提示点名）生效
 2. **跑批时间预算**：默认 300s 对 deepseek-v4-flash 不充分（600s 下 4/5 自然结束）；后续 run 建议 `--timeout 600000` 或 D1 常量升档，与「P0 300s 是保守值」诚实边界合并裁决；
 3. requiresConfirm 4 条仍归 A-6 真机走查（未变）；q3-07 画布污染归 P1（PR #896 已实施，待合并生效）；
 4. 阈值仍不拍（C-1b 验收 4 纪律）：单轮 9 条样本不足，待 run-4（每 run 新画布 + 600s）再采第二轮。
+
+## 12. run-4 终局回填与 G2 阈值多 run 累积计划（2026-11-16）
+
+### 12.1 run-4 终局（39 条全集，pod @2dcce392→8d2e62a2，600s + 自动画布 + 种子 12）
+
+**pass 16 / fail 10 / error 13 / skip 4**（有效样本 26，pass rate 61.5%；部署污染 6 条假 error 经稳定后重跑翻正 4 条归账）。
+
+- **fail 10（真实行为信号）**：decomp-01/02/03/04/05/n1（拆解质量）+ struct-01/02（状态纪律）+ sidebar-ref-001 + gen-claim-003（工具选择 miss，与 run-3 复现一致）；decomp-01 为 600s 超时截断（环境分母候选）。
+- **error 13**：q3×7 + q4-03 = agnes 平台 429 实名墙（显式 platform 模型 case，结构性阻断，解锁=用户实名）；q3-07 = requiresCleanCanvas ≤8 与种子 12 冲突（预期内，clean 类运营分批，#899 已声明）。
+- **skip 4**：requiresConfirm，归 A-6 真机走查（未变）。
+- 种子机制端到端实证：requiresCanvasNodes 下界类（c1a-decomp-n3）首次 pass。
+- B-1 生产观测同窗口实证：`pi_runtime_toolset_gate_narrow_total{kind="narrow"} 1`（decomp-04 探针 propose_plan→pending 收缩生效；restore=0 符合 pending 态收尾语义）。
+
+### 12.2 G2 拆解质量阈值：多 run 累积计划（登记，不拍数）
+
+**累积口径**（解封 agnes 429 后凑样本）：
+1. **样本集**：G2 判据 = c1a-decomp-*（粒度）∪ struct-*（状态纪律）∪ gen-claim-003（工具选择），当前真实 fail 信号 10 条/run；agnes 解锁补回 q3×8 + q4-03 后有效样本升至 26+9=35 条/run。
+2. **run 数要求**：≥3 个独立 run（不同日/不同 pod 实例）后拍「行为型 fail 率」区间；单 run 不拍（既有纪律）。
+3. **抖动率分母**：沿用 §11.3 口径修正——延迟型（超时截断）走环境分母不进抖动率；行为型二态翻转才计入。
+4. **拍板前置**：C-2c spec 门禁（G1–G4）达成的采集器就位前，阈值仅作 gate 输入（C-1b 验收 4 纪律不变）。
+5. **登记处**：本节为累积计划 SSOT；每次 run 后在 §12.1 追加终局行，达 3 run 时开阈值拍板刀。
