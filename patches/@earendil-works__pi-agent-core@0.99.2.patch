@@ -92,35 +92,3 @@ index fb6234695814cf1c21c15a84a4691e5361c1ddb7..bfc2298c34620af3494bb9c63d9a41c0
      /**
       * Report a failure without throwing. The model sees `content` as an error result, like a thrown
       * error, but `details` and `structuredContent` are kept for the UI and programmatic callers.
-diff --git a/package.json b/package.json
-index c678e46d4891c4f518272891ffb93062f178e3a6..799561bf2a7f27a1213e93c162e5b6b9e528e4a0 100644
---- a/package.json
-+++ b/package.json
-@@ -8,11 +8,15 @@
- 	"exports": {
- 		".": {
- 			"types": "./dist/index.d.ts",
--			"import": "./dist/index.js"
-+			"require": "./dist/index.js",
-+			"import": "./dist/index.js",
-+			"default": "./dist/index.js"
- 		},
- 		"./node": {
- 			"types": "./dist/node.d.ts",
--			"import": "./dist/node.js"
-+			"require": "./dist/node.js",
-+			"import": "./dist/node.js",
-+			"default": "./dist/node.js"
- 		},
- 		"./harness/context": {
- 			"types": "./dist/harness/context.d.ts",
-@@ -38,7 +42,8 @@
- 			"types": "./dist/harness/session/testing/index.d.ts",
- 			"import": "./dist/harness/session/testing/index.js"
- 		},
--		"./package.json": "./package.json"
-+		"./package.json": "./package.json",
-+		"./dist/*": "./dist/*"
- 	},
- 	"files": [
- 		"dist",
