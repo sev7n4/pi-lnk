@@ -168,7 +168,18 @@ export function buildWebTools(deps: { fetchImpl?: typeof fetch; now?: () => numb
 						}),
 						signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
 					});
-					if (!res.ok) throw new Error("tavily http " + res.status);
+					if (!res.ok) {
+						// E2E 2026-11-17 生产实证：432（套餐用量超限）时丢弃 body 导致模型只看到
+						// 「tavily http 432」+ invalid_params 标注，盲改参数重试 12 次。透传
+						// 响应体 detail（tavily 错误语义自解释），模型一次即可判定不可重试。
+						let detail = "";
+						try {
+							detail = (await res.text()).trim().slice(0, 300);
+						} catch {
+							// body 读取失败不掩盖原始状态码
+						}
+						throw new Error("tavily http " + res.status + (detail ? " " + detail : ""));
+					}
 					payload = (await res.json()) as { results?: TavilyResult[] };
 				} catch (err) {
 					throw new Error("web_search failed: " + (err instanceof Error ? err.message : String(err)));
