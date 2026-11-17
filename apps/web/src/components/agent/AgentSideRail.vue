@@ -2920,8 +2920,11 @@ function handleEvent(event: { type: string; data: unknown }) {
       // U-3（2026-11-17 E2E）：原始 JSON dump（含 request id 全文）不再直出对话流，
       // 高频错误映射为人话文案；未知错误 generic 透传。原始 message 保留在
       // markTurnError/trackStructuredError 内供诊断。
+      // ⚠️ 必须走 appendTurnNotice 兜底通道（AgentSideRail.errorNoticeWiring.test.ts）：
+      // 失败轮可能全程无 text_delta ⇒ assistant 消息压根不被创建 ⇒ 裸 appendText
+      // 静默 no-op ⇒ 用户对这类失败零感知（model_not_found 生产实证）。
       const friendly = friendlyAssistantError(data.message || '')
-      agent.appendText(`\n\n⚠️ ${friendly.text}`)
+      agent.appendTurnNotice(`\n\n⚠️ ${friendly.text}`)
       // dock 上沿窄卡片（失败提醒复用入口）：已分类的失败（如余额不足）弹充值/重试提醒
       if (data.error_type) {
         const retry = data.retry_hint ? ` ${data.retry_hint}` : '请稍后重试。'
