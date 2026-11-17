@@ -22,6 +22,10 @@ import AgentTaskProgressCard from '@/components/agent/AgentTaskProgressCard.vue'
 import AgentCanvasOutputs from '@/components/agent/AgentCanvasOutputs.vue'
 import AgentExecutionTrace from '@/components/agent/AgentExecutionTrace.vue'
 import AgentTurnTimeline from '@/components/agent/AgentTurnTimeline.vue'
+import SubagentTaskSheet from '@/components/agent/SubagentTaskSheet.vue'
+import type { TimelinePart } from '@/components/agent/turnTimeline'
+
+type SubagentTaskPart = Extract<TimelinePart, { kind: 'subagent_task' }>
 import { fetchInterruptionState } from '@/components/agent/interruptionState'
 import { locatableNodeIds, canvasOutputsForMessage as deriveCanvasOutputs } from '@/components/agent/agentCanvasOutputs'
 import { canvasDigestEntry, digestEntryForTurn } from '@/components/agent/deliverySummary'
@@ -957,6 +961,15 @@ const selectedSkillIds = ref<string[]>([])
 const activeSkillId = computed(() => selectedSkillIds.value[0] ?? null)
 const skillSheetOpen = ref(false)
 const manageOpen = ref(false)
+
+/* 子代理任务详情面板（spec 2026-11-17）：由 AgentTurnTimeline 任务卡点击驱动。
+   part 是拍快照（click 时对象引用），详情只读展示，不需要随流更新。 */
+const subagentTaskOpen = ref(false)
+const openSubagentPart = ref<SubagentTaskPart | null>(null)
+function onOpenSubagentTask(part: SubagentTaskPart): void {
+  openSubagentPart.value = part
+  subagentTaskOpen.value = true
+}
 // M1-3：动态并入下拉；内置技能可发现（本刀）：数据源=运行时 /skills/runtime ∪ 用户已装技能，
 // 合并/去重/过滤全部复用 mergeAgentSkills（runtimeSkillsToInstalled 仅做形状适配）。
 // fail-soft：runtime 失败 → 空数组（回退内置兜底）；mine 失败 → 空数组；均不阻断对话。
@@ -3515,6 +3528,7 @@ defineExpose({
                   @cancel-proposal="onInlineCancelProposal($event)"
                   @ask-submit="propose.onAskSubmit"
                   @ask-cancel="propose.onAskCancel"
+                  @open-subagent-task="onOpenSubagentTask"
                 />
                 <!-- 流式归一补位（2026-11-03 移动端复测）：钉底块退役后，「发消息 → 首个
                      timeline part（【思考】）到达」的空窗期什么都不渲染，「正在准备…」
@@ -4396,6 +4410,22 @@ defineExpose({
                             </button>
                           </div>
                           <SkillDiscoverPanel initial-tab="mine" @skills-changed="void loadDockSkills()" />
+                        </div>
+                      </div>
+                    </Teleport>
+                    <!-- 子代理任务详情面板（spec 2026-11-17）：任务卡点击打开，展示完整下发任务+报告 -->
+                    <Teleport to="body">
+                      <div
+                        v-if="subagentTaskOpen && openSubagentPart"
+                        class="fixed inset-0 z-[90] flex items-center justify-center bg-black/50"
+                        data-testid="subagent-task-dialog"
+                        @click.self="subagentTaskOpen = false"
+                      >
+                        <div class="max-h-[80vh] overflow-y-auto rounded-2xl bg-[var(--lnk-surface-raised)] p-3 shadow-xl">
+                          <SubagentTaskSheet
+                            :part="openSubagentPart"
+                            @close="subagentTaskOpen = false"
+                          />
                         </div>
                       </div>
                     </Teleport>

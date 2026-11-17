@@ -70,6 +70,8 @@ const emit = defineEmits<{
   askCancel: [callId: string]
   /** D1（2026-11-11）：中断 notice 的重试入口；SideRail 复用 sendMessage(..., isRetry=true) 续跑。 */
   retryTurn: []
+  /** 子代理任务卡点击 → SideRail 打开详情面板（spec 2026-11-17）。 */
+  openSubagentTask: [part: Extract<TimelinePart, { kind: 'subagent_task' }>]
 }>()
 
 const VIDEO_URL_RE = /\.(mp4|webm|mov)(\?|$)/i
@@ -104,6 +106,22 @@ function toolLabel(p: Extract<TimelinePart, { kind: 'tool' }>): string {
 function toolIcon(p: Extract<TimelinePart, { kind: 'tool' }>): string {
   const shown = presentToolStep({ label: p.toolName, kind: 'tool', meta: { toolName: p.toolName, args: p.args } })
   return shown.icon
+}
+
+const SUBAGENT_STATUS_LABEL: Record<Extract<TimelinePart, { kind: 'subagent_task' }>['status'], string> = {
+  running: '运行中',
+  completed: '已完成',
+  failed: '失败',
+  timeout: '超时',
+  budget_exceeded: '超出预算',
+  stream_interrupted: '结果中断',
+  interrupted: '已中断',
+}
+
+function subagentDurationLabel(ms?: number): string {
+  if (typeof ms !== 'number' || ms <= 0) return ''
+  const sec = Math.round(ms / 1000)
+  return sec < 60 ? `${sec}s` : `${Math.floor(sec / 60)}m${String(sec % 60).padStart(2, '0')}s`
 }
 
 function artifactUrl(p: Extract<TimelinePart, { kind: 'artifact' }>): string | undefined {
@@ -449,6 +467,26 @@ const rootClass = computed(() =>
         v-else-if="part.kind === 'text'"
         class="whitespace-pre-wrap text-[var(--neo-fg)]"
       >{{ collapseBlankRuns(part.text) }}<span v-if="isStreamingCursor(part)" class="animate-pulse">▊</span></p>
+
+      <!-- subagent_task：子代理任务卡（spec 2026-11-17）——点开详情面板看完整任务+报告；
+           与 tool part 并存，原执行轨迹行照常渲染在下方。 -->
+      <button
+        v-else-if="part.kind === 'subagent_task'"
+        type="button"
+        class="subagent-task-card flex w-full items-center gap-1.5 rounded border border-[var(--lnk-border-subtle)] px-2 py-1 text-left"
+        :class="['failed', 'timeout', 'budget_exceeded', 'stream_interrupted', 'interrupted'].includes(part.status) ? 'border-danger/40' : ''"
+        :data-testid="'subagent-task-card'"
+        @click="emit('openSubagentTask', part)"
+      >
+        <span class="subagent-avatar">G</span>
+        <span class="min-w-0 flex-1 truncate text-[var(--lnk-text-secondary)]">{{ part.displayName }}</span>
+        <span v-if="part.degraded" class="text-[var(--lnk-text-muted)]">结果已并入回复</span>
+        <span v-else class="text-[var(--lnk-text-muted)]">{{ subagentDurationLabel(part.durationMs) || SUBAGENT_STATUS_LABEL[part.status] }}</span>
+        <span
+          :class="['failed', 'timeout', 'budget_exceeded', 'stream_interrupted', 'interrupted'].includes(part.status) ? 'text-danger' : 'text-[var(--lnk-text-muted)]'"
+        >{{ part.status === 'running' ? '…' : part.status === 'failed' || part.status === 'stream_interrupted' ? '✗' : '✓' }}</span>
+        <span class="text-[var(--lnk-text-muted)]">›</span>
+      </button>
 
       <!-- tool：有 resultSummary 才包 details（可展开看结果）；
            无摘要时渲染纯行——空 details 是「点了没内容」的死交互（2026-10-14 生产反馈） -->
@@ -1462,4 +1500,9 @@ const rootClass = computed(() =>
   .delivery-toggle .chevron { transition: none; }
 }
 /* E2-A-DELIVERY-END */
+
+/* 子代理任务卡（spec 2026-11-17）——令牌一律 --lnk-* / --agent-*，无新 hex */
+.subagent-task-card { cursor: pointer; transition: background 0.15s ease; }
+.subagent-task-card:hover { background: var(--lnk-surface-canvas); }
+.subagent-avatar { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; flex-shrink: 0; border-radius: 50%; background: var(--lnk-hi-bg); color: var(--lnk-hi-text); font-size: 10px; font-weight: 600; }
 </style>
