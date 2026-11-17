@@ -94,6 +94,81 @@ describe('AgentService dock forwarding (pi-runtime)', () => {
     )
   })
 
+  it('P3: skillIds 多胶囊 → forceSkills 数组去重保序；未知名 fail-soft 过滤不阻断', async () => {
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })], true, [
+      { name: 'ecommerce-product-photo' },
+      { name: 'listing-copy' },
+    ])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+
+    for await (const _ of service.streamConversation(
+      's1',
+      '帮我做白底图和文案',
+      'u1',
+      'thread-1',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      ['product-visual', 'no-such-chip', 'listing-copy'],
+    )) {
+      // drain
+    }
+
+    expect(pi.prompt).toHaveBeenCalledWith(
+      'thread-1',
+      '帮我做白底图和文案',
+      'main',
+      expect.objectContaining({ forceSkills: ['ecommerce-product-photo', 'listing-copy'] }),
+    )
+  })
+
+  it('P3: skillId 兼容位与 skillIds 并存去重；/skill 命令与胶囊并存时命令名居首', async () => {
+    const pi = stubPiClient([piEvent('agent_end', { status: 'completed' })], true, [
+      { name: 'ecommerce-product-photo' },
+      { name: 'listing-copy' },
+    ])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+
+    for await (const _ of service.streamConversation(
+      's1',
+      '/skill listing-copy 白底图',
+      'u1',
+      'thread-1',
+      undefined,
+      'product-visual',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      ['product-visual', 'listing-copy'],
+    )) {
+      // drain
+    }
+
+    expect(pi.prompt).toHaveBeenCalledWith(
+      'thread-1',
+      '白底图',
+      'main',
+      expect.objectContaining({ forceSkills: ['listing-copy', 'ecommerce-product-photo'] }),
+    )
+  })
+
   it('falls back to user defaultTextModel; BYOK (source=user) is injected into the pi session', async () => {
     userAiPreferencesFindUnique.mockResolvedValue({
       defaultTextModel: 'ch-deepseek::deepseek-v4-flash',

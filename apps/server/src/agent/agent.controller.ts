@@ -89,6 +89,12 @@ class ConversationDto {
   @IsString()
   skillId?: string
 
+  /** P3 多胶囊：composer 技能 chips（数组），Nest 逐个映射转接 forceSkills[]；与 skillId 并存时去重合并。 */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  skillIds?: string[]
+
   /** W28: 单节点快速生成目标画布 node id */
   @IsOptional()
   @IsString()
@@ -949,6 +955,10 @@ export class AgentController {
         // SEL-REF：指代信号。追加在参数表**末尾**——中间插入会移位，
         // 而 `refOrder` / `mentionedKeys` 同为 string[] ⇒ 错位是静默的。
         dto.selectedNodeIds,
+        // SEL-REF 之后既有槽位（billingSource / streamOpts）走默认，P3 多胶囊按末位纪律补位
+        undefined,
+        undefined,
+        dto.skillIds,
       )) {
         res.write(`data: ${JSON.stringify(event)}\n\n`)
       }

@@ -174,17 +174,18 @@ describe('startConversationRun（P1 Task 4：ack 化 + 后台 drain）', () => {
     stubSnapshot(service, { T1: 3 })
     const { spyWithArgs, drained } = stubStream(service, { yields: [] })
 
-    await service.startConversationRun({ ...ARGS, selectedNodeIds: ['n1'] })
+    await service.startConversationRun({ ...ARGS, selectedNodeIds: ['n1'], skillIds: ['ecommerce-product-photo'] })
     expect(spyWithArgs.positionalArgs[0]).toBe('S1')
     expect(spyWithArgs.positionalArgs[1]).toBe('画一只红车')
     expect(spyWithArgs.positionalArgs[2]).toBe('U1')
     expect(spyWithArgs.positionalArgs[3]).toBe('T1')
-    // 17 个位置参数：末位 = streamOpts（2026-11-04 实时补桥，turn_settled 经总线注入
-    // /runs/events）；15 位 = selectedNodeIds；16 位 = billingSource（ack 入口固定 user）
-    expect(spyWithArgs.positionalArgs).toHaveLength(17)
+    // 18 个位置参数：末位 = skillIds（P3 多胶囊，2026-11-17）；15 位 = selectedNodeIds；
+    // 16 位 = billingSource（ack 入口固定 user）；17 位 = streamOpts
+    expect(spyWithArgs.positionalArgs).toHaveLength(18)
     expect(spyWithArgs.positionalArgs[14]).toEqual(['n1'])
     expect(spyWithArgs.positionalArgs[15]).toBeUndefined()
     expect(spyWithArgs.positionalArgs[16]).toEqual({ bridgeSettledToBus: true })
+    expect(spyWithArgs.positionalArgs[17]).toEqual(['ecommerce-product-photo'])
     await drained
   })
 
