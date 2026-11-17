@@ -3,6 +3,26 @@
 #                   2026-11-05 大幅扩写 —— 修掉「有机制但没生效」的四个缺口）
 #
 # ─────────────────────────────────────────────────────────────────────────────
+# 2026-11-17 的根因复盘（86% 用量，根分区 40G 只剩 5.9G 可用，低于 kubelet
+# imagefs 15% 驱逐线 ⇒ 节点被钉上 disk-pressure 污点 9 小时 ⇒ pi-runtime 全部
+# pod Evicted/Pending，用户会话卡「准备中」）
+#
+# 构成：/var/lib/containerd 10G、/var/lib/docker 5.2G、
+#       /tmp 4.1G（29 个取证 DB 副本 ≈ 3.8G）、/opt/actions-runner 2.0G
+#
+# 缺口 6【本次主根因】缺口 5 的取证副本匹配是**命名枚举**（p2-*/lnkpi-*/v5*/…），
+#        而 agent 取证命名一直在漂移（本次实绩：r2-ro.db / p2a.db / t1.db /
+#        x.db / pricing-*.db / pilnk-*.db / post-*.db / d1-check.db / verify*.db
+#        ……没有一个落在枚举内）。cron 日志里 `tmp 取证副本清理完成` 从
+#        03:17 起每 2 小时打印一次，实际一个文件都没删（空转假阳性）。
+#        ⇒ 修复：改**通配兜底** `/tmp 顶层 *.db（含 -wal/-shm）`，不再依赖命名
+#          约定；`-mmin +30` 保护正在进行的验证（沿用缺口 5 语义）。
+# 缺口 7【告警从未送达】notify_alert 的 webhook 需要 /usr/local/etc/lnkpi-alert.env
+#        提供 LNKPI_ALERT_WEBHOOK，但该文件从未创建 ⇒ 告警只落到本地
+#        /var/log/disk-guard.alert，凌晨起的每轮 ALERT 都无人看见。
+#        ⇒ 待办：创建 env 文件配企业微信 webhook（同款 service-guard 也受益）。
+#
+# ─────────────────────────────────────────────────────────────────────────────
 # 2026-11-05 的根因复盘（91% 爆盘，根分区 40G 只剩 4.0G 可用）
 #
 # 告警是「/app/share 所在分区 91%」，但 /app/share 自身只有 492K ⇒ 占用在别处。
@@ -384,13 +404,19 @@ prune_oversized_container_logs() {
 #   2026-11-12 累计 ~6.7GB 撑爆 ephemeral-storage，kubelet 驱逐 pi-runtime、
 #   模型请求卡死。这些副本纯只读、命名高度特异，可安全删除；仅排除最近 30 分钟内
 #   修改的（保护正在进行的验证），其余在水线以下一律回收。
-# 同时落实「取证副本即时清」：日常档（<10GB）即回收，避免再次撑爆。
+#
+# ── 缺口 6（2026-11-17 补，见文件头复盘）：命名枚举跟不上取证命名漂移 ─────
+# 11-12 的 p2-*/lnkpi-*/v5* 枚举到 11-17 全部落空（r2-ro/p2a/t1/x/pricing-*/
+# pilnk-*/post-*/d1-check/verify* 等 29 个 3.8G 一个没删，cron 空转 9 小时）。
+# ⇒ 改通配兜底：/tmp 顶层 *.db（含 sqlite 伴生 -wal/-shm）一律回收，
+#   不再依赖命名约定。安全性依据：生产真库在容器卷 /app/apps/server/data 内，
+#   /tmp 顶层的 *.db 历来只有取证副本；-mmin +30 保护进行中的验证。
+#   同时落实「取证副本即时清」：日常档（<10GB）即回收，避免再次撑爆。
 prune_tmp_forensics() {
   [ "$MODE" = dry-run ] && { log "DRY-RUN would prune /tmp 取证副本"; return 0; }
-  for p in p2-*.db lnkpi-*.db pi-probe.db v5*.db d2-*.db w1c-*.db '*-prod-*.db' '*-copy.db'; do
-    find /tmp -maxdepth 1 -type f -name "$p" -mmin +30 -exec rm -f {} + 2>/dev/null || true
-  done
-  log "tmp 取证副本清理完成"
+  find /tmp -maxdepth 1 -type f \( -name '*.db' -o -name '*.db-wal' -o -name '*.db-shm' \) \
+    -mmin +30 -exec rm -f {} + 2>/dev/null || true
+  log "tmp 取证副本清理完成（残留 $(find /tmp -maxdepth 1 -type f -name '*.db' 2>/dev/null | wc -l) 个 <30min 的受保护副本）"
 }
 
 if [ "$MODE" = verify ]; then
@@ -446,3 +472,4 @@ if [ "$FINAL_AVAIL_KB" -lt "$ALERT_LIMIT_KB" ]; then
 fi
 
 exit 0
+
