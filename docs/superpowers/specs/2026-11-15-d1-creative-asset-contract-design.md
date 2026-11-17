@@ -473,3 +473,22 @@ D.7 收敛后的三刀执行结果（实施记录 SSOT = `docs/superpowers/plans
 - **R2 · stale 传播**：PR **#923** squash 合并 `de30e8f8`——`propagateStale` / `computeNodeContentHash` / `changedNodeIdsFromOps` 提取至 `packages/shared/src/canvas/lineage.server.ts`，agent 写路径与 `sessions.service.patchCanvas` 共用同一实现（零重复、零 migration、零新字段）；部署后生产探针全绿（B/C BFS stale / version=2 / 幂等 / 探针节点清理）。
 - **第一原则落规**：D.1 三硬判据已入 `AGENTS.md`（#926 合 `9cc0e1c5`）。
 - 诚实边界：三 oracle 生产声明率仍为零（空证据 vacuous 现状保持，D.6 裁决不变）；真实声明数据出现后按 #815 用真实记录校准语义；本附录不宣告 oracle 生效。
+
+### D.9 状态清单刷新（2026-11-18，只追加）
+
+> **性质**：只追加纪律；正文与附录 A/B/D.1–D.8 历史快照不改。本节刷新附录 B「未闭环清单」中已随后续进展改变的事实项。取证：master `08b0086f`，生产 `/metrics` + CDP 9223 只读取证，详见 `.workbuddy/memory/2026-11-18.md`。
+
+**已从欠账清单移除（已闭环）**：
+
+- **D-1 全部代码刀未实施（附录 B）** → ✅ 已闭环：R0 #921 `ce5cd887` / R1 已在 #900/#901（三 oracle + 快照端点既有锚点装配）/ R2 #923 `de30e8f8` + 部署探针全绿。见 D.8 与全量计划文末回填。
+- **A-6 真机走查（附录 B / §10.3「本环境不可代跑」）** → ✅ 2026-11-17 完成创作域用户级走查（CDP 9223，S0/S1/S2/R2），见 `.workbuddy/memory/2026-11-17.md`；与评测线 `requiresConfirm` A-6 分开登记。
+- **复审规格与本文「均未入库、停在审阅 gate」（附录 B）** → ✅ 已入库：#921 合 `ce5cd887`（合并树 == CI head 树 `e2419a16`、7/7 blob KEPT）。
+
+**仍在欠账清单（依旧成立）**：
+
+- **acceptance 生产零声明 / C-2c 四 gate 未达**：本轮 `/metrics` 实测 `pi_runtime_acceptance_total` 仍只有 `#TYPE` 行、零数据行；CDP 前端 `acceptanceWords=0`。三 oracle 空证据 vacuous 现状保持（D.6 裁决不变），真实声明数据出现后再按 #815 校准；G1–G4 全未达归 C-2c，**不因本刀回填而达标**。
+- **agnes 429（附录 B「8 条 429 未解」）**：2.0/3.0-flash 仍实名限频（用户侧），2.5-flash 已恢复。
+- 交付清单 8 项证据归任务管理主线 SSOT（`2026-11-11-task-planning-engineering-roadmap-design.md`）登记，本主线不重复认领；`spawned 7天/200run`、P2 重启前后同门对比；lip-sync / 成片导出下线；D-2 感知监控（降格候选）。
+- ADR-0016 与 discovery spec「从未入库」（附录 B）状态更新：ADR-0016 已 Accepted、discovery spec v2 已入库（Skills 线），不属本刀范围。
+
+D.4 诚实边界维持，本附录不宣告 oracle 生效 / 不宣告 ALL_PASS。
