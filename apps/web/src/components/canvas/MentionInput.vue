@@ -99,9 +99,11 @@ const filteredMentions = computed(() => {
 const filteredSlashes = computed(() => {
   if (menuMode.value !== 'slash') return []
   const q = filterText.value.toLowerCase()
+  // F4（2026-11-17 P3 真机修复）：不再 slice(0,8)——`/` 与 `+` 技能 sheet 同源 dockSkills，
+  // 生产实测 11 个内置技能被这一刀砍成 8。mention 的 slice(0,8) 保留（@引用节点不同语义）。
   return (props.slashOptions ?? []).filter((o) =>
     o.label.toLowerCase().includes(q) || o.id.toLowerCase().includes(q),
-  ).slice(0, 8)
+  )
 })
 
 /** 当前生效的候选集合（键盘导航与渲染统一走它，两模式共享同一列框）。 */

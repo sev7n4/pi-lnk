@@ -102,4 +102,27 @@ describe('MentionInput `/` 技能候选（B4）', () => {
     expect((w.emitted('slash-select')![0][0] as SlashOption).id).toBe('product-visual')
     w.unmount()
   })
+
+  // ── F4（2026-11-17 P3 真机修复）：`/` 候选数对齐 `+` ──
+  it('F4/N5：超过 8 个 slash 候选全部展示（生产 11 个内置技能不再被 slice(0,8) 砍掉）', async () => {
+    const eleven: SlashOption[] = Array.from({ length: 11 }, (_, i) => ({
+      id: `skill-${i + 1}`,
+      label: `技能${i + 1}`,
+      desc: '内置',
+    }))
+    const w = mountInput({ slashOptions: eleven })
+    await typeInput(w, '/')
+    expect(w.findAll('[role="option"]')).toHaveLength(11)
+    // 末位（第 11 个）仍可见——旧 slice(0,8) 在此回红
+    expect(w.findAll('[role="option"]')[10].text()).toContain('技能11')
+    w.unmount()
+  })
+
+  it('F4：mention 的 slice(0,8) 保留（@引用节点不同语义，不受本刀影响）', async () => {
+    const manyMentions = Array.from({ length: 11 }, (_, i) => ({ id: `n${i}`, label: `节点${i}`, type: 'text' }))
+    const w = mountInput({ mentions: manyMentions })
+    await typeInput(w, '@')
+    expect(w.findAll('[role="option"]')).toHaveLength(8)
+    w.unmount()
+  })
 })

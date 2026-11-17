@@ -20,7 +20,14 @@ import {
   type MineItem,
 } from '@/services/skill-api'
 
-const props = withDefaults(defineProps<{ initialTab?: 'market' | 'mine' }>(), { initialTab: 'market' })
+/** F2（2026-11-17 P3 真机修复）：内置技能由宿主 dockSkills 经 prop 只读传入，
+ *  不在面板内二次拉取 /skills/runtime（单一事实源）；内置 ≠ 用户已安装，两个真边界不混列。 */
+interface BuiltinSkillDef { id: string; label: string; desc?: string }
+
+const props = withDefaults(
+  defineProps<{ initialTab?: 'market' | 'mine'; builtinSkills?: BuiltinSkillDef[] }>(),
+  { initialTab: 'market', builtinSkills: () => [] },
+)
 
 /** 操作成功后通知宿主（AgentSideRail 据此刷新 dockSkills/胶囊候选）。 */
 const emit = defineEmits<{ 'skills-changed': [] }>()
@@ -59,6 +66,14 @@ function matchSearch(s: MineItem): boolean {
 
 const filteredCustom = computed(() => customSkills.value.filter(matchSearch))
 const filteredMarket = computed(() => marketSkills.value.filter(matchSearch))
+
+// F2：内置技能只读分区——数据来自 prop（宿主 dockSkills），搜索同样过滤；无任何开关/卸载出口。
+function matchBuiltinSearch(s: BuiltinSkillDef): boolean {
+  const q = mineSearch.value.trim().toLowerCase()
+  if (!q) return true
+  return s.label.toLowerCase().includes(q) || (s.desc ?? '').toLowerCase().includes(q)
+}
+const filteredBuiltin = computed(() => props.builtinSkills.filter(matchBuiltinSearch))
 
 function toggleBatchSelect(id: string) {
   const idx = batchSelected.value.indexOf(id)
@@ -243,6 +258,26 @@ onMounted(() => {
         </button>
       </div>
 
+      <!-- F2：只读内置技能分区（平台提供、常开不可停用；数据来自宿主 dockSkills prop，面板零 fetch） -->
+      <section v-if="props.builtinSkills.length" class="group" data-testid="builtin-section">
+        <h3 class="group-title">内置技能（{{ props.builtinSkills.length }}）· 平台提供 · 常开</h3>
+        <div class="cards-grid">
+          <article
+            v-for="item in filteredBuiltin"
+            :key="item.id"
+            class="manage-card builtin-card"
+            data-testid="builtin-skill-row"
+          >
+            <div class="manage-head">
+              <BrandPatternAvatar :seed="item.id" :name="item.label" size="sm" />
+              <span class="card-name manage-name" :title="item.label">{{ item.label }}</span>
+              <span class="builtin-badge">内置</span>
+            </div>
+            <p v-if="item.desc" class="summary manage-summary" :title="item.desc">{{ item.desc }}</p>
+          </article>
+        </div>
+      </section>
+
       <!-- 批量操作栏 -->
       <div v-if="batchMode" class="batch-bar" data-testid="batch-bar">
         <span class="batch-count">已选 {{ batchSelected.length }} 个</span>
@@ -406,4 +441,8 @@ onMounted(() => {
 .mine-switch[aria-checked="true"] { background: var(--lnk-accent); }
 .mine-knob { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 999px; background: var(--lnk-surface-raised); transition: left 0.15s ease; }
 .mine-switch[aria-checked="true"] .mine-knob { left: 16px; }
+
+/* F2：只读内置技能卡——无 mine-toggle / 卸载出口，与用户已安装技能边界清晰。 */
+.builtin-card { background: var(--lnk-surface-canvas); }
+.builtin-badge { font-size: var(--lnk-text-xs); color: var(--lnk-accent); border: 1px solid var(--lnk-accent); border-radius: var(--lnk-radius-sm); padding: 0 var(--lnk-space-2); flex-shrink: 0; }
 </style>

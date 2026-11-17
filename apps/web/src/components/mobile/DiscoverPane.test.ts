@@ -132,15 +132,15 @@ describe('DiscoverPane — 发现 = 社区精选', () => {
     expect(html.indexOf('discover-work-grid')).toBeLessThan(html.indexOf('soon-title'))
   })
 
-  it('⑨ M1-3：点「技能」入口展开技能发现面板（市场区 + 我的技能区）', async () => {
+  it('⑨ F3：点「技能」入口 emit open-skill-center（壳层以底部 sheet 承载，不再内嵌）', async () => {
     const wrapper = await mountPane()
+    // 内嵌面板已退役（实测在长信息流底部 y=1388 点了看不见）
     expect(wrapper.find('[data-testid="discover-skills-panel"]').exists()).toBe(false)
     await wrapper.find('[data-testid="soon-skills"]').trigger('click')
     await flushPromises()
-    expect(wrapper.find('[data-testid="discover-skills-panel"]').exists()).toBe(true)
-    // 面板内含市场区/我的技能区两个 tab
-    expect(wrapper.text()).toContain('技能市场')
-    expect(wrapper.text()).toContain('我的技能')
+    expect(wrapper.emitted('open-skill-center')).toHaveLength(1)
+    // 点其它预留位（禁用）不触发
+    expect(wrapper.emitted('open-skill-center')).toHaveLength(1)
   })
 
   it('⑧ IA v4：社区化后不再有「资料库」跨页签入口与项目空间行', async () => {

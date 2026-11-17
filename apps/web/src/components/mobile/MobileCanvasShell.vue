@@ -38,6 +38,8 @@ import MobileConnectModeOverlay from './MobileConnectModeOverlay.vue'
 import { useMobileNodeConnect } from '@/composables/useMobileNodeConnect'
 import MobileCreateSheet from './MobileCreateSheet.vue'
 import MobileTaskSheet from './MobileTaskSheet.vue'
+import MobileSheet from './MobileSheet.vue'
+import SkillDiscoverPanel from '@/components/skills/SkillDiscoverPanel.vue'
 import MobileMultiSelectBar from './MobileMultiSelectBar.vue'
 import MobileNodeActionSheet, { type MobileNodeActionNode } from './MobileNodeActionSheet.vue'
 import MobileNodeEditorSheet from './MobileNodeEditorSheet.vue'
@@ -278,6 +280,8 @@ function openMobilePlans() {
 /** ＋FAB 新建 sheet / 任务 sheet —— 纯移动端入口承载（D-2） */
 const showMobileCreateSheet = ref(false)
 const showMobileTaskSheet = ref(false)
+/** F3（2026-11-17 P3 真机修复）：发现页「技能」入口 → 底部 sheet 承载技能中心（market tab）。 */
+const showSkillCenterSheet = ref(false)
 
 function onMobileCreate(type: DockNodeType) {
   props.dockAdd(type)
@@ -364,7 +368,7 @@ watch(
     @cancel="onNodePendingCancel"
     @open-tasks="showMobileTaskSheet = true"
   />
-  <DiscoverPane v-if="mobileAppTab === 'discover'" />
+  <DiscoverPane v-if="mobileAppTab === 'discover'" @open-skill-center="showSkillCenterSheet = true" />
   <ProfilePane
     v-if="mobileAppTab === 'mine'"
     @open-membership="openMembership"
@@ -461,6 +465,16 @@ watch(
     @retry="onMobileTaskRetry"
     @close="showMobileTaskSheet = false"
   />
+  <!-- F3：发现页「技能」→ 底部 sheet 承载技能中心（与 PC 管理技能同一组件，默认市场 tab） -->
+  <MobileSheet
+    v-if="showSkillCenterSheet"
+    title="技能中心"
+    subtitle="安装技能，管理已安装的技能"
+    max-height="82vh"
+    @close="showSkillCenterSheet = false"
+  >
+    <SkillDiscoverPanel initial-tab="market" data-testid="skill-center-panel" />
+  </MobileSheet>
   <!-- R1-T5：移动端长按动作 sheet（重命名/引用/副本/多选/编辑/删除） -->
   <MobileNodeActionSheet
     v-if="mobileActionNode"

@@ -149,4 +149,43 @@ describe('SkillDiscoverPanel — M1-3 发现页双区', () => {
     const wrapper = await mountPanel()
     expect(wrapper.find('[data-testid="market-empty"]').exists()).toBe(true)
   })
+
+  // ── F2（2026-11-17 P3 真机修复）：内置技能只读分区 ──
+  const BUILTIN = [
+    { id: 'code-review', label: '代码评审', desc: '平台内置' },
+    { id: 'brainstorm', label: '头脑风暴', desc: '平台内置' },
+    { id: 'writing', label: '文案写作', desc: '平台内置' },
+  ]
+
+  it('F2/N3：传 builtinSkills 时「我的技能」顶部渲染只读内置分区，条目数匹配、无开关/卸载', async () => {
+    const wrapper = mount(SkillDiscoverPanel, { props: { initialTab: 'mine', builtinSkills: BUILTIN } })
+    await flushPromises()
+    const section = wrapper.find('[data-testid="builtin-section"]')
+    expect(section.exists()).toBe(true)
+    expect(section.text()).toContain('内置技能（3）')
+    expect(wrapper.findAll('[data-testid="builtin-skill-row"]')).toHaveLength(3)
+    // 内置分区内不含任何开关/卸载出口（N3 靶：内置不可停用/卸载）
+    expect(section.find('[data-testid="mine-toggle"]').exists()).toBe(false)
+    expect(section.find('[data-testid="mine-uninstall"]').exists()).toBe(false)
+    expect(section.find('[data-testid="mine-rollback"]').exists()).toBe(false)
+    // 用户已安装区开关仍独立存在（边界不混）
+    expect(wrapper.findAll('[data-testid="mine-toggle"]')).toHaveLength(2)
+  })
+
+  it('F2/N2：内置分区数据纯 prop 消费——不传不渲染，面板不额外拉 runtime', async () => {
+    const wrapper = await mountPanel('mine')
+    expect(wrapper.find('[data-testid="builtin-section"]').exists()).toBe(false)
+    // skillApi mock 没有 runtimeList：若面板内拉 runtime 会抛错/被调用；此处确认只拉 catalog+mine
+    expect(catalog).toHaveBeenCalled()
+    expect(mine).toHaveBeenCalled()
+  })
+
+  it('F2：内置分区同样响应搜索过滤', async () => {
+    const wrapper = mount(SkillDiscoverPanel, { props: { initialTab: 'mine', builtinSkills: BUILTIN } })
+    await flushPromises()
+    await wrapper.find('[data-testid="mine-search"]').setValue('头脑')
+    await flushPromises()
+    expect(wrapper.findAll('[data-testid="builtin-skill-row"]')).toHaveLength(1)
+    expect(wrapper.text()).toContain('头脑风暴')
+  })
 })
