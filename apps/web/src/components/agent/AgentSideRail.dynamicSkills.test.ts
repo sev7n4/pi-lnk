@@ -40,7 +40,8 @@ describe('AgentSideRail 技能接线（M1-3 + P3 胶囊）', () => {
   it('P3 C6：sheet 底部管理入口 → 打开管理弹层（SkillDiscoverPanel mine tab）', () => {
     // manage-skills-btn 按钮本体在 SkillPickSheet.test.ts 覆盖；此处锁宿主接线
     expect(sfc).toContain('@manage="skillSheetOpen = false; manageOpen = true"')
-    expect(sfc).toContain('<SkillDiscoverPanel initial-tab="mine"')
+    // F2：管理弹层把 dockSkills 作为只读内置技能传入（零 fetch，单一事实源）
+    expect(sfc).toContain(':builtin-skills="dockSkills.map((s) => ({ id: s.id, label: s.label, desc: s.desc }))"')
   })
 
   it('onMounted 拉取：skillApi.runtimeList + skillApi.mine 并源，经 runtimeSkillsToInstalled 适配后复用 mergeAgentSkills', () => {

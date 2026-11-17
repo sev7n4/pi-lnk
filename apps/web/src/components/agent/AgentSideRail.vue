@@ -4409,7 +4409,11 @@ defineExpose({
                               <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75"><path stroke-linecap="round" d="M6 6l12 12M18 6L6 18" /></svg>
                             </button>
                           </div>
-                          <SkillDiscoverPanel initial-tab="mine" @skills-changed="void loadDockSkills()" />
+                          <SkillDiscoverPanel
+                            initial-tab="mine"
+                            :builtin-skills="dockSkills.map((s) => ({ id: s.id, label: s.label, desc: s.desc }))"
+                            @skills-changed="void loadDockSkills()"
+                          />
                         </div>
                       </div>
                     </Teleport>
@@ -5814,15 +5818,25 @@ defineExpose({
  * 2026-11-09 真机修复 #1：去掉 .agent-panel-mobile-dock 祖先限定——附件卡/遮罩已 Teleport 到 body
  * （脱离面板 z-30 堆叠上下文），不再是其后代；移动端恒 teleport，直接按元素类命中即可。 */
 @media (max-width: 767px) {
-  .attach-card {
+  .attach-card,
+  .skill-sheet-card {
+    /* F1（2026-11-17 P3 真机修复）：技能 sheet 与附件卡同款底部抽屉。
+       技能 sheet 同样 Teleport 到 body，仍带 base 的 absolute bottom-full z-30：
+       实测 rect.y=-382（整块在视口上方）且 z30<遮罩 z85 ⇒ 移动端完全不可见。
+       复用附件卡模式升为 fixed 贴底 + z90，PC 端不进此 media 保持 popover 不变。 */
     position: fixed;
     left: 12px;
     right: 12px;
     bottom: 0;
     width: auto;
-    z-index: 90; /* 2026-11-09 真机修复 #1：高于页签 z-80，附件卡作为底部抽屉完整盖住页签 */
+    z-index: 90; /* 高于遮罩 z-85 与页签 z-80，底部抽屉完整盖住 */
     border-radius: 16px 16px 0 0;
     padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+  .skill-sheet-card {
+    margin-bottom: 0; /* 覆盖 base 的 mb-1，贴底无悬空 */
+    max-height: 70vh;
+    overflow-y: auto;
   }
 }
 

@@ -25,7 +25,6 @@ import type { Work } from '@lnkpi/shared'
 import { WORK_CATEGORIES } from '@lnkpi/shared'
 import { api } from '@/services/api'
 import WorkCard from '@/components/works/WorkCard.vue'
-import SkillDiscoverPanel from '@/components/skills/SkillDiscoverPanel.vue'
 
 const router = useRouter()
 const works = ref<Work[]>([])
@@ -83,18 +82,21 @@ function viewShare(workId: string) {
 }
 
 /**
- * 能力预留位：专家/连接器仍置灰（未定义）；「技能」M1-3 已激活——点击展开技能发现面板。
- * 不与社区作品流抢主位：技能面板作为「敬请期待」区内的内嵌展开区。
+ * 能力预留位：专家/连接器仍置灰（未定义）；「技能」M1-3 已激活。
+ * F3（2026-11-17 P3 真机修复）：技能入口改为 emit `open-skill-center`——壳层以底部 sheet
+ * 承载技能中心（技能市场 tab），替代原「敬请期待」区内嵌展开（实测内嵌面板在长信息流底部
+ * y=1388/视口 844，点了看不见）。技能中心与 PC「管理技能」同一组件，语义统一。
  */
+const emit = defineEmits<{ 'open-skill-center': [] }>()
+
 const soonRows = [
   { key: 'experts', label: '专家', icon: 'experts', disabled: true },
   { key: 'skills', label: '技能', icon: 'skills', disabled: false },
   { key: 'connectors', label: '连接器', icon: 'connectors', disabled: true },
 ] as const
-const skillsOpen = ref(false)
 
 function onSoonClick(row: (typeof soonRows)[number]) {
-  if (row.key === 'skills') skillsOpen.value = !skillsOpen.value
+  if (row.key === 'skills') emit('open-skill-center')
 }
 
 onMounted(fetchWorks)
@@ -190,11 +192,9 @@ onMounted(fetchWorks)
             </svg>
           </span>
           <span class="row-label">{{ row.label }}</span>
-          <span v-if="row.key === 'skills'" class="row-caret" aria-hidden="true">{{ skillsOpen ? '▾' : '▸' }}</span>
+          <span v-if="row.key === 'skills'" class="row-caret" aria-hidden="true">▸</span>
         </button>
       </div>
-      <!-- M1-3：技能入口激活后内嵌发现面板（市场区 + 我的技能区） -->
-      <SkillDiscoverPanel v-if="skillsOpen" data-testid="discover-skills-panel" />
     </section>
   </div>
 </template>
