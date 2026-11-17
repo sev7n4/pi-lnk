@@ -38,6 +38,7 @@ import {
   mergeCursor,
   needsStart,
   planFrames,
+  shouldAbortConnection,
   shouldOpenConnection,
   shouldTakeOver,
 } from './shared-subscription-core'
@@ -393,4 +394,4 @@ export function createSharedSubscription(opts: SharedSubscriptionOptions): Share
   }
 }
 
-export { electLeader, mergeCursor, needsStart, planFrames, shouldOpenConnection, shouldTakeOver }
+export { electLeader, mergeCursor, needsStart, planFrames, shouldAbortConnection, shouldOpenConnection, shouldTakeOver }

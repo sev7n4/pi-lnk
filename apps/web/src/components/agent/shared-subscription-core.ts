@@ -88,6 +88,25 @@ export function shouldOpenConnection(state: {
 }
 
 /**
+ * 释放连接判据（2026-11-17 S3：与 needsStart 正交）。
+ *
+ * ⚠️ 不能把 `needsStart() === false` 直接当成「该 abort」：
+ * - `allowed=false`（follower / 隐藏页 / 让出全局槽位）⇒ 本端不该持有连接，必须释放；
+ * - `allowed=true && liveCount>=1` ⇒ 健康流已存在，只是**不该重复开**，
+ *   此时 abort 会掐死唯一那条连接，而之后往往没有第二个触发点重开（生产实证）。
+ *
+ * 因此释放只看 allowed 与实际活轮数，不看 state；无活轮时 abort 也是 no-op。
+ * 纯函数：无 IO/时钟（本文件纪律）。
+ */
+export function shouldAbortConnection(args: {
+  allowed: boolean
+  state: 'idle' | 'connecting' | 'streaming' | 'backoff'
+  liveCount: number
+}): boolean {
+  return !args.allowed && args.liveCount > 0
+}
+
+/**
  * 订阅开连接判据（2026-11-17 孤儿态自愈，spec §4 候选 B）。
  *
  * `evaluateConnection` 判出 allowed 后，还要决定**是否真的调用 start()**。

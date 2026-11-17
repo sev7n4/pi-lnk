@@ -7,6 +7,7 @@ import { applyTailVisibility } from './tail-visibility'
 import {
   createSharedSubscription,
   needsStart,
+  shouldAbortConnection,
   shouldOpenConnection,
   type SharedEvent,
   type SharedSubscription,
@@ -256,16 +257,21 @@ function evaluateConnection(): void {
       isLeader: shared?.isLeader() ?? true,
       visible: isTabVisible(),
     }) && holdsGlobalSseSlot()
-  const start =
-    needsStart({ allowed, state: followUpTail.getState() as 'idle' | 'connecting' | 'streaming' | 'backoff', liveCount: followUpTail.getLiveCount() })
-  if (start) {
+  const state = followUpTail.getState() as 'idle' | 'connecting' | 'streaming' | 'backoff'
+  const liveCount = followUpTail.getLiveCount()
+  // ⛔ 释放与开连接是两个正交判据：只有「本端不该持有连接」才 abort。
+  //   绝不能写 `if (needsStart(...)) start() else abort()`——liveCount>=1 时
+  //   needsStart=false 只表示「已有健康流、不要重复开」，abort 会把它掐死
+  //   且之后无重开触发点（2026-11-17 S3 生产实证：两条 SSE 均 19ms 被掐）。
+  if (shouldAbortConnection({ allowed, state, liveCount })) {
+    followUpTail.abort()
+    return
+  }
+  if (needsStart({ allowed, state, liveCount })) {
     // ⛔ 只在真的没有活连接时开：`start()` 会掐旧流重开，重复调用 ⇒ 连接抖动。
     // 2026-11-17 孤儿态自愈：判据从「state === idle」升级为 needsStart（含
     // 「state 非 idle 但 liveCount===0」的孤儿态——连接异常终止且无重开触发点）。
     void followUpTail.start()
-  } else {
-    // 让出 leader / 槽位 / 变隐藏 ⇒ 掐掉本标签页的连接
-    followUpTail.abort()
   }
 }
 
