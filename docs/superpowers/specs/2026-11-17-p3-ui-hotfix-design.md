@@ -1,6 +1,6 @@
 # P3 真机四缺陷修复 · 设计规格
 
-> 立项日期：2026-11-17。状态：**已实施待合（2026-11-17 用户确认开工，F1–F4 + 门禁/变异全绿）**。
+> 立项日期：2026-11-17。状态：**已上线闭环（PR #945，合并 `8bb1e946`，2026-11-17 完成）**。
 > 实施结论：F1 移动端技能 sheet 复用 attach-card 底部抽屉 CSS（fixed/z90/safe-area）；F2 SkillDiscoverPanel 加 `builtinSkills` prop 渲染只读内置分区（数据来自宿主 dockSkills，零 fetch，无开关/卸载）；F3 DiscoverPane 改 emit + MobileSheet 承载技能中心（market tab）；F4 slash 去 slice(0,8)。
 > 验收：web 关键 46/46 + 全量 4353/4353（2 文件因基底同步时序首轮失败、补齐后 22/22 全绿）；双 vue-tsc/tsc 干净；变异 N1–N5 全 5/5 RED。部署/生产 CDP 复测待单独授权。
 > 前序：`2026-11-17-p3-import-chip-manage-design.md`（PR #938 合 `8ebf962e` 已上线）——本刀修其真机暴露的四缺陷，**不新增后端端点、不碰 pi-runtime**。
