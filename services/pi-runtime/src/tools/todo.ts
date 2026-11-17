@@ -107,15 +107,19 @@ export function overwriteTodos(sessionId: string, todos: TodoItemInput[]): { sna
 
 /** A-2' 拍板 1：幻觉/已删除 id ⇒ 工具级硬拒绝（非软容错）。校验键与 overwriteTodos
  * 同源（storeScopeKey ?? sessionId，C4 取键约定）；拒绝零副作用、无快照事件；
- * 回执附完整合法 id 清单（防误伤设计）+ 单次自纠回路。 */
+ * 回执附完整合法 id 清单（防误伤设计）+ 单次自纠回路。
+ * E2E 2026-11-17 生产实证修正：空清单放行——清单为空时无可变更对象，带 id 必然是
+ * 新增意图；reduce 的 A-2' id 通道防御兜底本就按新项分配 plan-N（输入 id 不进 SSOT），
+ * 放行零风险且与模型心智模型一致（实证 agnes-2.5-flash 在空清单硬拒下连续 4 次重复
+ * 同错误调用 + 幻觉进度，第 6 次才自纠成功——拒绝回路对弱模型失效）。非空清单的
+ * 未知 id 仍硬拒（防复活已删任务，保留拍板 1 核心价值）。 */
 function rejectUnknownIds(params: { todos: TodoItemInput[] }, key: string): string | null {
 	const legal = getTodoState(key);
+	if (legal.length === 0) return null;
 	const legalIds = new Set(legal.map((i) => i.id));
 	const offending = params.todos.filter((t) => t.id !== undefined && !legalIds.has(t.id));
 	if (offending.length === 0) return null;
-	const listing = legal.length
-		? legal.map((i) => `- ${i.id} ${i.content}（${i.status}）`).join("\n")
-		: "（当前清单为空）";
+	const listing = legal.map((i) => `- ${i.id} ${i.content}（${i.status}）`).join("\n");
 	return `调用被拒绝：id 不存在于当前任务清单（${offending.map((o) => o.id).join("、")}）。当前合法 id：\n${listing}\n请带正确 id 重发（变更已有任务），或对新增任务省略 id。`;
 }
 

@@ -120,3 +120,36 @@ test("A-2' ②c: 校验键走 storeScopeKey（子会话校验自己的作用域�
 	const main = getTodoState("sess-main");
 	assert.equal(main[0].content, "主会话任务", "主会话不受子会话调用影响");
 });
+
+// ===== 空清单带 id 放行（E2E 2026-11-17 生产实证：agnes-2.5-flash 首跳带 plan-1..4 id 被
+// 硬拒后连续 4 次重复同错误 + 幻觉进度，第 6 次才省略 id 成功。空清单下无可变更对象，
+// 带 id 必然是新增意图——reduce 的 A-2' id 通道防御兜底本就按新项分配 plan-N，
+// 放行零风险且与模型心智模型一致。非空清单未知 id 保持硬拒（防复活已删任务）。=====
+
+test("空清单 + 首跳带 id ⇒ 放行为新增（reduce 计数器分配 plan-N，不再硬拒）", async () => {
+	const t = tool();
+	const res = await run(t, {
+		todos: [
+			{ id: "plan-1", content: "调研榜单", status: "in_progress" },
+			{ id: "plan-2", content: "拆解逻辑", status: "pending" },
+			{ id: "plan-3", content: "确认选题", status: "pending" },
+			{ id: "plan-4", content: "搭建画布", status: "pending" },
+		],
+	} as never);
+	assert.equal((res as { isError?: boolean }).isError, undefined, "空清单带 id 不应拒绝");
+	const snap = (res.details as { todo: { snapshot: Array<{ id: string; content: string }> } }).todo.snapshot;
+	assert.equal(snap.length, 4);
+	assert.deepEqual(snap.map((i) => i.id), ["plan-1", "plan-2", "plan-3", "plan-4"], "reduce 计数器分配与模型心智一致");
+	const first = res.content[0];
+	assert.ok(first.type === "text" && first.text.includes("共 4 项"));
+	assert.equal(getTodoState("sess-A").length, 4, "清单真实建立");
+});
+
+test("非空清单 + 未知 id ⇒ 仍硬拒绝（A-2' 拍板 1 保留：防复活已删任务）", async () => {
+	const t = tool();
+	await run(t, { todos: [{ content: "现存任务", status: "pending" }] });
+	const before = getTodoState("sess-A");
+	const res = await run(t, { todos: [{ id: "plan-9", content: "幻觉引用", status: "pending" }] } as never);
+	assert.equal((res as { isError?: boolean }).isError, true);
+	assert.deepEqual(getTodoState("sess-A"), before, "拒绝零副作用");
+});
