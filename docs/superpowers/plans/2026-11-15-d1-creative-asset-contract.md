@@ -1,6 +1,8 @@
 # D-1 创作资产契约与可执行判定层 实施计划
 
 > **状态回填（2026-11-17，只追加）**：本计划的「Shot/Story 加列」方案已被 D-1 spec 附录 D.5 / D.7 取证推翻并作废（`Shot` 全仓零写者、判据两端无结构化源）；实际实施经 #900/#901 落地为**既有锚点形态**（三 oracle 判定器 + 快照端点装配），收尾结论见 D-1 spec 附录 D.8 与全量计划 `2026-11-16-d1-creative-asset-contract-finalization.md`。以下正文保留为历史快照不改。
+>
+> **状态刷新（2026-11-18，只追加）**：本计划 Task 1–7 的执行产物已全部闭环（R0 #921 / R1 #900,#901 / R2 #923，见 D-1 spec 附录 D.9 与复审规格附录 D.6）；正文任务清单与末尾「等用户授权合并 / dispatch runtime-deploy」是历史时点快照，**实际授权与部署均已完成**。仍未达项仅观测线（C-2c 四 gate / acceptance 零声明 / agnes 429 墙），归对应线，不在本计划范围。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

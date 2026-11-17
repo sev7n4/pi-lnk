@@ -565,3 +565,25 @@ D.3 收敛后的三刀执行结果（实施记录 SSOT = `docs/superpowers/plans
 - **R2 完成**：客户端 PATCH stale 传播经 PR **#923** 合并 `de30e8f8` 上线——`propagateStale` / `computeNodeContentHash` / `changedNodeIdsFromOps` 提取至 `packages/shared/src/canvas/lineage.server.ts`，agent 写路径与 `sessions.service.patchCanvas` 共用同一纯函数（零重复实现、零 migration）；部署后生产探针全绿（B/C BFS stale 传递 / version=2 / 幂等 / 清理）。
 - **第一原则落规**：「吃满上游、不重复造轮子」已写入 `AGENTS.md`（#926 合 `9cc0e1c5`），含三条硬判据与执行纪律（规格 / 实施计划强制携带原则 + 等价物检索结论表）。
 - 诚实边界不变：三 oracle 生产声明率仍为零，fail-closed 属诚实拒绝；D-0 归 C-2c；本附录不宣告 ALL_PASS。
+
+### D.6 状态清单刷新（2026-11-18，只追加）
+
+> **性质**：按「只追加纪律」，正文与附录 A–C、D.1–D.5 历史快照一律不改；本节只对正文 §10.3 / §12 / 附录 B 中**已随后续进展改变的事实项**做状态刷新，供读者辨别哪些欠账已闭环、哪些仍成立。取证基准：master `08b0086f`（本轮 `gh api` 实测），生产 CDP（9223 真机 profile，测试号已登录）+ `/metrics` 只读取证，详见 `.workbuddy/memory/2026-11-18.md`。
+
+**已从欠账清单移除（已闭环，正文历史快照保留不改）**：
+
+| 项（正文位置） | 刷新状态 | 证据 |
+|---|---|---|
+| D-1 全部代码刀未实施（附录 B） | ✅ 已闭环 | R0 #921 `ce5cd887` / R1 已在 #900/#901 / R2 #923 `de30e8f8` + 部署探针全绿；见 D.5 与全量计划文末回填 |
+| A-6 真机 UI 走查（附录 B / §10.3「本环境不可代跑」） | ✅ 已完成用户级走查（S0 登录 / S1 创作全链 3/3 图 / S2 硬拒链 / R2 PATCH），2026-11-17 CDP 9223；注：此为创作域用户级走查口径，评测线 `requiresConfirm` A-6 另有闭环记录，勿混同 | `.workbuddy/memory/2026-11-17.md` 01:04–01:45 走查段 |
+| 交付清单 8 项证据（附录 B / §10.3） | 📌 归任务管理主线 SSOT（`2026-11-11-task-planning-engineering-roadmap-design.md`）登记，本主线不重复认领；非本刀可回填 |
+
+**仍在欠账清单（刷新后依旧成立，非本刀可解）**：
+
+- **D-0 / C-2c 四 gate 全未达**：本轮生产 `/metrics` 实测 `pi_runtime_acceptance_total` 仍**只有 `#TYPE` 行、零数据行**；CDP 前端 `acceptanceWords=0`（零验收/契约文案）⇒ 模型不主动构造 requirement DSL，声明率零的设计根因在生产复现。C-2c G1（`rate_limited` 墙 / 实名认证）、G2（采样窗口 + declared≥M）、G3（采集器/未标记重启）、G4（100% 探针流量）均未达，归 C-2c 观测线，**不因本刀回填而达标**。
+- **429 墙**：agnes-2.0/3.0-flash 仍实名认证限频（用户侧）；2.5-flash 已恢复。
+- `spawned 7天/200run` 复核、P2 严格重启前后同门对比（时间窗 / 流程未达）。
+- `lip-sync` 未开始、成片合成 / 导出已下线（`check_audio_video_sync` 无检测对象）；D-2 感知监控（human gold set + TPR/TNR + 429 解封，降格候选）。
+- 定价线 P3-B/P3-C、ADR-0016 M0–M4 路线图（其他窗口线，不属本刀）。
+
+**部署面核对（消除疑似缺口）**：生产 pi-runtime `build_info=b19dc038` 落后 master `08b0086f` 共 11 提交，但 `compare b19dc038...master` 实测该 11 提交**全为 web/docs，零 `services/pi-runtime` / `skills/` 变更** ⇒ runtime 停在 b19dc038 属预期，非漏部署。D.4 诚实边界维持，本附录不宣告 ALL_PASS。
