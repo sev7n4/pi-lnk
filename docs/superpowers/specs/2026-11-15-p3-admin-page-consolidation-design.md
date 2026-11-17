@@ -174,3 +174,5 @@
 - **实施计划**：`docs/superpowers/plans/2026-11-16-p3b-admin-page-convergence.md`。
 
 **阶段 C 未启动**：硬前置「会话成本来源取证全部为 CostRate」尚未成立——`PI_SESSION_COST_SOURCE=cost_rate` 已于 2026-11-16 13:15 切换，但切换后 7h 内生产无真实 pi 会话 usage 累计（`pi_runtime_usage_cost_total` 无序列行），取证待真实流量产生后另行进行。
+
+**2026-11-17 追加（观察窗现状与取证路径修正）**：① 切换后至今生产仍无真实 pi 会话 usage 累计——期间 **pi-runtime 曾因节点磁盘压力被 kubelet 驱逐下线约 9 小时**（ns `pi-lnk-runtime` pod 全 Evicted/Error/Pending，节点带 `node.kubernetes.io/disk-pressure` taint ⇒ 无法调度；已释放磁盘并待 taint 自动消退后恢复，pod Running 1/1、`/healthz` 与 `/skills` 均 200），该时段子代理/工具调用/usage 采集整体不可用，观察窗因此被打断而非「无流量」。② **取证路径需换**：`PI_SESSION_COST_SOURCE=cost_rate` 仍生效（容器 env 已复核），但 `pi_runtime_usage_cost_total` 在 **Nest `/api/metrics` 零命中**（该指标归 C-2c 只读面），pi-runtime 的 30100 端口亦未暴露 `/metrics` ⇒ 阶段 C 的「来源全部为 CostRate」取证不能依赖指标累计，须改为会话成本出口逐条取样（按会话读取 CNY 成本并核对单价形态 ≈0.06 元/MTok）。本条不改变阶段 C「未启动」结论，仅更正取证依据。
