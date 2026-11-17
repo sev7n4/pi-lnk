@@ -189,7 +189,7 @@ jobs:
               --exclude='**/dist' \
               --exclude='.cursor' \
               --exclude='docs' \
-              -czf - . | /tmp/lnkpi-ssh-retry.sh "sync-tar" ssh deploy-cvm "bash -lc 'mkdir -p ${DEPLOY_DIR} && if [[ -f ${DEPLOY_DIR}/.env ]]; then cp ${DEPLOY_DIR}/.env /tmp/lnkpi.env.bak; fi && rm -rf ${DEPLOY_DIR}/packages ${DEPLOY_DIR}/apps/server && tar -xzf - -C ${DEPLOY_DIR} && if [[ -f /tmp/lnkpi.env.bak ]]; then mv /tmp/lnkpi.env.bak ${DEPLOY_DIR}/.env; elif [[ ! -f ${DEPLOY_DIR}/.env ]]; then cp ${DEPLOY_DIR}/deploy/.env.production.example ${DEPLOY_DIR}/.env; fi && chmod +x ${DEPLOY_DIR}/deploy/deploy-remote-build.sh ${DEPLOY_DIR}/deploy/deploy-remote.sh ${DEPLOY_DIR}/deploy/launch-cvm-build.sh ${DEPLOY_DIR}/deploy/cvm-recover.sh ${DEPLOY_DIR}/deploy/deploy-web.sh ${DEPLOY_DIR}/deploy/smoke-graph-phase-a.sh && rm -f /tmp/lnkpi-deploy-${IMAGE_TAG}.status /tmp/lnkpi-deploy-${IMAGE_TAG}.log'"
+              -czf - . | /tmp/lnkpi-ssh-retry.sh "sync-tar" ssh deploy-cvm "bash -lc 'mkdir -p ${DEPLOY_DIR} && if [[ -f ${DEPLOY_DIR}/.env ]]; then cp ${DEPLOY_DIR}/.env /tmp/lnkpi.env.bak; fi && rm -rf ${DEPLOY_DIR}/packages ${DEPLOY_DIR}/apps/server && tar -xzf - -C ${DEPLOY_DIR} && if [[ -f /tmp/lnkpi.env.bak ]]; then mv /tmp/lnkpi.env.bak ${DEPLOY_DIR}/.env; elif [[ ! -f ${DEPLOY_DIR}/.env ]]; then cp ${DEPLOY_DIR}/deploy/.env.production.example ${DEPLOY_DIR}/.env; fi && chmod +x ${DEPLOY_DIR}/deploy/deploy-remote-build.sh ${DEPLOY_DIR}/deploy/rollback-api-image.sh ${DEPLOY_DIR}/deploy/deploy-remote.sh ${DEPLOY_DIR}/deploy/launch-cvm-build.sh ${DEPLOY_DIR}/deploy/cvm-recover.sh ${DEPLOY_DIR}/deploy/deploy-web.sh ${DEPLOY_DIR}/deploy/smoke-graph-phase-a.sh && rm -f /tmp/lnkpi-deploy-${IMAGE_TAG}.status /tmp/lnkpi-deploy-${IMAGE_TAG}.log'"
 
       # 平台级供应商密钥注入（单一来源 = GitHub Secrets）。
       #
@@ -303,6 +303,10 @@ jobs:
               failed)
                 echo "=== CVM build log (tail) ==="
                 ssh deploy-cvm "tail -80 ${LOG_FILE} 2>/dev/null || true"
+                # 自动回滚标记（2026-11-16 事故 #929 引入的护栏）：有标记说明服务已自动回退到上一个良好镜像；
+                # 部署本身仍判失败（新镜像为什么起不来仍需人看）。
+                echo "=== deploy rollback marker ==="
+                ssh deploy-cvm "cat ${STATUS_FILE}.rollback 2>/dev/null || echo 'no rollback marker (service may need manual intervention)'" || true
                 exit 1
                 ;;
             esac

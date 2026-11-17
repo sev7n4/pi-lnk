@@ -78,6 +78,17 @@ jobs:
           echo "- Also: \`pnpm verify-claims\` checks AGENTS.md factual claims (counts / section names / workflow names / pinned versions)" >> "$GITHUB_STEP_SUMMARY"
           echo "- Also: \`pnpm verify-links\` checks markdown relative links in active docs (vendor / historical plans excluded by design)" >> "$GITHUB_STEP_SUMMARY"
 
+  deploy-guard:
+    name: Verify deploy auto-rollback guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 部署护栏的价值全在「该失败时真的回滚」：必须用桩把每条路径（正常 + 全部失败路径）都跑一遍。
+      # 纯 bash + 桩，不需要 docker / 网络 / 生产；场景矩阵见脚本头部注释。
+      - name: Verify deploy rollback guard (offline stubs)
+        run: bash scripts/verify-deploy-rollback.sh
+
   build:
     name: Build monorepo
     runs-on: ubuntu-latest

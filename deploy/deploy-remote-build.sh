@@ -138,6 +138,12 @@ p.providerChannel.update({ where: { id: 'platform' }, data: { baseUrl: url } })
       log "WARN: /usr/local/sbin/lnkpi-service-guard.sh 未安装，跳过服务齐全性门禁（见 docs/ops/RUNBOOK-service-guard.md）"
     fi
 
+    # 记录「上次成功部署的镜像」：回滚锚点必须锚在真正跑通健康检查的版本上，
+    # 而不是「按时间最近的镜像」——后者可能是上一次失败部署留下的坏镜像
+    # （2026-11-16 事故实证：坏镜像 bd038ea9 比好镜像 de30e8f8 更新）。
+    printf '%s\n' "$IMAGE_TAG" > .last-good-api-image 2>/dev/null || true
+    log "last-good 镜像已记录: lnkpi-api:${IMAGE_TAG}"
+
     set_status success
     log "部署完成 (IMAGE=${LNKPI_API_IMAGE})"
     exit 0
@@ -147,4 +153,24 @@ p.providerChannel.update({ where: { id: 'platform' }, data: { baseUrl: url } })
 done
 
 log "health check failed after retries"
-on_fail
+
+# ── 自动回滚护栏（2026-11-16 事故 #929 引入）────────────────────────────────
+# 新镜像起不来时，容器会停在崩溃回环（/api/health 502 长时间无人值守）。
+# 此前这里直接 on_fail 退出，而「回滚命令」只打印在日志里没人执行 ⇒ 必须人工介入。
+# 现在自动回滚到构建前捕获的 prev_tag（见上方 rollback point 捕获逻辑），并留 marker 供 CI 展示。
+ROLLBACK_MARKER="${STATUS_FILE}.rollback"
+PREV_TAG="${prev_tag:-}" IMAGE_TAG="$IMAGE_TAG" \
+  API_HEALTH_URL="http://127.0.0.1:5100/api/health" \
+  COMPOSE_FILE="deploy/docker-compose.prod.yml" \
+  LOG_FILE="$LOG_FILE" MARKER_FILE="$ROLLBACK_MARKER" \
+  LAST_GOOD_FILE=".last-good-api-image" \
+  bash deploy/rollback-api-image.sh || true
+
+if [[ -f "$ROLLBACK_MARKER" ]]; then
+  log "!!! 已自动回滚到 lnkpi-api:${prev_tag}（服务已恢复，但本次部署仍判失败）"
+else
+  log "!!! 自动回滚未成功，需人工介入（marker: $ROLLBACK_MARKER）"
+fi
+set_status failed
+docker logs lnkpi-api --tail 40 2>&1 || true
+exit 1
