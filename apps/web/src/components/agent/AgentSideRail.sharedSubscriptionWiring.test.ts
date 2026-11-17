@@ -105,6 +105,13 @@ describe('AgentSideRail 跨标签页订阅共享接线（2026-10-26 根治）', 
     expect(body).toContain('onDegrade')
   })
 
+  it('⑧ ⭐ 孤儿态自愈：开连接判据必须走 needsStart（含 liveCount=0 自愈），不得退回裸 state===idle', () => {
+    const body = bodyOf('evaluateConnection')
+    expect(body, '必须引入 needsStart 纯函数判据').toContain('needsStart(')
+    expect(body, '必须把实际活轮数喂给判据').toContain('getLiveCount()')
+    expect(code, '必须导入 needsStart').toContain('needsStart,')
+  })
+
   it('⑦ 卸载必须退出共享频道与全局槽位（否则别的标签页接不了管）', () => {
     const body = bodyOf('onFollowUpTailVisibility') // 定位用
     expect(body.length).toBeGreaterThan(0)

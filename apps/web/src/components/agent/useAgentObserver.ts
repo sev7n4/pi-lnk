@@ -6,6 +6,7 @@ import { createFollowUpTailListener, isTurnTerminal } from './follow-up-tail'
 import { applyTailVisibility } from './tail-visibility'
 import {
   createSharedSubscription,
+  needsStart,
   shouldOpenConnection,
   type SharedEvent,
   type SharedSubscription,
@@ -255,9 +256,13 @@ function evaluateConnection(): void {
       isLeader: shared?.isLeader() ?? true,
       visible: isTabVisible(),
     }) && holdsGlobalSseSlot()
-  if (allowed) {
-    // ⛔ 只在真的没有连接时开：`start()` 会掐旧流重开，重复调用 ⇒ 连接抖动。
-    if (followUpTail.getState() === 'idle') void followUpTail.start()
+  const start =
+    needsStart({ allowed, state: followUpTail.getState() as 'idle' | 'connecting' | 'streaming' | 'backoff', liveCount: followUpTail.getLiveCount() })
+  if (start) {
+    // ⛔ 只在真的没有活连接时开：`start()` 会掐旧流重开，重复调用 ⇒ 连接抖动。
+    // 2026-11-17 孤儿态自愈：判据从「state === idle」升级为 needsStart（含
+    // 「state 非 idle 但 liveCount===0」的孤儿态——连接异常终止且无重开触发点）。
+    void followUpTail.start()
   } else {
     // 让出 leader / 槽位 / 变隐藏 ⇒ 掐掉本标签页的连接
     followUpTail.abort()
