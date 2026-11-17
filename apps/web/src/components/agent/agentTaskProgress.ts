@@ -181,6 +181,26 @@ export function applyPollRecordToTask(
   return { ...state, items }
 }
 
+/** U-1（2026-11-17 E2E）：run 失败终态收敛 —— task_* 事件只由 todo 域驱动，
+ * run 失败不发 task_summary ⇒ running 项永远停留「正在生成」，用户误以为还在跑。
+ * 在 error 事件分支调用：running/retrying → failed(+errorHint)、pending → skipped、
+ * finished=true。不改动 C1/W11 既有语义；completed 路径（task_summary 权威收敛）不走此函数；
+ * 无 items 或已 finished 时 no-op。 */
+export function applyRunInterrupted(
+  state: AgentTaskProgressState,
+  errorHint = '任务随本轮中断',
+): AgentTaskProgressState {
+  if (state.finished || state.items.length === 0) return state
+  const items = state.items.map((it) => {
+    if (it.status === 'running' || it.status === 'retrying') {
+      return { ...it, status: 'failed' as const, errorHint }
+    }
+    if (it.status === 'pending') return { ...it, status: 'skipped' as const }
+    return it
+  })
+  return { ...state, items, finished: true }
+}
+
 /** P1#5：从 assistant message metadata.executionEvents 播放 task 事件，恢复历史回合的任务卡。
  * 无 task 事件返回 null；全部到达终态时置 finished。 */
 export function seedTaskProgressFromEvents(

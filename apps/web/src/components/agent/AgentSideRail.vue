@@ -53,11 +53,13 @@ import {
 import {
   applyTaskEvent,
   applyPollRecordToTask,
+  applyRunInterrupted,
   emptyTaskProgress,
   mapRecordStatusToTaskStatus,
   seedTaskProgressFromEvents,
   type AgentTaskProgressState,
 } from '@/components/agent/agentTaskProgress'
+import { friendlyAssistantError } from '@/utils/apiError'
 import {
   parseRecordUrl,
   useGenerationPolling,
@@ -2911,14 +2913,22 @@ function handleEvent(event: { type: string; data: unknown }) {
       }
       agent.markTurnError(data)
       agent.trackStructuredError(data)
-      agent.appendText(`\n\n⚠️ ${data.message || '发生错误'}`)
+      // U-1（2026-11-17 E2E）：run 失败 ⇒ 任务卡运行态收敛（running→failed /
+      // pending→skipped），不再停留「正在生成」。completed 路径由 task_summary
+      // 权威收敛，不经此处。
+      taskProgress.value = applyRunInterrupted(taskProgress.value)
+      // U-3（2026-11-17 E2E）：原始 JSON dump（含 request id 全文）不再直出对话流，
+      // 高频错误映射为人话文案；未知错误 generic 透传。原始 message 保留在
+      // markTurnError/trackStructuredError 内供诊断。
+      const friendly = friendlyAssistantError(data.message || '')
+      agent.appendText(`\n\n⚠️ ${friendly.text}`)
       // dock 上沿窄卡片（失败提醒复用入口）：已分类的失败（如余额不足）弹充值/重试提醒
       if (data.error_type) {
         const retry = data.retry_hint ? ` ${data.retry_hint}` : '请稍后重试。'
         dockNotice.pushNotice({
           tone: 'error',
           title: data.error_type === 'insufficient_balance' ? '生成失败 · 渠道余额不足' : '生成失败',
-          message: `${data.message || '本轮生成失败。'}${retry}`,
+          message: `${friendly.text}${retry}`,
         })
       }
       break
