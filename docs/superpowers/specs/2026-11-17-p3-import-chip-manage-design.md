@@ -1,6 +1,6 @@
 # P3 导入 UI + composer 技能胶囊条 + 管理技能页 · 设计规格
 
-> 立项日期：2026-11-17。状态：**待审**。
+> 立项日期：2026-11-17。状态：**已实施上线（PR #938 合 8ebf962e，2026-11-17 生产部署+冒烟通过）**。
 > 上位规格：`2026-11-16-creative-skills-ecosystem-discovery-loading-design-v2.md`（P3 = 北极星 Must）。
 > 前序闭环：`2026-11-16-builtin-skills-discoverability-design.md`（#929/#931，基准线已上线，生产 ce22e69a）——本刀在其数据面之上做 UI 层，**不新增任何后端数据协议**。
 > 遵循：AGENTS.md「第一原则——吃满上游、不重复造轮子」（§5 附逐项等价物检索结论表）。
@@ -124,6 +124,7 @@ P3 判据前两条 Must 至今未达：用户无法从界面**导入自定义技
 
 - 前置：#929/#931 已上线（生产 ce22e69a）——本刀直接受益，无阻塞依赖。
 - 触发面：`apps/web` + `apps/server` → `deploy.yml`（web + API 双 job）；不碰 `services/pi-runtime`。
+- **实施回填（2026-11-17）**：PR #938 squash 合 `8ebf962e`，CI 4/4，合并树==CI 验证树（59eb4a7c），deploy 双 job 成功；生产冒烟：API 镜像 `8ebf962e` healthy、healthz 200、web chunk 含 `skillIds`/`uninstallBatch` 标记。变异 N1–N6 全 6/6 RED；web 4341/4341、server 3008/3008（含 arity 守卫 17→18 位同步）。实施期架构微调：胶囊 toggle 同时服务 sheet 与 `/`（onSlashSkillSelect→toggleSkillChip），「自动」=清空数组。遗留：行内 token 胶囊（二期）、zip/url/github 导入 UI、A-6 真机走查 sheet 交互。
 - 预计与 A-6 真机走查联动：移动端 sheet 交互上真机后补走查项。
 
 ## 9. 等价物检索结论表（第一原则 · 逐项）

@@ -1,6 +1,6 @@
 # P3 导入 UI + 技能胶囊条 + 管理技能页 · 实施计划
 
-> 立项日期：2026-11-17。规格：`docs/superpowers/specs/2026-11-17-p3-import-chip-manage-design.md`（待审；本计划随规格同审）。
+> 立项日期：2026-11-17。规格：`docs/superpowers/specs/2026-11-17-p3-import-chip-manage-design.md`。**状态：T1–T9 全部完成并上线（PR #938 合 8ebf962e，2026-11-17 生产部署+冒烟通过）。**
 > 纪律：TDD 红→绿 + 变异 N1–N6 转红 + 全量门禁 + REST 推 PR（保命纪律见 AGENTS.md / delivery.md）。
 > 第一原则：每个任务标注复用资产；任何「新造」冲动先回规格 §4.5 对照。
 
@@ -75,4 +75,10 @@ env -u NODE_OPTIONS ./node_modules/.bin/vitest run <file> --maxWorkers=1 --no-fi
 
 - **G0**（本计划 + 规格评审）：用户审过才动代码。
 - **G1**（合并）：CI 全绿后 squash 合并（总授权已含）。
-- **G2**（部署 + 生产冒烟）：随 G1 自动推进，冒烟结果回填规格 §8。
+- **G2**（部署 + 生产冒烟）：已闭环——deploy run 44052400912 双 job 成功；生产冒烟（镜像 8ebf962e healthy / healthz 200 / web chunk 标记）全过，结论已回填规格 §8。
+
+## 5. 实施结论（2026-11-17 回填）
+
+- 实际触碰面 15 文件（原估 14 + arity 守卫 `start-conversation-run.test.ts` 17→18 位同步——该守卫如约拦住位置参数变更）。
+- 实施期微调：`/` 候选选中与 sheet 同走 `toggleSkillChip`（toggle 胶囊），「自动」项 = 清空数组；`activeSkillId` 改 computed 首胶囊视图，placeholder/特判消费面零改动。
+- 变异 N1–N6 全 6/6 RED（副本备份恢复法）；全量 web 4341/4341 + server 3008/3008 + vue-tsc/tsc 干净；CI 4/4；合并树==CI 树（59eb4a7c）。
