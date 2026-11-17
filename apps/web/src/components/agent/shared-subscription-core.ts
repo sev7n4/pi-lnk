@@ -86,3 +86,28 @@ export function shouldOpenConnection(state: {
   if (state.degraded) return true
   return state.isLeader && state.visible
 }
+
+/**
+ * 订阅开连接判据（2026-11-17 孤儿态自愈，spec §4 候选 B）。
+ *
+ * `evaluateConnection` 判出 allowed 后，还要决定**是否真的调用 start()**。
+ * 旧代码只看 `state === 'idle'`，有结构性盲区：
+ *  - 连接异常终止后 state 可能停在 non-idle（connecting/backoff）但实际已无活轮
+ *    （abort 与 start 交错、backoff 冻结中退出）⇒ 永久孤儿，永不重开；
+ *  - 生产实证：/runs/events 200 → 2ms 被掐 → 60s 零重连、发消息也不开连接。
+ *
+ * 新判据：`allowed && (state === 'idle' || liveCount === 0)`。
+ *  - `liveCount > 0` ⇒ 已有在飞轮，重复 start() 会掐健康流（multi-device P0：
+ *    任何时刻 ≤1 条连接、禁止双份消费）；
+ *  - `liveCount === 0 && !idle` ⇒ 孤儿态，必须重开。
+ *
+ * 纯函数：无 IO/时钟（本文件纪律），state/liveCount 由调用方注入。
+ */
+export function needsStart(args: {
+  allowed: boolean
+  state: 'idle' | 'connecting' | 'streaming' | 'backoff'
+  liveCount: number
+}): boolean {
+  if (!args.allowed) return false
+  return args.state === 'idle' || args.liveCount === 0
+}
