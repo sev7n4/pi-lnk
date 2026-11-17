@@ -53,6 +53,18 @@ cat >"$WORK/bin/docker" <<'STUB'
 #!/usr/bin/env bash
 echo "docker $*" >>"$STUB_LOG"
 echo "env:LNKPI_API_IMAGE=${LNKPI_API_IMAGE:-}" >>"$STUB_LOG"
+if [[ "$1" == "image" && "$2" == "inspect" ]]; then
+  # STUB_IMAGE_MISSING 支持空格分隔的多个「不存在的镜像名片段」（精确到具体镜像，
+  # 不能一刀切——否则 prev_tag 的存在性校验也会被误判为缺失）。
+  target="${3:-}"
+  for miss in ${STUB_IMAGE_MISSING:-}; do
+    if [[ -n "$miss" && "$target" == *"$miss"* ]]; then
+      echo "stub: image not found: $target" >&2
+      exit 1
+    fi
+  done
+  exit 0
+fi
 if [[ "$1" == "compose" ]]; then
   if [[ "${STUB_COMPOSE_FAIL:-0}" == "1" ]]; then
     echo "stub: compose failed" >&2
@@ -107,6 +119,7 @@ run_case() {
     COMPOSE_FILE="deploy/docker-compose.prod.yml" \
     LOG_FILE="${LOG_FILE:-}" \
     MARKER_FILE="${MARKER_FILE:-}" \
+    LAST_GOOD_FILE="${LAST_GOOD_FILE:-}" \
     CURL_BIN="$WORK/bin/curl" \
     DOCKER_BIN="$WORK/bin/docker" \
     ROLLBACK_HEALTH_RETRIES="${ROLLBACK_HEALTH_RETRIES:-3}" \
@@ -248,10 +261,90 @@ else
   fail "10 日志文件未记录回滚目标（exit=${ec}）"
 fi
 
+# ── 12 last-good 优先：锚定「上次成功部署的镜像」，而不是时间最近的镜像 ─────────
+CASE_DIR="$WORK/case12_last_good"
+mkdir -p "$CASE_DIR"
+printf 'goodimg\n' >"$CASE_DIR/last-good"
+STUB_LOG="$CASE_DIR/stub.log"
+STUB_CURL_COUNT="$CASE_DIR/curl.count"
+: >"$STUB_LOG"
+: >"$STUB_CURL_COUNT"
+export STUB_LOG STUB_CURL_COUNT
+env IMAGE_TAG=newimg PREV_TAG=badimg LAST_GOOD_FILE="$CASE_DIR/last-good" \
+  CURL_BIN="$WORK/bin/curl" DOCKER_BIN="$WORK/bin/docker" \
+  ROLLBACK_HEALTH_RETRIES=1 ROLLBACK_HEALTH_INTERVAL=0 \
+  bash "$TARGET" >"$CASE_DIR/out.log" 2>&1
+ec=$?
+if [[ "$ec" == "0" ]] && grep -q "env:LNKPI_API_IMAGE=lnkpi-api:goodimg" "$STUB_LOG" && ! grep -q "lnkpi-api:badimg" "$STUB_LOG"; then
+  pass "12 last-good 优先：回滚锚定上次成功镜像（goodimg），忽略时间更新的坏镜像（badimg）"
+else
+  fail "12 last-good 优先：回滚目标选错（exit=${ec}，见 $STUB_LOG）"
+fi
+
+# ── 13 last-good == IMAGE_TAG（就是本次）⇒ 忽略，回退 prev_tag ────────────────
+CASE_DIR="$WORK/case13_self"
+mkdir -p "$CASE_DIR"
+printf 'newimg\n' >"$CASE_DIR/last-good"
+STUB_LOG="$CASE_DIR/stub.log"
+STUB_CURL_COUNT="$CASE_DIR/curl.count"
+: >"$STUB_LOG"
+: >"$STUB_CURL_COUNT"
+export STUB_LOG STUB_CURL_COUNT
+env IMAGE_TAG=newimg PREV_TAG=goodimg LAST_GOOD_FILE="$CASE_DIR/last-good" \
+  CURL_BIN="$WORK/bin/curl" DOCKER_BIN="$WORK/bin/docker" \
+  ROLLBACK_HEALTH_RETRIES=1 ROLLBACK_HEALTH_INTERVAL=0 \
+  bash "$TARGET" >"$CASE_DIR/out.log" 2>&1
+ec=$?
+if [[ "$ec" == "0" ]] && grep -q "env:LNKPI_API_IMAGE=lnkpi-api:goodimg" "$STUB_LOG"; then
+  pass "13 last-good 指向本次镜像：被忽略并回退 prev_tag（goodimg）"
+else
+  fail "13 last-good 指向本次镜像：未正确回退（exit=${ec}，见 $STUB_LOG）"
+fi
+
+# ── 14 last-good 指向的镜像已不存在 ⇒ 回退 prev_tag ─────────────────────────
+CASE_DIR="$WORK/case14_missing"
+mkdir -p "$CASE_DIR"
+printf 'ghostimg\n' >"$CASE_DIR/last-good"
+STUB_LOG="$CASE_DIR/stub.log"
+STUB_CURL_COUNT="$CASE_DIR/curl.count"
+: >"$STUB_LOG"
+: >"$STUB_CURL_COUNT"
+export STUB_LOG STUB_CURL_COUNT
+env IMAGE_TAG=newimg PREV_TAG=goodimg LAST_GOOD_FILE="$CASE_DIR/last-good" STUB_IMAGE_MISSING=ghostimg \
+  CURL_BIN="$WORK/bin/curl" DOCKER_BIN="$WORK/bin/docker" \
+  ROLLBACK_HEALTH_RETRIES=1 ROLLBACK_HEALTH_INTERVAL=0 \
+  bash "$TARGET" >"$CASE_DIR/out.log" 2>&1
+ec=$?
+if [[ "$ec" == "0" ]] && grep -q "env:LNKPI_API_IMAGE=lnkpi-api:goodimg" "$STUB_LOG"; then
+  pass "14 last-good 镜像已不存在：回退 prev_tag（goodimg）"
+else
+  fail "14 last-good 镜像已不存在：未回退（exit=${ec}，见 $STUB_LOG）"
+fi
+
+# ── 15 两个候选都不可用 ⇒ 跳过（exit 2），不盲目回滚 ─────────────────────────
+CASE_DIR="$WORK/case15_none"
+mkdir -p "$CASE_DIR"
+printf 'ghostimg\n' >"$CASE_DIR/last-good"
+STUB_LOG="$CASE_DIR/stub.log"
+STUB_CURL_COUNT="$CASE_DIR/curl.count"
+: >"$STUB_LOG"
+: >"$STUB_CURL_COUNT"
+export STUB_LOG STUB_CURL_COUNT
+env IMAGE_TAG=newimg PREV_TAG=ghostimg LAST_GOOD_FILE="$CASE_DIR/last-good" STUB_IMAGE_MISSING=ghostimg \
+  CURL_BIN="$WORK/bin/curl" DOCKER_BIN="$WORK/bin/docker" \
+  ROLLBACK_HEALTH_RETRIES=1 ROLLBACK_HEALTH_INTERVAL=0 \
+  bash "$TARGET" >"$CASE_DIR/out.log" 2>&1
+ec=$?
+if [[ "$ec" == "2" ]] && ! grep -q "^docker compose" "$STUB_LOG"; then
+  pass "15 无可用回滚目标：exit 2 跳过且未盲目 compose up"
+else
+  fail "15 无可用回滚目标：应跳过（exit=${ec}，见 $STUB_LOG）"
+fi
+
 # ── 11 接线断言：deploy-remote-build.sh 必须真的调用回滚原语 ──────────────────
 # （护栏最怕「原语写得对、但没接上」——这里做静态接线断言，防回归时被摘掉）
 DRB="${REPO_ROOT}/deploy/deploy-remote-build.sh"
-if [[ -f "$DRB" ]] && grep -q "rollback-api-image.sh" "$DRB" && grep -q "ROLLBACK_MARKER" "$DRB"; then
+if [[ -f "$DRB" ]] && grep -q "rollback-api-image.sh" "$DRB" && grep -q "ROLLBACK_MARKER" "$DRB" && grep -q "last-good-api-image" "$DRB"; then
   pass "11 接线：deploy-remote-build.sh 调用回滚原语并留 marker"
 else
   fail "11 接线：deploy-remote-build.sh 未调用 rollback-api-image.sh（护栏形同虚设）"

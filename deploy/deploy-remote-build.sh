@@ -138,6 +138,12 @@ p.providerChannel.update({ where: { id: 'platform' }, data: { baseUrl: url } })
       log "WARN: /usr/local/sbin/lnkpi-service-guard.sh 未安装，跳过服务齐全性门禁（见 docs/ops/RUNBOOK-service-guard.md）"
     fi
 
+    # 记录「上次成功部署的镜像」：回滚锚点必须锚在真正跑通健康检查的版本上，
+    # 而不是「按时间最近的镜像」——后者可能是上一次失败部署留下的坏镜像
+    # （2026-11-16 事故实证：坏镜像 bd038ea9 比好镜像 de30e8f8 更新）。
+    printf '%s\n' "$IMAGE_TAG" > .last-good-api-image 2>/dev/null || true
+    log "last-good 镜像已记录: lnkpi-api:${IMAGE_TAG}"
+
     set_status success
     log "部署完成 (IMAGE=${LNKPI_API_IMAGE})"
     exit 0
@@ -157,6 +163,7 @@ PREV_TAG="${prev_tag:-}" IMAGE_TAG="$IMAGE_TAG" \
   API_HEALTH_URL="http://127.0.0.1:5100/api/health" \
   COMPOSE_FILE="deploy/docker-compose.prod.yml" \
   LOG_FILE="$LOG_FILE" MARKER_FILE="$ROLLBACK_MARKER" \
+  LAST_GOOD_FILE=".last-good-api-image" \
   bash deploy/rollback-api-image.sh || true
 
 if [[ -f "$ROLLBACK_MARKER" ]]; then

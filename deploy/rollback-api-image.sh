@@ -9,7 +9,8 @@
 # 契约（CI 离线验证见 scripts/verify-deploy-rollback.sh —— 场景矩阵必须覆盖失败路径）：
 #   入参（全部走环境变量，便于注入桩）：
 #     IMAGE_TAG       新镜像 tag（本次部署目标）                  必填
-#     PREV_TAG        回滚目标 tag（构建前捕获的上一已知良好镜像） 可空 ⇒ 跳过回滚
+#     PREV_TAG        回滚候选 tag（构建前捕获的上一镜像）      可空 ⇒ 跳过回滚
+#     LAST_GOOD_FILE  「上次成功部署的镜像」记录文件              默认 .last-good-api-image
 #     API_HEALTH_URL  健康检查 URL       默认 http://127.0.0.1:5100/api/health
 #     COMPOSE_FILE    compose 文件        默认 deploy/docker-compose.prod.yml
 #     LOG_FILE        日志文件（追加）     可空 ⇒ 只写 stdout
@@ -31,12 +32,15 @@ LOG_FILE="${LOG_FILE:-}"
 MARKER_FILE="${MARKER_FILE:-}"
 CURL_BIN="${CURL_BIN:-curl}"
 DOCKER_BIN="${DOCKER_BIN:-docker}"
+LAST_GOOD_FILE="${LAST_GOOD_FILE:-.last-good-api-image}"
 RETRIES="${ROLLBACK_HEALTH_RETRIES:-10}"
 INTERVAL="${ROLLBACK_HEALTH_INTERVAL:-3}"
 
+# 日志一律走 stderr：resolve_target 在命令替换 $(...) 里执行，
+# 若 log 写 stdout 会把日志文本混进回滚目标变量（实测踩过：TARGET 变成多行）。
 log() {
   local msg="[$(date -u +%H:%M:%S)] [rollback] $*"
-  echo "$msg"
+  echo "$msg" >&2
   if [[ -n "$LOG_FILE" ]]; then
     echo "$msg" >>"$LOG_FILE"
   fi
@@ -45,14 +49,38 @@ log() {
 # 追加输出的目标：LOG_FILE 有值就落盘，否则丢弃（避免污染 stdout 契约）
 sink() { echo "${LOG_FILE:-/dev/null}"; }
 
-if [[ -z "$PREV_TAG" ]]; then
-  log "SKIP: 无 PREV_TAG（没有可回滚的上一版本）"
+# 镜像是否存在（桩可替换 DOCKER_BIN）
+image_exists() {
+  "$DOCKER_BIN" image inspect "$1" >/dev/null 2>&1
+}
+
+# 回滚目标选择（优先级）：
+#   1) LAST_GOOD_FILE 记录的「上次成功部署的镜像」——最可信（它真的跑通过健康检查）；
+#   2) PREV_TAG（构建前按时间抓到的上一个镜像）——只是「最近」，可能是上一次失败部署的坏镜像。
+#      ⚠️ 2026-11-16 事故实证：#929 的坏镜像 bd038ea9 比好镜像 de30e8f8 更新，按时间取会选中坏镜像。
+resolve_target() {
+  if [[ -n "$LAST_GOOD_FILE" && -f "$LAST_GOOD_FILE" ]]; then
+    local lg
+    lg="$(head -n1 "$LAST_GOOD_FILE" 2>/dev/null | tr -d '\r' | tr -d '[:space:]')"
+    if [[ -n "$lg" && "$lg" != "$IMAGE_TAG" ]] && image_exists "lnkpi-api:${lg}"; then
+      echo "$lg"
+      return 0
+    fi
+    log "last-good 候选不可用（${lg:-空}）——回退到 prev_tag"
+  fi
+  if [[ -n "$PREV_TAG" && "$PREV_TAG" != "$IMAGE_TAG" ]] && image_exists "lnkpi-api:${PREV_TAG}"; then
+    echo "$PREV_TAG"
+    return 0
+  fi
+  return 1
+}
+
+TARGET="$(resolve_target || true)"
+if [[ -z "$TARGET" ]]; then
+  log "SKIP: 没有可用的回滚目标（last-good 与 prev_tag 均不可用）"
   exit 2
 fi
-if [[ "$PREV_TAG" == "$IMAGE_TAG" ]]; then
-  log "SKIP: PREV_TAG == IMAGE_TAG（${IMAGE_TAG}），无可回滚目标"
-  exit 2
-fi
+PREV_TAG="$TARGET"
 
 log "回滚目标: lnkpi-api:${IMAGE_TAG} → lnkpi-api:${PREV_TAG}"
 
