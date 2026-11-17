@@ -166,6 +166,25 @@ test("web_search：Tavily 5xx → web_search failed 明确文案（Review#3）",
 	}
 });
 
+test("web_search：Tavily 432 配额超限 → 错误透传响应体 detail（E2E 2026-11-17：丢 body 导致模型盲重试 12 次）", async () => {
+	process.env.TAVILY_API_KEY = "test-key";
+	try {
+		const { impl } = mockFetch([
+			{
+				status: 432,
+				headers: { "content-type": "application/json" },
+				body: JSON.stringify({
+					detail: { error: "This request exceeds your plan's set usage limit. Please upgrade your plan or contact support@tavily.com" },
+				}),
+			},
+		]);
+		const [tool] = buildWebTools({ fetchImpl: impl });
+		await assert.rejects(() => runTool(tool, { query: "x" }), /usage limit/);
+	} finally {
+		delete process.env.TAVILY_API_KEY;
+	}
+});
+
 test("web_fetch：html → markdown 正文抽取（含标题）", async () => {
 	const { impl } = mockFetch([{ headers: { "content-type": "text/html; charset=utf-8" }, body: HTML_PAGE }]);
 	const tools = buildWebTools({ fetchImpl: impl });
