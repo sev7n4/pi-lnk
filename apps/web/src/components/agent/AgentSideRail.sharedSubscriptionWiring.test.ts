@@ -112,6 +112,19 @@ describe('AgentSideRail 跨标签页订阅共享接线（2026-10-26 根治）', 
     expect(code, '必须导入 needsStart').toContain('needsStart,')
   })
 
+  it('⑨ ⭐ abort 与 needsStart 正交：allowed=true 时绝不 abort（防二次判定掐死唯一连接）', () => {
+    const body = bodyOf('evaluateConnection')
+    expect(body, '释放连接必须走 shouldAbortConnection 判据').toContain('shouldAbortConnection(')
+    expect(code, '必须导入 shouldAbortConnection').toContain('shouldAbortConnection,')
+    const guardAt = body.indexOf('shouldAbortConnection(')
+    const abortAt = body.indexOf('followUpTail.abort()')
+    expect(guardAt, '必须先判「该不该释放」').toBeGreaterThan(-1)
+    expect(abortAt, '判据里必须保留释放动作').toBeGreaterThan(guardAt)
+    expect(body, 'needsStart=false 不得落进 else-abort（会掐死 liveCount>=1 的健康流）').not.toMatch(
+      /}\s*else\s*\{\s*followUpTail\.abort\(\)/,
+    )
+  })
+
   it('⑦ 卸载必须退出共享频道与全局槽位（否则别的标签页接不了管）', () => {
     const body = bodyOf('onFollowUpTailVisibility') // 定位用
     expect(body.length).toBeGreaterThan(0)
