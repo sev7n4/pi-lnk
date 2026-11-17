@@ -111,7 +111,7 @@ import { SIDEBAR_MEDIA_PARSE_PROMPT } from './sidebar-media-parse-prompt'
 import { buildDirectImagePayload, type DirectImageBuild } from './direct-image-payload'
 import { mapThinkingLevel } from './pi-runtime/thinking-level'
 import { parseSkillCommand } from './pi-runtime/skill-command'
-import { resolveForceSkills } from './pi-runtime/resolve-force-skills'
+import { resolveForceSkillsMulti } from './pi-runtime/resolve-force-skills'
 import { stripPlanMarkers } from './planMarkers'
 import { normalizeAssistantText } from './text-normalize'
 import { PiPromptAssembler } from './pi-runtime/pi-prompt-assembler.service'
@@ -1047,6 +1047,8 @@ export class AgentService implements OnModuleInit {
    * ~40 处按位置调用的测试。
    */
   streamOpts?: { bridgeSettledToBus?: boolean },
+  // P3 多胶囊：composer 技能 chips 数组（末位追加，禁中段插参）
+  skillIds?: string[],
   ): AsyncGenerator<AgentStreamEvent> {
     // P4 意图级去重（根治规格 §8.3）：预计算归一化意图指纹，供 registerIdempotencyKey 落库 +
     // 控制器入口 findDuplicateIntent 近窗去重。与 HTTP 随机幂等键解耦。
@@ -1210,6 +1212,8 @@ export class AgentService implements OnModuleInit {
         // 2026-11-04 实时补桥：drain 模式下 turn_settled 经 SessionEventBus 注入
         // runEventStream（见 streamOpts.bridgeSettledToBus 注释；结算块在本方法内）
         streamOpts,
+        // P3 多胶囊（末位追加，禁中段插参）
+        skillIds,
       )) {
         if (event.type === 'text_delta') {
           assistantText += (event.data as { text: string }).text
@@ -1431,6 +1435,8 @@ export class AgentService implements OnModuleInit {
     threadId?: string
     idempotencyKey?: string
     skillId?: string
+    /** P3 多胶囊：与 skillId 并存时 Nest 内去重合并（skillId 视为首个胶囊的兼容位）。 */
+    skillIds?: string[]
     model?: string
     focusNodeId?: string
     attachments?: SidebarAttachment[]
@@ -1467,6 +1473,8 @@ export class AgentService implements OnModuleInit {
       // flag-on 实时补桥：drain 丢弃 yield 帧 ⇒ turn_settled 经 SessionEventBus
       // 注入 runEventStream（2026-11-04，截图会话取证「刷新才有结算段」根因）。
       { bridgeSettledToBus: true },
+      // P3 多胶囊（末位追加，禁中段插参）
+      args.skillIds,
     )
     const drain = (): void => {
       void (async () => {
@@ -3191,6 +3199,8 @@ export class AgentService implements OnModuleInit {
     // 2026-11-04 实时补桥（见 streamConversation.streamOpts 注释）：结算块 emit
     // turn_settled 到 SessionEventBus，由 runEventStream 订阅注入 /runs/events。
     streamOpts?: { bridgeSettledToBus?: boolean },
+    // P3 多胶囊：composer 技能 chips 数组（末位追加，禁中段插参）
+    skillIds?: string[],
   ): AsyncGenerator<AgentStreamEvent> {
     // ── P2 T6（token 精确计费）：回合发起预扣 ──
     // flag 门禁：TEXT_TOKEN_BILLING 仅 'on' 启用；off 时零预扣零结算（Q2 展示预估照旧，
@@ -3580,25 +3590,34 @@ export class AgentService implements OnModuleInit {
       })
     }
     // 可观测性专项 ④ + P1 skillId 转接：文本 /skill 命令优先，dock skillId 兜底；未知名 fail-soft 原文发送。
-    // listSkills 仅在可能需要校验时调用（有命令或有 skillId），失败降级 null（fail-soft）
+    // listSkills 仅在可能需要校验时调用（有命令或有 skillId/skillIds），失败降级 null（fail-soft）
     // P1 标尺④修复 + M1-3：dock 传的 UI 短 id（canvas/product-visual）先经内置映射，
     // 未命中再走用户已装技能名 pass-through（resolveDockSkillTarget）；白名单并入用户技能名。
     // 两者都不命中 → fail-soft 原文发送（T2-3 语义不变）。
+    // P3 多胶囊：skillIds 每个走同一三通道映射，resolveForceSkillsMulti 去重合并（命令名居首）。
     const skillCmd = parseSkillCommand(userMessage)
     // M1-3：用户已装技能名并入白名单 + dock skillId pass-through 兜底（内置映射仍优先）。
     const userSkillNames = userSkillResources?.skills.map((s) => s.name) ?? []
-    const known =
-      skillCmd || skillId?.trim()
-        ? await client.listSkills().catch(() => null)
-        : null
+    const hasAnySkillIntent = Boolean(skillCmd || skillId?.trim() || skillIds?.length)
+    const known = hasAnySkillIntent ? await client.listSkills().catch(() => null) : null
     const builtinNames = known?.skills ?? null
     const knownNames = builtinNames ? withUserSkillNames(builtinNames, userSkillNames) : null
     const runtimeNames = builtinNames?.map((s) => s.name) ?? []
-    const { forceSkills, promptText } = resolveForceSkills(
-      resolveDockSkillTarget(skillId, userSkillNames, runtimeNames),
+    // P3：skillId 兼容位（旧客户端 = 首个胶囊）与胶囊数组逐个三通道映射（内置/用户已装/运行时名），
+    // 空串/未命中自然被 Multi 的 fail-soft 过滤。
+    const chipTargets = [skillId, ...(skillIds ?? [])]
+      .map((id) => resolveDockSkillTarget(id, userSkillNames, runtimeNames))
+      .filter((t): t is string => Boolean(t))
+    const { forceSkills, promptText, dropped } = resolveForceSkillsMulti(
+      chipTargets,
       userMessage,
       knownNames,
     )
+    if (dropped.length) {
+      this.piLogger?.warn?.(
+        `[skills] forceSkills fail-soft dropped unknown names: ${dropped.join(",")}`,
+      )
+    }
     // P0-①：每轮世界状态（画布/侧栏）随本轮 prompt 求值，不进对话历史
     const turnContext = {
       dynamicBlocks,

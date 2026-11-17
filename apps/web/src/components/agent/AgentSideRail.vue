@@ -12,6 +12,8 @@ import { normalizeMentionedKeys, SIDEBAR_ATTACHMENT_MAX } from '@lnkpi/shared'
 import { apiUrl } from '@/services/api-base'
 import { membershipApi } from '@/services/users-api'
 import NeoAgentLogo from '@/components/agent/NeoAgentLogo.vue'
+import SkillPickSheet from '@/components/agent/SkillPickSheet.vue'
+import SkillDiscoverPanel from '@/components/skills/SkillDiscoverPanel.vue'
 import { applyPiUserMessageEvent } from '@/components/agent/queueBubbleSync'
 import AgentRefStrip from '@/components/agent/AgentRefStrip.vue'
 import AgentSelectionBindingChip from '@/components/agent/AgentSelectionBindingChip.vue'
@@ -946,9 +948,13 @@ function setPlanningThinkingLevel(level: ThinkingLevel) {
 
 /* ---- 技能选择（显式 Skill；默认自动 / 平台路由）----
  * 2026-10-18：技能入口收敛为「＋」一级菜单（技能父项），展开下一级才列出 自动/已安装技能；
- * 选中即关闭菜单并写回 activeSkillId。原 composer 独立 chip（P2-5.1 skillMenuMode）已退役。 */
-const activeSkillId = ref<string | null>(null)
-const skillSubmenuOpen = ref(false)
+ * 选中即关闭菜单并写回 activeSkillId。原 composer 独立 chip（P2-5.1 skillMenuMode）已退役。
+ * P3（2026-11-17）：单选升级为多胶囊 selectedSkillIds[]（sheet 选择、X 移除、随消息一次性清空）；
+ * activeSkillId 降级为首个胶囊的兼容视图（placeholder / 特判消费面零改动）。 */
+const selectedSkillIds = ref<string[]>([])
+const activeSkillId = computed(() => selectedSkillIds.value[0] ?? null)
+const skillSheetOpen = ref(false)
+const manageOpen = ref(false)
 // M1-3：动态并入下拉；内置技能可发现（本刀）：数据源=运行时 /skills/runtime ∪ 用户已装技能，
 // 合并/去重/过滤全部复用 mergeAgentSkills（runtimeSkillsToInstalled 仅做形状适配）。
 // fail-soft：runtime 失败 → 空数组（回退内置兜底）；mine 失败 → 空数组；均不阻断对话。
@@ -967,9 +973,19 @@ const activeSkill = computed(
 const slashSkillOptions = computed(() =>
   dockSkills.value.map((s) => ({ id: s.id, label: s.label, desc: s.desc })),
 )
-/** `/` 候选选中：与 `+` 菜单同一 activeSkillId 出口（B4 判据）。 */
+/** `/` 候选选中：与 sheet 同一 toggle 胶囊出口（P3 C2 判据：已选 = 移除）。 */
 function onSlashSkillSelect(option: { id: string }) {
-  activeSkillId.value = option.id
+  toggleSkillChip(option.id)
+}
+/** P3：胶囊 toggle——选中追加 / 已选移除（sheet 与 `/` 同一出口）。 */
+function toggleSkillChip(id: string) {
+  const idx = selectedSkillIds.value.indexOf(id)
+  if (idx >= 0) selectedSkillIds.value.splice(idx, 1)
+  else selectedSkillIds.value.push(id)
+}
+function removeSkillChip(id: string) {
+  const idx = selectedSkillIds.value.indexOf(id)
+  if (idx >= 0) selectedSkillIds.value.splice(idx, 1)
 }
 const isProductVisualSkill = computed(() => activeSkillId.value === 'product-visual')
 onMounted(() => { void loadDockSkills() })
@@ -1822,7 +1838,9 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
             sessionId: props.sessionId,
             message,
             threadId: agentThreadId.value,
-            skillId: activeSkillId.value ?? undefined,
+            // P3 多胶囊：skillId = 首个胶囊兼容位，skillIds = 全量（服务端去重合并）
+            skillId: selectedSkillIds.value[0] ?? undefined,
+            skillIds: selectedSkillIds.value.length ? selectedSkillIds.value : undefined,
             model: planningModel.value || undefined,
             thinking: showPlanningThinkingControls.value ? planningThinking.value : false,
             thinkingEffort:
@@ -1851,6 +1869,8 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
       }
     }
     if (!res) return
+    // P3 C3：技能胶囊随消息一次性——请求已被服务端受理才清空（发起失败保留，便于重发）。
+    selectedSkillIds.value = []
 
     // ── 多端一致性 P1（计划 Task 5）：Content-Type 分派 ──────────────────────
     // 同一端点、同一请求：服务端 flag on ⇒ JSON ack（run 后台 drain，事件经
@@ -4078,6 +4098,33 @@ defineExpose({
                      原 PC 恒 18px（◎ 藏着也缩进）、移动端恒 0（◎ 压住行首字符）。
                      ⑥ 画布点选模式：placeholder 承载跨容器引导（点 ◎ 后视线还在 composer，
                      不提示就不知道下一步去画布点节点；退出模式自动还原） -->
+                <!-- P3：技能胶囊条（随消息一次性，X 移除；发送受理后清空）——输入区上方 chips 行 -->
+                <div
+                  v-if="selectedSkillIds.length"
+                  class="mb-1.5 flex flex-wrap items-center gap-1.5"
+                  data-testid="skill-chips-row"
+                >
+                  <span
+                    v-for="chipId in selectedSkillIds"
+                    :key="chipId"
+                    class="skill-chip inline-flex items-center gap-1 rounded-full border border-[var(--lnk-border-subtle)] bg-[var(--lnk-surface-canvas)] py-0.5 pl-2 pr-1 text-[11px] text-[var(--lnk-text-primary)]"
+                    data-testid="skill-chip"
+                  >
+                    <svg viewBox="0 0 24 24" class="h-3 w-3 text-[var(--lnk-accent)]" fill="none" stroke="currentColor" stroke-width="1.75">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
+                    </svg>
+                    <span class="max-w-[120px] truncate">{{ dockSkills.find((s) => s.id === chipId)?.label ?? chipId }}</span>
+                    <button
+                      type="button"
+                      class="ml-0.5 rounded-full p-0.5 text-[var(--lnk-text-muted)] hover:bg-[var(--lnk-surface-raised)]"
+                      :aria-label="`移除技能 ${dockSkills.find((s) => s.id === chipId)?.label ?? chipId}`"
+                      data-testid="skill-chip-remove"
+                      @click.stop="removeSkillChip(chipId)"
+                    >
+                      <svg viewBox="0 0 24 24" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="1.75"><path stroke-linecap="round" d="M6 6l12 12M18 6L6 18" /></svg>
+                    </button>
+                  </span>
+                </div>
                 <MentionInput
                   ref="composerRef"
                   v-model="input"
@@ -4261,8 +4308,8 @@ defineExpose({
                       <button
                         type="button"
                         class="neo-popover-item flex w-full items-center gap-2.5 px-2.5 py-2.5 text-left text-xs"
-                        :class="{ 'is-open': skillSubmenuOpen }"
-                        @click="skillSubmenuOpen = !skillSubmenuOpen"
+                        data-testid="open-skill-sheet"
+                        @click="skillSheetOpen = true; attachMenuOpen = false"
                       >
                         <span class="agent-skill-icon flex h-6 w-6 shrink-0 items-center justify-center rounded-md">
                           <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
@@ -4270,51 +4317,11 @@ defineExpose({
                           </svg>
                         </span>
                         <span class="flex-1">技能</span>
-                        <span class="max-w-[92px] truncate text-[10px] opacity-60">{{ activeSkill?.label || '自动' }}</span>
-                        <svg viewBox="0 0 24 24" class="h-3 w-3 shrink-0 opacity-60 transition-transform" :class="{ 'rotate-90': skillSubmenuOpen }" fill="none" stroke="currentColor" stroke-width="2">
+                        <span class="max-w-[92px] truncate text-[10px] opacity-60">{{ selectedSkillIds.length ? `${selectedSkillIds.length} 个已选` : (activeSkill?.label || '自动') }}</span>
+                        <svg viewBox="0 0 24 24" class="h-3 w-3 shrink-0 opacity-60" fill="none" stroke="currentColor" stroke-width="2">
                           <path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6" />
                         </svg>
                       </button>
-                      <div
-                        v-if="skillSubmenuOpen"
-                        class="skill-submenu ml-4 border-l border-[var(--lnk-border-subtle)] pl-1"
-                      >
-                        <button
-                          type="button"
-                          class="neo-popover-item agent-popover-skill-item flex w-full items-start gap-2 px-3 py-2 text-left"
-                          :class="{ 'is-selected': activeSkillId === null }"
-                          @click="activeSkillId = null; attachMenuOpen = false"
-                        >
-                          <span class="agent-skill-icon mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md">
-                            <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
-                              <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
-                            </svg>
-                          </span>
-                          <span class="min-w-0">
-                            <span class="text-xs font-medium">自动</span>
-                            <span class="block truncate text-[10px] opacity-60">平台路由，单张/图生图优先</span>
-                          </span>
-                        </button>
-                        <button
-                          v-for="skill in dockSkills"
-                          :key="skill.id"
-                          type="button"
-                          class="neo-popover-item agent-popover-skill-item flex w-full items-start gap-2 px-3 py-2 text-left"
-                          :class="{ 'is-selected': skill.id === activeSkillId }"
-                          @click="activeSkillId = skill.id; attachMenuOpen = false"
-                        >
-                          <span class="agent-skill-icon mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md">
-                            <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75">
-                              <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z" />
-                            </svg>
-                          </span>
-                          <span class="min-w-0">
-                            <span class="text-xs font-medium">{{ skill.label }}</span>
-                            <span class="block truncate text-[10px] opacity-60">{{ skill.desc }}</span>
-                          </span>
-                        </button>
-                        <p v-if="!dockSkills.length" class="px-3 py-2 text-[10px] opacity-50">暂无已安装技能</p>
-                      </div>
                       <button
                         type="button"
                         class="neo-popover-item flex w-full items-center gap-2.5 px-2.5 py-2.5 text-left text-xs opacity-40"
@@ -4334,6 +4341,50 @@ defineExpose({
                       <!-- 2026-10-18 用户裁决：「思考档位」属于不同模型展开的二级功能，移出本卡
                            （非默认档仍有 params 行 B chip 常驻；标准档切档入口随模型二级功能后续接入） -->
                     </div>
+                    </Teleport>
+                    <!-- P3：技能选择 sheet（替代 inline 子菜单）——沿用 attachCard Teleport/遮罩模式 -->
+                    <Teleport to="body" :disabled="isDesktopDock">
+                      <div
+                        v-if="skillSheetOpen"
+                        class="attach-menu-backdrop"
+                        aria-hidden="true"
+                        @pointerdown.stop="skillSheetOpen = false"
+                        @click.stop
+                      />
+                      <div
+                        v-if="skillSheetOpen"
+                        class="neo-popover skill-sheet-card absolute bottom-full left-0 z-30 mb-1 rounded-2xl p-2"
+                        data-testid="skill-sheet-card"
+                        @click.stop
+                      >
+                        <SkillPickSheet
+                          :skills="dockSkills.map((s) => ({ id: s.id, label: s.label, desc: s.desc }))"
+                          :selected-ids="selectedSkillIds"
+                          @toggle="toggleSkillChip"
+                          @clear="selectedSkillIds = []"
+                          @close="skillSheetOpen = false"
+                          @manage="skillSheetOpen = false; manageOpen = true"
+                        />
+                      </div>
+                    </Teleport>
+                    <!-- P3：管理技能弹层（桌面薄壳包既有 SkillDiscoverPanel，定位 mine tab；移动端走 DiscoverPane） -->
+                    <Teleport to="body">
+                      <div
+                        v-if="manageOpen"
+                        class="fixed inset-0 z-[90] flex items-center justify-center bg-black/50"
+                        data-testid="manage-skills-dialog"
+                        @click.self="manageOpen = false"
+                      >
+                        <div class="max-h-[80vh] w-[min(720px,92vw)] overflow-y-auto rounded-2xl bg-[var(--lnk-surface-raised)] p-3 shadow-xl">
+                          <div class="mb-2 flex items-center justify-between">
+                            <span class="text-sm font-semibold">管理技能</span>
+                            <button type="button" class="rounded-lg p-1.5 text-[var(--lnk-text-muted)] hover:bg-[var(--lnk-surface-canvas)]" aria-label="关闭管理" @click="manageOpen = false; void loadDockSkills()">
+                              <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.75"><path stroke-linecap="round" d="M6 6l12 12M18 6L6 18" /></svg>
+                            </button>
+                          </div>
+                          <SkillDiscoverPanel initial-tab="mine" @skills-changed="void loadDockSkills()" />
+                        </div>
+                      </div>
                     </Teleport>
                 </div>
 
