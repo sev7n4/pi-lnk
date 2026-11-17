@@ -392,6 +392,21 @@ export function applyNodeStatus(
   })
 }
 
+/** U-2（2026-11-17 E2E）：软失败二级判定 —— vendor executeTool 不消费 isError（#868
+ * 已知形态，生产恒 False），spawn_subagent 等工具失败以 isError=false +
+ * result.ok=false + usage.status=failed（或 error 标记）逃逸，UI 曾渲染为 ✓。
+ * 判定与 isError 一级直通互不覆盖：isError=true 仍直通 failed；ok=false 但
+ * 无失败佐证（usage 非 failed 且无 error 标记）不误判。 */
+export function detectSoftToolFailure(name: string, result: unknown): string | null {
+  if (result == null || typeof result !== 'object') return null
+  const r = result as Record<string, unknown>
+  if (r.ok !== false) return null
+  const usage = (r.usage ?? {}) as Record<string, unknown>
+  const failed = usage.status === 'failed' || typeof r.error === 'string'
+  if (!failed) return null
+  return name === 'spawn_subagent' ? '子代理执行失败' : '执行失败'
+}
+
 export function applyToolCall(
   trace: ExecutionTraceState,
   name: string,
@@ -404,11 +419,13 @@ export function applyToolCall(
     : trace.steps.find(
         (s) => s.kind === 'tool' && s.meta?.toolName === name && s.status === 'running',
       )
+  const softFail = detectSoftToolFailure(name, result)
+  const failed = meta?.isError === true || softFail !== null
   if (existing) {
     if (result === undefined) return // 重放/重复 start：幂等
-    existing.detail = summarizeToolResult(result)
+    existing.detail = softFail ?? summarizeToolResult(result)
     // P0 错误链路：isError 结果标 failed（保留在时间线，红色 ✗ 由渲染层按 status 着色）
-    completeStep(existing, meta?.isError ? 'failed' : 'done')
+    completeStep(existing, failed ? 'failed' : 'done')
     return
   }
   const now = Date.now()
@@ -416,12 +433,12 @@ export function applyToolCall(
     id: nextStepId('tool'),
     kind: 'tool',
     label: meta?.args ? `调用 ${name} · ${meta.args}` : `调用 ${name}`,
-    status: result !== undefined ? (meta?.isError ? 'failed' : 'done') : 'running',
+    status: result !== undefined ? (failed ? 'failed' : 'done') : 'running',
     startedAt: now,
     endedAt: result !== undefined ? now : undefined,
     ms: result !== undefined ? 0 : undefined,
     meta: { toolName: name, toolCallId: meta?.toolCallId, args: meta?.args },
-    detail: result !== undefined ? summarizeToolResult(result) : undefined,
+    detail: result !== undefined ? (softFail ?? summarizeToolResult(result)) : undefined,
   })
 }
 

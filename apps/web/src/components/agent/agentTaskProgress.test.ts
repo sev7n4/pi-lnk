@@ -4,6 +4,7 @@ import {
   seedTaskProgressFromEvents,
   applyPollRecordToTask,
   applyTaskEvent,
+  applyRunInterrupted,
   emptyTaskProgress,
   formatTaskProgressLine,
   mapRecordStatusToTaskStatus,
@@ -163,5 +164,48 @@ describe("seedTaskProgressFromEvents（P1#5 历史恢复）", () => {
 
   it("无 task 事件返回 null", () => {
     expect(seedTaskProgressFromEvents([{ type: "text_delta", data: { text: "x" } }])).toBeNull();
+  });
+});
+
+describe("applyRunInterrupted（U-1 run 失败终态收敛，2026-11-17 E2E）", () => {
+  const runningState = () => ({
+    items: [
+      { id: "a", title: "调研", status: "done" as const },
+      { id: "b", title: "分析", status: "running" as const, activeForm: "正在分析" },
+      { id: "c", title: "产出", status: "pending" as const },
+    ],
+    finished: false,
+  });
+
+  it("running→failed(+errorHint)、pending→skipped、finished=true", () => {
+    const next = applyRunInterrupted(runningState());
+    expect(next.items.map((i) => i.status)).toEqual(["done", "failed", "skipped"]);
+    expect(next.items[1]?.errorHint).toBe("任务随本轮中断");
+    expect(next.items[1]?.activeForm).toBe("正在分析");
+    expect(next.finished).toBe(true);
+  });
+
+  it("retrying 与 running 同路径收敛", () => {
+    const next = applyRunInterrupted({
+      items: [{ id: "b", title: "重试中", status: "retrying" as const }],
+      finished: false,
+    });
+    expect(next.items[0]?.status).toBe("failed");
+    expect(next.finished).toBe(true);
+  });
+
+  it("全部已终态时幂等（不重复改写，仍收敛 finished）", () => {
+    const next = applyRunInterrupted({
+      items: [{ id: "a", title: "完成", status: "done" as const }],
+      finished: false,
+    });
+    expect(next.items[0]?.status).toBe("done");
+    expect(next.items[0]?.errorHint).toBeUndefined();
+    expect(next.finished).toBe(true);
+  });
+
+  it("无 items 时 no-op（completed 路径 task_summary 才是权威收敛）", () => {
+    const next = applyRunInterrupted({ items: [], finished: false });
+    expect(next.finished).toBe(false);
   });
 });

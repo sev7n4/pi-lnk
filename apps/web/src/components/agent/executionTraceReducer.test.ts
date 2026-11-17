@@ -560,3 +560,49 @@ describe('hasFailedTraceStep（RB-D6② 持久警示判定）', () => {
     expect(hasFailedTraceStep(undefined)).toBe(false)
   })
 })
+
+describe('detectSoftToolFailure（U-2 软失败二级判定，2026-11-17 E2E）', () => {
+  const subagentFailedResult = {
+    ok: false,
+    error: 'subagent_failed',
+    usage: { status: 'failed' },
+  }
+
+  it('spawn_subagent 软失败（isError=false + ok=false + usage.status=failed）→ failed 步 + 失败文案', () => {
+    const trace = createExecutionTrace()
+    applyToolCall(trace, 'spawn_subagent', undefined, { toolCallId: 'c1' })
+    applyToolCall(trace, 'spawn_subagent', subagentFailedResult, { toolCallId: 'c1' })
+    const step = trace.steps.find((s) => s.kind === 'tool')
+    expect(step?.status).toBe('failed')
+    expect(step?.detail).toBe('子代理执行失败')
+  })
+
+  it('正常完成（ok=true + report 非空）回归 done ✓', () => {
+    const trace = createExecutionTrace()
+    applyToolCall(trace, 'spawn_subagent', { ok: true, report: '分析产出…' }, { toolCallId: 'c2' })
+    const step = trace.steps.find((s) => s.kind === 'tool')
+    expect(step?.status).toBe('done')
+  })
+
+  it('isError=true 直通 failed（一级判定不被软判定覆盖）', () => {
+    const trace = createExecutionTrace()
+    applyToolCall(trace, 'web_search', { error: 'x' }, { toolCallId: 'c3', isError: true })
+    const step = trace.steps.find((s) => s.kind === 'tool')
+    expect(step?.status).toBe('failed')
+  })
+
+  it('非 spawn_subagent 工具软失败给通用文案（可推广语义）', () => {
+    const trace = createExecutionTrace()
+    applyToolCall(trace, 'collect_subagent_result', subagentFailedResult, { toolCallId: 'c4' })
+    const step = trace.steps.find((s) => s.kind === 'tool')
+    expect(step?.status).toBe('failed')
+    expect(step?.detail).toBe('执行失败')
+  })
+
+  it('ok=false 但无失败佐证（usage 非 failed、无 error）不误判', () => {
+    const trace = createExecutionTrace()
+    applyToolCall(trace, 'spawn_subagent', { ok: false, pending: true }, { toolCallId: 'c5' })
+    const step = trace.steps.find((s) => s.kind === 'tool')
+    expect(step?.status).toBe('done')
+  })
+})
