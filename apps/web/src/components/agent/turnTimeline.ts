@@ -74,6 +74,35 @@ export type TimelinePart =
       nodeRef?: string
       isError?: boolean
     }
+  /**
+   * 子代理任务一等卡（spec 2026-11-17 subagent SSE visibility）：由 spawn_subagent /
+   * collect_subagent_result 的 tool_call/tool_result 派生，与 kind:'tool' 并存（原工具行
+   * 仍在，执行轨迹兼容）。完整 task/report 直接读原始事件，不走摘要截断（反截断硬约束）。
+   */
+  | {
+      kind: 'subagent_task'
+      id: string
+      toolCallId?: string
+      callId?: string
+      displayName: string
+      taskSummary: string
+      task: string
+      status:
+        | 'running'
+        | 'completed'
+        | 'failed'
+        | 'timeout'
+        | 'budget_exceeded'
+        | 'stream_interrupted'
+        | 'interrupted'
+      durationMs?: number
+      turns?: number
+      report?: string
+      partial?: boolean
+      truncated?: boolean
+      degraded?: boolean
+      startedAt: number
+    }
   | {
       kind: 'canvas'
       id: string
@@ -433,6 +462,45 @@ function resolveProposalStatusByReason(
   return 'confirmed'
 }
 
+// ── 子代理任务卡（spec 2026-11-17，A 档纯前端接线）──
+// 数据全在既有 tool_call/tool_result 的 args/result 中（pi-events.ts 全量透传），
+// 这里只做派生；完整 task/report 读原始事件，不走摘要函数（反截断硬约束）。
+const SUBAGENT_TOOLS = new Set(['spawn_subagent', 'collect_subagent_result'])
+
+function shortCode(callId: string): string {
+  return callId.slice(0, 8)
+}
+
+function subagentStatusFromResult(result: Record<string, unknown>, isError: boolean): SubagentPartStatus {
+  if (isError) return 'failed'
+  const usage = (result.usage ?? {}) as Record<string, unknown>
+  // status 优先取 result.status（collect 顶层）/ usage.status（spawn block 内嵌），
+  // 再退 error / ok。stream_interrupted 在 P3 里由 usage.status 携带。
+  const raw = result.status ?? usage.status ?? result.error ?? (result.ok === false ? 'failed' : 'completed')
+  const s = String(raw)
+  if (
+    s === 'running' || s === 'completed' || s === 'failed' || s === 'timeout' ||
+    s === 'budget_exceeded' || s === 'stream_interrupted' || s === 'interrupted'
+  ) return s
+  return 'failed'
+}
+
+type SubagentPartStatus = Extract<TimelinePart, { kind: 'subagent_task' }>['status']
+
+function findSubagentPart(
+  timeline: TurnTimeline,
+  ids: { toolCallId?: string; callId?: string },
+): Extract<TimelinePart, { kind: 'subagent_task' }> | undefined {
+  return timeline.parts.find((p): p is Extract<TimelinePart, { kind: 'subagent_task' }> => {
+    if (p.kind !== 'subagent_task') return false
+    if (ids.callId && p.callId === ids.callId) return true
+    if (ids.toolCallId && p.toolCallId === ids.toolCallId) return true
+    // spawn 的 tool_call 还没有 callId（在 tool_result 才拿到）：按 id 关联
+    if (ids.toolCallId && p.id === `subagent:${ids.toolCallId}`) return true
+    return false
+  })
+}
+
 export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent): void {
   // 非文本事件 ⇒ 先收口正在 streaming 的文本段（服务端 flush 同语义），保证文本按真实
   // 发生位置分段、与工具/思考交错顺序一致。文本类事件（text_delta/text/text_replace）与
@@ -556,6 +624,32 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
     case 'tool_call': {
       const d = event.data
       const name = String(d.name ?? 'tool')
+
+      // 子代理派发/收取：另派生一张 subagent_task 卡（原 tool part 照常建，执行轨迹兼容）。
+      if (SUBAGENT_TOOLS.has(name) && name === 'spawn_subagent') {
+        const args = (d.args ?? {}) as Record<string, unknown>
+        const task = String(args.task ?? '').trim()
+        const fullTask = [
+          task,
+          typeof args.background === 'string' && args.background.trim()
+            ? `【背景】${args.background.trim()}`
+            : '',
+        ].filter(Boolean).join('\n')
+        const key = d.toolCallId ? String(d.toolCallId) : nextPartId('subagent')
+        if (!findSubagentPart(timeline, { toolCallId: key })) {
+          timeline.parts.push({
+            kind: 'subagent_task',
+            id: `subagent:${key}`,
+            toolCallId: key,
+            displayName: `子代理 ${shortCode(key)}`,
+            taskSummary: fullTask.slice(0, 20),
+            task: fullTask,
+            status: 'running',
+            startedAt: Date.now(),
+          })
+        }
+      }
+
       const existing = d.toolCallId
         ? timeline.parts.find(
             (p): p is Extract<TimelinePart, { kind: 'tool' }> =>
@@ -578,6 +672,32 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
     case 'tool_result': {
       const d = event.data
       const name = String(d.name ?? 'tool')
+
+      // 子代理结果：收敛 subagent_task 卡（原 tool part 照常收口）。
+      if (SUBAGENT_TOOLS.has(name)) {
+        const r = (d.result ?? {}) as Record<string, unknown>
+        const callId = typeof r.callId === 'string' ? r.callId : undefined
+        // collect 用 callId 定位；spawn 的 block/background 结果用 toolCallId 定位。
+        const part = findSubagentPart(timeline, { callId, toolCallId: d.toolCallId })
+        if (part) {
+          if (callId && !part.callId) {
+            part.callId = callId
+            part.displayName = `子代理 ${shortCode(callId)}`
+          }
+          const usage = (r.usage ?? {}) as Record<string, unknown>
+          const status = subagentStatusFromResult(r, d.isError === true)
+          // background spawn 的 running 结果不覆盖已建卡（保持 running，等 collect 收敛）
+          if (!(status === 'running' && part.status !== 'running')) {
+            part.status = status
+          }
+          if (typeof r.report === 'string') part.report = r.report
+          if (typeof usage.durationMs === 'number') part.durationMs = usage.durationMs
+          if (typeof usage.turns === 'number') part.turns = usage.turns
+          if (r.partial === true) part.partial = true
+          if (r.truncated === true) part.truncated = true
+        }
+      }
+
       const existing = d.toolCallId
         ? timeline.parts.find(
             (p): p is Extract<TimelinePart, { kind: 'tool' }> =>
@@ -1046,6 +1166,12 @@ export function finalizeTurnTimeline(timeline: TurnTimeline): void {
     if (p.kind === 'artifact' && p.status === 'running') {
       // 生成未在回合内收口：兜底翻 done（D1 兜底，避免卡在 running）
       p.status = 'done'
+    }
+    if (p.kind === 'subagent_task' && p.status === 'running' && !p.report) {
+      // background 派发后本回合未 collect 到结构化结果（报告走 barrier 纯文本 followUp）。
+      // 标 degraded ⇒ UI 出「结果已并入回复」兜底，不留空白卡（spec §4.2 / C4）。
+      p.degraded = true
+      p.status = 'interrupted'
     }
   }
   const summary = summarizeTimeline(timeline)
