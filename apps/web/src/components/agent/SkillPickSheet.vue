@@ -94,7 +94,7 @@ function onPick(id: string) {
 </template>
 
 <style scoped>
-.skill-pick-sheet { display: flex; flex-direction: column; width: 100%; min-width: 260px; min-height: 0; gap: var(--lnk-space-1); } /* min-height:0：作为 max-h 卡片的 flex 子项允许收缩，否则内容溢出、管理入口被顶出视口（#950 生产复测） */
+.skill-pick-sheet { display: flex; flex-direction: column; width: 100%; min-width: 0; min-height: 0; gap: var(--lnk-space-1); } /* min-width:0：三次修复 R2，禁 min-content 传导撑爆 PC 锚定卡；min-height:0：作为 max-h 卡片的 flex 子项允许收缩，否则内容溢出、管理入口被顶出视口（#950 生产复测） */
 .sheet-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; } /* min-height:0：flex 子项默认 min-height:auto 不收缩，滚动区失效 */
 /* 二轮 R2（2026-11-18）：MobileSheet 宿主时内层降级为纯内容流——嵌套滚动容器 + overscroll:contain
    会吞掉触摸手势（外层收不到 ⇒ 移动端滑动死区，实测两次真手势 scrollTop 恒 0）；滚动权移交 m-sheet-body。 */
@@ -106,7 +106,7 @@ function onPick(id: string) {
 .pick-icon { display: flex; height: 32px; width: 32px; flex-shrink: 0; align-items: center; justify-content: center; border-radius: var(--lnk-radius-md); background: var(--lnk-surface-canvas); font-size: var(--lnk-text-xs); font-weight: var(--lnk-weight-semibold); color: var(--lnk-text-secondary); }
 .pick-icon-auto { color: var(--lnk-accent-text); }
 .pick-text { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
-.pick-name { font-size: var(--lnk-text-sm); font-weight: var(--lnk-weight-medium); }
+.pick-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--lnk-text-sm); font-weight: var(--lnk-weight-medium); }
 .pick-desc { font-size: var(--lnk-text-2xs); color: var(--lnk-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pick-check { display: flex; width: 20px; height: 20px; flex: none; align-items: center; justify-content: center; border-radius: var(--lnk-radius-full); background: var(--lnk-accent); color: var(--lnk-surface-raised); font-size: var(--lnk-text-2xs); }
 .sheet-foot { border-top: 1px solid var(--lnk-border-subtle); padding-top: var(--lnk-space-2); }

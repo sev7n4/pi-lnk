@@ -48,7 +48,11 @@ describe('技能 sheet 双形态（移动端 MobileSheet / PC 锚定 popover）'
     expect((sfc.match(/\bembedded\b/g) ?? []).length).toBe(1)
   })
 
-  it('R1（二轮 2026-11-18）：PC 锚定卡限宽 max-w min(92vw,560px)，禁 min-content 横向爆宽', () => {
-    expect(sfc).toContain('max-w-[min(92vw,560px)]')
+  it('R1→R2（二轮/三次修复 2026-11-18）：PC 锚定卡相对 composer 容器封顶，禁横向爆宽', () => {
+    // R2（三次修复 2026-11-18）：视口宽度上限不足以约束窄面板 —— 改为相对包含块 .agent-input-dock 封顶。
+    const cardRule = sfc.match(/\.skill-sheet-card\s*\{[\s\S]*?\}/)?.[0] ?? ''
+    expect(cardRule).toContain('width: min(560px, 100%)')
+    expect(cardRule).toContain('max-width: 100%')
+    expect(sfc).not.toContain('max-w-[min(92vw,560px)]')
   })
 })
