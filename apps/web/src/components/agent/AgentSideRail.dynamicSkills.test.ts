@@ -48,19 +48,19 @@ describe('AgentSideRail 技能接线（M1-3 + P3 胶囊）', () => {
     expect(sfc).toContain(':builtin-skills="dockSkills.map((s) => ({ id: s.id, label: s.label, desc: s.desc }))"')
   })
 
-  it('onMounted 拉取：skillApi.runtimeList + skillApi.mine 并源，经 runtimeSkillsToInstalled 适配后复用 mergeAgentSkills', () => {
-    expect(sfc).toContain('skillApi.runtimeList()')
-    expect(sfc).toContain('skillApi.mine()')
-    expect(sfc).toContain('runtimeSkillsToInstalled(runtime)')
-    expect(sfc).toContain('mergeAgentSkills(AGENT_SKILLS,')
+  it('onMounted 拉取：委托 useDockSkills 单一数据源（R4 抽取，与移动端技能中心共用）', () => {
+    // 二轮 R4（2026-11-18）：加载逻辑（runtimeList ∪ mine → mergeAgentSkills）收敛进
+    // useDockSkills 组合式，行为判据由 composables/useDockSkills.test.ts 承载；此处锁接线。
+    expect(sfc).toContain("import { useDockSkills } from '@/composables/useDockSkills'")
+    expect(sfc).toContain('const { dockSkills, loadDockSkills } = useDockSkills()')
+    expect(sfc).not.toContain('async function loadDockSkills()')
     expect(sfc).toContain('void loadDockSkills()')
   })
 
-  it('B6 fail-soft：runtime/mine 各自 catch 空数组回退，初始值静态内置兜底（不阻断对话）', () => {
-    expect(sfc).toContain('.catch(() => [])')
-    expect(sfc).toContain('const dockSkills = ref<AgentSkillDef[]>([...AGENT_SKILLS])')
-    // 旧整体 try/catch 已被逐源 catch 取代——不允许把异常吞成整体回退后丢弃 mine
-    const block = sfc.slice(sfc.indexOf('async function loadDockSkills'))
-    expect(block.slice(0, 600)).not.toContain('try {')
+  it('B6 fail-soft：初始值静态内置兜底 + 禁旧内联实现回潮（不阻断对话）', () => {
+    // 初始兜底与逐源 catch 在组合式内（useDockSkills.test.ts 实证）；宿主禁自带第二份实现
+    expect(sfc).not.toContain('skillApi.runtimeList()')
+    expect(sfc).not.toContain('mergeAgentSkills(AGENT_SKILLS,')
+    expect(sfc).toContain('useDockSkills()')
   })
 })

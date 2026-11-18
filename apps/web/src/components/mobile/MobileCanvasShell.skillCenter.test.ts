@@ -23,12 +23,18 @@ describe('F3 发现页技能进技能中心', () => {
     expect(shell).toContain('@open-skill-center="showSkillCenterSheet = true"')
     expect(shell).toContain('const showSkillCenterSheet = ref(false)')
     expect(shell).toContain('<MobileSheet')
-    expect(shell).toContain('<SkillDiscoverPanel initial-tab="market"')
+    // 二轮 R4（2026-11-18）：接线内置技能区（multiline 形态）——市场空目录不再死胡同
+    expect(shell).toContain('<SkillDiscoverPanel')
+    expect(shell).toContain('initial-tab="market"')
+    expect(shell).toContain(':builtin-skills="dockSkills.map((s) => ({ id: s.id, label: s.label, desc: s.desc }))"')
     expect(shell).toContain('@close="showSkillCenterSheet = false"')
   })
 
-  it('壳层不重复拉 runtime / 不硬编码内置技能（吃满上游）', () => {
+  it('壳层不重复拉 runtime / 不硬编码内置技能（吃满上游，委托 useDockSkills 单一事实源）', () => {
+    // 二轮 R4：加载逻辑收敛进 useDockSkills 组合式，壳层只消费——禁直接 skillApi 调用
+    expect(shell).not.toContain('skillApi')
     expect(shell).not.toContain('runtimeList')
     expect(shell).not.toContain('AGENT_SKILLS')
+    expect(shell).toContain("import { useDockSkills } from '@/composables/useDockSkills'")
   })
 })

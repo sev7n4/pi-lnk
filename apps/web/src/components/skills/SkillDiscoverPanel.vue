@@ -15,6 +15,7 @@ import { computed, onMounted, ref } from 'vue'
 import BrandPatternAvatar from '@/components/account/BrandPatternAvatar.vue'
 import SkillImportDialog from './SkillImportDialog.vue'
 import SkillDetailSheet from './SkillDetailSheet.vue'
+import { displayNameFromDesc } from '@/constants/agentSkillMap'
 import {
   skillApi,
   type CatalogItem,
@@ -60,8 +61,13 @@ interface DetailState {
   enabled?: boolean
 }
 const detail = ref<DetailState | null>(null)
+/* 二轮 R5（2026-11-18）：内置卡/详情名统一走 displayNameFromDesc（label 含 CJK 直接用，
+   slug 从 desc 首句派生），消灭裸英文 slug——与 + / / 列表同一派名函数，零第二份规则。 */
+function builtinDisplayName(item: BuiltinSkillDef): string {
+  return displayNameFromDesc(item.label, item.desc)
+}
 function openBuiltinDetail(item: BuiltinSkillDef) {
-  detail.value = { name: item.label, desc: item.desc ?? '', kind: 'builtin' }
+  detail.value = { name: builtinDisplayName(item), desc: item.desc ?? '', kind: 'builtin' }
 }
 function openMineDetail(item: MineItem, kind: 'custom' | 'market') {
   detail.value = {
@@ -245,7 +251,10 @@ onMounted(() => {
     <!-- 市场区 -->
     <div v-if="tab === 'market'" class="zone" role="tabpanel">
       <p v-if="marketLoading" class="hint">加载技能市场…</p>
-      <p v-else-if="marketError || !catalog.length" class="hint" data-testid="market-empty">暂无可用技能</p>
+      <!-- 二轮 R4（2026-11-18）：空市场补内置区引导——市场空目录不再死胡同（有内置技能时）。 -->
+      <p v-else-if="marketError || !catalog.length" class="hint" data-testid="market-empty">
+        暂无可用技能<span v-if="props.builtinSkills.length"> · 内置技能见「我的技能」页（{{ props.builtinSkills.length }} 个平台技能可直接查看）</span>
+      </p>
       <div v-else class="cards">
         <article v-for="item in catalog" :key="item.packageHash" class="card" data-testid="market-card">
           <div class="card-head">
@@ -303,17 +312,21 @@ onMounted(() => {
           >
             <div class="manage-head">
               <BrandPatternAvatar :seed="item.id" :name="item.label" size="sm" />
-              <span class="card-name manage-name" :title="item.label">{{ item.label }}</span>
+              <span class="card-name manage-name" :title="builtinDisplayName(item)">{{ builtinDisplayName(item) }}</span>
               <button
                 type="button"
                 class="detail-open"
                 data-testid="skill-detail-open"
-                :aria-label="`查看 ${item.label} 详情`"
+                :aria-label="`查看 ${builtinDisplayName(item)} 详情`"
                 @click.stop="openBuiltinDetail(item)"
               >ⓘ</button>
+            </div>
+            <!-- 二轮 R7（2026-11-18）：「内置」badge 从 head 行移到 summary 行尾——
+                 390px 下 head 4 元素挤行会把卡名压到 ~180px；badge 独立行不挤占名字宽度。 -->
+            <div class="summary-row">
+              <p v-if="item.desc" class="summary manage-summary" :title="item.desc">{{ item.desc }}</p>
               <span class="builtin-badge">内置</span>
             </div>
-            <p v-if="item.desc" class="summary manage-summary" :title="item.desc">{{ item.desc }}</p>
           </article>
         </div>
       </section>
@@ -366,8 +379,11 @@ onMounted(() => {
                   <span class="mine-knob" />
                 </button>
               </div>
+              <!-- 二轮 R7（2026-11-18）：状态行 + 元数据行两行结构（桌面端仍单行连排）——
+                   原四段元数据单行省略会把版本/来源吞掉；移动端分两行各自省略，信息保得住。 -->
               <p class="summary manage-summary" :title="`${item.enabled ? '已启用 · 自动可用' : '已停用'} · ${item.skill} · v${item.version} · ${item.sourceType}`">
-                {{ item.enabled ? '已启用 · 自动可用' : '已停用' }} · {{ item.skill }} · v{{ item.version }} · {{ item.sourceType }}
+                <span class="sum-status">{{ item.enabled ? '已启用 · 自动可用' : '已停用' }}</span>
+                <span class="sum-meta">{{ item.skill }} · v{{ item.version }} · {{ item.sourceType }}</span>
               </p>
               <div v-if="!batchMode" class="actions manage-actions">
                 <button type="button" class="act" data-testid="mine-rollback" @click.stop="onRollback(item)">回滚</button>
@@ -410,7 +426,8 @@ onMounted(() => {
                 </button>
               </div>
               <p class="summary manage-summary" :title="`${item.enabled ? '已启用 · 自动可用' : '已停用'} · ${item.skill} · v${item.version}`">
-                {{ item.enabled ? '已启用 · 自动可用' : '已停用' }} · {{ item.skill }} · v{{ item.version }}
+                <span class="sum-status">{{ item.enabled ? '已启用 · 自动可用' : '已停用' }}</span>
+                <span class="sum-meta">{{ item.skill }} · v{{ item.version }}</span>
               </p>
               <div v-if="!batchMode" class="actions manage-actions">
                 <button type="button" class="act" data-testid="mine-rollback" @click.stop="onRollback(item)">回滚</button>
@@ -458,16 +475,14 @@ onMounted(() => {
 .tab.is-active { color: var(--lnk-accent); border-bottom: 2px solid var(--lnk-accent); }
 .zone { min-height: 120px; }
 .hint { color: var(--lnk-text-muted); font-size: var(--lnk-text-sm); padding: var(--lnk-space-3) 0; }
-.cards, .rows { display: flex; flex-direction: column; gap: var(--lnk-space-3); }
-.card, .row { border: 1px solid var(--lnk-border-subtle); border-radius: var(--lnk-radius-md); padding: var(--lnk-space-3); background: var(--lnk-surface-raised); }
-.card-head, .row-head { display: flex; align-items: center; gap: var(--lnk-space-2); justify-content: space-between; }
+.cards { display: flex; flex-direction: column; gap: var(--lnk-space-3); }
+.card { border: 1px solid var(--lnk-border-subtle); border-radius: var(--lnk-radius-md); padding: var(--lnk-space-3); background: var(--lnk-surface-raised); }
+.card-head { display: flex; align-items: center; gap: var(--lnk-space-2); justify-content: space-between; }
 .card-name { font-weight: 600; }
 .ver, .publisher { color: var(--lnk-text-muted); font-size: var(--lnk-text-xs); }
 .summary { color: var(--lnk-text-secondary); font-size: var(--lnk-text-sm); margin: var(--lnk-space-2) 0; }
 .meta { display: flex; flex-wrap: wrap; gap: var(--lnk-space-2); align-items: center; }
 .chip { font-size: var(--lnk-text-xs); color: var(--lnk-text-muted); border: 1px solid var(--lnk-border-subtle); border-radius: var(--lnk-radius-sm); padding: 0 var(--lnk-space-2); }
-.badge-on { font-size: var(--lnk-text-xs); color: var(--lnk-accent); }
-.badge-off { font-size: var(--lnk-text-xs); color: var(--lnk-text-muted); }
 .install, .act { appearance: none; cursor: pointer; font: inherit; border: 1px solid var(--lnk-border-subtle); background: var(--lnk-surface-canvas); color: var(--lnk-text-primary); border-radius: var(--lnk-radius-sm); padding: var(--lnk-space-1) var(--lnk-space-3); margin-top: var(--lnk-space-2); }
 .actions { display: flex; gap: var(--lnk-space-2); }
 .act.danger { color: var(--lnk-error); }
@@ -490,16 +505,32 @@ onMounted(() => {
 .batch-bar { display: flex; align-items: center; gap: var(--lnk-space-2); }
 .batch-count { font-size: var(--lnk-text-xs); color: var(--lnk-text-secondary); }
 .group { margin-bottom: var(--lnk-space-3); }
-.group-title { font-size: var(--lnk-text-xs); font-weight: 600; color: var(--lnk-text-muted); margin: var(--lnk-space-2) 0; }
+/* 二轮 R8（2026-11-18）：分组头 sticky 吸顶——长列表滚动时始终知道当前分区；
+   裁决=不嵌套二级 Tab（HIG 反嵌套导航，规格 §4.3）。z-index:1 防后续卡片背景盖住。 */
+.group-title { font-size: var(--lnk-text-xs); font-weight: 600; color: var(--lnk-text-muted); margin: var(--lnk-space-2) 0; position: sticky; top: 0; z-index: 1; background: var(--lnk-surface-raised); }
 .cards-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--lnk-space-3); }
-@media (max-width: 639px) { .cards-grid { grid-template-columns: 1fr; } }
+/* 二轮 R1（2026-11-18）：移动端单列必须 minmax(0,1fr)——裸 1fr 的 min 走 min-content（整行文本宽），
+   nowrap 长描述把卡撑到 2011px（实测爆宽 5.2 倍屏宽）；minmax(0,1fr) 钉死 min=0。 */
+@media (max-width: 639px) { .cards-grid { grid-template-columns: minmax(0, 1fr); } }
 .manage-card { border: 1px solid var(--lnk-border-subtle); border-radius: var(--lnk-radius-md); padding: var(--lnk-space-3); background: var(--lnk-surface-raised); display: flex; flex-direction: column; gap: var(--lnk-space-2); }
 .manage-card.is-clickable { cursor: pointer; }
 .manage-card.is-off { opacity: 0.72; }
 .manage-card.is-batch-picked { border-color: var(--lnk-accent); }
 .manage-head { display: flex; align-items: center; gap: var(--lnk-space-2); }
 .manage-name { flex: 1; min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: var(--lnk-lh-md); }
-.manage-summary { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.manage-summary { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* 二轮 R7：内置卡 badge 独立行（summary 行尾），不挤占 head 卡名宽度 */
+.summary-row { display: flex; align-items: center; gap: var(--lnk-space-2); min-width: 0; }
+.summary-row .manage-summary { flex: 1; min-width: 0; }
+/* 二轮 R7：我的卡状态行/元数据行——桌面端连排单行（· 分隔），移动端两行各自省略 */
+.sum-status, .sum-meta { min-width: 0; }
+.sum-meta::before { content: ' · '; }
+@media (max-width: 639px) {
+  .sum-status, .sum-meta { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sum-meta::before { content: none; }
+  /* 二轮 R7：移动端触控目标补足 HIG 44px（实测 .act ~30px / .tab ~36px 违规） */
+  .act, .install, .tab { min-height: var(--lnk-touch-target); }
+}
 .manage-actions { margin-top: auto; }
 .detail-open { appearance: none; border: 0; background: transparent; color: var(--lnk-text-muted); cursor: pointer; flex: none; min-width: var(--lnk-touch-target); min-height: var(--lnk-touch-target); display: inline-flex; align-items: center; justify-content: center; font-size: var(--lnk-text-sm); }
 .mine-switch { position: relative; appearance: none; border: 0; cursor: pointer; flex-shrink: 0; width: 51px; height: 31px; border-radius: var(--lnk-radius-full); background: var(--lnk-border-strong); transition: background var(--lnk-duration-fast) ease; padding: 0; }

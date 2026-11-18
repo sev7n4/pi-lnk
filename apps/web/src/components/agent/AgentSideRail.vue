@@ -123,15 +123,11 @@ import { useClickOutside } from '@/composables/useClickOutside'
 import { useProviderBootstrap } from '@/composables/useProviderBootstrap'
 import { catalogModelKeyFromValue, supportsThinkingLevel } from '@/constants/studioModels'
 import {
-  AGENT_SKILLS,
   agentInputPlaceholder,
   displayNameFromDesc,
   getAgentSkill,
-  mergeAgentSkills,
-  runtimeSkillsToInstalled,
-  type AgentSkillDef,
 } from '@/constants/agentSkillMap'
-import { skillApi } from '@/services/skill-api'
+import { useDockSkills } from '@/composables/useDockSkills'
 import { PRODUCT_VISUAL_GUIDANCE } from '@/constants/productVisualCopy'
 import {
   buildDraftFromUtterance,
@@ -972,15 +968,10 @@ function onOpenSubagentTask(part: SubagentTaskPart): void {
   openSubagentPart.value = part
   subagentTaskOpen.value = true
 }
-// M1-3：动态并入下拉；内置技能可发现（本刀）：数据源=运行时 /skills/runtime ∪ 用户已装技能，
-// 合并/去重/过滤全部复用 mergeAgentSkills（runtimeSkillsToInstalled 仅做形状适配）。
-// fail-soft：runtime 失败 → 空数组（回退内置兜底）；mine 失败 → 空数组；均不阻断对话。
-const dockSkills = ref<AgentSkillDef[]>([...AGENT_SKILLS])
-async function loadDockSkills() {
-  const runtime = await skillApi.runtimeList().catch(() => [])
-  const mine = await skillApi.mine().catch(() => [])
-  dockSkills.value = mergeAgentSkills(AGENT_SKILLS, [...runtimeSkillsToInstalled(runtime), ...mine])
-}
+// M1-3：动态并入下拉；二轮 R4（2026-11-18）：dockSkills 加载抽为 useDockSkills 组合式，
+// 与 MobileCanvasShell（移动端技能中心）共用同一数据源——单一事实源，禁第二份加载逻辑。
+// fail-soft 与合并逻辑（mergeAgentSkills）均在组合式内，此处只消费。
+const { dockSkills, loadDockSkills } = useDockSkills()
 // activeSkill 查合并后的列表（用户技能选中后 placeholder 也能正确显示）；
 // getAgentSkill 兜底保证内置技能在异步加载完成前即可解析（M0 行为不回退）。
 const activeSkill = computed(
@@ -4395,6 +4386,7 @@ defineExpose({
                       <SkillPickSheet
                         :skills="skillPickItems"
                         :selected-ids="selectedSkillIds"
+                        embedded
                         @toggle="toggleSkillChip"
                         @clear="selectedSkillIds = []"
                         @close="skillSheetOpen = false"
@@ -4413,7 +4405,7 @@ defineExpose({
                           @click.stop
                         />
                         <div
-                          class="neo-popover skill-sheet-card absolute bottom-full left-0 z-30 mb-1 flex max-h-[70vh] flex-col rounded-2xl p-2"
+                          class="neo-popover skill-sheet-card absolute bottom-full left-0 z-30 mb-1 flex max-h-[70vh] max-w-[min(92vw,560px)] flex-col rounded-2xl p-2"
                           data-testid="skill-sheet-card"
                           @click.stop
                         >
@@ -4434,10 +4426,26 @@ defineExpose({
                         </div>
                       </template>
                     </template>
-                    <!-- P3：管理技能弹层（桌面薄壳包既有 SkillDiscoverPanel，定位 mine tab；移动端走 DiscoverPane） -->
+                    <!-- P3：管理技能弹层。二轮 R3（2026-11-18）：移动端复用 MobileSheet 底部弹层
+                         （HIG bottom sheet 优先，原桌面 Modal 移动端形态错位 + 内置卡爆宽）；
+                         PC 保留居中 Modal。数据接线同 PC：useDockSkills 单一事实源。
+                         MobileSheet 自带 Teleport（画布 transform 困 fixed 的既有解），无需外层包裹。 -->
+                    <MobileSheet
+                      v-if="manageOpen && !isDesktopDock"
+                      title="管理技能"
+                      subtitle="安装技能，管理已安装的技能"
+                      max-height="82vh"
+                      @close="manageOpen = false; void loadDockSkills()"
+                    >
+                      <SkillDiscoverPanel
+                        initial-tab="mine"
+                        :builtin-skills="dockSkills.map((s) => ({ id: s.id, label: s.label, desc: s.desc }))"
+                        @skills-changed="void loadDockSkills()"
+                      />
+                    </MobileSheet>
                     <Teleport to="body">
                       <div
-                        v-if="manageOpen"
+                        v-if="manageOpen && isDesktopDock"
                         class="fixed inset-0 z-[90] flex items-center justify-center bg-black/50"
                         data-testid="manage-skills-dialog"
                         @click.self="manageOpen = false"
