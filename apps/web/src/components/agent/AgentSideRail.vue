@@ -4259,7 +4259,11 @@ defineExpose({
                 <!-- 「+」提升为 actions 首子元素（2026-10-15 二次重构，对齐 WorkBuddy 红批注
                      「+号移到左边」）：移动端伸展态位于底行最左；收缩态经 display:contents
                      单行化后位于输入框左侧。桌面视觉顺序不变（原本就是 params 第一位）。 -->
-                <div ref="attachMenuRef" class="agent-attach-menu relative">
+                <div
+                  ref="attachMenuRef"
+                  class="agent-attach-menu relative"
+                  :class="{ 'is-skill-sheet-open': skillSheetOpen }"
+                >
                     <button
                       type="button"
                       class="dock-ghost-ctl agent-hit-expand flex h-8 w-8 items-center justify-center rounded-lg"
@@ -5924,6 +5928,13 @@ defineExpose({
 /* 三次修复 R2（2026-11-18）：PC 卡宽度相对包含块 .agent-input-dock 封顶。
  * 旧写法只按视口封顶（92vw/560px），窄面板下 shrink-to-fit 会越过 composer 右缘压到画布。
  * min-width:0 同步打断 SkillPickSheet 的 min-content 传导链。 */
+/* 技能 sheet 打开期间让 + 容器退出定位：它 shrink-to-fit 只有 32px，
+   relative 会把卡片 width:100% 强制解析成 32px（生产 CDP 实测卡宽 32px）。
+   退出定位后卡片回到 .agent-input-dock 包含块，宽度 = min(560px, dock 宽)。 */
+.agent-attach-menu.is-skill-sheet-open {
+  position: static;
+}
+
 .skill-sheet-card {
   box-sizing: border-box;
   width: min(560px, 100%);
