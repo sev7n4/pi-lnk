@@ -1,6 +1,6 @@
 # M1 遗留四项收口 · 实施计划
 
-> 规格：`docs/superpowers/specs/2026-11-18-m1-remaining-closeout-design.md`（**已实施待合**，2026-11-18）。
+> 规格：`docs/superpowers/specs/2026-11-18-m1-remaining-closeout-design.md`（**已上线**，2026-11-18：PR #952 squash `bd872f47`，runtime-deploy tag=`bd872f47` 全步 SUCCESS + 生产取证通过；部署记录见走查 §8.3）。
 > 范围：F1 = `services/pi-runtime`（唯一生产改动，触发 runtime-deploy）；F2–F5 = 测试 + docs（零部署）。
 > 分支：从最新 master 另开 `fix/m1-remaining-closeout`（worktree）。**PR 基线：远端 master `a1220acd`（与 #949–#951 web 刀零交集已核验）**。
 > 第一原则：每任务标注复用资产，禁止重复造轮子；禁造数/禁自报。

@@ -205,7 +205,13 @@ M0 探针（`upstream-skills-probe.test.ts`，本轮 26/26 全绿）已覆盖 U1
   宿主原先丢字段 ⇒ 写了 golden 也不生效。接解析链后契约真实可执行，且 golden 保持默认（正确语义）。
 - **判据**：G3-A1（布尔归一化）/A2（映射+formatter 过滤）/A3（lane.skill 显式仍达）/A4（默认行为不变）/A5（golden hash 零改动）全绿；
   变异 M-G3a（删映射）/M-G3b（归一化改恒 false）均实测 RED（`AssertionError`）。
-- **部署**：触发 runtime-deploy（pi-runtime 改动），单独授权。
+- **部署终态（2026-11-18）**：PR #952 squash 合并 `bd872f47`（合并树==CI 验证树 `9e695d35`，7 路径逐条 KEPT）；
+  手工 dispatch `runtime-deploy.yml`（tag=`bd872f47`，feature_grep=`disableModelInvocation`@skills/loader.js PASS），
+  production-runtime 审批通过，全步 SUCCESS（build→镜像特征核验→push→helm→rollout 三重校验）。
+- **生产取证（同日）**：pod `pi-lnk-runtime-7dbb78bbc9-7dx2m` image=`pi-runtime:bd872f47`、
+  imageID digest `sha256:f8b3d418…`、healthz=200；活体容器 `/app/services/pi-runtime/dist/skills/{loader,resources}.js`
+  实测含 `disableModelInvocation`（grep 各 2 处命中）。诚实边界：**行为级活体探针未做**——生产 11 golden
+  均无 `disable-model-invocation` 字段，过滤路径按预期休眠；行为正确性由 G3-A1~A4（含真实上游 formatter）单测承载。
 
 ### 8.4 终态判定（M1 行为契约收口，**不写 ALL_PASS**）
 

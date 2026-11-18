@@ -1,6 +1,6 @@
 # M1 遗留四项收口 · 设计规格
 
-> 立项日期：2026-11-18。状态：**已实施待合**（2026-11-18 门禁全绿：pi-runtime 全量 2090/2090、tsc 干净、M-G3a/b 变异 RED+sha256 还原、G3-A5 golden hash 11/11 与 master 一致）。
+> 立项日期：2026-11-18。状态：**已上线**（2026-11-18：PR #952 squash `bd872f47` + runtime-deploy tag=`bd872f47` 成功 + 生产取证；门禁全绿：pi-runtime 全量 2090/2090、tsc 干净、M-G3a/b 变异 RED+sha256 还原、G3-A5 golden hash 11/11 与 master 一致；部署终态见走查 §8.3）。
 > 上游任务：#42（G3 golden）、#43（G4/G5/G6 判据）、#44（M1 收口）、#46（导入 UI）。
 > 事实基线：生产 master `08b0086f`；走查记录 `docs/superpowers/plans/2026-11-16-m1-skills-acceptance-walkthrough.md` §5；
 > v2 规格 `docs/superpowers/specs/2026-11-16-creative-skills-ecosystem-discovery-loading-design-v2.md` §10.4/§10.7。
