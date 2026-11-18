@@ -16,6 +16,13 @@ vi.mock('@/services/skill-api', () => ({
   skillApi: { catalog, mine, install, setEnabled, remove, rollback, uninstallBatch },
 }))
 
+// 二轮 R6（2026-11-18）：SkillDetailSheet 增 PC 居中卡分支后，jsdom 无 matchMedia 会按桌面
+// （composable 缺省 isMobileLayout=false）走 Teleport 分支，U7 的 m-sheet-close 通道即失配。
+// 本文件语义=移动端详情壳（底部弹层），显式钉住移动分支；PC 分支由 SkillDetailSheet.desktop.test.ts 覆盖。
+vi.mock('@/composables/useAgentMobileLayout', () => ({
+  useAgentMobileLayout: () => ({ isMobileLayout: { value: true } }),
+}))
+
 const CATALOG = [
   { packageHash: 'p1', skill: 'task-decomposition', displayName: '任务分解', summary: '拆任务', version: '1.0', vertical: '通用', tags: [], featured: false, usageCount: 0, installCount: 0, compatProfile: 'C0', compatScore: 1, license: 'MIT', publisher: 'platform', description: 'd' },
   { packageHash: 'p2', skill: 'storyboard', displayName: '分镜', summary: '镜头表', version: '1.0', vertical: '短剧', tags: [], featured: true, usageCount: 5, installCount: 2, compatProfile: 'C1', compatScore: 0.8, license: 'MIT', publisher: 'platform', description: 'd' },
@@ -253,7 +260,9 @@ describe('SkillDiscoverPanel — M1-3 发现页双区', () => {
   it('U3：工具栏两行稳定、批量计数独占第二行；移动端卡片单列；空态文案指向内置技能', () => {
     const sfc = readFileSync(join(__dirname, 'SkillDiscoverPanel.vue'), 'utf8')
     expect(sfc).toContain('class="mine-toolbar-row"')
-    expect(sfc).toMatch(/@media \(max-width: 639px\) \{ \.cards-grid \{ grid-template-columns: 1fr; \} \}/)
+    // 二轮 R1（2026-11-18）：单列改 minmax(0,1fr)——裸 1fr 的 min 走 min-content 会横向爆宽（2011px 实测）
+    expect(sfc).toMatch(/@media \(max-width: 639px\) \{ \.cards-grid \{ grid-template-columns: minmax\(0, 1fr\); \} \}/)
+    expect(sfc).not.toMatch(/\.cards-grid \{ grid-template-columns: 1fr; \}/)
     expect(sfc).toContain('data-testid="batch-bar"')
     // T3.1：mine 空态不再用「还没有已安装技能」，改为说明内置技能由平台提供 + 下一步
     expect(sfc).toContain('内置技能由平台提供，导入或安装后可在此管理')
@@ -265,5 +274,47 @@ describe('SkillDiscoverPanel — M1-3 发现页双区', () => {
     expect(sfc).toMatch(/\.mine-switch \{[^}]*width: 51px; height: 31px;/)
     expect(sfc).toContain('.mine-switch::after { content: \'\'; position: absolute; inset: -7px; }')
     expect(sfc).toContain('width: 27px; height: 27px;')
+  })
+})
+
+describe('SkillDiscoverPanel — 二轮 UI/UX（R1/T5/T7/T8，2026-11-18）', () => {
+  it('R1：移动端单列 minmax(0,1fr) + manage-summary min-width:0（禁 min-content 爆宽）', () => {
+    const sfc = readFileSync(join(__dirname, 'SkillDiscoverPanel.vue'), 'utf8')
+    expect(sfc).toMatch(/\.cards-grid \{ grid-template-columns: minmax\(0, 1fr\); \}/)
+    expect(sfc).toMatch(/\.manage-summary \{[^}]*min-width: 0;/)
+  })
+
+  it('T5：内置卡显示名统一走 builtinDisplayName（displayNameFromDesc 派生，禁裸 slug）', () => {
+    const sfc = readFileSync(join(__dirname, 'SkillDiscoverPanel.vue'), 'utf8')
+    expect(sfc).toContain("import { displayNameFromDesc } from '@/constants/agentSkillMap'")
+    expect(sfc.match(/builtinDisplayName\(item\)/g)?.length).toBeGreaterThanOrEqual(3)
+  })
+
+  it('T7：「内置」badge 移出 head 行到 summary 行；我的卡状态/元数据两段结构', () => {
+    const sfc = readFileSync(join(__dirname, 'SkillDiscoverPanel.vue'), 'utf8')
+    expect(sfc).toContain('class="summary-row"')
+    expect(sfc).toMatch(/\.summary-row \{[^}]*display: flex;/)
+    // badge 不再挤 head 行（builtin 卡 head 只留 avatar+名+ⓘ）
+    const builtinBlock = sfc.slice(sfc.indexOf('data-testid="builtin-skill-row"'), sfc.indexOf('</section>'))
+    expect(builtinBlock).not.toMatch(/mine-switch/)
+    expect(sfc.match(/class="sum-status"/g)?.length).toBe(2)
+    expect(sfc.match(/class="sum-meta"/g)?.length).toBe(2)
+    expect(sfc).toContain(".sum-meta::before { content: ' · '; }")
+    expect(sfc).toMatch(/@media \(max-width: 639px\) \{[\s\S]*?\.sum-status, \.sum-meta \{ display: block;[\s\S]*?\}\n\}/)
+  })
+
+  it('T7：移动端 .act/.install/.tab 触控目标补足 44px（HIG）', () => {
+    const sfc = readFileSync(join(__dirname, 'SkillDiscoverPanel.vue'), 'utf8')
+    expect(sfc).toContain('.act, .install, .tab { min-height: var(--lnk-touch-target); }')
+  })
+
+  it('T8：分组头 sticky 吸顶（不嵌套二级 Tab 的轻量落点）', () => {
+    const sfc = readFileSync(join(__dirname, 'SkillDiscoverPanel.vue'), 'utf8')
+    expect(sfc).toMatch(/\.group-title \{[^}]*position: sticky; top: 0; z-index: 1; background: var\(--lnk-surface-raised\);/)
+  })
+
+  it('R4：市场空态有内置区引导（有内置技能时不再死胡同）', () => {
+    const sfc = readFileSync(join(__dirname, 'SkillDiscoverPanel.vue'), 'utf8')
+    expect(sfc).toContain('内置技能见「我的技能」页')
   })
 })

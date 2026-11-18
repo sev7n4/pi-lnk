@@ -18,7 +18,7 @@
  *
  * 本壳层自身只在 CanvasPage 的 `v-if="isMobileLayout"` 下渲染，内部不再判断断点。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import type { MobileAppTab } from './MobileTabBar.vue'
 import type { DockNodeType } from '@/components/canvas/NodePanelDock.vue'
@@ -40,6 +40,7 @@ import MobileCreateSheet from './MobileCreateSheet.vue'
 import MobileTaskSheet from './MobileTaskSheet.vue'
 import MobileSheet from './MobileSheet.vue'
 import SkillDiscoverPanel from '@/components/skills/SkillDiscoverPanel.vue'
+import { useDockSkills } from '@/composables/useDockSkills'
 import MobileMultiSelectBar from './MobileMultiSelectBar.vue'
 import MobileNodeActionSheet, { type MobileNodeActionNode } from './MobileNodeActionSheet.vue'
 import MobileNodeEditorSheet from './MobileNodeEditorSheet.vue'
@@ -282,6 +283,10 @@ const showMobileCreateSheet = ref(false)
 const showMobileTaskSheet = ref(false)
 /** F3（2026-11-17 P3 真机修复）：发现页「技能」入口 → 底部 sheet 承载技能中心（market tab）。 */
 const showSkillCenterSheet = ref(false)
+// 二轮 R4（2026-11-18）：移动端技能中心补接内置技能区——与 AgentSideRail 同源 useDockSkills
+// （单一事实源，禁第二份加载逻辑）；不接则市场空目录时整层无可点卡（死胡同，规格 §1.1 P3）。
+const { dockSkills, loadDockSkills } = useDockSkills()
+onMounted(() => { void loadDockSkills() })
 
 function onMobileCreate(type: DockNodeType) {
   props.dockAdd(type)
@@ -473,7 +478,12 @@ watch(
     max-height="82vh"
     @close="showSkillCenterSheet = false"
   >
-    <SkillDiscoverPanel initial-tab="market" data-testid="skill-center-panel" />
+    <SkillDiscoverPanel
+      initial-tab="market"
+      :builtin-skills="dockSkills.map((s) => ({ id: s.id, label: s.label, desc: s.desc }))"
+      @skills-changed="void loadDockSkills()"
+      data-testid="skill-center-panel"
+    />
   </MobileSheet>
   <!-- R1-T5：移动端长按动作 sheet（重命名/引用/副本/多选/编辑/删除） -->
   <MobileNodeActionSheet

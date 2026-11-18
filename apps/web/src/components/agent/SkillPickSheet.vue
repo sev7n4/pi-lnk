@@ -15,10 +15,16 @@ export interface PickSkillItem {
   desc?: string
 }
 
-const props = defineProps<{
-  skills: PickSkillItem[]
-  selectedIds: string[]
-}>()
+const props = withDefaults(
+  defineProps<{
+    skills: PickSkillItem[]
+    selectedIds: string[]
+    /** 二轮 R2（2026-11-18）：宿主为 MobileSheet 时置 true——内层滚动降级为内容流，
+     *  单一滚动容器（m-sheet-body 独担），消灭触摸滑动死区（嵌套滚动 + overscroll contain）。 */
+    embedded?: boolean
+  }>(),
+  { embedded: false },
+)
 
 const emit = defineEmits<{
   toggle: [id: string]
@@ -35,7 +41,7 @@ function onPick(id: string) {
 </script>
 
 <template>
-  <div class="skill-pick-sheet" role="dialog" aria-modal="true" aria-label="选择技能" data-testid="skill-pick-sheet">
+  <div class="skill-pick-sheet" :class="{ embedded: props.embedded }" role="dialog" aria-modal="true" aria-label="选择技能" data-testid="skill-pick-sheet">
     <div class="sheet-body" data-testid="skill-pick-list">
       <button
         type="button"
@@ -90,7 +96,10 @@ function onPick(id: string) {
 <style scoped>
 .skill-pick-sheet { display: flex; flex-direction: column; width: 100%; min-width: 260px; min-height: 0; gap: var(--lnk-space-1); } /* min-height:0：作为 max-h 卡片的 flex 子项允许收缩，否则内容溢出、管理入口被顶出视口（#950 生产复测） */
 .sheet-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; } /* min-height:0：flex 子项默认 min-height:auto 不收缩，滚动区失效 */
-.pick-item { display: flex; width: 100%; min-height: var(--lnk-touch-target); align-items: center; gap: var(--lnk-space-3); text-align: left; padding: var(--lnk-space-2) var(--lnk-space-3); border: 0; background: transparent; cursor: pointer; font: inherit; border-radius: var(--lnk-radius-md); color: var(--lnk-text-primary); }
+/* 二轮 R2（2026-11-18）：MobileSheet 宿主时内层降级为纯内容流——嵌套滚动容器 + overscroll:contain
+   会吞掉触摸手势（外层收不到 ⇒ 移动端滑动死区，实测两次真手势 scrollTop 恒 0）；滚动权移交 m-sheet-body。 */
+.skill-pick-sheet.embedded .sheet-body { overflow-y: visible; overscroll-behavior: auto; }
+.pick-item { display: flex; width: 100%; min-width: 0; min-height: var(--lnk-touch-target); align-items: center; gap: var(--lnk-space-3); text-align: left; padding: var(--lnk-space-2) var(--lnk-space-3); border: 0; background: transparent; cursor: pointer; font: inherit; border-radius: var(--lnk-radius-md); color: var(--lnk-text-primary); } /* min-width:0：二轮 R1 约束链，禁 min-content 撑爆宿主卡宽 */
 .pick-item:hover { background: var(--lnk-surface-canvas); }
 /* 主题稳定的强调淡底——⛔ 不用 --lnk-hi-bg/hi-text（随主题翻转，深主题变黑底） */
 .pick-item.is-active { background: var(--lnk-accent-subtle); color: var(--lnk-accent-text); }

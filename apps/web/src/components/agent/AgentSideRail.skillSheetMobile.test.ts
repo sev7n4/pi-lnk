@@ -39,4 +39,16 @@ describe('技能 sheet 双形态（移动端 MobileSheet / PC 锚定 popover）'
       expect(sfc).toContain(evt)
     }
   })
+
+  it('R2（二轮 2026-11-18）：移动分支传 embedded（滚动权移交 m-sheet-body，灭触摸死区）', () => {
+    // 移动分支的 SkillPickSheet 必须带 embedded；PC 锚定卡分支不传（内层滚动保留）。
+    const mobileUse = sfc.slice(sfc.indexOf('<MobileSheet'), sfc.indexOf('</MobileSheet>'))
+    expect(mobileUse).toContain('embedded')
+    // 全文件 embedded 恰好 1 处（只在移动分支），PC 分支零命中
+    expect((sfc.match(/\bembedded\b/g) ?? []).length).toBe(1)
+  })
+
+  it('R1（二轮 2026-11-18）：PC 锚定卡限宽 max-w min(92vw,560px)，禁 min-content 横向爆宽', () => {
+    expect(sfc).toContain('max-w-[min(92vw,560px)]')
+  })
 })

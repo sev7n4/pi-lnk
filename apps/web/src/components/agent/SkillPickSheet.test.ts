@@ -66,4 +66,11 @@ describe('SkillPickSheet（P3 技能选择 sheet）', () => {
     expect(sfc).toMatch(/\.sheet-body \{ flex: 1; min-height: 0; overflow-y: auto;/)
     expect(sfc).toMatch(/\.skill-pick-sheet \{[^}]*min-height: 0;/)
   })
+
+  it('R2（二轮 2026-11-18）：embedded 变体必须降级内层滚动（单一滚动容器，灭触摸死区）', () => {
+    const sfc = readFileSync(join(__dirname, 'SkillPickSheet.vue'), 'utf8')
+    expect(sfc).toMatch(/\.skill-pick-sheet\.embedded \.sheet-body \{ overflow-y: visible; overscroll-behavior: auto; \}/)
+    // prop 契约：根元素按 embedded 挂变体类
+    expect(sfc).toContain(':class="{ embedded: props.embedded }"')
+  })
 })

@@ -156,11 +156,12 @@ describe('路线 ③ 第二批：C 类 3 处模板肯定读取收敛为 !isDeskt
     expect(tpl, '模板区不得残留任何 isMobileLayout 读取').not.toMatch(/\bisMobileLayout\b/)
     // 2026-11-18 skill-ui-ux-polish：技能 sheet 移动端分支（v-if="skillSheetOpen && !isDesktopDock"）
     // 也是合法的 C 类派生消费点，3 → 4。
-    expect((tpl.match(/!isDesktopDock/g) ?? []).length, 'C 类 4 处必须恰好替换（3 处旧 + 技能 sheet 移动端分支 1 处）').toBe(4)
+    // 2026-11-18 skill-ux-round2 R3：管理技能弹层移动端 MobileSheet 分支（manageOpen && !isDesktopDock），4 → 5。
+    expect((tpl.match(/!isDesktopDock/g) ?? []).length, 'C 类 5 处必须恰好替换（3 处旧 + 技能 sheet + 管理弹层移动分支）').toBe(5)
     expect(tpl, 'composer 换行策略 prop 必须走派生真源')
       .toContain(':mobile-enter-newline="!isDesktopDock"')
-    // 9 处第一批/#800 消费点 + 3 处第二批 + 1 处技能 sheet = 13
-    expect((tpl.match(/\bisDesktopDock\b/g) ?? []).length).toBeGreaterThanOrEqual(13)
+    // 9 处第一批/#800 消费点 + 3 处第二批 + 技能 sheet + 管理弹层 = 14
+    expect((tpl.match(/\bisDesktopDock\b/g) ?? []).length).toBeGreaterThanOrEqual(14)
   })
 
   it('④ 冻结边界：defineExpose 11 项与 getIsMobileLayout 契约零改写', () => {
