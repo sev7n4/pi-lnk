@@ -12,7 +12,11 @@ const sfc = readFileSync(join(here, 'AgentSideRail.vue'), 'utf8')
 describe('AgentSideRail 技能接线（M1-3 + P3 胶囊）', () => {
   it('P3 C1：技能选择 sheet 数据源 = dockSkills（禁独立拉取/硬编码；inline 子菜单退役）', () => {
     expect(sfc).toContain('<SkillPickSheet')
-    expect(sfc).toContain(':skills="dockSkills.map((s) => ({ id: s.id, label: s.label, desc: s.desc }))"')
+    // UI 美化：数据源仍是 dockSkills，但显示名经 displayNameFromDesc 派生（零硬编码映射）
+    expect(sfc).toContain(':skills="skillPickItems"')
+    expect(sfc).toContain('const skillPickItems = computed(() =>')
+    expect(sfc).toContain('dockSkills.value.map((s) => ({')
+    expect(sfc).toContain('label: displayNameFromDesc(s.label, s.desc)')
     // 旧 inline 子菜单交互退役
     expect(sfc).not.toContain('skillSubmenuOpen')
     expect(sfc).toContain('skillSheetOpen = true; attachMenuOpen = false')

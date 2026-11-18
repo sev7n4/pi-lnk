@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   AGENT_SKILLS,
   agentInputPlaceholder,
+  displayNameFromDesc,
   getAgentSkill,
   mergeAgentSkills,
   runtimeSkillsToInstalled,
@@ -37,9 +38,28 @@ describe('agentSkillMap', () => {
     )
   })
 
-  it('placeholder differs for auto vs skill', () => {
+  it('U8：选中技能后 placeholder 不再重复技能名 / @ 引导', () => {
     expect(agentInputPlaceholder(undefined)).toContain('@')
-    expect(agentInputPlaceholder(getAgentSkill('product-visual'))).toContain('实物产品视觉出图')
+    const withSkill = agentInputPlaceholder(getAgentSkill('product-visual'))
+    expect(withSkill).toBe('补充描述…')
+    expect(withSkill).not.toContain('实物产品视觉出图')
+    expect(withSkill).not.toContain('@')
+  })
+
+  it('U1：displayNameFromDesc — 可读 label 优先；slug 才按句号派生，保留「短剧/漫剧」斜杠名', () => {
+    // 内置项有准确中文短名：直接用 label，不从长 desc 派生（否则与 desc 重复一整行）
+    expect(displayNameFromDesc(
+      '实物产品视觉出图',
+      '实拍产品多类型视觉方案与并行出图（ecommerce-product-photo）',
+    )).toBe('实物产品视觉出图')
+    // runtime 动态技能 label 是 slug → 从 desc 首句派生，只按 `。` 切
+    expect(displayNameFromDesc(
+      'drama-audio-design',
+      '短剧/漫剧配音与声音设计。当用户要求配音…',
+    )).toBe('短剧/漫剧配音与声音设计')
+    expect(displayNameFromDesc('x', '电商商品图/产品视觉生成指导。当用户要求…')).toBe('电商商品图/产品视觉生成指导')
+    expect(displayNameFromDesc('html-craft', '')).toBe('html-craft')
+    expect(displayNameFromDesc('fallback', undefined)).toBe('fallback')
   })
 })
 

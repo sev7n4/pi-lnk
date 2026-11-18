@@ -116,6 +116,7 @@ import DockGenerateButton from '@/components/canvas/dock-studio/shared/DockGener
 import { useSidebarAttachments, assignRefKeysFor, type FocusNodeLike, type CanvasRefAddResult } from '@/composables/useSidebarAttachments'
 import { parseRefMentions } from '@/composables/useRefMentions'
 import MentionInput from '@/components/canvas/MentionInput.vue'
+import MobileSheet from '@/components/mobile/MobileSheet.vue'
 import { isConversationAckResponse, parseConversationAck } from './main-turn-ack'
 import { turnLiveStatus } from './activityLine'
 import { useClickOutside } from '@/composables/useClickOutside'
@@ -124,6 +125,7 @@ import { catalogModelKeyFromValue, supportsThinkingLevel } from '@/constants/stu
 import {
   AGENT_SKILLS,
   agentInputPlaceholder,
+  displayNameFromDesc,
   getAgentSkill,
   mergeAgentSkills,
   runtimeSkillsToInstalled,
@@ -986,7 +988,20 @@ const activeSkill = computed(
 )
 // `/` 技能候选（本刀）：与 `+` 下拉同一 dockSkills 数据源——单一事实源，不另造列表（规格 §4.5）。
 const slashSkillOptions = computed(() =>
-  dockSkills.value.map((s) => ({ id: s.id, label: s.label, desc: s.desc })),
+  dockSkills.value.map((s) => ({
+    id: s.id,
+    label: displayNameFromDesc(s.label, s.desc),
+    desc: s.desc,
+    meta: s.id,
+  })),
+)
+/** `+` sheet 与 `/` 同一事实源、同一显示名派生（零第二份硬编码）。 */
+const skillPickItems = computed(() =>
+  dockSkills.value.map((s) => ({
+    id: s.id,
+    label: displayNameFromDesc(s.label, s.desc),
+    desc: s.desc,
+  })),
 )
 /** `/` 候选选中：与 sheet 同一 toggle 胶囊出口（P3 C2 判据：已选 = 移除）。 */
 function onSlashSkillSelect(option: { id: string }) {
@@ -4369,30 +4384,52 @@ defineExpose({
                            （非默认档仍有 params 行 B chip 常驻；标准档切档入口随模型二级功能后续接入） -->
                     </div>
                     </Teleport>
-                    <!-- P3：技能选择 sheet（替代 inline 子菜单）——沿用 attachCard Teleport/遮罩模式 -->
-                    <Teleport to="body" :disabled="isDesktopDock">
-                      <div
-                        v-if="skillSheetOpen"
-                        class="attach-menu-backdrop"
-                        aria-hidden="true"
-                        @pointerdown.stop="skillSheetOpen = false"
-                        @click.stop
+                    <!-- UI 美化 §4.2：移动端复用 MobileSheet（把手/遮罩/safe-area），PC 保留锚定 popover -->
+                    <MobileSheet
+                      v-if="skillSheetOpen && !isDesktopDock"
+                      title="选择技能"
+                      :subtitle="selectedSkillIds.length ? `已选 ${selectedSkillIds.length}` : '默认由平台路由'"
+                      max-height="72vh"
+                      @close="skillSheetOpen = false"
+                    >
+                      <SkillPickSheet
+                        :skills="skillPickItems"
+                        :selected-ids="selectedSkillIds"
+                        @toggle="toggleSkillChip"
+                        @clear="selectedSkillIds = []"
+                        @close="skillSheetOpen = false"
+                        @manage="skillSheetOpen = false; manageOpen = true"
                       />
-                      <div
-                        v-if="skillSheetOpen"
-                        class="neo-popover skill-sheet-card absolute bottom-full left-0 z-30 mb-1 rounded-2xl p-2"
-                        data-testid="skill-sheet-card"
-                        @click.stop
-                      >
-                        <SkillPickSheet
-                          :skills="dockSkills.map((s) => ({ id: s.id, label: s.label, desc: s.desc }))"
-                          :selected-ids="selectedSkillIds"
-                          @toggle="toggleSkillChip"
-                          @clear="selectedSkillIds = []"
-                          @close="skillSheetOpen = false"
-                          @manage="skillSheetOpen = false; manageOpen = true"
+                    </MobileSheet>
+                    <Teleport v-else to="body">
+                      <template v-if="skillSheetOpen">
+                        <div
+                          class="attach-menu-backdrop"
+                          aria-hidden="true"
+                          @pointerdown.stop="skillSheetOpen = false"
+                          @click.stop
                         />
-                      </div>
+                        <div
+                          class="neo-popover skill-sheet-card absolute bottom-full left-0 z-30 mb-1 rounded-2xl p-2"
+                          data-testid="skill-sheet-card"
+                          @click.stop
+                        >
+                          <div class="skill-sheet-head">
+                            <span class="text-xs font-semibold">选择技能<span v-if="selectedSkillIds.length" class="opacity-60"> · 已选 {{ selectedSkillIds.length }}</span></span>
+                            <button type="button" class="rounded-lg p-1.5 text-[var(--lnk-text-muted)]" aria-label="关闭技能选择" data-testid="skill-sheet-close" @click="skillSheetOpen = false">
+                              <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75"><path stroke-linecap="round" d="M6 6l12 12M18 6L6 18" /></svg>
+                            </button>
+                          </div>
+                          <SkillPickSheet
+                            :skills="skillPickItems"
+                            :selected-ids="selectedSkillIds"
+                            @toggle="toggleSkillChip"
+                            @clear="selectedSkillIds = []"
+                            @close="skillSheetOpen = false"
+                            @manage="skillSheetOpen = false; manageOpen = true"
+                          />
+                        </div>
+                      </template>
                     </Teleport>
                     <!-- P3：管理技能弹层（桌面薄壳包既有 SkillDiscoverPanel，定位 mine tab；移动端走 DiscoverPane） -->
                     <Teleport to="body">
@@ -5818,26 +5855,29 @@ defineExpose({
  * 2026-11-09 真机修复 #1：去掉 .agent-panel-mobile-dock 祖先限定——附件卡/遮罩已 Teleport 到 body
  * （脱离面板 z-30 堆叠上下文），不再是其后代；移动端恒 teleport，直接按元素类命中即可。 */
 @media (max-width: 767px) {
-  .attach-card,
-  .skill-sheet-card {
-    /* F1（2026-11-17 P3 真机修复）：技能 sheet 与附件卡同款底部抽屉。
-       技能 sheet 同样 Teleport 到 body，仍带 base 的 absolute bottom-full z-30：
-       实测 rect.y=-382（整块在视口上方）且 z30<遮罩 z85 ⇒ 移动端完全不可见。
-       复用附件卡模式升为 fixed 贴底 + z90，PC 端不进此 media 保持 popover 不变。 */
+  .attach-card {
+    /* F1（2026-11-17 P3 真机修复）：附件卡 Teleport 到 body 后仍带 base 的
+       absolute bottom-full z-30 ⇒ 复用固定贴底 + z90。技能 sheet 已改走
+       MobileSheet（自带把手/遮罩/safe-area），不再需要这份补丁 CSS。 */
     position: fixed;
     left: 12px;
     right: 12px;
     bottom: 0;
     width: auto;
-    z-index: 90; /* 高于遮罩 z-85 与页签 z-80，底部抽屉完整盖住 */
+    z-index: 90;
     border-radius: 16px 16px 0 0;
     padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
   }
-  .skill-sheet-card {
-    margin-bottom: 0; /* 覆盖 base 的 mb-1，贴底无悬空 */
-    max-height: 70vh;
-    overflow-y: auto;
-  }
+}
+
+/* PC 锚定 popover 的标题头（移动端由 MobileSheet 提供，不走这里） */
+.skill-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lnk-space-2);
+  padding: var(--lnk-space-1) var(--lnk-space-2) var(--lnk-space-2);
+  border-bottom: 1px solid var(--lnk-border-subtle);
 }
 
 /* ＋卡全屏透明遮罩（2026-10-19 真机修复「点空白收不拢」）：

@@ -14,6 +14,7 @@
 import { computed, onMounted, ref } from 'vue'
 import BrandPatternAvatar from '@/components/account/BrandPatternAvatar.vue'
 import SkillImportDialog from './SkillImportDialog.vue'
+import SkillDetailSheet from './SkillDetailSheet.vue'
 import {
   skillApi,
   type CatalogItem,
@@ -47,6 +48,34 @@ const mineSearch = ref('')
 const importOpen = ref(false)
 const batchMode = ref(false)
 const batchSelected = ref<string[]>([])
+
+/** UI 美化 §4.5：只读详情壳状态——只消费已加载数据，零 fetch / 零新字段。 */
+interface DetailState {
+  name: string
+  desc: string
+  kind: 'builtin' | 'custom' | 'market'
+  source?: string
+  version?: string
+  trustLevel?: string
+  enabled?: boolean
+}
+const detail = ref<DetailState | null>(null)
+function openBuiltinDetail(item: BuiltinSkillDef) {
+  detail.value = { name: item.label, desc: item.desc ?? '', kind: 'builtin' }
+}
+function openMineDetail(item: MineItem, kind: 'custom' | 'market') {
+  detail.value = {
+    name: item.displayName,
+    desc: kind === 'custom'
+      ? `${item.skill} · v${item.version} · ${item.sourceType}`
+      : `${item.skill} · v${item.version}`,
+    kind,
+    source: kind === 'custom' ? item.sourceType : 'market',
+    version: item.version,
+    trustLevel: item.trustLevel,
+    enabled: item.enabled,
+  }
+}
 
 const CUSTOM_SOURCES = new Set(['paste', 'zip', 'url', 'github'])
 
@@ -238,24 +267,26 @@ onMounted(() => {
     <!-- 我的技能区（P3：网格卡片 + 开关 + 分组 + 搜索 + 批量管理） -->
     <div v-else class="zone" role="tabpanel">
       <div class="mine-toolbar" data-testid="mine-toolbar">
-        <span class="mine-count">已安装技能（{{ mine.length }}）</span>
-        <input
-          v-model="mineSearch"
-          class="mine-search"
-          data-testid="mine-search"
-          type="search"
-          placeholder="搜索已安装的技能"
-          aria-label="搜索已安装的技能"
-        />
-        <button type="button" class="mine-act" data-testid="open-import" @click="importOpen = true">导入技能</button>
-        <button
-          type="button"
-          class="mine-act"
-          data-testid="toggle-batch"
-          @click="batchMode ? exitBatchMode() : (batchMode = true, batchSelected = [])"
-        >
-          {{ batchMode ? '退出批量' : '批量管理' }}
-        </button>
+        <div class="mine-toolbar-row">
+          <span class="mine-count">已安装技能（{{ mine.length }}）</span>
+          <input
+            v-model="mineSearch"
+            class="mine-search"
+            data-testid="mine-search"
+            type="search"
+            placeholder="搜索已安装的技能"
+            aria-label="搜索已安装的技能"
+          />
+          <button type="button" class="mine-act" data-testid="open-import" @click="importOpen = true">导入技能</button>
+          <button
+            type="button"
+            class="mine-act"
+            data-testid="toggle-batch"
+            @click="batchMode ? exitBatchMode() : (batchMode = true, batchSelected = [])"
+          >
+            {{ batchMode ? '退出批量' : '批量管理' }}
+          </button>
+        </div>
       </div>
 
       <!-- F2：只读内置技能分区（平台提供、常开不可停用；数据来自宿主 dockSkills prop，面板零 fetch） -->
@@ -267,10 +298,19 @@ onMounted(() => {
             :key="item.id"
             class="manage-card builtin-card"
             data-testid="builtin-skill-row"
+            :class="{ 'is-clickable': !batchMode }"
+            @click="!batchMode && openBuiltinDetail(item)"
           >
             <div class="manage-head">
               <BrandPatternAvatar :seed="item.id" :name="item.label" size="sm" />
               <span class="card-name manage-name" :title="item.label">{{ item.label }}</span>
+              <button
+                type="button"
+                class="detail-open"
+                data-testid="skill-detail-open"
+                :aria-label="`查看 ${item.label} 详情`"
+                @click.stop="openBuiltinDetail(item)"
+              >ⓘ</button>
               <span class="builtin-badge">内置</span>
             </div>
             <p v-if="item.desc" class="summary manage-summary" :title="item.desc">{{ item.desc }}</p>
@@ -291,7 +331,7 @@ onMounted(() => {
       </div>
 
       <p v-if="mineLoading" class="hint">加载我的技能…</p>
-      <p v-else-if="!mine.length" class="hint">还没有已安装技能</p>
+      <p v-else-if="!mine.length" class="hint">内置技能由平台提供，导入或安装后可在此管理</p>
       <template v-else>
         <section v-if="filteredCustom.length" class="group" data-testid="group-custom">
           <h3 class="group-title">用户自定义（{{ customSkills.length }}）</h3>
@@ -301,26 +341,33 @@ onMounted(() => {
               :key="item.id"
               class="manage-card"
               data-testid="mine-skill-row"
-              :class="{ 'is-off': !item.enabled, 'is-batch-picked': batchMode && batchSelected.includes(item.id) }"
-              @click="batchMode && toggleBatchSelect(item.id)"
+              :class="{ 'is-off': !item.enabled, 'is-batch-picked': batchMode && batchSelected.includes(item.id), 'is-clickable': !batchMode }"
+              @click="batchMode ? toggleBatchSelect(item.id) : openMineDetail(item, 'custom')"
             >
               <div class="manage-head">
                 <BrandPatternAvatar :seed="item.skill" :name="item.displayName" size="sm" />
                 <span class="card-name manage-name" :title="item.displayName">{{ item.displayName }}</span>
                 <button
                   type="button"
+                  class="detail-open"
+                  data-testid="skill-detail-open"
+                  :aria-label="`查看 ${item.displayName} 详情`"
+                  @click.stop="openMineDetail(item, 'custom')"
+                >ⓘ</button>
+                <button
+                  type="button"
                   class="mine-switch"
                   role="switch"
                   :aria-checked="item.enabled"
-                  :aria-label="item.enabled ? `停用 ${item.displayName}` : `启用 ${item.displayName}`"
+                  :aria-label="item.enabled ? `停用 ${item.displayName}（停用后不再自动生效，也不出现在 + / / 列表）` : `启用 ${item.displayName}`"
                   data-testid="mine-toggle"
                   @click.stop="onToggle(item)"
                 >
                   <span class="mine-knob" />
                 </button>
               </div>
-              <p class="summary manage-summary" :title="`${item.skill} · v${item.version} · ${item.sourceType}`">
-                {{ item.skill }} · v{{ item.version }} · {{ item.sourceType }}
+              <p class="summary manage-summary" :title="`${item.enabled ? '已启用 · 自动可用' : '已停用'} · ${item.skill} · v${item.version} · ${item.sourceType}`">
+                {{ item.enabled ? '已启用 · 自动可用' : '已停用' }} · {{ item.skill }} · v{{ item.version }} · {{ item.sourceType }}
               </p>
               <div v-if="!batchMode" class="actions manage-actions">
                 <button type="button" class="act" data-testid="mine-rollback" @click.stop="onRollback(item)">回滚</button>
@@ -337,26 +384,33 @@ onMounted(() => {
               :key="item.id"
               class="manage-card"
               data-testid="mine-skill-row"
-              :class="{ 'is-off': !item.enabled, 'is-batch-picked': batchMode && batchSelected.includes(item.id) }"
-              @click="batchMode && toggleBatchSelect(item.id)"
+              :class="{ 'is-off': !item.enabled, 'is-batch-picked': batchMode && batchSelected.includes(item.id), 'is-clickable': !batchMode }"
+              @click="batchMode ? toggleBatchSelect(item.id) : openMineDetail(item, 'market')"
             >
               <div class="manage-head">
                 <BrandPatternAvatar :seed="item.skill" :name="item.displayName" size="sm" />
                 <span class="card-name manage-name" :title="item.displayName">{{ item.displayName }}</span>
                 <button
                   type="button"
+                  class="detail-open"
+                  data-testid="skill-detail-open"
+                  :aria-label="`查看 ${item.displayName} 详情`"
+                  @click.stop="openMineDetail(item, 'market')"
+                >ⓘ</button>
+                <button
+                  type="button"
                   class="mine-switch"
                   role="switch"
                   :aria-checked="item.enabled"
-                  :aria-label="item.enabled ? `停用 ${item.displayName}` : `启用 ${item.displayName}`"
+                  :aria-label="item.enabled ? `停用 ${item.displayName}（停用后不再自动生效，也不出现在 + / / 列表）` : `启用 ${item.displayName}`"
                   data-testid="mine-toggle"
                   @click.stop="onToggle(item)"
                 >
                   <span class="mine-knob" />
                 </button>
               </div>
-              <p class="summary manage-summary" :title="`${item.skill} · v${item.version}`">
-                {{ item.skill }} · v{{ item.version }}
+              <p class="summary manage-summary" :title="`${item.enabled ? '已启用 · 自动可用' : '已停用'} · ${item.skill} · v${item.version}`">
+                {{ item.enabled ? '已启用 · 自动可用' : '已停用' }} · {{ item.skill }} · v{{ item.version }}
               </p>
               <div v-if="!batchMode" class="actions manage-actions">
                 <button type="button" class="act" data-testid="mine-rollback" @click.stop="onRollback(item)">回滚</button>
@@ -380,6 +434,13 @@ onMounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- UI 美化 §4.5：只读详情壳（复用 MobileSheet，零 fetch） -->
+    <SkillDetailSheet
+      v-if="detail"
+      v-bind="detail"
+      @close="detail = null"
+    />
 
     <!-- P3：导入弹窗（paste） -->
     <SkillImportDialog
@@ -417,8 +478,10 @@ onMounted(() => {
 .confirm-actions { display: flex; gap: var(--lnk-space-2); justify-content: flex-end; margin-top: var(--lnk-space-4); }
 
 /* ── P3 管理视图（网格卡片 + 开关 + 分组 + 搜索 + 批量）── */
-.mine-toolbar { display: flex; align-items: center; gap: var(--lnk-space-2); flex-wrap: wrap; }
-.mine-count { font-size: var(--lnk-text-xs); font-weight: 600; color: var(--lnk-text-primary); }
+.mine-toolbar { display: flex; flex-direction: column; gap: var(--lnk-space-1); }
+.mine-toolbar-row { display: flex; align-items: center; gap: var(--lnk-space-2); flex-wrap: nowrap; min-width: 0; }
+.mine-count { font-size: var(--lnk-text-xs); font-weight: 600; color: var(--lnk-text-primary); white-space: nowrap; }
+@media (max-width: 640px) { .mine-count { display: none; } }
 .mine-search { flex: 1; min-width: 120px; border: 1px solid var(--lnk-border-subtle); border-radius: var(--lnk-radius-sm); background: var(--lnk-surface-canvas); color: var(--lnk-text-primary); font: inherit; font-size: var(--lnk-text-xs); padding: var(--lnk-space-1) var(--lnk-space-2); }
 .mine-search:focus { outline: none; border-color: var(--lnk-accent); }
 .mine-act { appearance: none; cursor: pointer; font: inherit; font-size: var(--lnk-text-xs); border: 1px solid var(--lnk-border-subtle); background: var(--lnk-surface-canvas); color: var(--lnk-text-primary); border-radius: var(--lnk-radius-sm); padding: var(--lnk-space-1) var(--lnk-space-2); }
@@ -428,19 +491,22 @@ onMounted(() => {
 .batch-count { font-size: var(--lnk-text-xs); color: var(--lnk-text-secondary); }
 .group { margin-bottom: var(--lnk-space-3); }
 .group-title { font-size: var(--lnk-text-xs); font-weight: 600; color: var(--lnk-text-muted); margin: var(--lnk-space-2) 0; }
-.cards-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--lnk-space-3); }
-@media (max-width: 767px) { .cards-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.cards-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--lnk-space-3); }
+@media (max-width: 639px) { .cards-grid { grid-template-columns: 1fr; } }
 .manage-card { border: 1px solid var(--lnk-border-subtle); border-radius: var(--lnk-radius-md); padding: var(--lnk-space-3); background: var(--lnk-surface-raised); display: flex; flex-direction: column; gap: var(--lnk-space-2); }
-.manage-card.is-off { opacity: 0.55; }
+.manage-card.is-clickable { cursor: pointer; }
+.manage-card.is-off { opacity: 0.72; }
 .manage-card.is-batch-picked { border-color: var(--lnk-accent); }
 .manage-head { display: flex; align-items: center; gap: var(--lnk-space-2); }
-.manage-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.manage-name { flex: 1; min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: var(--lnk-lh-md); }
 .manage-summary { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .manage-actions { margin-top: auto; }
-.mine-switch { position: relative; appearance: none; border: 0; cursor: pointer; flex-shrink: 0; width: 32px; height: 18px; border-radius: 999px; background: var(--lnk-border-subtle); transition: background 0.15s ease; padding: 0; }
+.detail-open { appearance: none; border: 0; background: transparent; color: var(--lnk-text-muted); cursor: pointer; flex: none; min-width: var(--lnk-touch-target); min-height: var(--lnk-touch-target); display: inline-flex; align-items: center; justify-content: center; font-size: var(--lnk-text-sm); }
+.mine-switch { position: relative; appearance: none; border: 0; cursor: pointer; flex-shrink: 0; width: 51px; height: 31px; border-radius: var(--lnk-radius-full); background: var(--lnk-border-strong); transition: background var(--lnk-duration-fast) ease; padding: 0; }
+.mine-switch::after { content: ''; position: absolute; inset: -7px; }
 .mine-switch[aria-checked="true"] { background: var(--lnk-accent); }
-.mine-knob { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 999px; background: var(--lnk-surface-raised); transition: left 0.15s ease; }
-.mine-switch[aria-checked="true"] .mine-knob { left: 16px; }
+.mine-knob { position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: var(--lnk-radius-full); background: var(--lnk-surface-raised); box-shadow: var(--lnk-shadow-xs); transition: left var(--lnk-duration-fast) ease; }
+.mine-switch[aria-checked="true"] .mine-knob { left: 22px; }
 
 /* F2：只读内置技能卡——无 mine-toggle / 卸载出口，与用户已安装技能边界清晰。 */
 .builtin-card { background: var(--lnk-surface-canvas); }

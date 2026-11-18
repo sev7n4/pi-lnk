@@ -1,5 +1,7 @@
 // P3 SkillPickSheet 组件测试：sheet 选择 / toggle 胶囊 / 清空 / 管理入口（判据 C1/C2/C6）。
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { mount } from '@vue/test-utils'
 import SkillPickSheet from './SkillPickSheet.vue'
 
@@ -32,17 +34,30 @@ describe('SkillPickSheet（P3 技能选择 sheet）', () => {
     expect(w.emitted('toggle')).toEqual([['html-craft']])
   })
 
-  it('点自动 → emit clear；关闭按钮 → emit close', async () => {
+  it('点自动 → emit clear（关闭由宿主 MobileSheet / PC head 提供）', async () => {
     const w = mountSheet()
     await w.find('[data-testid="pick-auto"]').trigger('click')
     expect(w.emitted('clear')).toBeTruthy()
-    await w.find('[data-testid="sheet-close"]').trigger('click')
-    expect(w.emitted('close')).toBeTruthy()
+    expect(w.find('[data-testid="sheet-close"]').exists()).toBe(false)
   })
 
   it('底部【管理技能】入口 → emit manage（C6）', async () => {
     const w = mountSheet()
     await w.find('[data-testid="manage-skills-btn"]').trigger('click')
     expect(w.emitted('manage')).toBeTruthy()
+  })
+
+  it('U2：纯内容 sheet——品牌头像分类色标 / 圆形勾选 / 管理入口主操作', async () => {
+    const w = mountSheet(['ecommerce-product-photo'])
+    expect(w.findAll('[data-testid="brand-pattern"]')).toHaveLength(2)
+    expect(w.find('[data-testid="pick-checked"]').classes()).toContain('pick-check')
+    expect(w.find('[data-testid="manage-skills-btn"]').classes()).toContain('manage-btn')
+    // 宿主提供标题/关闭，组件内不再自带 head
+    expect(w.find('.sheet-head').exists()).toBe(false)
+    const sfc = readFileSync(join(__dirname, 'SkillPickSheet.vue'), 'utf8')
+    expect(sfc).toMatch(/\.pick-check \{[^}]*border-radius: var\(--lnk-radius-full\)/)
+    expect(sfc).toContain('background: var(--lnk-accent)')
+    expect(sfc).toContain('border: 1px solid var(--lnk-accent-border)')
+    w.unmount()
   })
 })

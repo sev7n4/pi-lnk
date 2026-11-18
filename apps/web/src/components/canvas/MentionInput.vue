@@ -15,6 +15,8 @@ export interface SlashOption {
   id: string
   label: string
   desc?: string
+  /** 技能 slug：降为副标题展示，不再裸显作主标签（UI 美化 §4.1）。 */
+  meta?: string
 }
 
 const props = defineProps<{
@@ -362,21 +364,40 @@ function onKeydown(e: KeyboardEvent) {
       v-if="showMenu && activeOptions.length"
       role="listbox"
       :aria-activedescendant="optionId(selectedIndex)"
-      class="neo-popover absolute bottom-full left-0 z-20 mb-1 max-h-48 w-full overflow-y-auto rounded-xl py-1"
+      class="neo-popover mention-popover absolute bottom-full left-0 z-20 mb-1 w-full overflow-y-auto rounded-xl py-1"
+      :class="menuMode === 'slash' ? 'slash-popover max-h-[48vh]' : 'max-h-48'"
     >
+      <li
+        v-if="menuMode === 'slash' && activeOptions.length"
+        role="presentation"
+        class="slash-list-head"
+        data-testid="slash-list-head"
+      >技能 · {{ activeOptions.length }}</li>
       <li
         v-for="(item, idx) in activeOptions"
         :id="optionId(idx)"
         :key="item.id"
         role="option"
         :aria-selected="idx === selectedIndex"
-        class="neo-popover-item cursor-pointer px-3 py-2 text-sm"
-        :class="idx === selectedIndex ? '!bg-[var(--lnk-hi-bg)] !text-[var(--lnk-hi-text)]' : ''"
+        class="neo-popover-item mention-option cursor-pointer px-3 py-2 text-sm"
+        :class="[
+          menuMode === 'slash' ? 'slash-option' : '',
+          idx === selectedIndex ? 'is-active' : '',
+        ]"
         @mousedown.prevent="chooseActive(item)"
       >
-        <span class="opacity-50">{{ menuMode === 'slash' ? '/' : '@' }}</span>{{ item.label }}
-        <span v-if="menuMode === 'slash' && (item as SlashOption).desc" class="ml-2 text-[10px] opacity-45">{{ (item as SlashOption).desc }}</span>
-        <span v-else-if="menuMode === 'mention' && (item as MentionOption).type" class="ml-2 text-[10px] opacity-45">{{ (item as MentionOption).type }}</span>
+        <span class="mention-option__trigger opacity-50">{{ menuMode === 'slash' ? '/' : '@' }}</span>
+        <span class="min-w-0 flex-1">
+          <span class="mention-option__label">{{ item.label }}</span>
+          <span
+            v-if="menuMode === 'slash' && (item as SlashOption).desc"
+            class="slash-option__desc"
+            :title="(item as SlashOption).desc"
+          >{{ (item as SlashOption).desc }}</span>
+          <span v-if="menuMode === 'mention' && (item as MentionOption).type" class="ml-2 text-[10px] opacity-45">{{ (item as MentionOption).type }}</span>
+        </span>
+        <span v-if="menuMode === 'slash' && (item as SlashOption).meta" class="slash-option__meta">{{ (item as SlashOption).meta }}</span>
+        <span v-if="menuMode === 'slash' && idx === selectedIndex" class="slash-option__check" aria-hidden="true">✓</span>
       </li>
     </ul>
   </div>
@@ -436,5 +457,60 @@ function onKeydown(e: KeyboardEvent) {
 
 .mention-input-ghost__draft {
   visibility: hidden;
+}
+
+/* ── UI 美化 §4.1：`/` 技能卡片（标签化 + 淡底选中 + 44px 触控）── */
+.mention-popover {
+  background: var(--lnk-surface-raised);
+  border: 1px solid var(--lnk-border-subtle);
+  box-shadow: var(--lnk-shadow-lg);
+}
+.slash-list-head {
+  padding: var(--lnk-space-1) var(--lnk-space-3);
+  font-size: var(--lnk-text-2xs);
+  color: var(--lnk-text-muted);
+}
+.mention-option {
+  display: flex;
+  align-items: center;
+  gap: var(--lnk-space-2);
+}
+.slash-option {
+  min-height: var(--lnk-touch-target);
+}
+.mention-option.is-active {
+  /* 主题稳定的强调淡底——⛔ 不用 --lnk-hi-bg/hi-text：那对随主题翻转，深主题会变黑底白字（规格 U1） */
+  background: var(--lnk-accent-subtle);
+  color: var(--lnk-accent-text);
+}
+.mention-option__label {
+  display: block;
+  font-weight: var(--lnk-weight-medium);
+}
+.slash-option__desc {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--lnk-text-2xs);
+  color: var(--lnk-text-muted);
+}
+.slash-option__meta {
+  flex: none;
+  max-width: 38%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 var(--lnk-space-1);
+  border: 1px solid var(--lnk-border-subtle);
+  border-radius: var(--lnk-radius-sm);
+  font-size: var(--lnk-text-2xs);
+  color: var(--lnk-text-muted);
+}
+.slash-option__check {
+  flex: none;
+  font-size: var(--lnk-text-xs);
+  color: var(--lnk-accent-text);
 }
 </style>
