@@ -88,8 +88,8 @@ function onPick(id: string) {
 </template>
 
 <style scoped>
-.skill-pick-sheet { display: flex; flex-direction: column; width: 100%; min-width: 260px; gap: var(--lnk-space-1); }
-.sheet-body { flex: 1; overflow-y: auto; overscroll-behavior: contain; }
+.skill-pick-sheet { display: flex; flex-direction: column; width: 100%; min-width: 260px; min-height: 0; gap: var(--lnk-space-1); } /* min-height:0：作为 max-h 卡片的 flex 子项允许收缩，否则内容溢出、管理入口被顶出视口（#950 生产复测） */
+.sheet-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; } /* min-height:0：flex 子项默认 min-height:auto 不收缩，滚动区失效 */
 .pick-item { display: flex; width: 100%; min-height: var(--lnk-touch-target); align-items: center; gap: var(--lnk-space-3); text-align: left; padding: var(--lnk-space-2) var(--lnk-space-3); border: 0; background: transparent; cursor: pointer; font: inherit; border-radius: var(--lnk-radius-md); color: var(--lnk-text-primary); }
 .pick-item:hover { background: var(--lnk-surface-canvas); }
 /* 主题稳定的强调淡底——⛔ 不用 --lnk-hi-bg/hi-text（随主题翻转，深主题变黑底） */

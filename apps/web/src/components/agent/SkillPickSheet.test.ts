@@ -60,4 +60,10 @@ describe('SkillPickSheet（P3 技能选择 sheet）', () => {
     expect(sfc).toContain('border: 1px solid var(--lnk-accent-border)')
     w.unmount()
   })
+
+  it('滚动区允许收缩（flex min-height:0），防内容溢出把管理入口顶出视口（#950 生产复测）', () => {
+    const sfc = readFileSync(join(__dirname, 'SkillPickSheet.vue'), 'utf8')
+    expect(sfc).toMatch(/\.sheet-body \{ flex: 1; min-height: 0; overflow-y: auto;/)
+    expect(sfc).toMatch(/\.skill-pick-sheet \{[^}]*min-height: 0;/)
+  })
 })
