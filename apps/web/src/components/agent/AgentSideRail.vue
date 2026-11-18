@@ -1327,7 +1327,7 @@ const composerDockRef = ref<HTMLElement | null>(null)
 /** 三次修复 R1（2026-11-18）：技能 toggle/clear 只改数组，焦点却被 Teleport 的 sheet 抢走；
  *  显式保持 composer 展开，避免 focusout 的 150ms 延迟收起把用户送回空态条。 */
 function keepComposerInputAfterSkillAction() {
-  if (!isMobileLayout.value) return
+  if (isDesktopDock.value) return
   composerExpanded.value = true
 }
 
@@ -1335,7 +1335,7 @@ function keepComposerInputAfterSkillAction() {
  *  PC 无需抢焦——composer 常驻可见，强抢会打断点击管理技能等次级流程。 */
 function onSkillSheetClose() {
   skillSheetOpen.value = false
-  if (!isMobileLayout.value) return
+  if (isDesktopDock.value) return
   composerExpanded.value = true
   void nextTick(() => composerRef.value?.focus())
 }
