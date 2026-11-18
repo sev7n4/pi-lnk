@@ -998,15 +998,22 @@ const skillPickItems = computed(() =>
 function onSlashSkillSelect(option: { id: string }) {
   toggleSkillChip(option.id)
 }
-/** P3：胶囊 toggle——选中追加 / 已选移除（sheet 与 `/` 同一出口）。 */
+/** P3：胶囊 toggle——选中追加 / 已选移除（sheet 与 `/` 同一出口）。
+ * 三次修复 R1（2026-11-18）：toggle 后保持 composer 输入态，禁止掉回空闲条。 */
 function toggleSkillChip(id: string) {
   const idx = selectedSkillIds.value.indexOf(id)
   if (idx >= 0) selectedSkillIds.value.splice(idx, 1)
   else selectedSkillIds.value.push(id)
+  keepComposerInputAfterSkillAction()
 }
 function removeSkillChip(id: string) {
   const idx = selectedSkillIds.value.indexOf(id)
   if (idx >= 0) selectedSkillIds.value.splice(idx, 1)
+}
+/** 「自动」= 清空全部胶囊；与 toggle 同出口，保持 composer 输入态。 */
+function clearSkillChips() {
+  selectedSkillIds.value = []
+  keepComposerInputAfterSkillAction()
 }
 const isProductVisualSkill = computed(() => activeSkillId.value === 'product-visual')
 onMounted(() => { void loadDockSkills() })
@@ -1317,6 +1324,22 @@ const composerFocused = useMobileComposerFocus()
 const { isKeyboardOpen } = useMobileKeyboardInset()
 const composerDockRef = ref<HTMLElement | null>(null)
 
+/** 三次修复 R1（2026-11-18）：技能 toggle/clear 只改数组，焦点却被 Teleport 的 sheet 抢走；
+ *  显式保持 composer 展开，避免 focusout 的 150ms 延迟收起把用户送回空态条。 */
+function keepComposerInputAfterSkillAction() {
+  if (!isMobileLayout.value) return
+  composerExpanded.value = true
+}
+
+/** 技能 sheet 关闭后回到输入态：回焦 textarea（键盘随焦点回来）。
+ *  PC 无需抢焦——composer 常驻可见，强抢会打断点击管理技能等次级流程。 */
+function onSkillSheetClose() {
+  skillSheetOpen.value = false
+  if (!isMobileLayout.value) return
+  composerExpanded.value = true
+  void nextTick(() => composerRef.value?.focus())
+}
+
 // 输入框被程序填充（如待发消息取回）时自动进入伸展态
 watch(input, (v) => {
   if (isMobileLayout.value && v.trim()) composerExpanded.value = true
@@ -1337,6 +1360,10 @@ function onComposerFocusOut(e: FocusEvent) {
   // ③ 焦点只在真正离开卡内时才清（点模型 chip 等卡内控件不算离开，否则 ◎ 闪烁熄灭）
   const next = e.relatedTarget as Node | null
   if (next && composerDockRef.value?.contains(next)) return
+  // 三次修复 R1（2026-11-18）：技能/管理 sheet 是 Teleport 弹层，其按钮命中时 relatedTarget 在 dock 外，
+  // 旧逻辑据此外推「用户离开输入」并在 150ms 后收起空草稿 —— 选完技能就掉回空态条的根因。
+  // sheet 期间保留输入态，关闭时由 onSkillSheetClose 统一回焦。
+  if (skillSheetOpen.value || manageOpen.value) return
   composerFocused.value = false
   if (!isMobileLayout.value) return
   // 延迟收起：给「聚焦丢失但有交互意图」的场景留窗口；有内容则保持伸展
@@ -1363,7 +1390,8 @@ const mobileBarIdle = computed(
   () =>
     isMobileLayout.value &&
     mobileBarShape.value === 'idle' &&
-    !composerExpanded.value,
+    !composerExpanded.value &&
+    !selectedSkillIds.value.length,
 )
 
 /**
@@ -4126,15 +4154,13 @@ defineExpose({
                      裸条只剩 [芯片行][＋/模型/发送]，用户无法输入文字（stacked 三行布局
                      见下方 CSS 注释：行0 芯片 / 行1 输入文本 / 行2 控件——行1 必须常在）。
                      空闲态由 .is-idle 的 display:none 规则隐藏输入行，不依赖本处条件。 -->
-                <div class="agent-composer__input-wrap">
-                <!-- 2026-10-18 修 B：leading-inset 跟随 ◎ 可见性（两端统一）——
-                     原 PC 恒 18px（◎ 藏着也缩进）、移动端恒 0（◎ 压住行首字符）。
-                     ⑥ 画布点选模式：placeholder 承载跨容器引导（点 ◎ 后视线还在 composer，
-                     不提示就不知道下一步去画布点节点；退出模式自动还原） -->
-                <!-- P3：技能胶囊条（随消息一次性，X 移除；发送受理后清空）——输入区上方 chips 行 -->
+                <!-- P3：技能胶囊条（随消息一次性，X 移除；发送受理后清空）——输入区上方 chips 行。
+                     2026-11-18 三次修复 R3：必须留在 input-wrap 之外——移动端 input-wrap 是
+                     display:flex 的文本/◎ 同排容器，胶囊一旦成为其子元素就会被横向并排，
+                     把 textarea 挤到右列，换行从胶囊右侧起排（生产截图已复现）。 -->
                 <div
                   v-if="selectedSkillIds.length"
-                  class="mb-1.5 flex flex-wrap items-center gap-1.5"
+                  class="agent-composer__skill-chips mb-1.5 flex flex-wrap items-center gap-1.5"
                   data-testid="skill-chips-row"
                 >
                   <span
@@ -4158,6 +4184,11 @@ defineExpose({
                     </button>
                   </span>
                 </div>
+                <div class="agent-composer__input-wrap">
+                <!-- 2026-10-18 修 B：leading-inset 跟随 ◎ 可见性（两端统一）——
+                     原 PC 恒 18px（◎ 藏着也缩进）、移动端恒 0（◎ 压住行首字符）。
+                     ⑥ 画布点选模式：placeholder 承载跨容器引导（点 ◎ 后视线还在 composer，
+                     不提示就不知道下一步去画布点节点；退出模式自动还原） -->
                 <MentionInput
                   ref="composerRef"
                   v-model="input"
@@ -4381,15 +4412,15 @@ defineExpose({
                       title="选择技能"
                       :subtitle="selectedSkillIds.length ? `已选 ${selectedSkillIds.length}` : '默认由平台路由'"
                       max-height="72vh"
-                      @close="skillSheetOpen = false"
+                      @close="onSkillSheetClose"
                     >
                       <SkillPickSheet
                         :skills="skillPickItems"
                         :selected-ids="selectedSkillIds"
                         embedded
                         @toggle="toggleSkillChip"
-                        @clear="selectedSkillIds = []"
-                        @close="skillSheetOpen = false"
+                        @clear="clearSkillChips"
+                        @close="onSkillSheetClose"
                         @manage="skillSheetOpen = false; manageOpen = true"
                       />
                     </MobileSheet>
@@ -4405,13 +4436,13 @@ defineExpose({
                           @click.stop
                         />
                         <div
-                          class="neo-popover skill-sheet-card absolute bottom-full left-0 z-30 mb-1 flex max-h-[70vh] max-w-[min(92vw,560px)] flex-col rounded-2xl p-2"
+                          class="neo-popover skill-sheet-card absolute bottom-full left-0 z-30 mb-1 flex max-h-[70vh] flex-col rounded-2xl p-2"
                           data-testid="skill-sheet-card"
                           @click.stop
                         >
                           <div class="skill-sheet-head">
                             <span class="text-xs font-semibold">选择技能<span v-if="selectedSkillIds.length" class="opacity-60"> · 已选 {{ selectedSkillIds.length }}</span></span>
-                            <button type="button" class="rounded-lg p-1.5 text-[var(--lnk-text-muted)]" aria-label="关闭技能选择" data-testid="skill-sheet-close" @click="skillSheetOpen = false">
+                            <button type="button" class="rounded-lg p-1.5 text-[var(--lnk-text-muted)]" aria-label="关闭技能选择" data-testid="skill-sheet-close" @click="onSkillSheetClose">
                               <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="1.75"><path stroke-linecap="round" d="M6 6l12 12M18 6L6 18" /></svg>
                             </button>
                           </div>
@@ -4419,8 +4450,8 @@ defineExpose({
                             :skills="skillPickItems"
                             :selected-ids="selectedSkillIds"
                             @toggle="toggleSkillChip"
-                            @clear="selectedSkillIds = []"
-                            @close="skillSheetOpen = false"
+                            @clear="clearSkillChips"
+                            @close="onSkillSheetClose"
                             @manage="skillSheetOpen = false; manageOpen = true"
                           />
                         </div>
@@ -5851,6 +5882,15 @@ defineExpose({
   margin-bottom: 0;
 }
 
+/* 三次修复 R3（2026-11-18）：技能胶囊行独占上行。
+ * input-wrap 在移动端是 flex 单行容器（MentionInput + ◎），胶囊必须作为其兄弟节点，
+ * 否则 shrink-to-fit 会把 textarea 挤到右列，所有换行从胶囊右侧起排。 */
+.agent-panel-mobile-dock .composer-bare-bar .agent-composer__skill-chips {
+  order: -1;
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
 /* 2026-10-18 确定性两行布局（对齐 PC 卡结构）：
  * 行0 = 引用芯片行（有芯片时，basis 100% 独占）；行1 = 输入文本（basis 100% 独占）；
  * 行2 = ＋ / 模型⌄ / 发送。修复：摊平 flex-wrap 下各控件按内容宽度自由折行，
@@ -5879,6 +5919,16 @@ defineExpose({
     border-radius: 16px 16px 0 0;
     padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
   }
+}
+
+/* 三次修复 R2（2026-11-18）：PC 卡宽度相对包含块 .agent-input-dock 封顶。
+ * 旧写法只按视口封顶（92vw/560px），窄面板下 shrink-to-fit 会越过 composer 右缘压到画布。
+ * min-width:0 同步打断 SkillPickSheet 的 min-content 传导链。 */
+.skill-sheet-card {
+  box-sizing: border-box;
+  width: min(560px, 100%);
+  max-width: 100%;
+  min-width: 0;
 }
 
 /* PC 锚定 popover 的标题头（移动端由 MobileSheet 提供，不走这里） */
