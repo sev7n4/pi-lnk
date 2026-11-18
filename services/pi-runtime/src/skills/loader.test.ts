@@ -57,6 +57,32 @@ test("missing root returns empty array", () => {
 	assert.deepEqual(discoverSkills("/nonexistent-skills-dir-xyz"), []);
 });
 
+// ── G3（2026-11-18）：disable-model-invocation 解析与布尔归一化 ──
+test("G3-A1: disable-model-invocation:true 解析为布尔 true（字符串归一化）", () => {
+	const root = mkdtempSync(join(tmpdir(), "skills-g3-"));
+	try {
+		makeSkill(root, "hidden-skill", 'name: hidden-skill\ndescription: "有副作用的技能"\ndisable-model-invocation: true');
+		const [entry] = discoverSkills(root);
+		assert.equal(entry.disableModelInvocation, true, "宿主镜像必须是布尔 true，不是字符串 'true'");
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("G3-A4: 默认无字段 / false → 不置 true（行为与现状一致）", () => {
+	const root = mkdtempSync(join(tmpdir(), "skills-g3-"));
+	try {
+		makeSkill(root, "default-skill", 'name: default-skill\ndescription: "默认技能"');
+		makeSkill(root, "false-skill", 'name: false-skill\ndescription: "假值技能"\ndisable-model-invocation: false');
+		const entries = discoverSkills(root);
+		assert.equal(entries.length, 2);
+		assert.notEqual(entries.find((e) => e.name === "default-skill")!.disableModelInvocation, true);
+		assert.notEqual(entries.find((e) => e.name === "false-skill")!.disableModelInvocation, true);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
+
 test("buildSkillIndexBlock empty when no entries", () => {
 	assert.equal(buildSkillIndexBlock([]), "");
 });

@@ -25,6 +25,9 @@ export function buildSkillResources(
 			description: e.description,
 			content: loadBody(e.name) ?? "",
 			filePath: join(e.dir, "SKILL.md"),
+			// G3（2026-11-18）：透传宿主镜像给上游 Skill；formatSkillsForSystemPrompt
+			// 原生过滤 disableModelInvocation=true 的技能（隐式 index 不列出）。
+			...(e.disableModelInvocation ? { disableModelInvocation: true } : {}),
 		})),
 	};
 }
