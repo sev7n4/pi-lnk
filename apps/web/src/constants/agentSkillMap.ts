@@ -94,10 +94,30 @@ export function mergeAgentSkills(
   return merged
 }
 
+/**
+ * `/` 卡片显示名（零映射表、零造数）：
+ *  1) label 已是可读名（含中文 / 非纯 slug）→ 直接用（AGENT_SKILLS 内置项有准确短名，如「实物产品视觉出图」）；
+ *  2) label 是 slug（runtime 动态技能，如 `drama-audio-design`）→ 从 desc 首句派生。
+ * ⚠️ 派生只按 `。` 切——技能名本身含 `/`（如「短剧/漫剧配音与声音设计」），
+ * 按 `/` 或 `，` 切会把显示名砍成「短剧」。无 `。` 时退首个换行；失败回退 label。
+ */
+export function displayNameFromDesc(label: string, desc: string | undefined): string {
+  const fallback = label || '技能'
+  // 可读名判据：含 CJK 字符即视为已命名（slug 为纯 ascii/数字/-/_）。
+  if (/[\u3400-\u9fff]/.test(label)) return label
+  const raw = (desc ?? '').trim()
+  if (!raw) return fallback
+  const first = raw.split('。', 1)[0]!.split('\n', 1)[0]!.trim()
+  const name = first || raw.split('\n', 1)[0]!.trim()
+  return name.slice(0, 24) || fallback
+}
+
+/** 选中技能后胶囊行已承载技能名，placeholder 只留一句短提示，不再重复技能名 / @ 引导。 */
+export const AGENT_INPUT_PLACEHOLDER_WITH_SKILL = '补充描述…'
+
 export const AGENT_INPUT_PLACEHOLDER_AUTO =
   '描述你的想法，或 @ 引用画布节点…'
 
 export function agentInputPlaceholder(skill: AgentSkillDef | undefined): string {
-  if (!skill) return AGENT_INPUT_PLACEHOLDER_AUTO
-  return `已选技能「${skill.label}」— 描述编排需求，@ 引用画布节点…`
+  return skill ? AGENT_INPUT_PLACEHOLDER_WITH_SKILL : AGENT_INPUT_PLACEHOLDER_AUTO
 }

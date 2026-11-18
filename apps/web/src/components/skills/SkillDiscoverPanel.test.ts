@@ -4,6 +4,8 @@
 //  ② 卸载必须二次确认：点卸载只弹确认框，不触发 DELETE；缺确认（取消）不触发 DELETE。
 //  ③ 市场区卡片点安装 → POST install；我的技能区拉 mine。
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { mount, flushPromises } from '@vue/test-utils'
 import SkillDiscoverPanel from './SkillDiscoverPanel.vue'
 
@@ -33,8 +35,9 @@ describe('SkillDiscoverPanel — M1-3 发现页双区', () => {
   beforeEach(() => {
     catalog.mockReset(); mine.mockReset(); install.mockReset()
     setEnabled.mockReset(); remove.mockReset(); rollback.mockReset(); uninstallBatch.mockReset()
-    catalog.mockResolvedValue(CATALOG)
-    mine.mockResolvedValue(MINE)
+    catalog.mockResolvedValue(CATALOG.map((c) => ({ ...c })))
+    // onToggle 会就地改 item.enabled；每次给新对象，避免测试间状态串味（U6 曾因此假红）
+    mine.mockResolvedValue(MINE.map((m) => ({ ...m })))
     install.mockResolvedValue({ enabled: false })
     setEnabled.mockResolvedValue({ id: 'row-1', enabled: true })
     remove.mockResolvedValue({ uninstalled: 1 })
@@ -187,5 +190,80 @@ describe('SkillDiscoverPanel — M1-3 发现页双区', () => {
     await flushPromises()
     expect(wrapper.findAll('[data-testid="builtin-skill-row"]')).toHaveLength(1)
     expect(wrapper.text()).toContain('头脑风暴')
+  })
+
+  // ── UI 美化 §4.4 / §4.5 / §4.3（U6 / U7 / U3）──
+  it('U6：开关文案讲清「停用后果」而非「自动触发」；副标题区分启用态', async () => {
+    const wrapper = await mountPanel('mine')
+    const [onToggleBtn, offToggleBtn] = wrapper.findAll('[data-testid="mine-toggle"]')
+    expect(onToggleBtn!.attributes('aria-label')).toContain('停用后不再自动生效，也不出现在 + / / 列表')
+    expect(onToggleBtn!.attributes('aria-label')).not.toContain('自动触发')
+    expect(offToggleBtn!.attributes('aria-checked')).toBe('false')
+    expect(wrapper.text()).toContain('已启用 · 自动可用')
+    expect(wrapper.text()).toContain('已停用')
+    expect(onToggleBtn!.attributes('role')).toBe('switch')
+  })
+
+  it('U7：内置 / 自定义 / 来自市场三类卡片均可打开同一只读详情壳', async () => {
+    const wrapper = mount(SkillDiscoverPanel, { props: { initialTab: 'mine', builtinSkills: BUILTIN } })
+    await flushPromises()
+    // MobileSheet Teleport 到 body，wrapper.find 穿不过去——从 document.body 取证
+    // kind 标签在 MobileSheet 的 subtitle（Teleport 根），不在 detail-sheet 内，故取整个 body
+    const detailText = () => document.body.textContent ?? ''
+    const closeDetail = async () => {
+      ;(document.body.querySelector('[data-testid="m-sheet-close"]') as HTMLElement | null)?.click()
+      await flushPromises()
+      // MobileSheet 的离场 transition 会短暂保留 Teleport 节点；等真实计时器走完再断言
+      await new Promise((resolve) => setTimeout(resolve, 300))
+    }
+    const opens = wrapper.findAll('[data-testid="skill-detail-open"]')
+    expect(opens).toHaveLength(5) // 3 内置 + 2 已安装
+    await opens[0]!.trigger('click')
+    await flushPromises()
+    expect(document.body.querySelector('[data-testid="skill-detail-sheet"]')).not.toBeNull()
+    expect(detailText()).toContain('代码评审')
+    expect(detailText()).toContain('平台提供 · 常开 · 不可停用')
+    await closeDetail()
+    expect(detailText()).toBe('')
+
+    await opens[3]!.trigger('click') // 0-2 内置，3 自定义，4 来自市场
+    await flushPromises()
+    expect(detailText()).toContain('用户自定义')
+    expect(detailText()).toContain('已启用 · 自动可用')
+    await closeDetail()
+
+    await opens[4]!.trigger('click')
+    await flushPromises()
+    expect(detailText()).toContain('来自市场')
+    await closeDetail()
+    wrapper.unmount()
+  })
+
+  it('U7：批量态点卡片仍=勾选，不弹详情', async () => {
+    // 清掉上一例 transition 残留（Teleport 到 body，不受 wrapper.unmount 管辖）
+    document.body.querySelectorAll('.m-sheet-root').forEach((el) => el.remove())
+    const wrapper = await mountPanel('mine')
+    await wrapper.find('[data-testid="toggle-batch"]').trigger('click')
+    await wrapper.findAll('[data-testid="mine-skill-row"]')[0]!.trigger('click')
+    expect(document.body.querySelector('[data-testid="skill-detail-sheet"]')).toBeNull()
+    expect(wrapper.text()).toContain('已选 1 个')
+    wrapper.unmount()
+  })
+
+  it('U3：工具栏两行稳定、批量计数独占第二行；移动端卡片单列；空态文案指向内置技能', () => {
+    const sfc = readFileSync(join(__dirname, 'SkillDiscoverPanel.vue'), 'utf8')
+    expect(sfc).toContain('class="mine-toolbar-row"')
+    expect(sfc).toMatch(/@media \(max-width: 639px\) \{ \.cards-grid \{ grid-template-columns: 1fr; \} \}/)
+    expect(sfc).toContain('data-testid="batch-bar"')
+    // T3.1：mine 空态不再用「还没有已安装技能」，改为说明内置技能由平台提供 + 下一步
+    expect(sfc).toContain('内置技能由平台提供，导入或安装后可在此管理')
+    expect(sfc).not.toContain('还没有已安装技能')
+  })
+
+  it('U4：开关 51×31 / knob 27 / 触控热区 ≥44，内置卡无开关（见 F2）', () => {
+    const sfc = readFileSync(join(__dirname, 'SkillDiscoverPanel.vue'), 'utf8')
+    expect(sfc).toMatch(/\.mine-switch \{[^}]*width: 51px; height: 31px;/)
+    expect(sfc).toContain('.mine-switch::after { content: \'\'; position: absolute; inset: -7px; }')
+    expect(sfc).toContain('width: 27px; height: 27px;')
   })
 })

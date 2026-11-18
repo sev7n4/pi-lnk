@@ -146,7 +146,7 @@ describe('路线 ③ 第二批：C 类 3 处模板肯定读取收敛为 !isDeskt
     w.unmount()
   })
 
-  it('③ 源码契约：模板区 isMobileLayout 归零，3 处改为 !isDesktopDock，派生定义仍是纯否定', () => {
+  it('③ 源码契约：模板区 isMobileLayout 归零，4 处改为 !isDesktopDock，派生定义仍是纯否定', () => {
     const src = railSource()
     expect(src).toMatch(
       /const isDesktopDock = computed\(\(\) => !isMobileLayout\.value\)/,
@@ -154,11 +154,13 @@ describe('路线 ③ 第二批：C 类 3 处模板肯定读取收敛为 !isDeskt
     const tpl = templatePart(src)
     expect(tpl, '模板区必须扫到主体，防空集假绿').toContain('agent-panel-header')
     expect(tpl, '模板区不得残留任何 isMobileLayout 读取').not.toMatch(/\bisMobileLayout\b/)
-    expect((tpl.match(/!isDesktopDock/g) ?? []).length, 'C 类 3 处必须恰好替换').toBe(3)
+    // 2026-11-18 skill-ui-ux-polish：技能 sheet 移动端分支（v-if="skillSheetOpen && !isDesktopDock"）
+    // 也是合法的 C 类派生消费点，3 → 4。
+    expect((tpl.match(/!isDesktopDock/g) ?? []).length, 'C 类 4 处必须恰好替换（3 处旧 + 技能 sheet 移动端分支 1 处）').toBe(4)
     expect(tpl, 'composer 换行策略 prop 必须走派生真源')
       .toContain(':mobile-enter-newline="!isDesktopDock"')
-    // 9 处第一批/#800 消费点 + 3 处第二批 = 12
-    expect((tpl.match(/\bisDesktopDock\b/g) ?? []).length).toBeGreaterThanOrEqual(12)
+    // 9 处第一批/#800 消费点 + 3 处第二批 + 1 处技能 sheet = 13
+    expect((tpl.match(/\bisDesktopDock\b/g) ?? []).length).toBeGreaterThanOrEqual(13)
   })
 
   it('④ 冻结边界：defineExpose 11 项与 getIsMobileLayout 契约零改写', () => {

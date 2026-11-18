@@ -2,6 +2,8 @@
 // 判据：`/` 唤出候选（同一 dockSkills 数据源由宿主传入）、Enter 选中 emit slash-select、
 //       `@` mention 行为不受影响、未传 slashOptions 时 `/` 不触发（零回归）。
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { mount } from '@vue/test-utils'
 import MentionInput, { type SlashOption } from './MentionInput.vue'
 
@@ -124,5 +126,33 @@ describe('MentionInput `/` 技能候选（B4）', () => {
     await typeInput(w, '@')
     expect(w.findAll('[role="option"]')).toHaveLength(8)
     w.unmount()
+  })
+
+  // ── UI 美化 §4.1（U1）：标签化 + 淡底选中 + 44px ──
+  it('U1：`/` 卡片显示中文名、slug 降副标题，顶部有「技能 · N」', async () => {
+    const options: SlashOption[] = [
+      { id: 'drama-audio-design', label: '短剧/漫剧配音与声音设计', desc: '当用户要求配音…', meta: 'drama-audio-design' },
+    ]
+    const w = mountInput({ slashOptions: options })
+    await typeInput(w, '/')
+    expect(w.find('[data-testid="slash-list-head"]').text()).toBe('技能 · 1')
+    const item = w.findAll('[role="option"]')[0]!
+    expect(item.text()).toContain('短剧/漫剧配音与声音设计')
+    expect(item.text()).toContain('drama-audio-design')
+    expect(w.find('[role="listbox"]').classes()).toContain('slash-popover')
+    w.unmount()
+  })
+
+  it('U1：选中态走主题稳定的强调淡底（非黑底/非翻转令牌）；项高 ≥44 由令牌给出（静态判据）', () => {
+    const sfc = readFileSync(join(__dirname, 'MentionInput.vue'), 'utf8')
+    // ⛔ 禁 --lnk-hi-bg/hi-text：随主题翻转，深主题 = 黑底白字（CDP 实测暴露，§9 #9）
+    expect(sfc).toContain('.mention-option.is-active {\n  /* 主题稳定的强调淡底')
+    expect(sfc).toContain('background: var(--lnk-accent-subtle);')
+    expect(sfc).toContain('color: var(--lnk-accent-text);')
+    expect(sfc).not.toContain('#1a1a21')
+    // 规则块内 background 必须是 accent-subtle，不能是翻转令牌（注释里提到 hi-bg 不算）
+    expect(sfc).toMatch(/\.mention-option\.is-active \{[\s\S]*?background: var\(--lnk-accent-subtle\);[\s\S]*?\}/)
+    expect(sfc).toMatch(/\.slash-option \{\n  min-height: var\(--lnk-touch-target\);\n\}/)
+    expect(sfc).toContain('slash-popover max-h-[48vh]')
   })
 })

@@ -10,8 +10,13 @@ describe('composer placeholder keyboard copy ban (P0-1.2)', () => {
     expect(FORBIDDEN.test(AGENT_INPUT_PLACEHOLDER_AUTO)).toBe(false)
     expect(AGENT_INPUT_PLACEHOLDER_AUTO).toContain('@')
   })
-  it('skill placeholder describes capability, not keyboard', () => {
-    for (const s of AGENT_SKILLS) expect(FORBIDDEN.test(agentInputPlaceholder(s))).toBe(false)
+  it('skill placeholder describes capability, not keyboard / skill name / @', () => {
+    for (const s of AGENT_SKILLS) {
+      const copy = agentInputPlaceholder(s)
+      expect(FORBIDDEN.test(copy)).toBe(false)
+      expect(copy).not.toContain(s.label)
+      expect(copy).not.toContain('@')
+    }
   })
   it('streaming placeholder in AgentSideRail has no keyboard words', () => {
     const sfc = readFileSync(join(__dirname, '../components/agent/AgentSideRail.vue'), 'utf8')
