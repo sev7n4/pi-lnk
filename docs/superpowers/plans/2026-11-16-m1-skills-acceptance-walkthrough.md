@@ -149,3 +149,74 @@ gh api 'search/code?q=skillApi.import+repo:sev7n4/pi-lnk+path:apps/web' --jq '.t
 # N 靶点删除（v2 §7.3 / §8）
 grep -nE 'computeIndexSignature|buildUserSkillIndex|resolveSkillBodies|withForcedSkills' docs/superpowers/specs/2026-11-16-creative-skills-ecosystem-discovery-loading-design-v2.md
 ```
+
+---
+
+## 8. 收口补记（2026-11-18 · M1 遗留四项收口刀）
+
+> **纪律**：上文 §0–§7 是 2026-11-16 的原始快照，**逐字保留不篡改**（审计留痕）。
+> 本节是 2026-11-18 收尾刀（规格 `specs/2026-11-18-m1-remaining-closeout-design.md`）
+> 基于生产 master `08b0086f` 的逐项复核与终态裁决。两节冲突时**以本节为准**。
+> **PR 基线注记**：本刀 PR 切自远端 master `a1220acd`（复核后 #949–#951 web 刀先后合入，
+> 触碰面 apps/web 与本刀零交集已逐路径核验；pi-runtime 判定链结论不受影响）。
+
+### 8.1 缺口状态终裁（G1–G6 全部闭合或裁决）
+
+| 缺口 | 原始状态 | 终态（2026-11-18 实证） | 处置 |
+|---|---|---|---|
+| G1 P12 userInvocable 判定链 | ❌ 未消费 | ✅ **已修**（#929/#931）：`skills-pure.ts:188-229` 的 `InvocationIntent` 含 `routed`、`resolveInvocationMode` 消费 `userInvocable`，`applyInvocationIntent` 落字段；web `runtimeSkillsToInstalled` 同源 | 关闭（代码已在 master） |
+| G2 导入 UI 入口（任务 #46） | ❌ `skillApi.import` 零调用方 | ✅ **已闭环**（P3 #938/#939）：`SkillImportDialog.vue` 挂发现面板，master blob `d915cd7b`，生产 `/api/skills/import` 返 400（非 404=端点在） | **关闭 #46** |
+| G3 golden 重写 | ❌ 11 文件未补字段 | ✅ **裁决改写 + 真链接线落地**：原始定义（补 `userInvocable`/`capabilities`）被推翻——上游 `pi-agent-core@0.99.2` 只原生解析 `disable-model-invocation`，无另两字段概念；11 个 golden 全是创作方法论，默认即正确（补字段反破坏 G1 双通路）。改在 `loader.ts`+`resources.ts` 接解析/映射链（本刀），golden **零改动** | 关闭（真链接线，详见 8.3） |
+| G4 N 靶点债务 | ⚠️ N1/N3/N6/N12 无等价靶点、N4/N7/N8 未实测 | ✅ **等价靶点写死 + 变异实测**（见 8.2） | 关闭 |
+| G5 A10 install 搜索态（N11） | ❌ 靶点不存在 | ✅ **裁决 N/A**：约束对象是「agent 自主安装」，但 agent 工具清单只有 `load_skill`，无 `skill_search/install/disable`；安装仅用户 UI（天然「看搜索结果点装」= 最近搜索+确认）。约束对象不存在，补会话态是给不存在的锁配钥匙 | 关闭（规格裁决，零代码） |
+| G6 A11 userModified 保护 | ❌ 未实现 | ✅ **裁决 N/A**：防「市场更新静默覆盖」，但全服务无 upgrade 写路径（仅 install/rollback 改 pinnedHash，均需用户显式动作）；`userModified` 已在 `mine` 响应暴露（`skills.service.ts:518`）供 M2 用。写路径不存在，加保护空转 | 关闭（规格裁决，零代码） |
+| G7 A2/A7 同会话即时 | 低（已授权降级） | 维持降级（下一轮新会话），不属缺陷 | 记录即可 |
+
+### 8.2 G4 变异靶点等价重定义与实测（N1–N13）
+
+v2 §10.4 声明 N1/N3/N6/N12「编号/语义保留，观测点替换」，但未落可执行靶点。本刀写死为可执行判据并逐条实测；
+M0 探针（`upstream-skills-probe.test.ts`，本轮 26/26 全绿）已覆盖 U1–U11 及 M-U 变异，等价靶点锚定如下：
+
+| 判据 | v1 靶点（符号已删） | v2 等价靶点（本刀写死） | 转红实证 |
+|---|---|---|---|
+| N1 | `withForcedSkills.resolveBody` 改只查本地 | 装配层不读 `getResources()` → 改回静态 index | U8（M-U8b 已证 RED） |
+| N2 | 查询去 `where:{userId}` | 靶点健在（`getMine`） | ✅ M1-1 实测 RED（历史） |
+| N3 | `resolveSkillBodies` 取最新 | `buildSkillResources` 用启动期快照替换 live entries | session-manager 资源测试 |
+| N4 | 身份改裸 name | contentHash 公式含 skill 身份 | M1-1 contentHash 用例 |
+| N5 | 注释 verifyImport | 七规则健在 | ✅ M1-1 实测 RED（历史） |
+| N6 | index 启动期快照 | 同 N1（每轮现组装） | U8 |
+| N7 | DTO 漏装饰器 | ValidationPipe whitelist | DTO 校验用例 |
+| N8 | override 写正文 | `applySkillOverride` 只改 DB | override 用例 |
+| N9 | 卸载四变异 | 守卫健在 | ✅ A8 confirmed（历史）；其余 3 条归位同入口 |
+| N10 | 忽略 disableModelInvocation | 宿主→上游透传链（**本刀 G3 新增**） | ✅ M-G3a/b 实测 RED（本轮） |
+| N11 | install 跳过确认 | 裁决 N/A（无 agent 安装工具，见 8.1） | 不适用（约束对象不存在） |
+| N12 | `computeIndexSignature` 恒值 | resume 漏调 `buildSkillResources()` | U11 |
+| N13 | trustLevel 由热度决定 | 热度/信任分离健在 | 代码分离可见（trustLevel='reviewed' 不读计数） |
+
+**G4 结论**：13 条中 ✅已实测转红 4（N2/N5/N10/N9-A8）+ M0 探针等价靶点可转红 7（N1/N3/N4/N6/N7/N8/N12，U8/U11+配套测试为判据载体）+ N/A 裁决 1（N11）+ 代码分离可见 1（N13）。
+判据债务已归位到可执行入口，不再存在「靶点已删、无变异可做」的空项。
+
+### 8.3 G3 真链接线（本刀唯一生产改动）
+
+- **改动**：`services/pi-runtime/src/skills/loader.ts` 的 `SkillIndexEntry` 增 `disableModelInvocation?: boolean`，
+  `discoverSkills` 布尔归一化解析 frontmatter；`resources.ts` 的 `buildSkillResources` 透传给上游 `Skill`。
+- **为何不重写 golden**：`disable-model-invocation` 是上游唯一原生解析的调用控制字段（`skills.ts:341`），
+  真实装配走 `session-manager.ts:2717` 的 `formatSkillsForSystemPrompt(getResources().skills)` 原生过滤；
+  宿主原先丢字段 ⇒ 写了 golden 也不生效。接解析链后契约真实可执行，且 golden 保持默认（正确语义）。
+- **判据**：G3-A1（布尔归一化）/A2（映射+formatter 过滤）/A3（lane.skill 显式仍达）/A4（默认行为不变）/A5（golden hash 零改动）全绿；
+  变异 M-G3a（删映射）/M-G3b（归一化改恒 false）均实测 RED（`AssertionError`）。
+- **部署**：触发 runtime-deploy（pi-runtime 改动），单独授权。
+
+### 8.4 终态判定（M1 行为契约收口，**不写 ALL_PASS**）
+
+| 口径 | 终态 |
+|---|---|
+| M1-A1–A11 | A9 判定链已修（G1）；A10/A11 子项按 G5/G6 裁决 N/A；A2/A7 维持已授权降级。行为契约范围内无 ❌ |
+| M1-N1–N13 | 四缺口等价靶点已写死并归位（8.2）；N10 本刀新增变异实证 |
+| §4.7 Must | P3（导入 UI）已闭环 #46；P12（userInvocable 判定链）已修；golden 按真链接线关闭 |
+| G1–G7 | 全部关闭或 N/A 裁决 |
+
+**宣告**：**M1 行为契约收口**（非 `ALL_PASS`）。按 v2 §10.7 诚实边界：
+M0/M1 通过 ≠ 生态兼容完成 ≠ WorkBuddy 全量复刻；产出北极星在 M2。
+**残留（如实移交 M2）**：① A2/A7 同会话即时语义（G7，已授权降级，若要即时调 `POST /sessions/:id/resources`）；
+② userModified 保护（G6，待市场 upgrade 写路径出现时启用）；③ agent 安装工具若引入需补 G5 确认约束。

@@ -14,6 +14,11 @@ export interface SkillIndexEntry {
 	name: string;
 	description: string;
 	dir: string;
+	/** G3（2026-11-18）：上游 `Skill.disableModelInvocation` 的宿主镜像。
+	 *  仅当 SKILL.md frontmatter `disable-model-invocation` 为真时为 true；
+	 *  resources.buildSkillResources 透传给上游 Skill[]，由 formatSkillsForSystemPrompt
+	 *  原生从隐式 index 过滤（lane.skill 显式调用不受影响，Anthropic 官方语义）。 */
+	disableModelInvocation?: boolean;
 }
 
 export interface LoadedSkill extends SkillIndexEntry {
@@ -37,7 +42,12 @@ export function discoverSkills(root: string): SkillIndexEntry[] {
 			const description = String(frontmatter.description ?? "");
 			validateName(name, child);
 			validateDescription(description);
-			entries.push({ skillId: child, name, description, dir });
+			// G3：布尔归一化——parseSimpleYaml 把标量一律读成字符串（`true` → "true"），
+			// 必须与上游 skills.ts 的 `frontmatter["disable-model-invocation"] === true` 对齐，
+			// 否则宿主镜像恒 false ⇒ 上游过滤永不触发（判据自匹配恒绿）。
+			const rawDisable = frontmatter["disable-model-invocation"];
+			const disableModelInvocation = rawDisable === true || String(rawDisable ?? "").toLowerCase() === "true";
+			entries.push({ skillId: child, name, description, dir, disableModelInvocation });
 		} catch (err) {
 			console.warn(`[skills] skipping ${child}: ${err instanceof Error ? err.message : String(err)}`);
 		}
