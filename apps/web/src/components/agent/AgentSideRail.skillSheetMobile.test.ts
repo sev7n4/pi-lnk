@@ -18,8 +18,12 @@ describe('技能 sheet 双形态（移动端 MobileSheet / PC 锚定 popover）'
     expect(sfc).toContain(':subtitle="selectedSkillIds.length ? `已选 ${selectedSkillIds.length}` : \'默认由平台路由\'"')
   })
 
-  it('PC 分支保留锚定 skill-sheet-card，不走全宽底栏', () => {
-    expect(sfc).toContain('<Teleport v-else to="body">')
+  it('PC 分支原地锚定 skill-sheet-card（禁 Teleport，不走全宽底栏）', () => {
+    // #949 生产 CDP 复测：PC 分支 Teleport to body 会丢锚定上下文，
+    // absolute bottom-full 相对 body ⇒ y=-766 整卡在视口上方不可见。
+    // PC 必须原地渲染（<template v-else>），锚定语义由父容器提供。
+    expect(sfc).not.toContain('<Teleport v-else to="body">')
+    expect(sfc).toContain('<template v-else>')
     expect(sfc).toContain('neo-popover skill-sheet-card absolute bottom-full left-0 z-30')
     expect(sfc).toContain('skill-sheet-head')
   })

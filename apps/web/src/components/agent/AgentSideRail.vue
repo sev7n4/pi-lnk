@@ -4401,7 +4401,10 @@ defineExpose({
                         @manage="skillSheetOpen = false; manageOpen = true"
                       />
                     </MobileSheet>
-                    <Teleport v-else to="body">
+                    <!-- PC 分支原地渲染（不 Teleport）：teleport 到 body 会丢锚定上下文，
+                         absolute bottom-full 相对 body ⇒ 实测 y=-766 整卡在视口上方不可见（#949 生产 CDP 复测发现）。
+                         与 F1 前旧版 PC 行为一致：卡片锚定 composer 上方，backdrop fixed 自适应。 -->
+                    <template v-else>
                       <template v-if="skillSheetOpen">
                         <div
                           class="attach-menu-backdrop"
@@ -4410,7 +4413,7 @@ defineExpose({
                           @click.stop
                         />
                         <div
-                          class="neo-popover skill-sheet-card absolute bottom-full left-0 z-30 mb-1 rounded-2xl p-2"
+                          class="neo-popover skill-sheet-card absolute bottom-full left-0 z-30 mb-1 flex max-h-[70vh] flex-col rounded-2xl p-2"
                           data-testid="skill-sheet-card"
                           @click.stop
                         >
@@ -4430,7 +4433,7 @@ defineExpose({
                           />
                         </div>
                       </template>
-                    </Teleport>
+                    </template>
                     <!-- P3：管理技能弹层（桌面薄壳包既有 SkillDiscoverPanel，定位 mine tab；移动端走 DiscoverPane） -->
                     <Teleport to="body">
                       <div
