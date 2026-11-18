@@ -1,6 +1,6 @@
 # 技能 UI/UX 二轮优化 · 实施计划
 
-> 规格：`docs/superpowers/specs/2026-11-18-skill-ui-ux-round2-design.md`（draft-review，待用户审）。
+> 规格：`docs/superpowers/specs/2026-11-18-skill-ui-ux-round2-design.md`（**已上线**，2026-11-18）。
 > 范围：全部 ∈ apps/web（零生产代码、零新组件、零新依赖）⇒ web-only 部署。
 > 分支：从最新 master 另开 `fix/skill-ux-round2`（worktree）。
 > 复用资产：MobileSheet 基座 / displayNameFromDesc / 既有三组件本体——第一原则禁新建。
@@ -109,3 +109,13 @@
 ### 新增判据资产
 - 新文件：`composables/useDockSkills.ts` + `.test.ts`（3 判据）；`AgentSideRail.manageSheetMobile.test.ts`（4 判据）；`SkillDetailSheet.desktop.test.ts`（2 判据）。
 - 扩展：`SkillPickSheet.test.ts`（R1/R2）、`AgentSideRail.skillSheetMobile.test.ts`（R1/R2）、`AgentSideRail.mobileDockDerived.test.ts`（C 类消费点计数 4→5）、`SkillDiscoverPanel.test.ts`（U3 同步 + 二轮 6 判据；钉住移动分支 mock 防 R6 分支失配）。
+
+## 6. 部署终态与生产取证（2026-11-18）
+
+- PR #953：触碰面恰 17 路径（5 组件 + 8 测试 + 1 组合式 + 2 docs + 1 useDockSkills），CI 4/4 绿；squash 合并 `8a23882e`，**合并树==CI 验证树 `a610a04c`**，17 路径 KEPT。
+- deploy.yml push 自动触发：**Deploy web SUCCESS / Build API skipped**（web-only 分流正确）；产物核验 `skill-detail-sheet-desktop` / `sum-status` / `embedded` / `92vw,560px` 全中（CanvasPage-BAQSu4i7.js），`minmax(0,1fr)` 在 CSS。
+- 生产 CDP 复测（119.29.173.89:8888，合并后产物）：
+  - 移动端 390×844 触摸：+ 技能 sheet **触摸滑动 0→197 满程**（死区根除实锤）、pickW 360≤366、管理弹层 MobileSheet（desktop modal absent）卡 328px、卡名 210px、badge 在 summary 行、嵌套详情 MobileSheet 390×238、裸 slug=0、技能中心内置 11 卡可见、分组头 sticky 吸顶（标题 y==容器 top 220）。
+  - PC 1280×757：技能卡 **560×530 fitsViewport**（原 1772 爆宽根除）、内层滚轮滚动 auto 保留、管理 Modal 720×606 两列 323px 基线不变、详情居中窄卡 **480px**（mobileSheetAbsent=true）。
+- 探针资产：`.workbuddy/e2e-cdp/ux-prod-probe.mjs`（全链）+ `prod-mobile-ab.mjs`（A/B 链补测）。
+- 诚实边界：iOS 真机惯性/橡皮筋需真机复核一次；市场目录空为运营数据面。
