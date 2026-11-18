@@ -48,6 +48,11 @@ describe('技能 composer 三处回归（R1 输入态 / R2 PC 限宽 / R3 胶囊
     expect(cardRule).toContain('max-width: 100%')
     expect(sfc).not.toContain('max-w-[min(92vw,560px)]')
 
+    // 生产 CDP 实测：+ 容器 relative 且 shrink-to-fit=32px 时，100% 会被解析成 32px。
+    expect(sfc).toContain("'is-skill-sheet-open': skillSheetOpen")
+    const attachRule = rule(sfc, '.agent-attach-menu.is-skill-sheet-open')
+    expect(attachRule).toContain('position: static')
+
     const pickRoot = rule(pick, '.skill-pick-sheet')
     expect(pickRoot).toContain('min-width: 0')
     expect(pickRoot).not.toContain('min-width: 260px')
