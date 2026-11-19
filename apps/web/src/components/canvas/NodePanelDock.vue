@@ -16,7 +16,6 @@ export type DockNodeType =
 
 const emit = defineEmits<{
   add: [type: DockNodeType]
-  'open-settings': []
   'asset-apply': [asset: CanvasAssetItem]
   'asset-add-to-agent': [asset: CanvasAssetItem]
   'history-locate': [payload: { recordId: string; nodeId?: string | null }]
@@ -207,28 +206,6 @@ useClickOutside(rootRef, closePopovers)
             </svg>
           </span>
           <span class="rail-btn-label">任务</span>
-        </button>
-
-        <span class="mx-auto my-0.5 h-px w-8 bg-[var(--neo-border)]" />
-
-        <button
-          type="button"
-          class="rail-btn"
-          title="模型服务配置"
-          @click.stop="emit('open-settings')"
-        >
-          <span class="rail-circle">
-            <svg class="h-[16px] w-[16px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <circle cx="12" cy="12" r="3" stroke-width="1.75" />
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="1.75"
-                d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"
-              />
-            </svg>
-          </span>
-          <span class="rail-btn-label">设置</span>
         </button>
 
         <span class="mx-auto my-0.5 h-px w-8 bg-[var(--neo-border)]" />

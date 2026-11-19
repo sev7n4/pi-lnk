@@ -6550,7 +6550,6 @@ onUnmounted(() => {
         <NodePanelDock
           v-if="!canvasChromeHidden && !isMobileLayout"
           @add="handleDockAdd"
-          @open-settings="showModelSettings = true"
           @asset-apply="handleAssetApply"
           @asset-add-to-agent="handleAssetAddToAgent"
           @history-locate="handleHistoryLocate"
