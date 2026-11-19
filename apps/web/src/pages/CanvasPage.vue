@@ -5616,13 +5616,12 @@ async function loadSession() {
       reconcileGroups()
       applyGroupDraggable(isMobileLayout.value)
       // SP-C：必须等 nodes 真正应用完（进入测量盒）再恢复视口，否则 setViewport 没有意义（R5）。
-      // 无 viewport / 脏值 ⇒ restoreViewport 内部判否，维持默认 fitView（N1：存量画布行为零变化）。
+      // 有落库视口 ⇒ 恢复；恢复失败（脏值）或无落库视口（存量画布）⇒ 确定性全览。
+      // 不用 VueFlow 的 init 自动全览：它等节点测量完成后对**全部**节点（含千万级离群）fitView，
+      // 会覆盖恢复出的健康视口（生产实证：修复视口落库后访问一次即回流成 {zoom:0.1} 污染值）。
       await nextTick()
-      if (serverViewport && !restoreViewport(serverViewport)) {
-        // 落库视口被判脏（平移量超限）⇒ 不能停在默认 {0.8,0,0}：
-        // 对非离群节点做一次定向 fitView，把真实内容拉回视口。
-        restoreContentViewport()
-      }
+      const restored = serverViewport ? restoreViewport(serverViewport) : false
+      if (!restored) restoreContentViewport()
     } else {
       // 空画布就是空画布：不再伪造 prompt-1 占位节点（2026-09-29 拍板，spec 场景 A）。
       // 伪造节点会让用户以为「画布上本来就有东西」，且一旦拖动就会触发 saveCanvas()
@@ -5997,10 +5996,11 @@ const agentRailActions: MobileShellAgentActions = {
   // 2026-10-27 三页顶栏统一重构（规格 §6.3）：‹ 返回创作空间 + ⤢ 适应画布（桥接 VueFlow）。
   // 移动端对话/画布顶栏同构；新对话/历史/品牌字标退役（ADR-0015 单对话 + 门面收敛）。
   goGallery: () => void router.push('/canvases'),
-  /* ⤢ 手动桥（N3 例外）：用户显式点顶栏 ⤢ 才触发的全览 fitView——
-     非回合末自动劫持（SP-C N1-N6 的语义是禁止**自动**全览，手动动作合法）。 */
-  fitView: () =>
-    void vueFlowRef.value?.fitView({ padding: 0.2, duration: 200 }),
+  /* ⤢ 手动桥（N3 例外）：用户显式点顶栏 ⤢ 才触发的全览——
+     非回合末自动劫持（SP-C N1-N6 的语义是禁止**自动**全览，手动动作合法）。
+     走确定性 restoreContentViewport：裸 fitView 会把千万级离群节点算进包围盒，
+     zoom 被压到 minZoom 0.1、真实内容推出屏幕外（生产实证"点了没用/越点越空"）。 */
+  fitView: () => restoreContentViewport(),
 }
 const mobileBatchActions: MobileShellBatchActions = {
   done: exitMultiSelectMode,
@@ -6313,7 +6313,6 @@ onUnmounted(() => {
           :connection-radius="48"
           :delete-key-code="null"
           :is-valid-connection="isValidConnection"
-          fit-view-on-init
           class="canvas-flow h-full"
           :style="canvasEdgeStyle"
           @connect="onConnect"
