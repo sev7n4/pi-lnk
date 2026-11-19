@@ -179,7 +179,7 @@ onMounted(() => {
       <!-- 邀请码降级：低频操作折叠进原生 details（键盘可达），不再各占一张主卡 -->
       <details class="rounded-2xl border border-overlay/8 bg-surface-elevated px-6 py-4">
         <summary class="cursor-pointer list-none text-sm text-fg-2 transition hover:text-fg">
-          邀请与设置
+          我的邀请码
         </summary>
         <div data-testid="invite-code-block" class="mt-4">
           <p class="text-sm text-fg-3">我的邀请码</p>

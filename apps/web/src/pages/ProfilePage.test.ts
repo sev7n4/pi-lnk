@@ -326,12 +326,15 @@ describe('ProfilePage', () => {
     expect(wrapper.findAll('h1')).toHaveLength(1)
   })
 
-  it('邀请码降级进「邀请与设置」折叠区（details/summary）', async () => {
+  it('邀请码降级进「我的邀请码」折叠区（details/summary）', async () => {
     const wrapper = await mountProfile()
 
     const details = wrapper.find('details')
     expect(details.exists()).toBe(true)
-    expect(details.find('summary').text()).toContain('邀请与设置')
+    const summaryText = details.find('summary').text()
+    expect(summaryText).toContain('我的邀请码')
+    // 设置入口已迁至独立页，个人中心折叠区标签不得再写「邀请与设置」误导
+    expect(summaryText).not.toContain('邀请与设置')
     // 邀请码不再占据独立主卡片
     expect(wrapper.find('[data-testid="invite-code-block"]').exists()).toBe(true)
   })
