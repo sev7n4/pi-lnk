@@ -73,4 +73,16 @@ describe('SkillPickSheet（P3 技能选择 sheet）', () => {
     // prop 契约：根元素按 embedded 挂变体类
     expect(sfc).toContain(':class="{ embedded: props.embedded }"')
   })
+
+  it('R11（三轮 2026-11-19）：输入查询按 label + desc 过滤，清空后恢复全量', async () => {
+    const w = mountSheet()
+    expect(w.findAll('[data-testid="pick-skill"]')).toHaveLength(2)
+    await w.find('[data-testid="skill-pick-search"]').setValue('白底')
+    const rows = w.findAll('[data-testid="pick-skill"]')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.text()).toContain('实物产品视觉出图')
+    await w.find('[data-testid="skill-pick-search"]').setValue('')
+    expect(w.findAll('[data-testid="pick-skill"]')).toHaveLength(2)
+    w.unmount()
+  })
 })

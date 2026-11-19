@@ -1015,6 +1015,18 @@ function clearSkillChips() {
   selectedSkillIds.value = []
   keepComposerInputAfterSkillAction()
 }
+/** 方案 A（三轮 2026-11-19）：`+` sheet 内的选择即走——toggle 后立刻收起 sheet 回输入态。
+ *  与 `/` slash 候选分流：slash 是就地勾选、不关闭；sheet 是模态选择、选完即走。
+ *  关闭统一走 onSkillSheetClose（移动端回焦 textarea / PC 常驻不抢焦），焦点逻辑单一出口。 */
+function onSheetPick(id: string) {
+  toggleSkillChip(id)
+  onSkillSheetClose()
+}
+/** 同上：sheet 内点「自动」= 清空并退出，避免留在空列表里。 */
+function onSheetClear() {
+  clearSkillChips()
+  onSkillSheetClose()
+}
 const isProductVisualSkill = computed(() => activeSkillId.value === 'product-visual')
 onMounted(() => { void loadDockSkills() })
 const inputPlaceholder = computed(() =>
@@ -4422,8 +4434,8 @@ defineExpose({
                         :skills="skillPickItems"
                         :selected-ids="selectedSkillIds"
                         embedded
-                        @toggle="toggleSkillChip"
-                        @clear="clearSkillChips"
+                        @toggle="onSheetPick"
+                        @clear="onSheetClear"
                         @close="onSkillSheetClose"
                         @manage="skillSheetOpen = false; manageOpen = true"
                       />
@@ -4453,8 +4465,8 @@ defineExpose({
                           <SkillPickSheet
                             :skills="skillPickItems"
                             :selected-ids="selectedSkillIds"
-                            @toggle="toggleSkillChip"
-                            @clear="clearSkillChips"
+                            @toggle="onSheetPick"
+                            @clear="onSheetClear"
                             @close="onSkillSheetClose"
                             @manage="skillSheetOpen = false; manageOpen = true"
                           />

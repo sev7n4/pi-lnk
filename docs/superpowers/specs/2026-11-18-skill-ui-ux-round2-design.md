@@ -140,3 +140,42 @@
 - 生产技能市场目录当前为空（`/api/skills/catalog` = `[]`）：R4 修复「死胡同」，但市场有货与否是运营数据，不在本轮范围。
 - 真实 iOS Safari 的橡皮筋/惯性细节无法在 CDP 仿真完全复刻；R2 验收以仿真手势 + 代码级根因消除为准，上线后需真机复核一次。
 - 移动端 UA 仿真未改 navigator.userAgent（isMobileLayout 判定走视口宽度，已验证走移动分支）。
+
+## 8. 三轮交互收敛（2026-11-19，方案 A 拍板后修订）
+
+> 用户 2026-11-19 拍板「先按方案 A 走」+ 追加下滑关闭、右上角搜索；并就「卡片详情图标」征询建议。本节并入原规格作为 R10–R12，**不另立新规格**。
+
+### 8.0 第一原则（最高约束）
+- **吃满上游 / 接线优先于新建 / 禁造数**：三条改动全部落在既有组件与既有数据面——搜索复用 `SkillDiscoverPanel.mine-search` 的输入即过滤模式（零新 API / 零新面板），下滑关闭落在 `MobileSheet` 基座（一次建设所有底部 sheet 受益），选中即走复用 `onSkillSheetClose`（焦点逻辑单一出口）。
+
+### 8.1 等价物检索结论表
+
+| 诉求 | 看似要新建 | 结论：既有等价物 | 本轮动作 |
+|---|---|---|---|
+| 搜索技能 | 新搜索面板/API | `SkillDiscoverPanel.mine-search`（label+desc 即时过滤） | 同模式移植进 `SkillPickSheet`，零新 API |
+| 下滑关闭 | 新手势库/新组件 | `MobileSheet` 基座已是所有 sheet 宿主，仅缺 touch 监听 | 基座加手势 + `swipeToDismiss` 开关 |
+| 选中即走 | 新状态机 | `onSkillSheetClose`（已含回焦 + 输入态） | 新增 sheet 专用出口接线即可 |
+| 卡片详情图标 | 每张选择卡加 ⓘ | **§4.5 已裁定**：详情入口放 P4，选择 sheet 保持 toggle；`SkillDetailSheet` 只读壳的正文依赖上游 SKILL.md（未接） | **不做**（维持既有裁决），无重复造轮子 |
+
+### 8.2 R10 · 移动端下滑关闭（P1）
+- `MobileSheet` 加 `swipeToDismiss?: boolean`（默认 true）；touchstart 记录起点 y 与 `bodyRef.scrollTop<=1`（顶部起手势），touchmove 跟踪 dy 并在 >80px 时给 sheet 跟随位移、超阈值 `preventDefault` 抑制回弹，touchend 若 `顶部起手势 && dy>80px` 则 `emit('close')`。
+- 冲突规避：列表中段下拉（scrollTop>1）不起手势 ⇒ 仍是滚动，不误关；对话框型 sheet 可传 `false` 退出该手势。
+- 验收：移动端技能 sheet 顶部下拉 >80px 关闭并回输入态；列表中段下拉仍滚动。
+
+### 8.3 R11 · 技能搜索（P2）
+- `SkillPickSheet` 内容顶部加 `type=search` 输入框（🔍 图标），`v-model=query`，按 `label` + `desc` 双字段小写包含匹配，空查询原样返回；搜索框置于 `sheet-body` 之前（内容顶部），两端共用单一状态源（host 头部两端各异，不塞进 header）。
+- 验收：输入「白底」仅命中描述含白底项；清空恢复全量；③ 两端 sheet 均可见搜索框。
+
+### 8.4 R12 · 选中即走（P0，方案 A）
+- `+` sheet 内 `toggle` → `onSheetPick`（toggle 后 `onSkillSheetClose`）、`clear`（自动）→ `onSheetClear`；两处宿主（移动 MobileSheet / PC popover）都接新出口。
+- **slash `/` 候选保持原 `toggleSkillChip`**（就地勾选、不关闭）——两类选择语义分流，互不污染。
+- 验收：点技能后 sheet 收起 + 移动端回焦 textarea（键盘回来）、composer 保持输入态；`/` 选技能不关任何 sheet。
+
+### 8.5 卡片详情图标裁决（用户征询项 → 维持既有边界）
+- 结论：**不在选择卡加详情 ⓘ**。数据面实证：`SkillDetailSheet` 详情正文依赖上游 SKILL.md（规格 §4.5/§8 P4 未接），现有点开只见元数据 + "完整技能文档暂未提供"，加图标=制造空承诺；且 §4.5 早已把详情入口限定在管理技能页卡片。
+- 用户目标「选时了解技能怎么用」的真解：先把 `desc`（一句话摘要）写准，完整文档待 P4 补数据后接回**管理页详情**，不在选择流里造导航流。此裁决与原规格 §4.5 一致，非新增限制。
+
+### 8.6 改动面与诚实边界（三轮）
+- 全部 ∈ `apps/web`（AgentSideRail / SkillPickSheet / MobileSheet + 守卫测试 + 本规格）⇒ web-only 部署。
+- 搜索当前技能数为个位数，搜索框为未来扩容留位，非当下痛点。
+- 下滑关闭的真机惯性/橡皮筋细节 CDP 无法完全复刻，以手势判据代码级验证 + 上线真机复核为准。

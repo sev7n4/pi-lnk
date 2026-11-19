@@ -76,6 +76,10 @@ describe('技能 composer 三处回归（R1 输入态 / R2 PC 限宽 / R3 胶囊
     const close = block(sfc, 'function onSkillSheetClose', '// 输入框被程序填充')
     expect(close).toContain('composerRef.value?.focus()')
     expect(sfc).toContain('@close="onSkillSheetClose"')
-    expect((sfc.match(/@clear="clearSkillChips"/g) ?? []).length).toBe(2)
+    // 三轮 R12：sheet 内 clear/toggle 迁移到「选中即走」出口（onSheetClear/onSheetPick），
+    // 二者内部仍调 clearSkillChips/toggleSkillChip 保持输入态；slash 候选仍直连原出口。
+    expect((sfc.match(/@clear="onSheetClear"/g) ?? []).length).toBe(2)
+    expect((sfc.match(/@toggle="onSheetPick"/g) ?? []).length).toBe(2)
+    expect(block(sfc, 'function clearSkillChips', 'const isProductVisualSkill')).toContain('keepComposerInputAfterSkillAction()')
   })
 })
