@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, provide, ref } from 'vue'
+import { computed, nextTick, onMounted, provide, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { VueFlow, type Edge, type Node } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
@@ -15,6 +15,7 @@ import CanvasNodeVideo from '@/components/canvas/CanvasNodeVideo.vue'
 import CanvasNodeText from '@/components/canvas/CanvasNodeText.vue'
 import CanvasNodeAudio from '@/components/canvas/CanvasNodeAudio.vue'
 import { CANVAS_NODE_READONLY_KEY } from '@/composables/canvasNodeActions'
+import { computeContentViewport } from '@/composables/useCanvasViewport'
 
 const route = useRoute()
 const router = useRouter()
@@ -30,6 +31,7 @@ const nodes = ref<Node[]>([])
 const edges = ref<Edge[]>([])
 const loading = ref(true)
 const forking = ref(false)
+const vueFlowRef = ref<InstanceType<typeof VueFlow> | null>(null)
 
 const nodeTypes = {
   prompt: CanvasNodePrompt,
@@ -48,12 +50,31 @@ onMounted(async () => {
     work.value = workRes.data.data
     nodes.value = (canvasRes.data.data.nodes ?? []) as Node[]
     edges.value = (canvasRes.data.data.edges ?? []) as Edge[]
+    // 不用 VueFlow 的 init 自动全览：它对全部节点（含千万级离群）fitView，zoom 被压到 minZoom 0.1、
+    // 真实内容推出屏幕外（与 CanvasPage 同源故障）。等 nodes 应用完再确定性落位。
+    await nextTick()
+    fitContentViewport()
   } catch {
     work.value = null
   } finally {
     loading.value = false
   }
 })
+
+/** 只读页首屏全览：按非离群节点包围盒确定性算视口（不依赖 fitView 的节点测量盒）。 */
+function fitContentViewport() {
+  const el = document.querySelector('.canvas-flow') as HTMLElement | null
+  const safeViewport = computeContentViewport(
+    nodes.value,
+    el?.clientWidth ?? window.innerWidth,
+    el?.clientHeight ?? window.innerHeight,
+  )
+  if (!safeViewport) return
+  const flow = vueFlowRef.value as {
+    setViewport?: (vp: { x: number; y: number; zoom: number }, opts?: { duration?: number }) => void
+  } | null
+  flow?.setViewport?.(safeViewport, { duration: 0 })
+}
 
 async function forkToMyCanvas() {
   if (!auth.isLoggedIn) {
@@ -94,6 +115,7 @@ function backToShare() {
     <div v-else-if="!work" class="flex flex-1 items-center justify-center text-fg-3">作品不存在</div>
     <div v-else class="relative flex-1">
       <VueFlow
+        ref="vueFlowRef"
         :nodes="nodes"
         :edges="edges"
         :node-types="nodeTypes as any"
@@ -102,7 +124,6 @@ function backToShare() {
         :elements-selectable="false"
         :pan-on-drag="true"
         :zoom-on-scroll="true"
-        fit-view-on-init
         class="canvas-flow h-full w-full bg-surface-sunken"
       >
         <Background pattern-color="#333" :gap="20" />

@@ -101,7 +101,7 @@
         "composables/useRoutePreload.ts",
         "router/index.ts"
       ],
-      "lines": 6908
+      "lines": 6907
     },
     {
       "name": "CanvasReadonlyPage.vue",
@@ -109,7 +109,7 @@
       "prod_refs": [
         "router/index.ts"
       ],
-      "lines": 123
+      "lines": 144
     },
     {
       "name": "ReplayPage.vue",
