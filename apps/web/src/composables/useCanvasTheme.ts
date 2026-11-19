@@ -40,5 +40,10 @@ export function useCanvasTheme() {
     theme.value = theme.value === 'dark' ? 'light' : 'dark'
   }
 
-  return { theme, toggleTheme }
+  /** 设为指定主题（设置页外观双选项用）。复用同一 ref + watch 链路，不引入第二真相源。 */
+  function setTheme(value: CanvasTheme) {
+    theme.value = value
+  }
+
+  return { theme, toggleTheme, setTheme }
 }

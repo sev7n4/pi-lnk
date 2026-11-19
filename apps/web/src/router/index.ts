@@ -66,6 +66,13 @@ const router = createRouter({
       component: () => import('@/pages/ProfilePage.vue'),
     },
     {
+      // 独立设置页（2026-11-19 返工）：账号级设置从「个人中心」Tab 与画布竖轨收敛到此处，
+      // 由头像下拉菜单的一级「设置」项进入，与「我的主页/个人资料/退出登录」同级。
+      path: '/settings',
+      name: 'settings',
+      component: () => import('@/pages/SettingsPage.vue'),
+    },
+    {
       // 我的订阅 / 我的积分：PC 外壳页；内容与移动端共用同一面板组件（只差导航壳）
       path: '/subscription',
       name: 'subscription',
