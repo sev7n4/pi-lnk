@@ -1,7 +1,17 @@
-import { describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import ElementPlus from 'element-plus'
 import ProviderConfigDialog from './ProviderConfigDialog.vue'
+
+const here = dirname(fileURLToPath(import.meta.url))
+
+// attachTo 的 teleport 弹层卸载后偶发残留 DOM，污染后续用例 ⇒ 每条测试后强制清空。
+afterEach(() => {
+  document.body.innerHTML = ''
+})
 
 vi.mock('element-plus', async (importOriginal) => {
   const actual = await importOriginal<typeof import('element-plus')>()
@@ -138,5 +148,36 @@ describe('ProviderConfigDialog', () => {
     const okRow = wrapper.findAll('.channel-model-row').find((el) => el.text().includes('agnes-image'))
     expect(okRow).toBeTruthy()
     expect(okRow!.text()).not.toContain('暂不可用')
+  })
+
+  it('设置域令牌已迁移：弹层无任何 --neo-* 残留', () => {
+    const sfc = readFileSync(join(here, 'ProviderConfigDialog.vue'), 'utf8')
+    expect(sfc.match(/--neo-/g) ?? []).toHaveLength(0)
+  })
+
+  it('弹层有可访问名：自定义标题 id 被真实引用，内层 dialog 的 aria-labelledby 不悬空', async () => {
+    const wrapper = mount(ProviderConfigDialog, {
+      props: { modelValue: true },
+      global: { plugins: [ElementPlus] },
+      attachTo: document.body,
+    })
+    await flushPromises()
+
+    // Element Plus 把 attrs 透传到内层 .el-dialog（role=dialog 外层的 aria-labelledby
+    // 是库自身生成的 el-id-*，自定义 header 时会悬空——属上游行为，不由本项目修）。
+    // 本项目职责：提供一个真实存在的标题，并让内层 dialog 的 aria-labelledby 指向它。
+    const title = document.getElementById('provider-config-title')
+    expect(title).toBeTruthy()
+    expect(title!.textContent).toContain('配置与用户偏好')
+
+    const inner = document.body.querySelector('.el-dialog')
+    expect(inner).toBeTruthy()
+    const labelId = inner!.getAttribute('aria-labelledby')
+    expect(labelId).toBeTruthy()
+    expect(document.getElementById(labelId!)).toBe(title)
+
+    // role=dialog 与 aria-modal 由上游保证
+    expect(document.body.querySelector('[role="dialog"][aria-modal="true"]')).toBeTruthy()
+    wrapper.unmount()
   })
 })

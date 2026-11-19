@@ -29,9 +29,16 @@ describe('mobile create-entry convergence wiring (PR2)', () => {
     const dock = page.match(/<NodePanelDock\s+v-if="[^"]*"\s+@add="handleDockAdd"[\s\S]*?\/>/)?.[0] ?? ''
     expect(dock, 'NodePanelDock 必须带 !isMobileLayout 门控').toContain('!isMobileLayout')
     expect(dock).toContain('!canvasChromeHidden')
-    // PC 处理器原样保留（新建/资产/任务/设置四条 emit 不变）
+    // PC 处理器保留（新建/资产/任务三条业务 emit；设置入口已于 2026-11-19 迁到个人中心「设置」Tab）
     expect(dock).toContain('@asset-apply="handleAssetApply"')
     expect(dock).toContain('@history-locate="handleHistoryLocate"')
+    expect(dock).not.toContain('@open-settings')
+  })
+
+  it('PC 竖轨不再渲染【设置】按钮（入口迁到个人中心）', () => {
+    const dockSrc = read('../components/canvas/NodePanelDock.vue')
+    expect(stripComments(dockSrc)).not.toContain('title="模型服务配置"')
+    expect(stripComments(dockSrc)).not.toContain("emit('open-settings')")
   })
 
   it('＋FAB 门控：画布页签 + chrome 未隐藏；呼吸联动空画布；多选态让位给动作条', () => {

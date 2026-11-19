@@ -49,6 +49,17 @@ vi.mock('@/components/membership/TopupModal.vue', () => ({
   default: { template: '<div class="topup-modal-stub" />' },
 }))
 
+vi.mock('@/components/canvas/ProviderConfigDialog.vue', () => ({
+  default: {
+    props: ['modelValue'],
+    template: '<div data-testid="provider-config-dialog" :data-open="String(modelValue)" />',
+  },
+}))
+
+vi.mock('@/components/layout/ThemeToggle.vue', () => ({
+  default: { template: '<div class="theme-toggle-stub" />' },
+}))
+
 const usagePayload = {
   data: {
     data: {
@@ -344,5 +355,27 @@ describe('ProfilePage', () => {
     // 消费令牌而非硬编码 px（display 档没有 Tailwind 类，只能走任意值语法）
     expect(points.classes().join(' ')).toContain('--lnk-text-display-1')
     expect(points.classes().join(' ')).not.toContain('text-6xl')
+  })
+
+  it('?tab=settings 解析为设置 Tab，展示外观/模型配置两行', async () => {
+    routeQuery.tab = 'settings'
+    const wrapper = await mountProfile()
+    const panel = wrapper.find('[data-testid="profile-settings-panel"]')
+    expect(panel.exists()).toBe(true)
+    expect(panel.text()).toContain('外观')
+    expect(panel.text()).toContain('模型配置')
+    const activeSettingsTab = wrapper.findAll('[role="tab"]').find(
+      (t) => t.text() === '设置' && t.attributes('aria-selected') === 'true',
+    )
+    expect(activeSettingsTab).toBeTruthy()
+  })
+
+  it('点模型配置行打开配置弹层（v-model 置真）', async () => {
+    routeQuery.tab = 'settings'
+    const wrapper = await mountProfile()
+    expect(wrapper.find('[data-testid="provider-config-dialog"]').attributes('data-open')).toBe('false')
+    await wrapper.find('[data-testid="open-model-settings"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-testid="provider-config-dialog"]').attributes('data-open')).toBe('true')
   })
 })

@@ -606,12 +606,14 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
     class="provider-config-dialog"
     destroy-on-close
     align-center
+    aria-label="配置与用户偏好"
+    aria-labelledby="provider-config-title"
     :close-on-click-modal="false"
   >
     <template #header>
       <div>
-        <div class="text-base font-semibold text-[var(--neo-text-primary)]">配置与用户偏好</div>
-        <div class="mt-1 text-xs font-normal text-[var(--neo-text-muted)]">渠道聚合、模型选择和同步偏好</div>
+        <div id="provider-config-title" class="text-base font-semibold text-fg">配置与用户偏好</div>
+        <div class="mt-1 text-xs font-normal text-fg-3">渠道聚合、模型选择和同步偏好</div>
       </div>
     </template>
 
@@ -620,17 +622,17 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
         <!-- 渠道 -->
         <el-tab-pane label="渠道" name="channels" lazy>
           <div class="mb-3 flex flex-wrap items-start justify-between gap-3 rounded-lg border border-warning-border bg-warning-bg px-3 py-2.5">
-            <div class="min-w-0 text-xs leading-5 text-[var(--neo-text-secondary)]">
-              <span class="font-medium text-[var(--neo-warm)]">重要提示：</span>
+            <div class="min-w-0 text-xs leading-5 text-fg-2">
+              <span class="font-medium text-warning">重要提示：</span>
               新增或拉取模型后，请到「模型」Tab 勾选可选项，Dock 才会显示这些模型。
             </div>
             <el-button size="small" @click="goToModelsTab">去模型设置</el-button>
           </div>
 
-          <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--neo-border)] p-3">
+          <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line p-3">
             <div>
-              <div class="text-sm font-semibold text-[var(--neo-text-primary)]">多渠道聚合</div>
-              <div class="mt-1 text-xs text-[var(--neo-text-muted)]">
+              <div class="text-sm font-semibold text-fg">多渠道聚合</div>
+              <div class="mt-1 text-xs text-fg-3">
                 每个渠道保存自己的 Base URL、API Key 和模型列表；模型选择时会显示模型名和渠道名。
               </div>
             </div>
@@ -644,15 +646,15 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
             <section
               v-for="draft in channelDrafts"
               :key="draft.id"
-              class="rounded-lg border border-[var(--neo-border)] p-3"
+              class="rounded-lg border border-line p-3"
             >
               <div class="mb-3 flex items-center justify-between gap-3">
                 <div class="min-w-0">
-                  <div class="truncate text-sm font-semibold text-[var(--neo-text-primary)]">
+                  <div class="truncate text-sm font-semibold text-fg">
                     {{ draft.name || '未命名渠道' }}
-                    <span v-if="draft.readOnly" class="ml-2 text-[10px] font-normal text-[var(--neo-text-muted)]">平台 · 只读</span>
+                    <span v-if="draft.readOnly" class="ml-2 text-[10px] font-normal text-fg-3">平台 · 只读</span>
                   </div>
-                  <div class="mt-1 text-xs text-[var(--neo-text-muted)]">已保存 {{ draft.modelNames.length }} 个模型</div>
+                  <div class="mt-1 text-xs text-fg-3">已保存 {{ draft.modelNames.length }} 个模型</div>
                 </div>
                 <div class="flex shrink-0 gap-2">
                   <el-button
@@ -685,22 +687,22 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
 
               <div class="grid gap-3 md:grid-cols-2">
                 <label class="block">
-                  <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">渠道名称</span>
+                  <span class="mb-1 block text-[11px] text-fg-3">渠道名称</span>
                   <el-input v-model="draft.name" :disabled="draft.readOnly" />
                 </label>
                 <label class="block">
-                  <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">调用格式</span>
+                  <span class="mb-1 block text-[11px] text-fg-3">调用格式</span>
                   <el-select v-model="draft.apiFormat" class="w-full" :disabled="draft.readOnly">
                     <el-option label="OpenAI" value="openai" />
                     <el-option label="Gemini（暂未接入生成链）" value="gemini" disabled />
                   </el-select>
                 </label>
                 <label class="block">
-                  <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">Base URL</span>
+                  <span class="mb-1 block text-[11px] text-fg-3">Base URL</span>
                   <el-input v-model="draft.baseUrl" :disabled="draft.readOnly" placeholder="https://api.openai.com/v1" />
                 </label>
                 <label class="block">
-                  <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">API Key</span>
+                  <span class="mb-1 block text-[11px] text-fg-3">API Key</span>
                   <el-input
                     v-model="draft.apiKeyDraft"
                     type="password"
@@ -713,14 +715,14 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
                   <button
                     v-if="!draft.readOnly && draft.hasApiKey"
                     type="button"
-                    class="mt-1 text-[10px] text-[var(--neo-text-muted)] hover:text-[var(--neo-text-secondary)]"
+                    class="mt-1 text-[10px] text-fg-3 hover:text-fg-2"
                     @click="draft.clearApiKey = true; draft.apiKeyDraft = ''"
                   >
                     清除已保存密钥
                   </button>
                 </label>
                 <div class="block md:col-span-2">
-                  <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">模型列表</span>
+                  <span class="mb-1 block text-[11px] text-fg-3">模型列表</span>
                   <el-input
                     :model-value="addModelDraft[draft.id] ?? ''"
                     :disabled="draft.readOnly"
@@ -756,13 +758,13 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
                       >
                         <!-- S1-3：平台渠道 unavailable 条目灰显标注（unknown/缺字段照常） -->
                         <span
-                          class="min-w-0 flex-1 truncate text-[11px]"
-                          :class="draft.modelAvailability[name] === 'unavailable' ? 'text-[var(--neo-text-muted)] line-through opacity-70' : 'text-[var(--neo-text-secondary)]'"
+                          class="min-w-0 flex-1 truncate text-[length:var(--lnk-text-2xs)]"
+                          :class="draft.modelAvailability[name] === 'unavailable' ? 'text-fg-3 line-through opacity-70' : 'text-fg-2'"
                           :title="draft.modelAvailability[name] === 'unavailable' ? '暂不可用 · 平台最近探活未通过' : undefined"
                         >{{ name }}</span>
                         <span
                           v-if="draft.modelAvailability[name] === 'unavailable'"
-                          class="shrink-0 text-[10px] text-[var(--neo-warm,--neo-text-muted)]"
+                          class="shrink-0 text-[length:var(--lnk-text-2xs)] text-warning"
                         >
                           暂不可用
                         </span>
@@ -780,7 +782,7 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
                         <button
                           v-if="!draft.readOnly"
                           type="button"
-                          class="text-[10px] text-[var(--neo-text-muted)] hover:text-[var(--neo-text-secondary)]"
+                          class="text-[10px] text-fg-3 hover:text-fg-2"
                           @click="removeChannelModel(draft, name)"
                         >
                           移除
@@ -790,11 +792,11 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
                   </div>
                   <p
                     v-else-if="draft.modelNames.length"
-                    class="mt-2 text-[10px] text-[var(--neo-text-muted)]"
+                    class="mt-2 text-[10px] text-fg-3"
                   >
                     无匹配模型
                   </p>
-                  <p class="mt-1.5 text-[10px] leading-4 text-[var(--neo-text-muted)]">
+                  <p class="mt-1.5 text-[10px] leading-4 text-fg-3">
                     已保存 {{ draft.modelNames.length }} 个。能力标签决定模型优先出现在哪一类可选项；自定义渠道模型也可在「模型」Tab 勾选「显示其他渠道模型」后跨类型使用。填写后请点击「保存」或底部「完成」。
                   </p>
                 </div>
@@ -805,9 +807,9 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
 
         <!-- 模型 -->
         <el-tab-pane label="模型" name="models" lazy>
-          <div class="mb-4 rounded-lg border border-[var(--neo-border)] p-3">
-            <div class="text-sm font-semibold text-[var(--neo-text-primary)]">默认模型和可选项</div>
-            <div class="mt-1 text-xs leading-5 text-[var(--neo-text-muted)]">
+          <div class="mb-4 rounded-lg border border-line p-3">
+            <div class="text-sm font-semibold text-fg">默认模型和可选项</div>
+            <div class="mt-1 text-xs leading-5 text-fg-3">
               可选项默认只列出对应能力的模型，并决定各处下拉框展示哪些模型；同名模型会以括号里的渠道名区分。
               若拉取后类型不准，可勾选「显示其他渠道模型」再搜索勾选。
             </div>
@@ -815,7 +817,7 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
 
           <div class="grid gap-4 md:grid-cols-2">
             <div v-for="group in MODEL_GROUPS" :key="group.selectableKey" class="block">
-              <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">{{ group.optionsLabel }}</span>
+              <span class="mb-1 block text-[11px] text-fg-3">{{ group.optionsLabel }}</span>
               <el-select-v2
                 :model-value="prefsDraft[group.selectableKey]"
                 class="w-full"
@@ -829,14 +831,14 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
                 @update:model-value="onSelectableChange(group.selectableKey, group.defaultKey, $event)"
               />
               <el-checkbox v-model="includeOtherByok[group.capability]" class="mt-1.5">
-                <span class="text-[11px] text-[var(--neo-text-muted)]">显示其他渠道模型</span>
+                <span class="text-[11px] text-fg-3">显示其他渠道模型</span>
               </el-checkbox>
             </div>
           </div>
 
           <div class="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
             <label v-for="group in MODEL_GROUPS" :key="group.defaultKey" class="block">
-              <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">{{ group.defaultLabel }}</span>
+              <span class="mb-1 block text-[11px] text-fg-3">{{ group.defaultLabel }}</span>
               <el-select v-model="prefsDraft[group.defaultKey]" class="w-full" clearable filterable>
                 <el-option
                   v-for="value in prefsDraft[group.selectableKey]"
@@ -853,7 +855,7 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
         <el-tab-pane label="生成偏好" name="preferences" lazy>
           <div class="grid gap-4 md:grid-cols-4">
             <label class="block opacity-80">
-              <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">画布默认生图张数</span>
+              <span class="mb-1 block text-[11px] text-fg-3">画布默认生图张数</span>
               <el-input-number
                 :model-value="1"
                 :min="1"
@@ -862,24 +864,24 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
                 class="!w-full"
                 controls-position="right"
               />
-              <span class="mt-1 block text-[10px] leading-4 text-[var(--neo-text-muted)]">
+              <span class="mt-1 block text-[10px] leading-4 text-fg-3">
                 系统设定：单次原子生图固定 1 张。批量多图请通过 Agent 对话自动创建多个节点。
               </span>
             </label>
             <label class="block">
-              <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">默认生图比例</span>
+              <span class="mb-1 block text-[11px] text-fg-3">默认生图比例</span>
               <el-select v-model="prefsDraft.defaultImageAspect" class="w-full">
                 <el-option v-for="v in ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '21:9']" :key="v" :label="v" :value="v" />
               </el-select>
             </label>
             <label class="block">
-              <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">默认生图分辨率</span>
+              <span class="mb-1 block text-[11px] text-fg-3">默认生图分辨率</span>
               <el-select v-model="prefsDraft.defaultImageResolution" class="w-full">
                 <el-option v-for="v in ['1K', '2K', '4K']" :key="v" :label="v" :value="v" />
               </el-select>
             </label>
             <label class="block">
-              <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">默认视频比例</span>
+              <span class="mb-1 block text-[11px] text-fg-3">默认视频比例</span>
               <el-select v-model="prefsDraft.defaultVideoAspect" class="w-full">
                 <el-option
                   v-for="opt in VIDEO_ASPECT_RATIO_OPTIONS"
@@ -890,7 +892,7 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
               </el-select>
             </label>
             <label class="block">
-              <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">默认视频时长</span>
+              <span class="mb-1 block text-[11px] text-fg-3">默认视频时长</span>
               <el-select v-model="prefsDraft.defaultVideoDuration" class="w-full">
                 <el-option
                   v-for="opt in VIDEO_DURATION_OPTIONS"
@@ -901,7 +903,7 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
               </el-select>
             </label>
             <label class="block">
-              <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">默认视频分辨率</span>
+              <span class="mb-1 block text-[11px] text-fg-3">默认视频分辨率</span>
               <el-select v-model="prefsDraft.defaultVideoResolution" class="w-full">
                 <el-option
                   v-for="opt in VIDEO_RESOLUTION_OPTIONS"
@@ -912,7 +914,7 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
               </el-select>
             </label>
             <label class="block">
-              <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">默认视频裁剪</span>
+              <span class="mb-1 block text-[11px] text-fg-3">默认视频裁剪</span>
               <el-select v-model="prefsDraft.defaultVideoCrop" class="w-full">
                 <el-option
                   v-for="opt in VIDEO_CROP_OPTIONS"
@@ -923,7 +925,7 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
               </el-select>
             </label>
             <label class="block">
-              <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">默认音频声音</span>
+              <span class="mb-1 block text-[11px] text-fg-3">默认音频声音</span>
               <el-select v-model="prefsDraft.audioVoice" class="w-full" filterable allow-create>
                 <el-option
                   v-for="opt in AUDIO_VOICE_OPTIONS"
@@ -934,7 +936,7 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
               </el-select>
             </label>
             <label class="block">
-              <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">默认音频格式</span>
+              <span class="mb-1 block text-[11px] text-fg-3">默认音频格式</span>
               <el-select v-model="prefsDraft.audioFormat" class="w-full">
                 <el-option
                   v-for="opt in AUDIO_FORMAT_OPTIONS"
@@ -945,7 +947,7 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
               </el-select>
             </label>
             <label class="block">
-              <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">默认音频语速</span>
+              <span class="mb-1 block text-[11px] text-fg-3">默认音频语速</span>
               <el-input-number
                 v-model="prefsDraft.audioSpeed"
                 :min="0.25"
@@ -958,7 +960,7 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
           </div>
 
           <label class="mt-4 block">
-            <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">默认音频指令</span>
+            <span class="mb-1 block text-[11px] text-fg-3">默认音频指令</span>
             <el-input
               v-model="prefsDraft.audioInstructions"
               type="textarea"
@@ -968,7 +970,7 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
           </label>
 
           <label class="mt-4 block">
-            <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">系统提示词</span>
+            <span class="mb-1 block text-[11px] text-fg-3">系统提示词</span>
             <el-input
               v-model="prefsDraft.systemPrompt"
               type="textarea"
@@ -980,39 +982,39 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
 
         <!-- WebDAV -->
         <el-tab-pane label="WebDAV" name="webdav" lazy>
-          <section class="rounded-lg border border-[var(--neo-border)] p-3">
+          <section class="rounded-lg border border-line p-3">
             <div class="mb-3 flex flex-wrap items-start justify-between gap-3">
               <div>
-                <div class="text-sm font-semibold text-[var(--neo-text-primary)]">WebDAV 同步</div>
-                <div class="mt-1 text-xs text-[var(--neo-text-muted)]">
+                <div class="text-sm font-semibold text-fg">WebDAV 同步</div>
+                <div class="mt-1 text-xs text-fg-3">
                   同步画布与素材等数据，不包含 AI API Key；连接经服务端代理（不在浏览器直连）。
                 </div>
               </div>
-              <div class="text-xs text-[var(--neo-text-muted)]">{{ formatSyncTime(webdavDraft.lastSyncedAt) }}</div>
+              <div class="text-xs text-fg-3">{{ formatSyncTime(webdavDraft.lastSyncedAt) }}</div>
             </div>
 
             <div class="grid gap-3 md:grid-cols-2">
               <label class="block md:col-span-2">
-                <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">连接方式</span>
+                <span class="mb-1 block text-[11px] text-fg-3">连接方式</span>
                 <el-radio-group model-value="proxy">
                   <el-radio-button value="proxy">服务端代理</el-radio-button>
                 </el-radio-group>
-                <span class="mt-1 block text-[10px] text-[var(--neo-text-muted)]">本产品仅支持服务端代理模式</span>
+                <span class="mt-1 block text-[10px] text-fg-3">本产品仅支持服务端代理模式</span>
               </label>
               <label class="block">
-                <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">WebDAV 地址</span>
+                <span class="mb-1 block text-[11px] text-fg-3">WebDAV 地址</span>
                 <el-input v-model="webdavDraft.url" placeholder="https://nas.example.com/webdav" />
               </label>
               <label class="block">
-                <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">远程目录</span>
+                <span class="mb-1 block text-[11px] text-fg-3">远程目录</span>
                 <el-input v-model="webdavDraft.directory" placeholder="lnkpi" />
               </label>
               <label class="block">
-                <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">用户名</span>
+                <span class="mb-1 block text-[11px] text-fg-3">用户名</span>
                 <el-input v-model="webdavDraft.username" autocomplete="username" />
               </label>
               <label class="block">
-                <span class="mb-1 block text-[11px] text-[var(--neo-text-muted)]">密码 / 应用密码</span>
+                <span class="mb-1 block text-[11px] text-fg-3">密码 / 应用密码</span>
                 <el-input
                   v-model="webdavDraft.password"
                   type="password"
@@ -1024,7 +1026,7 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
                 <button
                   v-if="webdavDraft.hasPassword"
                   type="button"
-                  class="mt-1 text-[10px] text-[var(--neo-text-muted)] hover:text-[var(--neo-text-secondary)]"
+                  class="mt-1 text-[10px] text-fg-3 hover:text-fg-2"
                   @click="webdavDraft.clearPassword = true; webdavDraft.password = ''"
                 >
                   清除已保存密码
@@ -1063,8 +1065,8 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
 
 <style>
 .provider-config-dialog .el-dialog {
-  background: var(--neo-surface-card);
-  border: 1px solid var(--neo-border);
+  background: var(--lnk-surface-raised);
+  border: 1px solid var(--lnk-border-default);
   max-width: 96vw;
 }
 .provider-config-dialog .el-dialog__header {
@@ -1073,7 +1075,7 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
 }
 .provider-config-dialog .el-dialog__title,
 .provider-config-dialog .el-dialog__headerbtn .el-dialog__close {
-  color: var(--neo-text-primary);
+  color: var(--lnk-text-primary);
 }
 .provider-config-dialog .el-dialog__body {
   max-height: 72vh;
@@ -1081,13 +1083,13 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
   padding-top: 4px;
 }
 .provider-config-dialog .el-tabs__item {
-  color: var(--neo-text-muted);
+  color: var(--lnk-text-muted);
 }
 .provider-config-dialog .el-tabs__item.is-active {
-  color: var(--neo-accent-text);
+  color: var(--lnk-accent-text);
 }
 .provider-config-dialog .el-tabs__active-bar {
-  background-color: var(--neo-accent);
+  background-color: var(--lnk-accent);
 }
 .provider-config-body {
   min-height: 240px;
@@ -1097,8 +1099,8 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
 }
 .channel-model-scroller {
   overflow: auto;
-  border: 1px solid var(--neo-border);
-  border-radius: 8px;
+  border: 1px solid var(--lnk-border-default);
+  border-radius: var(--lnk-radius-md);
 }
 .channel-model-row {
   position: absolute;
@@ -1109,16 +1111,16 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
   align-items: center;
   gap: 8px;
   padding: 0 8px;
-  border-bottom: 1px solid var(--neo-border);
+  border-bottom: 1px solid var(--lnk-border-default);
 }
 .channel-model-cap {
   height: 24px;
   width: 72px;
   flex-shrink: 0;
-  border: 1px solid var(--neo-border);
-  border-radius: 6px;
-  background: var(--neo-hover-bg);
-  color: var(--neo-text-secondary);
-  font-size: 11px;
+  border: 1px solid var(--lnk-border-default);
+  border-radius: var(--lnk-radius-sm);
+  background: var(--lnk-hover-overlay);
+  color: var(--lnk-text-secondary);
+  font-size: var(--lnk-text-2xs);
 }
 </style>
