@@ -8,16 +8,19 @@ import { subscriptionLabel } from '@/services/users-api'
 import { api } from '@/services/api'
 import { copyTextToClipboard } from '@/utils/copyToClipboard'
 import BrandPatternAvatar from '@/components/account/BrandPatternAvatar.vue'
+import ProviderConfigDialog from '@/components/canvas/ProviderConfigDialog.vue'
+import ThemeToggle from '@/components/layout/ThemeToggle.vue'
 import type { User } from '@lnkpi/shared'
 
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
 
-type ProfileTab = 'account' | 'billing'
+type ProfileTab = 'account' | 'billing' | 'settings'
 
 const activeTab = computed<ProfileTab>(() => {
   const raw = Array.isArray(route.query.tab) ? route.query.tab[0] : route.query.tab
+  if (raw === 'settings') return 'settings'
   if (raw === 'billing' || raw === 'usage') return 'billing'
   return 'account'
 })
@@ -32,6 +35,7 @@ function closeProfile() {
 }
 const profile = ref<User | null>(null)
 const showTopup = ref(false)
+const showModelSettings = ref(false)
 const inviteCopied = ref(false)
 
 /// 账号徽章同样用订阅口径：免费版不是套餐，未订阅一律说「未订阅」。
@@ -104,7 +108,7 @@ onMounted(() => {
       aria-label="个人中心视图"
     >
       <button
-        v-for="tab in ([['account', '账户'], ['billing', '用量']] as const)"
+        v-for="tab in ([['account', '账户'], ['billing', '用量'], ['settings', '设置']] as const)"
         :key="tab[0]"
         type="button"
         role="tab"
@@ -230,6 +234,36 @@ onMounted(() => {
       <UsagePanel />
     </div>
 
+    <div
+      v-if="activeTab === 'settings'"
+      id="panel-settings"
+      role="tabpanel"
+      aria-labelledby="tab-settings"
+      data-testid="profile-settings-panel"
+      class="space-y-4"
+    >
+      <section class="rounded-2xl border border-overlay/8 bg-surface-elevated p-6">
+        <h2 class="mb-4 text-base font-medium text-fg">设置</h2>
+        <div class="flex items-center justify-between gap-4 py-3">
+          <span class="text-sm text-fg-2">外观</span>
+          <ThemeToggle />
+        </div>
+        <div class="border-t border-overlay/8" />
+        <button
+          type="button"
+          data-testid="open-model-settings"
+          class="flex w-full items-center justify-between gap-4 py-3 text-left text-sm text-fg-2 transition-colors hover:text-fg"
+          @click="showModelSettings = true"
+        >
+          <span>模型配置</span>
+          <svg class="h-4 w-4 text-fg-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="m9 5 7 7-7 7" />
+          </svg>
+        </button>
+      </section>
+    </div>
+
+    <ProviderConfigDialog v-model="showModelSettings" />
     <TopupModal v-model="showTopup" />
   </div>
 </template>
