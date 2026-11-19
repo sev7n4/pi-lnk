@@ -24,7 +24,7 @@ import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/minimap/dist/style.css'
 import type { Session, CanvasAction, ImageVersionEntry, PlanSelectionGenerateResult, CanvasGroup, SnapPrev, CanvasData } from '@lnkpi/shared'
-import { seedImageVersions, planSelectionGenerate, SelectionBatchLimitError, SelectionBatchPendingConfirmError, computeSnapGuides, VIEWPORT_XY_LIMIT } from '@lnkpi/shared'
+import { seedImageVersions, planSelectionGenerate, SelectionBatchLimitError, SelectionBatchPendingConfirmError, computeSnapGuides } from '@lnkpi/shared'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
@@ -34,7 +34,7 @@ import { diffCanvasData } from '@/utils/canvasDiff'
 import { patchDiffers, pickInflightRecords, shouldPollNode } from '@/utils/generationPollScope'
 import { formatMediaDuration } from '@/utils/mediaInfoFormat'
 import { shouldBlockCanvasOverwrite, type CanvasLoadState } from './canvas/canvasLoadGuard'
-import { createViewportRestorer, createViewportTracker } from '@/composables/useCanvasViewport'
+import { computeContentViewport, createViewportRestorer, createViewportTracker } from '@/composables/useCanvasViewport'
 import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
 import { annotateEdgesForSelection } from '@/utils/edgeHighlight'
 import { isValidCanvasConnection } from '@/utils/canvasEdgeValidation'
@@ -5621,7 +5621,7 @@ async function loadSession() {
       if (serverViewport && !restoreViewport(serverViewport)) {
         // 落库视口被判脏（平移量超限）⇒ 不能停在默认 {0.8,0,0}：
         // 对非离群节点做一次定向 fitView，把真实内容拉回视口。
-        fitViewSaneNodes()
+        restoreContentViewport()
       }
     } else {
       // 空画布就是空画布：不再伪造 prompt-1 占位节点（2026-09-29 拍板，spec 场景 A）。
@@ -5864,23 +5864,22 @@ const restoreViewport = createViewportRestorer(
 )
 
 /**
- * 脏视口的 fail-open 落点：只对非离群节点定向 fitView。
- * 千万级离群节点参与全览会把 zoom 压到 0.1，再次把真实内容推出视口（生产实证）。
+ * 脏视口的 fail-open 落点：按非离群节点包围盒直接 setViewport。
+ * 不用 nodes 定向的 fitView：loadSession 的 nextTick 窗口内节点测量盒未就绪，
+ * 生产实证其静默返回 false，画面仍空白；千万级离群节点也不得参与包围盒。
  */
-function fitViewSaneNodes() {
-  const saneNodeIds = nodes.value
-    .filter((n) => {
-      const p = n.position
-      return (
-        Number.isFinite(p?.x) &&
-        Number.isFinite(p?.y) &&
-        Math.abs(p.x) <= VIEWPORT_XY_LIMIT &&
-        Math.abs(p.y) <= VIEWPORT_XY_LIMIT
-      )
-    })
-    .map((n) => n.id)
-  if (!saneNodeIds.length) return
-  void vueFlowRef.value?.fitView({ nodes: saneNodeIds, padding: 0.2, duration: 0, maxZoom: 1.05 })
+function restoreContentViewport() {
+  const canvasEl = document.querySelector('.canvas-flow') as HTMLElement | null
+  const safeViewport = computeContentViewport(
+    nodes.value,
+    canvasEl?.clientWidth ?? window.innerWidth,
+    canvasEl?.clientHeight ?? window.innerHeight,
+  )
+  if (!safeViewport) return
+  const flow = vueFlowRef.value as {
+    setViewport?: (vp: { x: number; y: number; zoom: number }, opts?: { duration?: number }) => void
+  } | null
+  flow?.setViewport?.(safeViewport, { duration: 0 })
 }
 
 

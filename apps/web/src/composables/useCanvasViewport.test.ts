@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  computeContentViewport,
   createViewportRestorer,
   createViewportTracker,
   normalizeViewportPayload,
@@ -43,6 +44,26 @@ describe('SP-C：视口恢复 —— restoreViewport（N5/N6）', () => {
     expect(restore({ x: NaN, y: 0, zoom: 1 })).toBe(false)
     expect(restore({ x: 0, y: 0 })).toBe(false)
     expect(setViewport).not.toHaveBeenCalled()
+  })
+})
+
+describe('脏视口兜底：computeContentViewport（不依赖节点测量）', () => {
+  it('按非离群节点包围盒算出视口，使节点群中心落在画布中心', () => {
+    const nodes = [
+      { position: { x: 80, y: 80 } },
+      { position: { x: 1680, y: 400 } },
+      { position: { x: -24294840, y: 260 } }, // 离群，不参与
+    ]
+    const vp = computeContentViewport(nodes, 1440, 900)
+    expect(vp).not.toBeNull()
+    const cx = (80 + 1680) / 2, cy = (80 + 400) / 2
+    expect(Math.round(vp!.x + cx * vp!.zoom)).toBe(720)
+    expect(Math.round(vp!.y + cy * vp!.zoom)).toBe(450)
+    expect(vp!.zoom).toBeLessThanOrEqual(1.05)
+  })
+
+  it('全是离群节点 ⇒ null（调用方保持原视口，不制造新脏值）', () => {
+    expect(computeContentViewport([{ position: { x: 8574349, y: 23 } }], 1440, 900)).toBeNull()
   })
 })
 
