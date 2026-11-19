@@ -110,7 +110,7 @@ describe('sanitizeClientOps（C1a 纯函数）', () => {
   it('非 whitelisted op 类型整体剥除；set_viewport 放行；脏输入安全', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const { sanitized, droppedOps } = sanitizeClientOps([
-      { type: 'set_viewport', payload: { viewport: { x: 1 } } },
+      { type: 'set_viewport', payload: { viewport: { x: 1, y: 2, zoom: 1 } } },
       { type: 'update_node', payload: { id: 'n1', data: { title: 'ok' } } },
       { type: 'rewrite_all', payload: {} },
       'garbage',
@@ -118,6 +118,20 @@ describe('sanitizeClientOps（C1a 纯函数）', () => {
     ])
     expect(sanitized).toHaveLength(2)
     expect(droppedOps).toBe(3)
+    warn.mockRestore()
+  })
+
+  it('set_viewport：平移量超限/非有限 ⇒ 整体剥除（防脏视口落库）', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { sanitized, droppedOps } = sanitizeClientOps([
+      { type: 'set_viewport', payload: { viewport: { x: 8574349, y: 23, zoom: 0.77 } } },
+      { type: 'set_viewport', payload: { viewport: { x: -768, y: -393934, zoom: 0.1 } } },
+      { type: 'set_viewport', payload: { viewport: { x: NaN, y: 0, zoom: 1 } } },
+      { type: 'set_viewport', payload: { viewport: { x: 10, y: 20, zoom: 1 } } },
+    ])
+    expect(sanitized).toHaveLength(1)
+    expect(droppedOps).toBe(3)
+    expect((sanitized[0] as { payload: { viewport: { x: number } } }).payload.viewport.x).toBe(10)
     warn.mockRestore()
   })
 

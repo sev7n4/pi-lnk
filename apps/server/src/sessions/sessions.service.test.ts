@@ -301,7 +301,7 @@ describe('SessionsService.patchCanvas —— 埋点观测（Task 4）', () => {
       stagedActions: JSON.stringify([{ type: 'update_node', payload: {} }]),
     })
     await expect(
-      service.patchCanvas('s1', 'u1', [{ type: 'set_viewport', payload: { viewport: {} } }], 'c1'),
+      service.patchCanvas('s1', 'u1', [{ type: 'set_viewport', payload: { viewport: { x: 1, y: 2, zoom: 1 } } }], 'c1'),
     ).rejects.toThrow(/staged actions pending commit/)
     expect(canvasPatchMetrics.snapshot().patches).toBe(0)
   })
@@ -313,7 +313,7 @@ describe('SessionsService.patchCanvas —— 埋点观测（Task 4）', () => {
     const res = await service.patchCanvas(
       's1',
       'u1',
-      [{ type: 'set_viewport', payload: { viewport: {} } }],
+      [{ type: 'set_viewport', payload: { viewport: { x: 1, y: 2, zoom: 1 } } }],
       'c1',
     )
     expect(res).toEqual({ applied: 1 })

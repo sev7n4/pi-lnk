@@ -161,6 +161,25 @@ describe('applyCanvasActions —— op 幂等 & onSkipped 留痕（Task 3 追加
   })
 })
 
+describe('set_viewport —— 视口边界闸门', () => {
+  it('合法视口照常写入', () => {
+    const out = applyCanvasActions(data(), [
+      { type: 'set_viewport', payload: { viewport: { x: 10, y: 20, zoom: 1.25 } } },
+    ])
+    expect(out.viewport).toEqual({ x: 10, y: 20, zoom: 1.25 })
+  })
+
+  it('平移量超限/非有限 ⇒ 整体跳过并留痕，不污染 canvasData', () => {
+    const skipped: string[] = []
+    const out = applyCanvasActions(data({ viewport: { x: 1, y: 2, zoom: 1 } }), [
+      { type: 'set_viewport', payload: { viewport: { x: 8574349, y: 23, zoom: 0.77 } } },
+      { type: 'set_viewport', payload: { viewport: { x: -768, y: -393934, zoom: 0.1 } } },
+    ], { onSkipped: (_type, reason) => skipped.push(reason) })
+    expect(out.viewport).toEqual({ x: 1, y: 2, zoom: 1 })
+    expect(skipped).toEqual(['invalid_viewport', 'invalid_viewport'])
+  })
+})
+
 describe('mergeNodeData —— 双守卫吸收态（web / agent 共用同一纯函数）', () => {
   it('终态被无新 recordId 的 generating 写回 ⇒ 整体丢弃 incoming', () => {
     expect(

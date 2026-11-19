@@ -17,6 +17,7 @@
  * agent/生成链路不受影响：它们走 agent-canvas-tools.persist，不经过本白名单。
  */
 import type { CanvasAction } from '@lnkpi/shared'
+import { isViewportUsable } from '@lnkpi/shared'
 
 /**
  * 客户端不得写、只能由服务端链路推进的节点数据键。
@@ -114,6 +115,12 @@ export function sanitizeClientOps(raw: unknown): SanitizeClientOpsResult {
       }
     }
     // P1-C C2a：侧车 op 全量替换语义，形状不对整体剥除（防脏载荷直接覆盖侧车）。
+    // 视口写入端闸门：平移量超限/非有限 ⇒ 整体剥除（与 shared applier 同一判据）。
+    if (type === 'set_viewport' && !isViewportUsable((op as { payload?: { viewport?: unknown } }).payload?.viewport)) {
+      console.warn('[canvas_patch] dropped out-of-bounds viewport')
+      droppedOps += 1
+      continue
+    }
     if (type === 'set_groups' || type === 'set_composition_run_group') {
       const payload = (op as { payload?: Record<string, unknown> }).payload
       const valid =

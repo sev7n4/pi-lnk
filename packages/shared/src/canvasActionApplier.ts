@@ -1,5 +1,6 @@
 import type { CanvasAction, CanvasData } from './index'
 import { isTerminalRegen } from './canvasLifecycle'
+import { isViewportUsable } from './canvas/viewport'
 
 /**
  * 画布动作落地（Phase 5 收敛后的唯一 SSOT）。
@@ -19,7 +20,7 @@ import { isTerminalRegen } from './canvasLifecycle'
  * - remove_edge / set_viewport / set_groups / set_composition_run_group：与历史 agent 行为一致。
  */
 /** op 被跳过的原因（观测用，见 ApplyCanvasActionsOpts.onSkipped）。 */
-export type CanvasActionSkipReason = 'duplicate_edge' | 'node_not_found'
+export type CanvasActionSkipReason = 'duplicate_edge' | 'node_not_found' | 'invalid_viewport'
 
 export interface ApplyCanvasActionsOpts {
   /**
@@ -186,7 +187,13 @@ export function applyCanvasActions(
         break
       }
       case 'set_viewport': {
-        if (action.payload.viewport) result.viewport = action.payload.viewport
+        // 视口是屏幕平移量：千万级脏值会把全部节点推到视口外（PC 画布空白）。
+        // 写入端也认同一套边界，防 agent / 历史回放把污染固化进 canvasData。
+        if (!isViewportUsable(action.payload?.viewport)) {
+          opts?.onSkipped?.('set_viewport', 'invalid_viewport', '')
+          break
+        }
+        result.viewport = action.payload.viewport
         break
       }
       // P1-C C2a：侧车 op（规格 2026-11-02 §4 收口前置）。此前侧车无 op 表达，

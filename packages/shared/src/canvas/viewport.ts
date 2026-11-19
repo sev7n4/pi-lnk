@@ -15,7 +15,15 @@ export const VIEWPORT_ZOOM_MIN = 0.1
 export const VIEWPORT_ZOOM_MAX = 2
 
 /**
- * 视口是否可用（三值齐备且为有限数）。
+ * 平移量绝对上限（像素）。视口是「屏幕平移」，不是世界坐标：
+ * 生产实证污染值 x=8.6e6 / y=-3.9e5，会把全部节点推到视口外（PC 画布空白，
+ * 图片本身 200 且 complete=true）。健康会话落库值量级在千位以内，10 万留足
+ * pan/大画布余量；超限一律判否 ⇒ 调用方回落 fitView（fail-open）。
+ */
+export const VIEWPORT_XY_LIMIT = 100_000
+
+/**
+ * 视口是否可用（三值齐备且为有限数，平移量在合理边界内）。
  * 判否一律回落默认 fitView（fail-open）——宁可不恢复，也不恢复出一个错视口。
  */
 export function isViewportUsable(vp: unknown): vp is CanvasViewport {
@@ -24,8 +32,10 @@ export function isViewportUsable(vp: unknown): vp is CanvasViewport {
   return (
     typeof v.x === 'number' &&
     Number.isFinite(v.x) &&
+    Math.abs(v.x) <= VIEWPORT_XY_LIMIT &&
     typeof v.y === 'number' &&
     Number.isFinite(v.y) &&
+    Math.abs(v.y) <= VIEWPORT_XY_LIMIT &&
     typeof v.zoom === 'number' &&
     Number.isFinite(v.zoom)
   )

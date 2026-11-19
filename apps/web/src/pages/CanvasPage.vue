@@ -24,7 +24,7 @@ import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/minimap/dist/style.css'
 import type { Session, CanvasAction, ImageVersionEntry, PlanSelectionGenerateResult, CanvasGroup, SnapPrev, CanvasData } from '@lnkpi/shared'
-import { seedImageVersions, planSelectionGenerate, SelectionBatchLimitError, SelectionBatchPendingConfirmError, computeSnapGuides } from '@lnkpi/shared'
+import { seedImageVersions, planSelectionGenerate, SelectionBatchLimitError, SelectionBatchPendingConfirmError, computeSnapGuides, VIEWPORT_XY_LIMIT } from '@lnkpi/shared'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { api } from '@/services/api'
 import { useAuthStore } from '@/stores/auth'
@@ -5618,7 +5618,11 @@ async function loadSession() {
       // SP-C：必须等 nodes 真正应用完（进入测量盒）再恢复视口，否则 setViewport 没有意义（R5）。
       // 无 viewport / 脏值 ⇒ restoreViewport 内部判否，维持默认 fitView（N1：存量画布行为零变化）。
       await nextTick()
-      restoreViewport(serverViewport)
+      if (serverViewport && !restoreViewport(serverViewport)) {
+        // 落库视口被判脏（平移量超限）⇒ 不能停在默认 {0.8,0,0}：
+        // 对非离群节点做一次定向 fitView，把真实内容拉回视口。
+        fitViewSaneNodes()
+      }
     } else {
       // 空画布就是空画布：不再伪造 prompt-1 占位节点（2026-09-29 拍板，spec 场景 A）。
       // 伪造节点会让用户以为「画布上本来就有东西」，且一旦拖动就会触发 saveCanvas()
@@ -5858,6 +5862,26 @@ const restoreViewport = createViewportRestorer(
       setViewport?: (vp: { x: number; y: number; zoom: number }, options?: { duration?: number }) => void
     } | null,
 )
+
+/**
+ * 脏视口的 fail-open 落点：只对非离群节点定向 fitView。
+ * 千万级离群节点参与全览会把 zoom 压到 0.1，再次把真实内容推出视口（生产实证）。
+ */
+function fitViewSaneNodes() {
+  const saneNodeIds = nodes.value
+    .filter((n) => {
+      const p = n.position
+      return (
+        Number.isFinite(p?.x) &&
+        Number.isFinite(p?.y) &&
+        Math.abs(p.x) <= VIEWPORT_XY_LIMIT &&
+        Math.abs(p.y) <= VIEWPORT_XY_LIMIT
+      )
+    })
+    .map((n) => n.id)
+  if (!saneNodeIds.length) return
+  void vueFlowRef.value?.fitView({ nodes: saneNodeIds, padding: 0.2, duration: 0, maxZoom: 1.05 })
+}
 
 
 const agentRailRef = ref<InstanceType<typeof AgentSideRail> | null>(null)
