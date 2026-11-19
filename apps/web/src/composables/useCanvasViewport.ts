@@ -6,7 +6,7 @@
 // 断言「有没有被调用、参数是什么、调了几次」这三个可观测出口。
 //
 // 判据映射：N4 节流（防抖窗口内只落库一次）、N5 缩放 clamp、N6 duration: 0 不闪。
-import { clampViewport, type CanvasViewport } from '@lnkpi/shared'
+import { clampViewport, VIEWPORT_XY_LIMIT, VIEWPORT_ZOOM_MAX, VIEWPORT_ZOOM_MIN, type CanvasViewport } from '@lnkpi/shared'
 
 /**
  * 归一化 vue-flow 的 viewportChange 载荷。
@@ -17,6 +17,41 @@ export function normalizeViewportPayload(payload: unknown): CanvasViewport | nul
   if (!payload || typeof payload !== 'object') return null
   const raw = (payload as { viewport?: unknown }).viewport ?? payload
   return clampViewport(raw)
+}
+
+export interface PositionedNode {
+  position: { x: number; y: number }
+}
+
+/**
+ * 脏视口兜底：按「非离群节点」包围盒直接算视口，让内容中心落在画布中心。
+ * 刻意不依赖 vue-flow 的 fitView——生产实证 loadSession 的 nextTick 窗口内
+ * 节点测量盒尚未就绪，fitView({nodes}) 静默返回 false，画面仍空白。
+ */
+export function computeContentViewport(
+  nodes: readonly PositionedNode[],
+  width: number,
+  height: number,
+): CanvasViewport | null {
+  const sane = nodes.filter(
+    (n) =>
+      Number.isFinite(n.position?.x) &&
+      Number.isFinite(n.position?.y) &&
+      Math.abs(n.position.x) <= VIEWPORT_XY_LIMIT &&
+      Math.abs(n.position.y) <= VIEWPORT_XY_LIMIT,
+  )
+  if (!sane.length || !(width > 0) || !(height > 0)) return null
+  const xs = sane.map((n) => n.position.x)
+  const ys = sane.map((n) => n.position.y)
+  const minX = Math.min(...xs), maxX = Math.max(...xs)
+  const minY = Math.min(...ys), maxY = Math.max(...ys)
+  const zoom = Math.min(
+    1.05,
+    VIEWPORT_ZOOM_MAX,
+    Math.max(VIEWPORT_ZOOM_MIN, Math.min(width / (maxX - minX + 320), height / (maxY - minY + 320))),
+  )
+  const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2
+  return { x: width / 2 - cx * zoom, y: height / 2 - cy * zoom, zoom }
 }
 
 export type ViewportSink = {

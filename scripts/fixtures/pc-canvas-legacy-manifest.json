@@ -101,7 +101,7 @@
         "composables/useRoutePreload.ts",
         "router/index.ts"
       ],
-      "lines": 6909
+      "lines": 6908
     },
     {
       "name": "CanvasReadonlyPage.vue",

@@ -42,11 +42,12 @@ describe('SP-C：CanvasPage 视口接线（静态契约）', () => {
     )
   })
 
-  it('恢复：脏服务端视口 ⇒ 只对非离群节点做一次定向 fitView（fail-open 到可见内容）', () => {
-    // 污染视口被 R1 判否后不能停在 {0.8,0,0}：必须把真实内容拉回视口；
-    // 但离群节点（千万级坐标）不得参与 fitView，否则又把 zoom 压到 0.1 再次空白。
+  it('恢复：脏服务端视口 ⇒ 用非离群节点包围盒直接 setViewport（不依赖 fitView 测量）', () => {
+    // fitView({nodes}) 在 loadSession 的 nextTick 窗口内没有节点测量盒，生产实证不生效；
+    // 兜底必须由 computeContentViewport 算出确定性视口，再 setViewport 落位。
     expect(source).toContain('if (serverViewport && !restoreViewport(serverViewport))')
-    expect(source).toContain('fitView({ nodes: saneNodeIds')
+    expect(source).toContain('computeContentViewport(')
+    expect(source).toContain('setViewport?.(safeViewport, { duration: 0 })')
   })
 
   it('视口逻辑走抽出的 composable（不在页面里手写防抖/clamp）', () => {
