@@ -28,6 +28,14 @@ describe('SP-C：视口恢复 —— restoreViewport（N5/N6）', () => {
     expect(calls[1]).toEqual({ x: 5, y: 6, zoom: 2 })
   })
 
+  it('平移量超限 ⇒ 不调用 setViewport，返回 false（回落默认 fitView）', () => {
+    const setViewport = vi.fn()
+    const restore = createViewportRestorer(() => ({ setViewport }))
+    expect(restore({ x: 8574349, y: 23, zoom: 0.77 })).toBe(false)
+    expect(restore({ x: -768, y: -393934, zoom: 0.1 })).toBe(false)
+    expect(setViewport).not.toHaveBeenCalled()
+  })
+
   it('脏值 / 缺字段 ⇒ 不调用 setViewport，返回 false（回落默认 fitView，N1）', () => {
     const setViewport = vi.fn()
     const restore = createViewportRestorer(() => ({ setViewport }))

@@ -42,6 +42,13 @@ describe('SP-C：CanvasPage 视口接线（静态契约）', () => {
     )
   })
 
+  it('恢复：脏服务端视口 ⇒ 只对非离群节点做一次定向 fitView（fail-open 到可见内容）', () => {
+    // 污染视口被 R1 判否后不能停在 {0.8,0,0}：必须把真实内容拉回视口；
+    // 但离群节点（千万级坐标）不得参与 fitView，否则又把 zoom 压到 0.1 再次空白。
+    expect(source).toContain('if (serverViewport && !restoreViewport(serverViewport))')
+    expect(source).toContain('fitView({ nodes: saneNodeIds')
+  })
+
   it('视口逻辑走抽出的 composable（不在页面里手写防抖/clamp）', () => {
     expect(source).toContain("from '@/composables/useCanvasViewport'")
   })

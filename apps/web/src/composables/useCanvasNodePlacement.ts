@@ -1,3 +1,4 @@
+import { VIEWPORT_XY_LIMIT } from '@lnkpi/shared'
 import { getNodeSize, type FlowNode } from '@/composables/useCanvasGrouping'
 
 export const PLACEMENT_GRID = 20
@@ -24,6 +25,22 @@ function rectsOverlap(
   return ax < bx + bw + pad && ax + aw + pad > bx && ay < by + bh + pad && ay + ah + pad > by
 }
 
+/** 视口已污染时 screenToFlowCoordinate 会产出千万级世界坐标；回落到非离群节点群右侧。 */
+function fallbackFlowPoint(nodes: FlowNode[], halfWidth: number, halfHeight: number) {
+  const sane = nodes.filter(
+    (n) =>
+      Number.isFinite(n.position?.x) &&
+      Number.isFinite(n.position?.y) &&
+      Math.abs(n.position.x) <= VIEWPORT_XY_LIMIT &&
+      Math.abs(n.position.y) <= VIEWPORT_XY_LIMIT,
+  )
+  if (!sane.length) return { x: 0, y: 80 }
+  return {
+    x: Math.max(...sane.map((n) => n.position.x)) + 320 + halfWidth,
+    y: Math.min(...sane.map((n) => n.position.y)) + halfHeight,
+  }
+}
+
 export function computeNewNodePosition(
   type: string,
   nodes: FlowNode[],
@@ -39,8 +56,14 @@ export function computeNewNodePosition(
   const screenX = rect.left + rect.width / 2
   const screenY = rect.top + Math.max(80, (rect.height - dockReserve) * 0.42)
 
-  const flowPoint = flowApi.screenToFlowCoordinate({ x: screenX, y: screenY })
   const { w, h } = getNodeSize({ type } as FlowNode)
+  const rawPoint = flowApi.screenToFlowCoordinate({ x: screenX, y: screenY })
+  const pointIsSane =
+    Number.isFinite(rawPoint?.x) &&
+    Number.isFinite(rawPoint?.y) &&
+    Math.abs(rawPoint.x) <= VIEWPORT_XY_LIMIT &&
+    Math.abs(rawPoint.y) <= VIEWPORT_XY_LIMIT
+  const flowPoint = pointIsSane ? rawPoint : fallbackFlowPoint(nodes, w / 2, h / 2)
 
   let x = snap ? snapToGrid(flowPoint.x - w / 2, grid) : flowPoint.x - w / 2
   let y = snap ? snapToGrid(flowPoint.y - h / 2, grid) : flowPoint.y - h / 2
