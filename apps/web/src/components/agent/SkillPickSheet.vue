@@ -6,7 +6,7 @@
  * 「自动」项 = 清空全部胶囊（平台路由，等价旧 activeSkillId=null）。
  * ⚠️ 标题/遮罩/关闭由宿主提供：移动端 MobileSheet，PC 锚定 popover 的 head；本组件不再自带。
  */
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import BrandPatternAvatar from '@/components/account/BrandPatternAvatar.vue'
 
 export interface PickSkillItem {
@@ -35,6 +35,20 @@ const emit = defineEmits<{
 
 const hasSelection = computed(() => props.selectedIds.length > 0)
 
+/**
+ * 三轮 R11（2026-11-19）：右上角搜索过滤——复用 SkillDiscoverPanel.mine-search 的输入即过滤模式，
+ * 不新增独立搜索面板/API；label 与 desc 双字段命中，空查询原样返回（零行为变化）。
+ * 技能数当前为个位数，搜索框常驻仅为未来扩容留位；不改 toggle/clear/manage 契约。
+ */
+const query = ref('')
+const filteredSkills = computed(() => {
+  const q = query.value.trim().toLowerCase()
+  if (!q) return props.skills
+  return props.skills.filter(
+    (s) => s.label.toLowerCase().includes(q) || (s.desc ?? '').toLowerCase().includes(q),
+  )
+})
+
 function onPick(id: string) {
   emit('toggle', id)
 }
@@ -42,6 +56,21 @@ function onPick(id: string) {
 
 <template>
   <div class="skill-pick-sheet" :class="{ embedded: props.embedded }" role="dialog" aria-modal="true" aria-label="选择技能" data-testid="skill-pick-sheet">
+    <!-- R11：搜索框置于内容顶部（host 头部两端各异，内容内搜索=单一状态源覆盖移动/PC） -->
+    <div class="pick-search" data-testid="skill-pick-search-wrap">
+      <svg viewBox="0 0 24 24" class="pick-search-icon" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true">
+        <circle cx="11" cy="11" r="7" />
+        <path stroke-linecap="round" d="M20 20l-4-4" />
+      </svg>
+      <input
+        v-model="query"
+        type="search"
+        class="pick-search-input"
+        placeholder="搜索技能"
+        aria-label="搜索技能"
+        data-testid="skill-pick-search"
+      />
+    </div>
     <div class="sheet-body" data-testid="skill-pick-list">
       <button
         type="button"
@@ -62,7 +91,7 @@ function onPick(id: string) {
         <span v-if="!hasSelection" class="pick-check" aria-hidden="true">✓</span>
       </button>
       <button
-        v-for="skill in skills"
+        v-for="skill in filteredSkills"
         :key="skill.id"
         type="button"
         class="pick-item"
@@ -95,6 +124,11 @@ function onPick(id: string) {
 
 <style scoped>
 .skill-pick-sheet { display: flex; flex-direction: column; width: 100%; min-width: 0; min-height: 0; gap: var(--lnk-space-1); } /* min-width:0：三次修复 R2，禁 min-content 传导撑爆 PC 锚定卡；min-height:0：作为 max-h 卡片的 flex 子项允许收缩，否则内容溢出、管理入口被顶出视口（#950 生产复测） */
+/* R11：搜索框常驻内容顶部——最小高度走触控令牌；min-width:0 防 flex min-content 传导撑爆宿主卡 */
+.pick-search { display: flex; flex: none; align-items: center; gap: var(--lnk-space-2); min-width: 0; min-height: var(--lnk-touch-target); padding: 0 var(--lnk-space-3); border: 1px solid var(--lnk-border-subtle); border-radius: var(--lnk-radius-md); background: var(--lnk-surface-canvas); color: var(--lnk-text-muted); }
+.pick-search-icon { width: 16px; height: 16px; flex: none; }
+.pick-search-input { flex: 1; min-width: 0; appearance: none; border: 0; outline: none; background: transparent; color: var(--lnk-text-primary); font: inherit; font-size: var(--lnk-text-sm); }
+.pick-search-input::placeholder { color: var(--lnk-text-muted); }
 .sheet-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; } /* min-height:0：flex 子项默认 min-height:auto 不收缩，滚动区失效 */
 /* 二轮 R2（2026-11-18）：MobileSheet 宿主时内层降级为纯内容流——嵌套滚动容器 + overscroll:contain
    会吞掉触摸手势（外层收不到 ⇒ 移动端滑动死区，实测两次真手势 scrollTop 恒 0）；滚动权移交 m-sheet-body。 */

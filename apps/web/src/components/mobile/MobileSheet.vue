@@ -13,13 +13,57 @@ withDefaults(
     subtitle?: string
     /** sheet 最大高度（CSS 长度），默认 62vh——新建宫格 10 项 + 资产库瓦片 */
     maxHeight?: string
+    /** 三轮 R10（2026-11-19）：关闭手势开关，默认开（HIG bottom sheet 下滑即关）。
+     *  对话框型 sheet（有必选动作/表单未保存）可传 false 关闭此手势，避免误关。 */
+    swipeToDismiss?: boolean
   }>(),
-  { maxHeight: '62vh' },
+  { maxHeight: '62vh', swipeToDismiss: true },
 )
 
 const emit = defineEmits<{
   close: []
 }>()
+
+/** R10：下拉关闭手势——起点 y、是否从滚动顶部起手势、 dragging 态。
+ *  判据：仅当手势起点落在「未滚动的内容顶部」(scrollTop<=1) 且下落位移 > 阈值(80px) 才关闭，
+ *  从列表中段下拉仍是滚动，不误关。touchstart 用 passive:false 以便必要时 preventDefault 抑制回弹。 */
+const DISMISS_THRESHOLD_PX = 80
+const bodyRef = ref<HTMLElement | null>(null)
+const dragOffset = ref(0)
+let startY = 0
+let lastDy = 0
+let startAtTop = false
+let dragging = false
+
+function onTouchStart(e: TouchEvent) {
+  if (e.touches.length !== 1) return
+  startY = e.touches[0]!.clientY
+  lastDy = 0
+  startAtTop = (bodyRef.value?.scrollTop ?? 0) <= 1
+  dragging = false
+}
+
+function onTouchMove(e: TouchEvent) {
+  if (e.touches.length !== 1 || !startAtTop) return
+  lastDy = e.touches[0]!.clientY - startY
+  if (lastDy <= 0) {
+    dragOffset.value = 0
+    dragging = false
+    return
+  }
+  dragging = true
+  dragOffset.value = lastDy
+  if (lastDy > DISMISS_THRESHOLD_PX && e.cancelable) e.preventDefault()
+}
+
+function onTouchEnd() {
+  const shouldDismiss = dragging && startAtTop && lastDy > DISMISS_THRESHOLD_PX
+  dragOffset.value = 0
+  dragging = false
+  startY = 0
+  lastDy = 0
+  if (shouldDismiss) dismiss()
+}
 
 /** 进场后锁 body 滚动，避免 sheet 内滚动带动画布（iOS 需 overflow:hidden + touch-action） */
 const bodyOverflow = ref('')
@@ -41,8 +85,17 @@ function dismiss() {
     <Transition name="m-sheet">
       <div class="m-sheet-root">
         <div class="m-sheet-scrim" data-testid="m-sheet-scrim" @click="dismiss" />
-        <div class="m-sheet" role="dialog" :aria-label="title" :style="{ maxHeight }">
-          <div class="m-sheet-handle" aria-hidden="true" />
+        <div
+          class="m-sheet"
+          role="dialog"
+          :aria-label="title"
+          :style="{ maxHeight, ...(dragOffset ? { transform: `translateY(${dragOffset}px)` } : {}) }"
+          @touchstart.passive="swipeToDismiss && onTouchStart($event)"
+          @touchmove="swipeToDismiss && onTouchMove($event)"
+          @touchend.passive="swipeToDismiss && onTouchEnd()"
+          @touchcancel.passive="swipeToDismiss && onTouchEnd()"
+        >
+          <div class="m-sheet-handle" data-testid="m-sheet-handle" aria-hidden="true" />
           <header class="m-sheet-head">
             <div class="min-w-0">
               <p class="m-sheet-title">{{ title }}</p>
@@ -60,7 +113,7 @@ function dismiss() {
               </svg>
             </button>
           </header>
-          <div class="m-sheet-body">
+          <div class="m-sheet-body" ref="bodyRef">
             <slot />
           </div>
           <!--
