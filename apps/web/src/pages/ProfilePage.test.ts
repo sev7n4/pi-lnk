@@ -49,17 +49,6 @@ vi.mock('@/components/membership/TopupModal.vue', () => ({
   default: { template: '<div class="topup-modal-stub" />' },
 }))
 
-vi.mock('@/components/canvas/ProviderConfigDialog.vue', () => ({
-  default: {
-    props: ['modelValue'],
-    template: '<div data-testid="provider-config-dialog" :data-open="String(modelValue)" />',
-  },
-}))
-
-vi.mock('@/components/layout/ThemeToggle.vue', () => ({
-  default: { template: '<div class="theme-toggle-stub" />' },
-}))
-
 const usagePayload = {
   data: {
     data: {
@@ -357,25 +346,20 @@ describe('ProfilePage', () => {
     expect(points.classes().join(' ')).not.toContain('text-6xl')
   })
 
-  it('?tab=settings 解析为设置 Tab，展示外观/模型配置两行', async () => {
-    routeQuery.tab = 'settings'
+  it('个人中心只有账户/用量两个 Tab，不再有设置（2026-11-19 返工迁至 /settings）', async () => {
     const wrapper = await mountProfile()
-    const panel = wrapper.find('[data-testid="profile-settings-panel"]')
-    expect(panel.exists()).toBe(true)
-    expect(panel.text()).toContain('外观')
-    expect(panel.text()).toContain('模型配置')
-    const activeSettingsTab = wrapper.findAll('[role="tab"]').find(
-      (t) => t.text() === '设置' && t.attributes('aria-selected') === 'true',
-    )
-    expect(activeSettingsTab).toBeTruthy()
+    const tabs = wrapper.findAll('[role="tab"]').map((t) => t.text())
+    expect(tabs).toEqual(['账户', '用量'])
+    expect(tabs).not.toContain('设置')
   })
 
-  it('点模型配置行打开配置弹层（v-model 置真）', async () => {
+  it('旧链接 ?tab=settings 安全回落到账户页，不残留设置面板/弹层', async () => {
     routeQuery.tab = 'settings'
     const wrapper = await mountProfile()
-    expect(wrapper.find('[data-testid="provider-config-dialog"]').attributes('data-open')).toBe('false')
-    await wrapper.find('[data-testid="open-model-settings"]').trigger('click')
-    await flushPromises()
-    expect(wrapper.find('[data-testid="provider-config-dialog"]').attributes('data-open')).toBe('true')
+    expect(wrapper.find('[data-testid="profile-settings-panel"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="open-model-settings"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="provider-config-dialog"]').exists()).toBe(false)
+    // 回落到账户面板（账户面板在 profile 加载后有内容）
+    expect(wrapper.find('#panel-account').exists()).toBe(true)
   })
 })

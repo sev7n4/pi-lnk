@@ -38,6 +38,12 @@ function openMyHomepage() {
   void router.push(`/creator/${id}`)
 }
 
+/** 2026-11-19 返工：账号级设置从画布竖轨/个人中心收敛到独立设置页，与主页/资料/登出同级。 */
+function openSettings() {
+  closeMenu()
+  void router.push('/settings')
+}
+
 function openTopup() {
   closeMenu()
   emit('open-topup')
@@ -123,6 +129,15 @@ const membershipLabel = (value?: string) => membershipLabelOf(value)
           @click="openProfile"
         >
           个人资料
+        </button>
+        <button
+          type="button"
+          data-testid="account-settings"
+          class="neo-popover-item flex w-full px-3 text-left text-xs"
+          :class="compact ? 'py-1.5' : 'py-2'"
+          @click="openSettings"
+        >
+          设置
         </button>
         <button
           type="button"

@@ -61,6 +61,27 @@ describe('AccountUserMenu 我的主页入口（P2 Task 3）', () => {
     expect(wrapper.text()).toContain('个人资料')
     expect(wrapper.text()).toContain('退出登录')
   })
+
+  it('有「设置」一级项，点击跳 /settings', async () => {
+    const wrapper = mountMenu()
+    await wrapper.find('.account-user-menu button').trigger('click')
+    const item = wrapper.find('[data-testid="account-settings"]')
+    expect(item.exists()).toBe(true)
+    expect(item.text()).toContain('设置')
+    await item.trigger('click')
+    expect(routerMocks.push).toHaveBeenCalledWith('/settings')
+  })
+
+  it('「设置」位于「退出登录」之前（登出恒为末项）', async () => {
+    const wrapper = mountMenu()
+    await wrapper.find('.account-user-menu button').trigger('click')
+    const items = wrapper.findAll('.neo-popover-item')
+    const texts = items.map((el) => el.text())
+    const settingsIdx = texts.findIndex((t) => t.includes('设置'))
+    const logoutIdx = texts.findIndex((t) => t.includes('退出登录'))
+    expect(settingsIdx).toBeGreaterThanOrEqual(0)
+    expect(logoutIdx).toBeGreaterThan(settingsIdx)
+  })
 })
 
 describe('AccountUserMenu 头像收敛（P2 Task 6）', () => {
