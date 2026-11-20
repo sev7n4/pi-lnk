@@ -47,8 +47,10 @@ const visible = computed(() => props.failed || props.saving)
   /* ⚠️ fixed（**不是** absolute）：同 ＋FAB——absolute 贴 100vh 根容器底边，在带浏览器
      工具条的真机上整颗掉出可见区。fixed 贴可见视口底，与页签栏同一坐标系。 */
   position: fixed;
-  /* 横向让开 ＋FAB：68px = FAB 12 + 48 + 8 间距（同带不同位，FAB(z60) 不压本行(z54)） */
-  left: 68px;
+  /* 2026-11-20：＋FAB 平移到右下角 ⇒ 状态行回到左下 12px，两者重新同带不同位 */
+  left: 12px;
+  /* 窄屏/长文案兜底：最右仍给 FAB（12 + 48 + 8）留出空位 */
+  max-width: calc(100% - 80px);
   /* +10px = (FAB 48 − 胶囊 28) / 2 ⇒ 与 ＋FAB 垂直居中 */
   bottom: calc(var(--lnk-agent-dock-h, 0px) + var(--lnk-tabbar-h, 0px) + env(safe-area-inset-bottom, 0px) + 12px + 10px);
   z-index: 54;

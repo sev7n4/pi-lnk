@@ -115,7 +115,7 @@ const props = defineProps<{
   /** ＋FAB 隐藏（沉浸画布） */
   canvasChromeHidden: boolean
   /** 移动端 studio dock 已展开（用户 tap 把手）——dock 面板占满画布底部，
-   *  ＋FAB 让位（否则压在面板左下角） */
+   *  ＋FAB 让位（否则压在面板右下角） */
   dockExpanded: boolean
   /** 画布视图的「窗态」：composer 空闲条与 FAB 同一基线（见 MobileCanvasCreateFab
    *  的尺寸计算——48=48 无内缩余量，窗态下 ＋FAB 直接不渲染，由 composer 盖住这一带） */

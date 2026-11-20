@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { useProjectManager } from '@/composables/useProjectManager'
 import { useProjectWorkspace } from '@/composables/useProjectWorkspace'
@@ -9,6 +10,7 @@ import { projectCoverFallback } from '@/utils/projectCoverFallback'
 import AppEmptyState from '@/components/common/AppEmptyState.vue'
 import ProjectList from '@/components/canvases/ProjectList.vue'
 import ProjectGrid from '@/components/canvases/ProjectGrid.vue'
+import MobileCanvasCreateFab from '@/components/mobile/MobileCanvasCreateFab.vue'
 
 /**
  * 创作空间（2026-10-21 P1 从 WorkflowPage 迁出；2026-10-23 IA v4：
@@ -28,7 +30,38 @@ const { isMobileLayout } = useAgentMobileLayout()
 // 2026-10-25 PR-2：创建通道收敛到 useProjectWorkspace（全仓唯一 create 通道）。
 // 2026-10-27 v2.2：补取 `error`（模块级单例，与 mgr.projects 同源），
 // 用于区分「加载失败」与「真无项目」两种空态（D12 / 修 bug④）。
-const { list: listProjects, loadIfStale, error: wsError, gallerySearchOpen } = useProjectWorkspace()
+const { list: listProjects, loadIfStale, create, error: wsError, gallerySearchOpen } = useProjectWorkspace()
+
+/** 默认折叠数量（2026-11-20 用户授权自定）：移动端 5 条 ≈ 一屏，PC 8 张 = 两排四列。
+ *  点「更多」才展开全量；搜索结果同样折叠，避免一屏被淹没。 */
+const MOBILE_PROJECT_LIMIT = 5
+const PC_PROJECT_LIMIT = 8
+const showAll = ref(false)
+const visibleRows = computed(() =>
+  showAll.value
+    ? rows.value
+    : rows.value.slice(0, isMobileLayout.value ? MOBILE_PROJECT_LIMIT : PC_PROJECT_LIMIT),
+)
+const hiddenCount = computed(() => rows.value.length - visibleRows.value.length)
+watch(() => mgr.search.value, () => { showAll.value = false })
+
+/** 新建项目（2026-11-20 从 AppHeader 裸栏迁入）：唯一 create 通道仍是 useProjectWorkspace，
+ *  20s 超时 / 登录守卫 / 失败提示均随流程一起迁移，不新造第二套。 */
+async function createProject() {
+  if (!auth.isLoggedIn) {
+    auth.openLogin()
+    return
+  }
+  const loading = ElMessage({ type: 'info', message: '正在创建画布…', duration: 0 })
+  try {
+    const created = await create({ timeoutMs: 20_000 })
+    loading.close()
+    router.push({ path: `/workflow/${created.id}`, query: { openAgent: '1' } })
+  } catch {
+    loading.close()
+    ElMessage.error('创建画布失败，请检查网络后重试')
+  }
+}
 
 /** 打开项目：封面节点存在时带 focusNode 深链（CanvasPage:1962 消费 query）。 */
 function openCanvas(p: { id: string; coverNodeId: string | null }) {
@@ -159,7 +192,7 @@ const rows = computed(() =>
       <!-- §13.3/C3：断点切视图——只分展示子组件，数据源与交互接线全在本页单源 -->
       <ProjectList
         v-else-if="mgr.filtered.value.length && isMobileLayout"
-        :rows="rows"
+        :rows="visibleRows"
         :mgr="mgr"
         @open="openCanvas"
         @press-start="startCardLongPress"
@@ -167,11 +200,12 @@ const rows = computed(() =>
       />
       <ProjectGrid
         v-else-if="mgr.filtered.value.length"
-        :rows="rows"
+        :rows="visibleRows"
         :mgr="mgr"
         @open="openCanvas"
         @press-start="startCardLongPress"
         @press-cancel="cancelCardLongPress"
+        @create="createProject"
       />
 
       <AppEmptyState
@@ -203,14 +237,44 @@ const rows = computed(() =>
         </template>
       </AppEmptyState>
 
-      <!-- 真无项目：仅此处提示，新建入口统一在 AppHeader 裸栏（data-testid="gallery-create" 全局唯一） -->
+      <!-- 真无项目：页内提供首个新建入口（顶栏 ＋ 已于 2026-11-20 删除） -->
       <AppEmptyState
         v-else
         data-testid="canvases-empty"
         desc="创建第一个项目，开始创作"
       >
         还没有项目
+        <template #action>
+          <button
+            type="button"
+            data-testid="canvases-create-empty"
+            class="btn-primary text-sm"
+            @click="createProject"
+          >
+            新建项目
+          </button>
+        </template>
       </AppEmptyState>
     </template>
+
+    <!-- 默认折叠：点「更多」展开（与列表/空态互斥，hiddenCount=0 时零渲染） -->
+    <button
+      v-if="hiddenCount > 0"
+      type="button"
+      data-testid="canvases-show-more"
+      class="mx-auto mt-4 block rounded-lg border border-line px-5 py-2 text-xs text-fg-2 transition hover:bg-hover hover:text-fg"
+      @click="showAll = true"
+    >
+      更多（还有 {{ hiddenCount }} 个）
+    </button>
+
+    <!-- 移动端新建项目：右下圆形 FAB，与画布页 ＋ 同款视觉（顶栏 ＋ 已删除） -->
+    <MobileCanvasCreateFab
+      v-if="isMobileLayout && auth.isLoggedIn"
+      anchor="safe"
+      label="新建项目"
+      test-id="canvases-create-fab"
+      @click="createProject"
+    />
   </div>
 </template>

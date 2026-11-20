@@ -92,6 +92,7 @@ describe('CanvasesPage 项目管理器（P1；IA v4 画布+对话=项目）', ()
     authState.isLoggedIn = true
     // 2026-10-26 规格收敛 v2（INV-10）：列表唯一真身 = useProjectWorkspace ⇒ canvasApi.list。
     canvasList.mockReset()
+    canvasCreate.mockReset()
     canvasList.mockResolvedValue({ data: { data: makeSessions(6) } })
     // 2026-10-27 顶栏重构：gallerySearchOpen 是模块级单例，跨用例复位
     useProjectWorkspace().gallerySearchOpen.value = false
@@ -114,8 +115,32 @@ describe('CanvasesPage 项目管理器（P1；IA v4 画布+对话=项目）', ()
     useProjectWorkspace().gallerySearchOpen.value = true
     await flushPromises()
     expect(wrapper.find('[data-testid="canvases-search"]').exists()).toBe(true)
-    // 新建入口已上移 AppHeader 裸栏（gallery-create）⇒ 页面内零 create
-    expect(wrapper.find('[data-testid="canvases-create"]').exists()).toBe(false)
+    // 2026-11-20：顶栏 ＋ 删除，新建入口改为页内（PC 首张空白卡 / 移动端右下 FAB）
+    expect(wrapper.find('[data-testid="gallery-create"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="canvases-create-card"]').exists()).toBe(true)
+  })
+
+  it('PC 首张空白卡点新建 → canvasApi.create → 跳 /workflow/:id?openAgent=1', async () => {
+    canvasCreate.mockResolvedValue({ data: { data: { id: 's_new' } } })
+    const wrapper = await mountPage()
+    await wrapper.find('[data-testid="canvases-create-card"]').trigger('click')
+    await flushPromises()
+    expect(canvasCreate).toHaveBeenCalled()
+    expect(sessionsCreate, '新建仍走唯一 create 通道，不得走 sessionsApi').not.toHaveBeenCalled()
+    expect(pushMock).toHaveBeenCalledWith({ path: '/workflow/s_new', query: { openAgent: '1' } })
+  })
+
+  it('默认折叠：超过 8 个项目只渲染 8 张卡，点「更多」展开全量', async () => {
+    canvasList.mockResolvedValue({ data: { data: makeSessions(10) } })
+    await useProjectWorkspace().list()
+    await flushPromises()
+    const wrapper = await mountPage()
+    expect(wrapper.findAll('.session-card-menu-anchor')).toHaveLength(8)
+    expect(wrapper.find('[data-testid="canvases-show-more"]').text()).toContain('2')
+    await wrapper.find('[data-testid="canvases-show-more"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findAll('.session-card-menu-anchor')).toHaveLength(10)
+    expect(wrapper.find('[data-testid="canvases-show-more"]').exists()).toBe(false)
   })
 
   it('搜索框过滤画布列表（gallerySearchOpen 展开后）', async () => {
@@ -246,15 +271,14 @@ describe('CanvasesPage 空态三态（D12 / bug④）', () => {
     expect(wrapper.findAll('.session-card-menu-anchor')).toHaveLength(0)
   })
 
-  it('真无项目：显示「还没有项目」，页内零新建入口（create 已上移 AppHeader 裸栏 gallery-create）', async () => {
+  it('真无项目：显示「还没有项目」并在空态提供新建（顶栏 ＋ 已删除）', async () => {
     await seedProjects([])
     canvasList.mockResolvedValue({ data: { data: [] } })
     const wrapper = await mountPage()
     await flushPromises()
     expect(wrapper.text()).toContain('还没有项目')
     expect(wrapper.find('[data-testid="canvases-empty"]').exists()).toBe(true)
-    // ⛔ 空态与页面均不得再内联「新建项目」⇒ 唯一入口 = AppHeader 裸栏 gallery-create
-    expect(wrapper.findAll('[data-testid="canvases-create"]')).toHaveLength(0)
+    expect(wrapper.find('[data-testid="canvases-create-empty"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="canvases-retry"]').exists()).toBe(false)
   })
 

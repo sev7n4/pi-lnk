@@ -100,10 +100,10 @@ describe('PC 画布页项目入口（PR-2 Task 8 + 顶栏重构修订）', () =>
   })
 
   it('③ 新建项目保留 20s 客户端超时（收敛通道时最易丢的就是它）', () => {
-    // 2026-10-27 顶栏重构：create 入口自 CanvasesPage 页内按钮迁至 AppHeader 裸栏 ＋ 盘
-    // （规格 §6.1），20s 超时必须随迁（收敛时最易丢的就是它）。
-    const header = read('../components/layout/AppHeader.vue')
-    expect(header).toContain('create({ timeoutMs: 20_000 })')
+    // 2026-11-20：顶栏 ＋ 删除，入口收敛到 CanvasesPage（PC 首卡 / 移动 FAB），
+    // 20s 超时必须随迁（收敛时最易丢的就是它）。
+    const page = read('../pages/CanvasesPage.vue')
+    expect(page).toContain('create({ timeoutMs: 20_000 })')
     // workspace 必须把超时透传给 canvasApi.create
     const ws = read('../composables/useProjectWorkspace.ts')
     expect(ws).toContain('{ timeout: opts.timeoutMs }')

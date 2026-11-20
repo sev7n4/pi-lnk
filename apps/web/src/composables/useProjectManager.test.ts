@@ -64,14 +64,34 @@ describe('useProjectManager', () => {
     expect(m.manageMode.value).toBe(false)
   })
 
-  it('重命名：prompt 取消 → 不调 rename；成功 → 走 useProjectWorkspace.rename', async () => {
+  it('重命名：菜单只发起行内编辑（不再弹 prompt），提交走 useProjectWorkspace.rename', async () => {
     const m = useProjectManager()
-    prompt.mockRejectedValueOnce('cancel')
-    await m.renameProject({ id: 'a', title: '项目A' })
+    m.openMenuId.value = 'a'
+    m.startRename({ id: 'a', title: '项目A' })
+    expect(m.openMenuId.value).toBeNull()
+    expect(m.editingId.value).toBe('a')
+    expect(m.editingTitle.value).toBe('项目A')
+    expect(prompt, '卡片名原地可改，禁止再弹 prompt 卡').not.toHaveBeenCalled()
     expect(rename).not.toHaveBeenCalled()
-    prompt.mockResolvedValueOnce({ value: '新名字 ' })
-    await m.renameProject({ id: 'a', title: '项目A' })
+
+    m.editingTitle.value = '  新名字  '
+    await m.commitRename()
     expect(rename).toHaveBeenCalledWith('a', '新名字')
+    // Enter 后 blur 再触发一次 ⇒ 编辑态已清空，不得重复落库
+    await m.commitRename()
+    expect(rename).toHaveBeenCalledTimes(1)
+  })
+
+  it('行内重命名：Esc 取消 / 空名不落库', async () => {
+    const m = useProjectManager()
+    m.startRename({ id: 'a', title: '项目A' })
+    m.cancelRename()
+    expect(m.editingId.value).toBeNull()
+
+    m.startRename({ id: 'a', title: '项目A' })
+    m.editingTitle.value = '   '
+    await m.commitRename()
+    expect(rename).not.toHaveBeenCalled()
   })
 
   it('单删：确认成功 → 走 useProjectWorkspace.remove', async () => {

@@ -70,8 +70,22 @@ defineEmits<{
         />
         <CanvasCoverFallback v-else :seed="p.id" />
       </button>
-      <!-- 名称 -->
+      <!-- 名称：重命名时原地变输入框（两端同构，菜单只负责发起） -->
+      <input
+        v-if="mgr.editingId.value === p.id"
+        v-model="mgr.editingTitle.value"
+        type="text"
+        data-testid="project-rename-input"
+        class="project-rename-input min-w-0 flex-1 text-sm text-fg"
+        aria-label="项目名称"
+        @pointerdown.stop
+        @click.stop
+        @keydown.enter.prevent="mgr.commitRename()"
+        @keydown.esc.prevent="mgr.cancelRename()"
+        @blur="mgr.commitRename()"
+      />
       <button
+        v-else
         type="button"
         class="min-w-0 flex-1 truncate text-left text-sm text-fg"
         @click="mgr.manageMode.value ? mgr.toggleSelect(p.id) : $emit('open', p)"
@@ -93,7 +107,7 @@ defineEmits<{
         </button>
         <ProjectCardMenu
           v-if="mgr.openMenuId.value === p.id"
-          @rename="mgr.renameProject(p)"
+          @rename="mgr.startRename(p)"
           @duplicate="mgr.duplicateProject(p.id)"
           @remove="mgr.removeProject(p)"
         />
@@ -101,3 +115,15 @@ defineEmits<{
     </div>
   </div>
 </template>
+
+<style scoped>
+/* 行内重命名：与 PC 卡墙同一.input 契约（菜单只发起编辑，不再弹 prompt） */
+.project-rename-input {
+  width: 100%;
+  padding: 2px 6px;
+  border: 0.5px solid var(--lnk-border-focus);
+  border-radius: var(--lnk-radius-md, 8px);
+  background: var(--lnk-surface-raised);
+  outline: none;
+}
+</style>
