@@ -23,6 +23,22 @@ describe('MobileCanvasCreateFab（PR2）', () => {
     expect(w2.find('button').classes()).not.toContain('is-breathing')
   })
 
+  it('2026-11-20：右下角落位 + 上移 12px；anchor=safe 只让开安全区（创作空间）', () => {
+    const sfc = readFileSync(join(here, 'MobileCanvasCreateFab.vue'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/[^\n]*/g, '')
+    expect(sfc).toContain('right: 12px')
+    expect(sfc).not.toContain('left: 12px')
+    expect(sfc).toMatch(/bottom:\s*calc\(var\(--lnk-tabbar-h, 0px\) \+ env\(safe-area-inset-bottom, 0px\) \+ 12px\)/)
+    expect(sfc).toMatch(/\.mobile-create-fab\.is-safe-anchored\s*\{[^}]*env\(safe-area-inset-bottom, 0px\) \+ 12px/)
+    const project = mount(MobileCanvasCreateFab, {
+      props: { anchor: 'safe', label: '新建项目', testId: 'canvases-create-fab' },
+    })
+    expect(project.find('button').attributes('aria-label')).toBe('新建项目')
+    expect(project.find('button').attributes('data-testid')).toBe('canvases-create-fab')
+    expect(project.find('button').classes()).toContain('is-safe-anchored')
+  })
+
   it('契约：48px ≥44px、清位公式锚页签栏（tabbar/safe-area）、:active scale(0.92)', () => {
     // 剥注释再断言（迁移说明写在注释里是规范，否定断言命中注释 = 假红）
     const sfc = readFileSync(join(here, 'MobileCanvasCreateFab.vue'), 'utf8')

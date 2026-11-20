@@ -245,13 +245,14 @@ describe('移动端底部锚定元素：fixed 贴可见视口（真机走查 202
     }
   })
 
-  it('＋FAB 与保存状态行不得同位（曾同 left + 同 bottom ⇒ FAB 压住状态行圆点与首字）', () => {
+  it('＋FAB 右下 / 保存状态行左下：同带不同侧（2026-11-20 位置平移后不得同侧相压）', () => {
     const leftOf = (block: string) => block.match(/left:\s*([\d.]+px)/)?.[1]
-    const fabLeft = leftOf(cssBlock(fab, '.mobile-create-fab'))
-    const statusLeft = leftOf(cssBlock(status, '.mobile-save-status'))
-    expect(fabLeft, 'FAB 贴左边 12px').toBe('12px')
-    expect(statusLeft, '状态行须横向让开 FAB（12 + 48 + 8）').toBe('68px')
-    expect(statusLeft, '二者 left 必须不同').not.toBe(fabLeft)
+    const fabBlock = cssBlock(fab, '.mobile-create-fab')
+    const statusBlock = cssBlock(status, '.mobile-save-status')
+    expect(fabBlock, 'FAB 贴右边 12px').toContain('right: 12px')
+    expect(fabBlock, 'FAB 不再贴左边').not.toMatch(/left:\s*\d/)
+    expect(leftOf(statusBlock), '状态行回到左下 12px').toBe('12px')
+    expect(statusBlock, '长文案不得横穿右侧 FAB').toContain('max-width: calc(100% - 80px)')
   })
 
   it('多选态不出 ＋FAB（多选动作条接管同一条底部清位）', () => {

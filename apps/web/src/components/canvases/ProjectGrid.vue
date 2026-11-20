@@ -23,15 +23,32 @@ defineEmits<{
   open: [p: ProjectRowVM]
   'press-start': [id: string]
   'press-cancel': []
+  create: []
 }>()
 </script>
 
 <template>
   <div class="project-grid">
+    <!-- 新建卡：与项目卡同网格首格（顶栏 ＋ 删除后的 PC 唯一新建入口） -->
+    <button
+      v-if="!mgr.manageMode.value"
+      type="button"
+      data-testid="canvases-create-card"
+      class="project-create-card flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed bg-surface-base transition hover:bg-hover"
+      @click="$emit('create')"
+    >
+      <span class="project-create-card__disc flex items-center justify-center rounded-full">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+          <path stroke-linecap="round" d="M12 5v14M5 12h14" />
+        </svg>
+      </span>
+      <span class="text-sm text-fg">新建项目</span>
+    </button>
     <div
       v-for="p in rows"
       :key="p.id"
-      class="session-card-menu-anchor group overflow-hidden rounded-2xl border border-line bg-surface-base transition hover:bg-hover"
+      class="session-card-menu-anchor group rounded-2xl border border-line bg-surface-base transition hover:bg-hover"
+      :class="{ 'z-20': mgr.openMenuId.value === p.id }"
       @pointerdown="$emit('press-start', p.id)"
       @pointerup="$emit('press-cancel')"
       @pointerleave="$emit('press-cancel')"
@@ -57,7 +74,7 @@ defineEmits<{
       <!-- 封面：coverUrl 三态。⛔ `relative` 不是装饰（同 ProjectList，黑屏教训） -->
       <button
         type="button"
-        class="relative block aspect-[4/3] w-full overflow-hidden bg-surface-sunken"
+        class="relative block aspect-[4/3] w-full overflow-hidden rounded-t-2xl bg-surface-sunken"
         @click="mgr.manageMode.value ? mgr.toggleSelect(p.id) : $emit('open', p)"
       >
         <img
@@ -71,7 +88,21 @@ defineEmits<{
 
       <!-- 名称 + 时间 + ⋯ -->
       <div class="flex items-center gap-2 px-3 py-2">
+        <input
+          v-if="mgr.editingId.value === p.id"
+          v-model="mgr.editingTitle.value"
+          type="text"
+          data-testid="project-rename-input"
+          class="project-rename-input min-w-0 flex-1 text-sm text-fg"
+          aria-label="项目名称"
+          @pointerdown.stop
+          @click.stop
+          @keydown.enter.prevent="mgr.commitRename()"
+          @keydown.esc.prevent="mgr.cancelRename()"
+          @blur="mgr.commitRename()"
+        />
         <button
+          v-else
           type="button"
           class="min-w-0 flex-1 truncate text-left text-sm text-fg"
           @click="mgr.manageMode.value ? mgr.toggleSelect(p.id) : $emit('open', p)"
@@ -92,7 +123,8 @@ defineEmits<{
           </button>
           <ProjectCardMenu
             v-if="mgr.openMenuId.value === p.id"
-            @rename="mgr.renameProject(p)"
+            placement="top"
+            @rename="mgr.startRename(p)"
             @duplicate="mgr.duplicateProject(p.id)"
             @remove="mgr.removeProject(p)"
           />
@@ -112,5 +144,30 @@ defineEmits<{
 }
 .project-grid > * {
   position: relative;
+}
+
+/* 首格新建卡：与画布 ＋ 同款圆形渐变徽章，虚线边界示"空位"（不用新令牌） */
+.project-create-card {
+  min-height: 210px;
+  border-color: var(--lnk-accent-border);
+}
+.project-create-card__disc {
+  width: 48px;
+  height: 48px;
+  background: var(--lnk-accent-gradient);
+  color: var(--lnk-text-on-accent);
+}
+.project-create-card__disc svg {
+  width: 22px;
+  height: 22px;
+}
+/* 行内重命名：卡片名原地可编辑（不再弹 prompt 卡） */
+.project-rename-input {
+  width: 100%;
+  padding: 2px 6px;
+  border: 0.5px solid var(--lnk-border-focus);
+  border-radius: var(--lnk-radius-md, 8px);
+  background: var(--lnk-surface-raised);
+  outline: none;
 }
 </style>

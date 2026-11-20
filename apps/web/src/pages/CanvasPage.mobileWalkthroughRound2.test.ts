@@ -73,7 +73,7 @@ describe('移动端 studio dock 默认折叠（2026-10-21 用户裁决：创建�
     expect(open).not.toContain('editorNode.value')
   })
 
-  it('dock 展开时 ＋FAB 让位（不压在面板左下角）', () => {
+  it('dock 展开时 ＋FAB 让位（不压在面板右下角）', () => {
     const shell = readComponent('mobile/MobileCanvasShell.vue')
     expect(shell).toContain('!dockExpanded')
   })
@@ -85,13 +85,15 @@ describe('底部锚定元素落位（2026-10-21 真机：＋FAB 被裸条盖掉�
   const railCode = stripComments(rail)
   const page = read('./CanvasPage.vue')
 
-  it('＋FAB 不再依赖运行时测量变量（落位恒定，与 composer 条同基线）', () => {
+  it('＋FAB 不再依赖运行时测量变量（2026-11-20：右下角 + 上移 12px）', () => {
     // ⚠️ 先剥 CSS 注释：迁移说明写在注释里是规范（否定断言命中注释 = 假红）
     const css = stripComments(fab).match(/\.mobile-create-fab \{[\s\S]*?\n\}/)?.[0] ?? ''
     expect(css, '必须能定位 FAB 样式块').not.toBe('')
     expect(css).toContain('var(--lnk-tabbar-h')
     expect(css).not.toContain('--lnk-agent-dock-h')
-    expect(css).toContain('left: 12px')
+    expect(css).toContain('right: 12px')
+    expect(css).toContain('+ 12px')
+    expect(css).not.toContain('left: 12px')
   })
 
   it('窗态由 composer 盖住 ＋FAB：裸条保持原宽、FAB 由 composerVisible 门控', () => {

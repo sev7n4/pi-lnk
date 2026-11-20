@@ -1,4 +1,4 @@
-import { computed, onScopeDispose, ref } from 'vue'
+import { computed, nextTick, onScopeDispose, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { sessionsApi } from '@/services/sessions-api'
@@ -22,6 +22,9 @@ export function useProjectManager() {
   const openMenuId = ref<string | null>(null)
   const manageMode = ref(false)
   const selectedIds = ref<string[]>([])
+  /** 行内重命名（2026-11-20）：菜单只发起编辑，名称在卡片上原地改，不再弹 prompt 卡 */
+  const editingId = ref<string | null>(null)
+  const editingTitle = ref('')
 
   const filtered = computed(() => {
     const q = search.value.trim().toLowerCase()
@@ -69,24 +72,33 @@ export function useProjectManager() {
     }
   }
 
-  async function renameProject(p: { id: string; title: string }): Promise<void> {
+  function startRename(p: { id: string; title: string }): void {
     closeMenu()
-    let value: string
+    editingId.value = p.id
+    editingTitle.value = displayCanvasTitle(p.title)
+    // 两端同一 testid：同一时刻最多一张卡处于编辑态，直接聚焦即可
+    void nextTick(() => {
+      const input = document.querySelector<HTMLInputElement>('[data-testid="project-rename-input"]')
+      input?.focus()
+      input?.select()
+    })
+  }
+
+  function cancelRename(): void {
+    editingId.value = null
+    editingTitle.value = ''
+  }
+
+  async function commitRename(): Promise<void> {
+    const id = editingId.value
+    if (!id) return // Enter 提交后 blur 再触发一次时直接退场
+    const value = editingTitle.value.trim()
+    editingId.value = null
+    if (!value) return
+    const current = projects.value.find((p) => p.id === id)
+    if (current && displayCanvasTitle(current.title) === value) return
     try {
-      const result = await ElMessageBox.prompt('输入新的项目名称', '重命名', {
-        inputValue: displayCanvasTitle(p.title),
-        inputPattern: /\S/,
-        inputErrorMessage: '名称不能为空',
-        confirmButtonText: '保存',
-        cancelButtonText: '取消',
-      })
-      value = result.value.trim()
-    } catch {
-      return
-    }
-    if (!value || value === p.title) return
-    try {
-      await rename(p.id, value)
+      await rename(id, value)
       ElMessage.success('已重命名')
     } catch {
       ElMessage.error('重命名失败，请稍后重试')
@@ -140,6 +152,7 @@ export function useProjectManager() {
   return {
     projects, loading, search, openMenuId, manageMode, selectedIds, filtered,
     toggleMenu, closeMenu, toggleManage, toggleSelect,
-    batchDelete, renameProject, duplicateProject, removeProject,
+    batchDelete, editingId, editingTitle, startRename, cancelRename, commitRename,
+    duplicateProject, removeProject,
   }
 }

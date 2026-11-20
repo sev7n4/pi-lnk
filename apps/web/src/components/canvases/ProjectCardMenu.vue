@@ -5,6 +5,11 @@
  * 两视图必须同构，禁止各写一份（防语义漂移，同 §6.4 项目名教训）。
  * 开合状态由父级 mgr.openMenuId 承载（单一出处）。
  */
+withDefaults(defineProps<{
+  /** PC 卡墙的底排菜单改向上弹，避开视口底部/相邻行遮挡；移动行卡保持向下 */
+  placement?: 'top' | 'bottom'
+}>(), { placement: 'bottom' })
+
 defineEmits<{
   rename: []
   duplicate: []
@@ -14,7 +19,8 @@ defineEmits<{
 
 <template>
   <div
-    class="absolute right-0 top-8 z-10 w-28 overflow-hidden rounded-xl border border-line bg-surface-base py-1 shadow-lg"
+    class="absolute right-0 z-20 w-28 overflow-hidden rounded-xl border border-line bg-surface-base py-1 shadow-lg"
+    :class="placement === 'top' ? 'bottom-8' : 'top-8'"
   >
     <button
       type="button"

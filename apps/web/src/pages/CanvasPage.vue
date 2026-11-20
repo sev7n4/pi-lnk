@@ -6501,7 +6501,7 @@ onUnmounted(() => {
         >
           <p class="mobile-canvas-empty__main">画布还是空的</p>
           <p class="mobile-canvas-empty__sub">
-            {{ mobileCanvasImm ? '点左下 ＋ 新建节点；想交给 AI，先切到对话页' : '点 ＋ 新建节点，或点底部条输入' }}
+            {{ mobileCanvasImm ? '点右下 ＋ 新建节点；想交给 AI，先切到对话页' : '点右下 ＋ 新建节点，或点底部条输入' }}
           </p>
         </div>
 

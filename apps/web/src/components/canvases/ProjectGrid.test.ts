@@ -35,6 +35,28 @@ describe('ProjectGrid（PC 卡墙 · §13.3/C1）', () => {
     expect(grid).toMatch(/relative block aspect-\[4\/3\]/)
   })
 
+  it('2026-11-20 新建入口：网格首张空白卡 + 圆形徽章，菜单向上弹且卡片不再裁切弹层', () => {
+    expect(grid).toContain('data-testid="canvases-create-card"')
+    expect(grid).toContain("@click=\"$emit('create')\"")
+    expect(grid).toMatch(/project-create-card__disc[^>]*rounded-full/)
+    expect(grid).toContain('placement="top"')
+    expect(list).not.toContain('placement="top"')
+    const menu = read('ProjectCardMenu.vue')
+    expect(menu).toContain("placement === 'top' ? 'bottom-8' : 'top-8'")
+    // 卡片 wrapper 不再 overflow-hidden（原裁切就是 PC 菜单向下被挡的真凶）
+    expect(grid).not.toMatch(/session-card-menu-anchor[^\n]*overflow-hidden/)
+    // 封面补回圆角，避免去掉 wrapper 裁切后露出方角
+    expect(grid).toContain('rounded-t-2xl bg-surface-sunken')
+  })
+
+  it('重命名在卡片名上原地编辑（两端同构，不在卡片里内联菜单动作）', () => {
+    for (const src of [grid, list]) {
+      expect(src).toContain('data-testid="project-rename-input"')
+      expect(src).toContain('@keydown.enter.prevent="mgr.commitRename()"')
+      expect(src).toContain('@blur="mgr.commitRename()"')
+    }
+  })
+
   it('相对时间口径单源：两视图都消费 canvases/relativeTime 模块', () => {
     expect(grid).toContain("from './relativeTime'")
     expect(list).toContain("from './relativeTime'")
