@@ -7,6 +7,7 @@ import { useClickOutside } from '@/composables/useClickOutside'
 import { useModelSelectorOptions } from '@/composables/useModelSelectorOptions'
 import { useModelConfigView } from '@/composables/useModelConfigView'
 import ModelConfigPanel from '@/components/agent/ModelConfigPanel.vue'
+import ModelOptionRow from '@/components/agent/ModelOptionRow.vue'
 import type { ThinkingLevel } from '@/components/agent/composer/thinkingLevels'
 import DockTypeIcon from '@/components/canvas/dock-studio/shared/DockTypeIcon.vue'
 
@@ -182,42 +183,18 @@ function onSetThinking(level: ThinkingLevel) {
           <span class="truncate">{{ labelForValue(current.id) }}</span>
           <span class="ml-2 shrink-0 text-warning">已停用</span>
         </button>
-        <button
+        <!-- 2026-11-21 模型卡 R2：列表行共用 ModelOptionRow（与移动 Sheet 单源，
+             名称+可识图+渠道+倍率 WorkBuddy 排布）。class 经 attrs 透传到根按钮，
+             保留 .neo-popover-item 全局 hover 形态与既有测试选择器。 -->
+        <ModelOptionRow
           v-for="model in selectableOptions"
           :key="model.id"
-          type="button"
-          class="neo-popover-item flex w-full items-center justify-between px-3 py-2 text-xs"
-          :class="[
-            model.id === modelValue && !model.unavailable
-              ? '!bg-[var(--lnk-accent-subtle)] !text-[var(--lnk-accent-text)] shadow-[inset_0_0_0_1px_var(--lnk-accent-border)]'
-              : '',
-            model.unavailable ? 'cursor-not-allowed opacity-45' : '',
-          ]"
-          :disabled="model.unavailable || undefined"
+          class="neo-popover-item"
+          :option="model"
+          :selected="model.id === modelValue && !model.unavailable"
           :title="model.unavailable ? unavailableTitle() : undefined"
-          @click="select(model.id)"
-        >
-          <span class="truncate">{{ model.name }}</span>
-          <span
-            v-if="model.unavailable"
-            class="ml-1 shrink-0 text-[10px] text-[var(--neo-warm,--neo-text-muted)]"
-          >
-            暂不可用
-          </span>
-          <span
-            v-else-if="model.healthDot"
-            class="model-health-dot ml-1 h-1.5 w-1.5 shrink-0 rounded-full"
-            :class="model.healthDot.kind === 'red' ? 'bg-danger' : 'bg-warning'"
-            :title="model.healthDot.title"
-          />
-          <span
-            v-if="type === 'text' && model.visionCapable && !model.unavailable"
-            class="ml-1 shrink-0 text-[10px] text-success"
-          >
-            可识图
-          </span>
-          <span class="ml-2 shrink-0 opacity-45">{{ model.channelName }}</span>
-        </button>
+          @select="select(model.id)"
+        />
         <p v-if="!selectableOptions.length" class="px-3 py-2 text-[11px] text-[var(--neo-text-muted)]">
           暂无可选模型，请先在配置中设置
         </p>

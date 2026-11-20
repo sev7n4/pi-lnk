@@ -25,22 +25,27 @@ describe('resolveModelCapability（K-1 能力三层解析）', () => {
     expect(resolveModelCapability('deepseek-r1').reasoning).toBe(true)
   })
 
-  it('reasoning 系命中：o1/o3/gpt-5/deepseek-r1/reasoner', () => {
+  it('reasoning 系命中：o1/o3/gpt-5/deepseek-r1/reasoner/deepseek-v4 系/flash', () => {
     for (const ref of [
       'ch_1::o3-mini',
       'ch_1::o4-mini',
       'ch_1::gpt-5',
       'ch_1::deepseek-r1',
       'ch_1::deepseek-reasoner',
+      // 2026-11-21 放行（用户拍板）：DeepSeek V4 全系 + 官方 V4.1 Flash id，
+      // 匹配面与 shared supportsThinkingLevel / isDeepSeekV4Model 对齐。
+      // BYOK override reasoning:true ⇒ pi 放行 thinkingLevel；deepseek.com baseUrl
+      // 时 pi-ai 自动用 "deepseek" thinkingFormat（thinking+effort，与老链路同构）。
+      'cmrrxageh000bql01xg1y6kjn::deepseek-flash',
+      'cmrrxageh000bql01xg1y6kjn::deepseek-v4-pro',
+      'cmrrxageh000bql01xg1y6kjn::deepseek-v4-flash',
     ]) {
       expect(resolveModelCapability(ref).reasoning, ref).toBe(true)
     }
   })
 
-  it('非 reasoning 系明确 false：deepseek-flash / deepseek-v4-pro / gemini / claude', () => {
+  it('非 reasoning 系明确 false：gemini / claude / 未知', () => {
     for (const ref of [
-      'cmrrxageh000bql01xg1y6kjn::deepseek-flash',
-      'cmrrxageh000bql01xg1y6kjn::deepseek-v4-pro',
       'ch_1::gemini-3.5-flash',
       'ch_1::claude-sonnet-4',
     ]) {

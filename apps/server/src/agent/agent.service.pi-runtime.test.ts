@@ -140,7 +140,10 @@ describe('AgentService pi-runtime switch (B4)', () => {
         baseUrl: 'https://api.deepseek.com/',
         providerRef: 'ch_byok::deepseek-flash',
         source: 'user',
-        reasoning: false,
+        // 2026-11-21 deepseek-v4 系放行（用户拍板）：deepseek-flash 命中 shared
+        // supportsThinkingLevel ⇒ override reasoning:true，pi 放行 thinkingLevel；
+        // 本例 baseUrl 含 deepseek.com ⇒ pi-ai 自动 "deepseek" thinkingFormat。
+        reasoning: true,
         contextWindow: 128_000,
         maxTokens: 8_192,
         // #123 接线：视觉输入能力必须显式传下去，否则 pi-runtime 侧

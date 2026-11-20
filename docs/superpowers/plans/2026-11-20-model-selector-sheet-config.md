@@ -94,3 +94,10 @@
    - `AgentSideRail.vue`：PC 分支接线 config props；移动 Sheet 换用共用面板；样式迁移（删已迁类、补 `.model-sheet-muted`）。
 3. **门禁**：定向 65/65 绿、`vue-tsc -b` 0、`verify-agent-rail-gates.py` 11/11、变异自检 2/2 RED（composable back 分支 + testid 锁本体）后零残留。
 4. **部署与复测**：并入 PR #967 推送 → CI 绿 → squash 合并 → web-only 部署 → 生产 chunk 取证（新串 `pc-model-config-open` / `ums-header`）→ CDP 双端复测（PC 锚定卡配置页 + 移动端回归）。
+
+## Task 10 · 列表行信息完备 + chip 收敛 + 倍率 + deepseek-v4 放行（2026-11-21，用户 6 点拍板）
+
+1. **服务端**：`pricing.service.getActiveTextMultipliers()`（active 表 `text:*:in` 行 profitBpSnapshot → (10000+bp)/10000，2 位小数；PriceTable 缓存扩 `textProfitBp`）+ `PricingController.active()` 响应扩 `multipliers`；sqlite 集成测试 RED→GREEN（6/6）。
+2. **shared**：`modelCapability.ts` 加 deepseek-v4 / deepseek-flash 模式（对齐 isDeepSeekV4Model），测试翻转（5/5）。
+3. **前端**：`pricing-api.fetchActivePricingMultipliers()`（单飞缓存 + 失败空 map）；`useModelSelectorOptions` 加 `multiplier`（平台渠道 + text 模态限定，modelOptionName 小写归一匹配；visionCapable 模态门控迁入投影层；currentLabel 去渠道）；新增 `ModelOptionRow.vue`（PC/移动共用行）+ 挂载/令牌测试；PC popover 与移动 Sheet 接线（PC 经 attrs 透传 `.neo-popover-item`）；AgentSideRail chip 加 full-label title、删死样式。
+4. **门禁**：定向 84/84 → 全量 + `vue-tsc -b` + rail-gates + 变异自检 → PR → CI → squash → 部署 → chunk 取证 → CDP 双端走查。

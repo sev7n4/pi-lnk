@@ -210,9 +210,9 @@ describe('UniversalModelSelector 健康角标（A4 抽行）', () => {
         props: { modelValue: visionTextModel, type: 'text' },
       })
       await openDropdown(wrapper)
-      const redDot = optionButton(wrapper, 'minimax-ok')!.find('.model-health-dot')
+      const redDot = optionButton(wrapper, 'minimax-ok')!.find('.mor-dot')
       expect(redDot.exists()).toBe(true)
-      expect(redDot.classes()).toContain('bg-danger')
+      expect(redDot.classes()).toContain('is-red')
       expect(redDot.attributes('title')).toBe('近24h 成功率 4/10')
     } finally {
       setHealth(null)
@@ -226,8 +226,8 @@ describe('UniversalModelSelector 健康角标（A4 抽行）', () => {
         props: { modelValue: visionTextModel, type: 'text' },
       })
       await openDropdown(wrapper)
-      const dot = optionButton(wrapper, 'minimax-ok')!.find('.model-health-dot')
-      expect(dot.classes()).toContain('bg-warning')
+      const dot = optionButton(wrapper, 'minimax-ok')!.find('.mor-dot')
+      expect(dot.classes()).toContain('is-warn')
     } finally {
       setHealth(null)
     }
@@ -243,10 +243,10 @@ describe('UniversalModelSelector 健康角标（A4 抽行）', () => {
         props: { modelValue: visionTextModel, type: 'text' },
       })
       await openDropdown(wrapper)
-      expect(optionButton(wrapper, 'minimax-ok')!.find('.model-health-dot').exists()).toBe(false)
+      expect(optionButton(wrapper, 'minimax-ok')!.find('.mor-dot').exists()).toBe(false)
       // BYOK（ch1）gpt-4o 只匹配本人 BYOK 行（无）⇒ 平台行 0 成功率不误挂
       const byokBtn = optionButton(wrapper, 'gpt-4o')!
-      expect(byokBtn.find('.model-health-dot').exists()).toBe(false)
+      expect(byokBtn.find('.mor-dot').exists()).toBe(false)
     } finally {
       setHealth(null)
     }

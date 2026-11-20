@@ -16,8 +16,11 @@ export class PricingController {
    */
   @Get('active')
   async active() {
-    const textTokenRatios = await this.pricing.getActiveTextTokenRatios()
-    return { code: 0, message: 'ok', data: { textTokenRatios } }
+    const [textTokenRatios, multipliers] = await Promise.all([
+      this.pricing.getActiveTextTokenRatios(),
+      this.pricing.getActiveTextMultipliers(),
+    ])
+    return { code: 0, message: 'ok', data: { textTokenRatios, multipliers } }
   }
 
   /**
