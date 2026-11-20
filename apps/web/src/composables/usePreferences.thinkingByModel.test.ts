@@ -2,7 +2,6 @@
 // thinkingByModel: Record<modelKey, ThinkingLevel>。切模型查表种入会话级单值。
 import { beforeEach, describe, expect, it } from 'vitest'
 import { __resetForTest, usePreferences } from './usePreferences'
-import type { ThinkingLevel } from '@/components/agent/composer/thinkingLevels'
 
 describe('usePreferences.thinkingByModel（按模型种子）', () => {
   beforeEach(() => {
