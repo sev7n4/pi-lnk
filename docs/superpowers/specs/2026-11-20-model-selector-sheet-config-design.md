@@ -155,3 +155,14 @@
 ## 10. 变更记录
 
 - 2026-11-20 初版：用户拍板上下文只读 / 先出规格计划；思考强度作用域经行业+上游取证后定混合模式。
+
+### R3b · 列表行信息完备 + chip 收敛 + 倍率（2026-11-21 追加，用户 6 点反馈）
+
+1. **移动端列表丢字段（用户点 1/2）**：根因是上一刀移动 Sheet 列表只渲染了名称——纯渲染层丢失（数据源 `visionCapable/channelName` 两端本就有）。修复=列表行渲染抽 `ModelOptionRow.vue` 单源，PC popover 与移动 Sheet 共用，永不漂移。
+2. **chip 收敛（点 3）**：`currentLabel` 去掉「（渠道名）」只显示模型名（`friendlyModelName` 截断不变）；渠道细节保留在 `currentFullLabel`（按钮 title tooltip）。两端 chip 同源。
+3. **列表行 WorkBuddy 排布（点 4，用户拍板）**：左=模型名 → 「可识图」徽标（success 令牌）→ 渠道徽标（border-subtle 胶囊）→ 行末右对齐倍率（`1.10x` 两位小数 tabular-nums）+ 选中勾。`visionCapable` 的 text 模态门控从 PC 模板迁入投影层。
+4. **倍率数据链（点 4，吃满上游不造数）**：active 价目表 `PriceListEntry.profitBpSnapshot`（物化公式 `credits = 成本 × (1 + profitBp/10000)` 的同一利润率锚）→ 服务端 `getActiveTextMultipliers()`（multiplier = (10000+bp)/10000 两位小数）→ 公开端点 `GET /api/pricing/active` 扩 `multipliers` 字段 → 前端 `fetchActivePricingMultipliers()` 会话级单飞缓存 → `useModelSelectorOptions` 投影。**BYOK 渠道永不显示**（不在平台价目表内，用户拍板）；无快照的模型键不出现（禁造数）；取数失败全 undefined（不抛错）。
+5. **PC/移动一致性（点 5）**：数据源投影（composable）+ 行渲染（ModelOptionRow）双单源；PC 经 attrs 透传 `.neo-popover-item` 保留全局 hover 形态与既有测试选择器。
+6. **deepseek-v4 思考强度放行（点 6，用户拍板）**：`supportsThinkingLevel` 加 `/deepseek-v4/i` + `/(?:^|[/:])deepseek-flash(?:[-./]|$)/i`（匹配面对齐 `isDeepSeekV4Model`）。证据=老 studio 链路 `buildDeepSeekThinkingFields` 对 V4 系发 `thinking:{type:"enabled"}+reasoning_effort`（生产验证）+ vendored pi-ai 内置 "deepseek" thinkingFormat 同构（baseUrl 含 deepseek.com 自动启用）。composer 开关与 pi override `reasoning:true` 两端同源生效。已接受风险=非 deepseek.com 聚合网关裸 `reasoning_effort` 个别 400；kill switch=回滚本表条目。
+
+DoD 增补：倍率端点 sqlite 集成测试（有/无快照/六段键不外泄）；multiplier 投影测试（平台有值/BYOK 永无/非 text 无/失败 undefined）；ModelOptionRow 挂载测试（徽标/倍率格式/选中/灰显/健康点/令牌）；tokenGuard 跨文件锁 accent 三件套迁移。

@@ -121,6 +121,7 @@ import { parseRefMentions } from '@/composables/useRefMentions'
 import MentionInput from '@/components/canvas/MentionInput.vue'
 import MobileSheet from '@/components/mobile/MobileSheet.vue'
 import ModelConfigPanel from './ModelConfigPanel.vue'
+import ModelOptionRow from './ModelOptionRow.vue'
 import { useModelConfigView } from '@/composables/useModelConfigView'
 import { isConversationAckResponse, parseConversationAck } from './main-turn-ack'
 import { turnLiveStatus } from './activityLine'
@@ -1001,7 +1002,7 @@ const modelSelector = useModelSelectorOptions({
   modelValue: () => planningModel.value,
   type: () => 'text',
 })
-const { currentLabel: modelChipLabel, selectableOptions: modelSheetOptions } = modelSelector
+const { currentLabel: modelChipLabel, currentFullLabel: modelChipFullLabel, selectableOptions: modelSheetOptions } = modelSelector
 const modelSheetSubtitle = computed(() =>
   modelSheetView.value === 'list' ? undefined : `当前模型：${modelSelector.current.value?.name ?? ''}`,
 )
@@ -4616,6 +4617,7 @@ defineExpose({
                     type="button"
                     class="dock-ghost-ctl flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs"
                     :disabled="props.readOnly"
+                    :title="modelChipFullLabel"
                     data-testid="model-sheet-trigger"
                     @click="openModelSheet"
                   >
@@ -4694,20 +4696,17 @@ defineExpose({
                     @set-thinking="setThinkingFromSheet"
                   />
                   <template v-else>
+                    <!-- 2026-11-21 模型卡 R2：列表行共用 ModelOptionRow（PC popover 单源；
+                         名称+可识图+渠道+倍率 WorkBuddy 排布，选中勾/灰显/健康点同构）。 -->
                     <div class="model-sheet-list">
-                      <button
+                      <ModelOptionRow
                         v-for="model in modelSheetOptions"
                         :key="model.id"
-                        type="button"
-                        class="model-sheet-row"
-                        :class="{ 'is-selected': model.id === planningModel && !model.unavailable }"
-                        :disabled="model.unavailable || props.readOnly"
-                        @click="selectModelFromSheet(model.id)"
-                      >
-                        <span class="model-sheet-name">{{ model.name }}</span>
-                        <span v-if="model.unavailable" class="model-sheet-muted">暂不可用</span>
-                        <span v-else-if="model.id === planningModel" class="model-sheet-check">✓</span>
-                      </button>
+                        divided
+                        :option="model"
+                        :selected="model.id === planningModel && !model.unavailable"
+                        @select="selectModelFromSheet(model.id)"
+                      />
                     </div>
                   </template>
                   <template #headerActions>
@@ -6383,57 +6382,6 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 2px;
-}
-
-.model-sheet-row {
-  display: flex;
-  min-height: var(--lnk-touch-target);
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--lnk-space-2);
-  width: 100%;
-  padding: var(--lnk-space-2) var(--lnk-space-3);
-  border: none;
-  border-radius: var(--lnk-radius-md);
-  background: transparent;
-  color: var(--lnk-text-primary);
-  font-size: var(--lnk-text-sm);
-  text-align: left;
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.model-sheet-row:active {
-  background: var(--lnk-pressed-overlay);
-}
-
-.model-sheet-row:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.model-sheet-row.is-selected {
-  background: var(--lnk-accent-subtle);
-  color: var(--lnk-accent-text);
-  box-shadow: inset 0 0 0 1px var(--lnk-accent-border);
-}
-
-.model-sheet-name {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.model-sheet-check {
-  flex: none;
-  color: var(--lnk-accent-text);
-}
-
-.model-sheet-muted {
-  color: var(--lnk-text-muted);
 }
 
 </style>

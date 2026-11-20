@@ -43,3 +43,32 @@ export async function fetchPriceQuote(q: PriceQuoteQuery): Promise<PriceQuoteRes
   if (body.code !== 0) throw new Error(`pricing quote error: ${body.code}`)
   return body.data
 }
+
+/* ---- 文本模型倍率（2026-11-21 模型卡 R2）----
+ * GET /api/pricing/active 的 multipliers map（active 价目表 text:in 行
+ * profitBpSnapshot → (10000+bp)/10000）。会话级单飞缓存：模型卡 PC/移动两处
+ * composable 实例共用一次取数。失败回落空 map（展示层据此省略倍率，禁造数），
+ * 不重试（价目表 30s 服务端 TTL，下次会话自然刷新）。 */
+
+let multipliersCache: Promise<Record<string, number>> | null = null
+
+export function fetchActivePricingMultipliers(): Promise<Record<string, number>> {
+  multipliersCache ??= (async () => {
+    try {
+      const res = await fetch(apiUrl('/pricing/active'), { cache: 'no-store' })
+      if (!res.ok) throw new Error(`pricing active failed: ${res.status}`)
+      const body = (await res.json()) as { code: number; data: { multipliers?: Record<string, number> } }
+      if (body.code !== 0) throw new Error(`pricing active error: ${body.code}`)
+      return body.data.multipliers ?? {}
+    } catch (err) {
+      console.warn('[pricing] 倍率取数失败 — 不展示倍率：', err instanceof Error ? err.message : err)
+      return {}
+    }
+  })()
+  return multipliersCache
+}
+
+/** 测试专用：清空会话级倍率缓存。 */
+export function resetActivePricingCacheForTests(): void {
+  multipliersCache = null
+}

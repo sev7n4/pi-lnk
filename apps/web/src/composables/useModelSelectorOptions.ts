@@ -1,10 +1,11 @@
-import { type ComputedRef, computed } from 'vue'
+import { type ComputedRef, computed, ref } from 'vue'
 import { supportsVisionTextModel, upstreamChatModel } from '@lnkpi/agent'
 import type { AudioKind, GenerationType } from '@lnkpi/shared'
-import { decodeChannelModel, modelOptionName } from '@lnkpi/shared'
+import { PLATFORM_CHANNEL_ID, decodeChannelModel, modelOptionName } from '@lnkpi/shared'
 import { type StudioModality } from '@/constants/studioModels'
 import { audioKindOfModelValue } from '@/constants/dockAudio'
 import { friendlyModelName } from '@/components/agent/composer/modelSkillDedup'
+import { fetchActivePricingMultipliers } from '@/services/pricing-api'
 import type { DockNodeIconKind } from '@/components/canvas/dock-studio/shared/dockIcons'
 import { useProviderBootstrap } from './useProviderBootstrap'
 import {
@@ -24,6 +25,23 @@ export type SelectorModelOption = {
   unavailable?: boolean
   /** S1-3 健康角标（A4）：近 24h 成功率 <0.5 红 / <0.9 黄 / 其余无。 */
   healthDot?: ModelHealthDot | null
+  /**
+   * 2026-11-21 模型卡 R2：平台价目表利润率倍率（10% 利润 → 1.1，展示 `1.10x`）。
+   * 仅平台渠道文本模型有值（active 价目表 profitBpSnapshot 单源）；BYOK 渠道
+   * 不在平台价目表内 ⇒ 永远 undefined（用户拍板：不显示）。取数失败 ⇒ undefined。
+   */
+  multiplier?: number
+}
+
+/** 会话级单飞缓存（fetchActivePricingMultipliers 内部去重），跨 PC/移动 composable 实例共享。 */
+const textMultipliers = ref<Record<string, number>>({})
+let multipliersRequested = false
+function requestTextMultipliers(): void {
+  if (multipliersRequested) return
+  multipliersRequested = true
+  void fetchActivePricingMultipliers().then((m) => {
+    textMultipliers.value = m
+  })
 }
 
 /**
@@ -68,18 +86,30 @@ export function useModelSelectorOptions(opts: {
     return `${modelOptionName(value)}（${channelNameForValue(value)}）`
   }
 
+  function multiplierForValue(value: string): number | undefined {
+    // 仅平台渠道：BYOK 自带 key，平台利润率语义不适用（用户拍板 2026-11-21）。
+    if (decodeChannelModel(value)?.channelId !== PLATFORM_CHANNEL_ID) return undefined
+    const key = modelOptionName(value).trim().toLowerCase()
+    const m = textMultipliers.value[key]
+    return typeof m === 'number' && Number.isFinite(m) ? m : undefined
+  }
+
   const selectableOptions: ComputedRef<SelectorModelOption[]> = computed(() => {
     const channels = allChannels.value
     const healthRows = modelHealth.value?.rows
+    if (catalogModality.value === 'text') requestTextMultipliers()
     return selectableForModality(catalogModality.value).map((id) => {
       const unavailable = availabilityOfModel(channels, id) === 'unavailable'
       return {
         id,
         name: modelOptionName(id),
         channelName: channelNameForValue(id),
-        visionCapable: supportsVisionTextModel(upstreamChatModel(id)),
+        // 「可识图」徽标仅文本模态有意义（画图模型必吃图输入，展示=噪音）；
+        // 门控收进投影层（原 PC 模板 type==='text' 判断迁移），行组件保持纯渲染。
+        visionCapable: catalogModality.value === 'text' ? supportsVisionTextModel(upstreamChatModel(id)) : undefined,
         unavailable,
         healthDot: unavailable ? null : healthDotOfModel(healthRows, id),
+        multiplier: catalogModality.value === 'text' ? multiplierForValue(id) : undefined,
       }
     })
   })
@@ -99,9 +129,11 @@ export function useModelSelectorOptions(opts: {
   })
 
   // P2-6.1：chip 文案截断（模型名 >12 字符取前 12 + '…'），完整名进按钮 title tooltip
+  // 2026-11-21 模型卡 R2：chip 只显示模型名（用户拍板：去掉渠道信息）；渠道细节保留
+  // 在 currentFullLabel（按钮 title tooltip 与停用标注），两端 chip 文案同源。
   const currentLabel = computed(() => {
     if (!current.value) return '...'
-    const base = `${friendlyModelName(current.value.name)}（${current.value.channelName}）`
+    const base = friendlyModelName(current.value.name)
     return current.value.disabled ? `${base} · 已停用` : base
   })
 

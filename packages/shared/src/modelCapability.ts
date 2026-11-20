@@ -17,6 +17,15 @@ const THINKING_LEVEL_PATTERNS: RegExp[] = [
 	/^gpt-5/i,
 	/deepseek-r1/i,
 	/deepseek-reasoner/i,
+	// 2026-11-21 放行（用户拍板）：DeepSeek V4 全系 + 官方 V4.1 Flash id，匹配面与
+	// packages/agent 的 `isDeepSeekV4Model` 对齐。证据：老 studio 链路
+	// `buildDeepSeekThinkingFields` 对 V4 系发 `thinking:{type:"enabled"}` +
+	// `reasoning_effort`（生产验证）；vendored pi-ai openai-completions 内置
+	// "deepseek" thinkingFormat 同构（baseUrl 含 deepseek.com 自动启用）。
+	// 已接受风险：非 deepseek.com 的聚合网关会收到裸 `reasoning_effort`（无
+	// thinking 包装），个别网关可能 400 —— kill switch = 回滚本表条目。
+	/deepseek-v4/i,
+	/(?:^|[/:])deepseek-flash(?:[-./]|$)/i,
 ]
 
 /**

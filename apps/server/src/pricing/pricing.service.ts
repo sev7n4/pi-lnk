@@ -87,6 +87,11 @@ interface PriceTable {
   subjectEntries: Map<string, number>
   /** 命中 subjectKey 行的价格锁快照（成本/利润/来源），供展示与对账。 */
   subjectMeta: Map<string, Partial<PricingQuote>>
+  /**
+   * 文本模型利润率快照（2026-11-21 模型卡倍率展示）：`text:<model>:in` 行的
+   * profitBpSnapshot → 模型小写名；无快照记 null（展示层据此省略，禁造数）。
+   */
+  textProfitBp: Map<string, number | null>
   loadedAt: number
 }
 
@@ -577,6 +582,33 @@ export class PricingService implements OnModuleInit {
     }
   }
 
+  /**
+   * 2026-11-21 模型卡倍率展示：当前 active 版本的文本模型利润率倍率 map
+   * （公开端点 GET /api/pricing/active 的数据源，与 textTokenRatios 同一缓存与
+   * 过滤纪律）。multiplier = (10000 + profitBp) / 10000，两位小数（10% 利润 → 1.1，
+   * 与物化公式 credits = 成本 × (1 + profitBp/10000) 同一语义锚）。无快照的模型
+   * 不出现键（禁造数；BYOK 渠道模型不在平台价目表内 ⇒ 自然无倍率）。
+   * 空态（无 active 版本 / 无带快照的 in 行）返回空对象，永不 throw。
+   */
+  async getActiveTextMultipliers(): Promise<Record<string, number>> {
+    try {
+      const table = await this.loadActiveTable()
+      if (!table) return {}
+      const out: Record<string, number> = {}
+      for (const [model, bp] of table.textProfitBp) {
+        if (typeof bp !== 'number' || !Number.isFinite(bp)) continue
+        out[model] = Math.round(((10000 + bp) / 10000) * 100) / 100
+      }
+      return out
+    } catch (err) {
+      console.warn(
+        '[pricing] 活动价目倍率读取失败 — 返回空 map：',
+        err instanceof Error ? err.message : err,
+      )
+      return {}
+    }
+  }
+
   /** global 表（无 active 版本抛错 → 由 quoteTextTokens 的 catch 落 degraded）。 */
   private async requireGlobalTable(): Promise<PriceTable> {
     const table = await this.loadActiveTable()
@@ -662,8 +694,15 @@ export class PricingService implements OnModuleInit {
     const entries = new Map<string, number>()
     const subjectEntries = new Map<string, number>()
     const subjectMeta = new Map<string, Partial<PricingQuote>>()
+    const textProfitBp = new Map<string, number | null>()
     for (const e of version.entries) {
       entries.set(e.matchKey, e.credits)
+      // text:<model>:in 行 → 利润率快照（模型卡倍率展示的唯一取数口径；
+      // 与 getActiveTextTokenRatios 同一过滤纪律：六段键/legacy 单行/非 in 行不进 map）
+      if (e.matchKey.startsWith('text:') && e.matchKey.endsWith(':in') && !e.matchKey.includes('|')) {
+        const model = e.matchKey.slice('text:'.length, -':in'.length).trim().toLowerCase()
+        if (model) textProfitBp.set(model, typeof e.profitBpSnapshot === 'number' ? e.profitBpSnapshot : null)
+      }
       if (e.subjectKey) {
         subjectEntries.set(e.subjectKey, e.credits)
         subjectMeta.set(e.subjectKey, {
@@ -682,6 +721,7 @@ export class PricingService implements OnModuleInit {
       entries,
       subjectEntries,
       subjectMeta,
+      textProfitBp,
       loadedAt: Date.now(),
     }
     // 自愈：boot 时因「无 active 版本」降级的进程，运行中经发布流建出版本后
