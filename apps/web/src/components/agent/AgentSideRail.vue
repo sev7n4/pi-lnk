@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, reactive, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
+import { useThinkingByModel } from '@/composables/useThinkingByModel'
 import { useMobileComposerFocus } from '@/composables/useMobileComposerFocus'
 import { useMobileKeyboardInset } from '@/composables/useMobileKeyboardInset'
 import { useRouter } from 'vue-router'
@@ -894,6 +895,13 @@ watch(showPlanningThinkingControls, (show) => {
   }
 })
 
+/* 2026-11-20 思考强度按模型种子（模型配置页 AD3）：
+ * 持久层按模型 key 记忆档位，切模型时查表一次性种入 composer 级单值（planningThinking/Effort）；
+ * 运行时仍是会话单值、每轮下传，与 pi-runtime SessionEntry.thinkingLevel 一一对应。
+ * ⚠️ 不要在运行时把档位做成 Map<model,level>——上游 setThinkingLevel 原地换档、reasoning 能力位、
+ * meta.json 不落盘三处都与运行时 Map 冲突（详见 useThinkingByModel 注释）。 */
+const { seedFor, saveSeed } = useThinkingByModel()
+
 // 第八刀（strangler-fig）：Queue-Draft 簇（queueDraftAsPending / deliverQueued / withdrawQueued /
 // dismissQueued / requeueQueued / markQueueApplied）已迁入 useAgentQueue。
 // queuedSlots / queuedEntryIds 仍由本组件持有所有权，仅注入 composable 消费（与第七刀同口径）。
@@ -943,12 +951,25 @@ const currentThinkingLevel = computed<ThinkingLevel>(() => {
 
 function setPlanningThinkingLevel(level: ThinkingLevel) {
   thinkingMenuOpen.value = false
+  // 按模型记忆：改档即写种子（与会话单值写回并行；切回该模型时恢复）
+  saveSeed(planningModel.value, level)
   if (level === '标准') {
     setPlanningThinking(false)
     return
   }
   setPlanningThinkingEffort(level === '极限' ? 'max' : 'high')
 }
+
+/* 切模型时查种子表一次性种入（能力门禁：不支持 thinking 的模型强制标准）。
+ * 只在此刻读种子；运行时仍用 planningThinking/Effort 单值下传，不做运行时 Map。 */
+watch(
+  planningModel,
+  (model) => {
+    if (!showPlanningThinkingControls.value) return
+    const seed = seedFor(model)
+    if (seed) setPlanningThinkingLevel(seed)
+  },
+)
 
 /* ---- 技能选择（显式 Skill；默认自动 / 平台路由）----
  * 2026-10-18：技能入口收敛为「＋」一级菜单（技能父项），展开下一级才列出 自动/已安装技能；
