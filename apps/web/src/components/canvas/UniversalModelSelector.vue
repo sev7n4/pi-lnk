@@ -84,7 +84,7 @@ function select(id: string) {
 
     <div
       v-if="open"
-      class="neo-popover dock-inline-card absolute bottom-full left-0 z-50 mb-1 min-w-[220px] rounded-xl py-1"
+      class="neo-popover absolute bottom-full left-0 z-50 mb-1 min-w-[220px] rounded-xl py-1"
       @click.stop
     >
       <button

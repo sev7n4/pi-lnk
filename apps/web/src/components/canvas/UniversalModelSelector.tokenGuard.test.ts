@@ -25,4 +25,8 @@ describe('UniversalModelSelector token & composable guard', () => {
   it('option logic extracted to shared composable (PC/移动双形态共用)', () => {
     expect(sfc).toContain('useModelSelectorOptions')
   })
+
+  it('no legacy dock-inline-card anchor hook (mobile uses full-width Sheet)', () => {
+    expect(sfc).not.toContain('dock-inline-card')
+  })
 })
