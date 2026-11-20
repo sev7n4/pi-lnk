@@ -1,4 +1,4 @@
-import { decodeChannelModel, supportsThinkingLevel } from '@lnkpi/shared'
+import { decodeChannelModel, resolveContextWindow, supportsThinkingLevel } from '@lnkpi/shared'
 
 export type ModelCapability = {
   reasoning: boolean
@@ -29,11 +29,10 @@ const DEFAULT_CAPABILITY: ModelCapability = {
  * 与「能否接收图片输入」是两个维度，不可互相推导。
  */
 
-const CONTEXT_WINDOW_RULES: ReadonlyArray<readonly [RegExp, number]> = [
-  [/^claude/i, 200_000],
-  [/^gemini/i, 1_000_000],
-  [/^gpt-5/i, 400_000],
-]
+/**
+ * 上下文窗口规则已上移 `@lnkpi/shared/contextWindow`（2026-11-20 模型配置页只读展示
+ * 与本函数共用同一真相源）——前端展示 200K/1M/400K/128K 与此处装配值永不漂移。
+ */
 
 /**
  * 解析模型能力（供 pi-runtime 会话级装配用）。
@@ -48,8 +47,7 @@ export function resolveModelCapability(providerRef: string): ModelCapability {
 
   return {
     reasoning: supportsThinkingLevel(raw),
-    contextWindow:
-      CONTEXT_WINDOW_RULES.find(([re]) => re.test(name))?.[1] ?? DEFAULT_CAPABILITY.contextWindow,
+    contextWindow: resolveContextWindow(raw),
     maxTokens: DEFAULT_CAPABILITY.maxTokens,
   }
 }
