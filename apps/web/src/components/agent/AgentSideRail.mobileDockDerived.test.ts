@@ -157,7 +157,8 @@ describe('路线 ③ 第二批：C 类 3 处模板肯定读取收敛为 !isDeskt
     // 2026-11-18 skill-ui-ux-polish：技能 sheet 移动端分支（v-if="skillSheetOpen && !isDesktopDock"）
     // 也是合法的 C 类派生消费点，3 → 4。
     // 2026-11-18 skill-ux-round2 R3：管理技能弹层移动端 MobileSheet 分支（manageOpen && !isDesktopDock），4 → 5。
-    expect((tpl.match(/!isDesktopDock/g) ?? []).length, 'C 类 5 处必须恰好替换（3 处旧 + 技能 sheet + 管理弹层移动分支）').toBe(5)
+    // 2026-11-20 模型卡 iOS 化：模型选择 Sheet 移动端分支（modelSheetOpen && !isDesktopDock），5 → 6。
+    expect((tpl.match(/!isDesktopDock/g) ?? []).length, 'C 类 6 处必须恰好替换（3 处旧 + 技能 sheet + 管理弹层 + 模型 sheet 移动分支）').toBe(6)
     expect(tpl, 'composer 换行策略 prop 必须走派生真源')
       .toContain(':mobile-enter-newline="!isDesktopDock"')
     // 9 处第一批/#800 消费点 + 3 处第二批 + 技能 sheet + 管理弹层 = 14

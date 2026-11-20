@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, reactive, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { useAgentMobileLayout } from '@/composables/useAgentMobileLayout'
+import { useThinkingByModel } from '@/composables/useThinkingByModel'
+import { useModelSelectorOptions } from '@/composables/useModelSelectorOptions'
+import { contextWindowLabel } from '@lnkpi/shared'
 import { useMobileComposerFocus } from '@/composables/useMobileComposerFocus'
 import { useMobileKeyboardInset } from '@/composables/useMobileKeyboardInset'
 import { useRouter } from 'vue-router'
@@ -894,6 +897,13 @@ watch(showPlanningThinkingControls, (show) => {
   }
 })
 
+/* 2026-11-20 思考强度按模型种子（模型配置页 AD3）：
+ * 持久层按模型 key 记忆档位，切模型时查表一次性种入 composer 级单值（planningThinking/Effort）；
+ * 运行时仍是会话单值、每轮下传，与 pi-runtime SessionEntry.thinkingLevel 一一对应。
+ * ⚠️ 不要在运行时把档位做成 Map<model,level>——上游 setThinkingLevel 原地换档、reasoning 能力位、
+ * meta.json 不落盘三处都与运行时 Map 冲突（详见 useThinkingByModel 注释）。 */
+const { seedFor, saveSeed } = useThinkingByModel()
+
 // 第八刀（strangler-fig）：Queue-Draft 簇（queueDraftAsPending / deliverQueued / withdrawQueued /
 // dismissQueued / requeueQueued / markQueueApplied）已迁入 useAgentQueue。
 // queuedSlots / queuedEntryIds 仍由本组件持有所有权，仅注入 composable 消费（与第七刀同口径）。
@@ -943,12 +953,25 @@ const currentThinkingLevel = computed<ThinkingLevel>(() => {
 
 function setPlanningThinkingLevel(level: ThinkingLevel) {
   thinkingMenuOpen.value = false
+  // 按模型记忆：改档即写种子（与会话单值写回并行；切回该模型时恢复）
+  saveSeed(planningModel.value, level)
   if (level === '标准') {
     setPlanningThinking(false)
     return
   }
   setPlanningThinkingEffort(level === '极限' ? 'max' : 'high')
 }
+
+/* 切模型时查种子表一次性种入（能力门禁：不支持 thinking 的模型强制标准）。
+ * 只在此刻读种子；运行时仍用 planningThinking/Effort 单值下传，不做运行时 Map。 */
+watch(
+  planningModel,
+  (model) => {
+    if (!showPlanningThinkingControls.value) return
+    const seed = seedFor(model)
+    if (seed) setPlanningThinkingLevel(seed)
+  },
+)
 
 /* ---- 技能选择（显式 Skill；默认自动 / 平台路由）----
  * 2026-10-18：技能入口收敛为「＋」一级菜单（技能父项），展开下一级才列出 自动/已安装技能；
@@ -959,6 +982,32 @@ const selectedSkillIds = ref<string[]>([])
 const activeSkillId = computed(() => selectedSkillIds.value[0] ?? null)
 const skillSheetOpen = ref(false)
 const manageOpen = ref(false)
+
+/* 2026-11-20 模型选择卡 iOS 化：移动端全宽底部 Sheet（PC 保留 UniversalModelSelector 锚定卡）。
+ * modelSheetView='list' 为模型列表，'config' 为同 Sheet 内的模型配置二级页（返回按钮回列表）。 */
+const modelSheetOpen = ref(false)
+const modelSheetView = ref<'list' | 'config'>('list')
+/** 移动端模型 chip 与 Sheet 共用同一选项投影（PC 的 UniversalModelSelector 内部另调一次，数据源同源）。 */
+const modelSelector = useModelSelectorOptions({
+  modelValue: () => planningModel.value,
+  type: () => 'text',
+})
+const { currentLabel: modelChipLabel, selectableOptions: modelSheetOptions } = modelSelector
+function openModelSheet() {
+  if (props.readOnly) return
+  modelSheetView.value = 'list'
+  modelSheetOpen.value = true
+}
+function onModelSheetClose() {
+  modelSheetOpen.value = false
+  modelSheetView.value = 'list'
+}
+/** 选择模型（Sheet 内）：沿用与 PC select 相同的可用性门禁，写回并关闭。 */
+function selectModelFromSheet(id: string) {
+  if (modelSelector.selectableOptions.value.find((m) => m.id === id)?.unavailable) return
+  planningModel.value = id
+  onModelSheetClose()
+}
 
 /* 子代理任务详情面板（spec 2026-11-17）：由 AgentTurnTimeline 任务卡点击驱动。
    part 是拍快照（click 时对象引用），详情只读展示，不需要随流更新。 */
@@ -4531,13 +4580,30 @@ defineExpose({
                 </div>
 
                 <div class="agent-dock-params">
+                  <!-- PC：锚定 popover（不动存量行为）；移动端：点击开全宽底部 Sheet -->
                   <UniversalModelSelector
-                    v-if="shouldShowModelChip(activeSkillId)"
+                    v-if="shouldShowModelChip(activeSkillId) && isDesktopDock"
                     v-model="planningModel"
                     type="text"
                     ghost
                     class="agent-model-hit"
                   />
+                  <button
+                    v-else-if="shouldShowModelChip(activeSkillId)"
+                    type="button"
+                    class="dock-ghost-ctl flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs"
+                    :disabled="props.readOnly"
+                    data-testid="model-sheet-trigger"
+                    @click="openModelSheet"
+                  >
+                    <svg viewBox="0 0 24 24" class="h-3 w-3 shrink-0 opacity-60" fill="none" stroke="currentColor" stroke-width="2">
+                      <circle cx="12" cy="12" r="3" /><path stroke-linecap="round" d="M12 2v3m0 14v3M2 12h3m14 0h3" />
+                    </svg>
+                    <span class="max-w-[140px] truncate font-medium">{{ modelChipLabel }}</span>
+                    <svg class="h-3 w-3 shrink-0 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
 
                   <!-- P1-2.1：B 级 chip 仅非默认档常驻；默认档经 C 抽屉「思考档位」进入同一 popover，写回原状态通道
                        （agent-dock-thinking：移动端裸条按 spec §5.5 只留 +/模型/发送，此槽位 CSS 隐藏） -->
@@ -4580,6 +4646,80 @@ defineExpose({
                     </div>
                   </div>
                 </div>
+
+                <!-- 模型选择卡 iOS 化（2026-11-20）：移动端全宽底部 Sheet，配置页同 Sheet 内切换。
+                     不传 swipe-to-dismiss ⇒ 继承 MobileSheet 默认开启的下滑手柄关闭。 -->
+                <MobileSheet
+                  v-if="modelSheetOpen && !isDesktopDock"
+                  :title="modelSheetView === 'config' ? '模型配置' : '选择模型'"
+                  :subtitle="modelSheetView === 'config' ? `当前模型：${modelSelector.current.value?.name ?? ''}` : undefined"
+                  :show-back="modelSheetView === 'config'"
+                  max-height="72vh"
+                  @back="modelSheetView = 'list'"
+                  @close="onModelSheetClose"
+                >
+                  <template v-if="modelSheetView === 'config'">
+                    <div class="model-config-group">
+                      <div class="model-config-row">
+                        <span>思考强度</span>
+                        <span v-if="showPlanningThinkingControls" class="model-config-value">{{ currentThinkingLevel }}</span>
+                        <span v-else class="model-config-value model-config-muted">不支持</span>
+                      </div>
+                      <div v-if="showPlanningThinkingControls" class="model-config-levels">
+                        <button
+                          v-for="lv in THINKING_LEVELS"
+                          :key="lv"
+                          type="button"
+                          class="model-config-level"
+                          :class="{ 'is-selected': lv === currentThinkingLevel }"
+                          :aria-pressed="lv === currentThinkingLevel"
+                          :disabled="props.readOnly"
+                          @click="setPlanningThinkingLevel(lv)"
+                        >
+                          {{ lv }}
+                          <svg v-if="lv === currentThinkingLevel" viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                        </button>
+                      </div>
+                      <div class="model-config-row">
+                        <span>上下文窗口</span>
+                        <span class="model-config-value">{{ contextWindowLabel(planningModel) }}</span>
+                      </div>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <div class="model-sheet-list">
+                      <button
+                        v-for="model in modelSheetOptions"
+                        :key="model.id"
+                        type="button"
+                        class="model-sheet-row"
+                        :class="{ 'is-selected': model.id === planningModel && !model.unavailable }"
+                        :disabled="model.unavailable || props.readOnly"
+                        @click="selectModelFromSheet(model.id)"
+                      >
+                        <span class="model-sheet-name">{{ model.name }}</span>
+                        <span v-if="model.unavailable" class="model-config-muted">暂不可用</span>
+                        <span v-else-if="model.id === planningModel" class="model-sheet-check">✓</span>
+                      </button>
+                    </div>
+                  </template>
+                  <template #headerActions>
+                    <button
+                      type="button"
+                      class="m-sheet-close"
+                      aria-label="模型配置"
+                      data-testid="model-config-open"
+                      @click="modelSheetView = 'config'"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z" />
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                      </svg>
+                    </button>
+                  </template>
+                </MobileSheet>
 
                 <div class="agent-dock-primary">
                   <!-- P2-2.1：麦克风改 press-and-hold——press 开始、release 转写填入（不自动提交）、上滑取消 -->
@@ -6198,5 +6338,125 @@ defineExpose({
 }
 
 /* 2026-11-05：会话级 ☐ 勾选列样式随功能一并退役（对话页零选择态）。 */
+
+/* 2026-11-20 模型选择卡 iOS 化：底部 Sheet 内的模型列表 + 配置分组卡。
+ * 全部消费 L2 令牌；选中态用主题稳定的 accent 三件套，禁 hi-bg/hi-text。 */
+.model-sheet-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.model-sheet-row {
+  display: flex;
+  min-height: var(--lnk-touch-target);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lnk-space-2);
+  width: 100%;
+  padding: var(--lnk-space-2) var(--lnk-space-3);
+  border: none;
+  border-radius: var(--lnk-radius-md);
+  background: transparent;
+  color: var(--lnk-text-primary);
+  font-size: var(--lnk-text-sm);
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.model-sheet-row:active {
+  background: var(--lnk-pressed-overlay);
+}
+
+.model-sheet-row:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.model-sheet-row.is-selected {
+  background: var(--lnk-accent-subtle);
+  color: var(--lnk-accent-text);
+  box-shadow: inset 0 0 0 1px var(--lnk-accent-border);
+}
+
+.model-sheet-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-sheet-check {
+  flex: none;
+  color: var(--lnk-accent-text);
+}
+
+.model-config-group {
+  overflow: hidden;
+  border: 1px solid var(--lnk-border-subtle);
+  border-radius: var(--lnk-radius-xl);
+  background: var(--lnk-surface-base);
+}
+
+.model-config-row {
+  display: flex;
+  min-height: var(--lnk-touch-target);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--lnk-space-2);
+  padding: var(--lnk-space-2) var(--lnk-space-4);
+  color: var(--lnk-text-primary);
+  font-size: var(--lnk-text-sm);
+}
+
+.model-config-row + .model-config-row,
+.model-config-row + .model-config-levels {
+  border-top: 1px solid var(--lnk-border-subtle);
+}
+
+.model-config-value {
+  color: var(--lnk-text-secondary);
+}
+
+.model-config-muted {
+  color: var(--lnk-text-muted);
+}
+
+.model-config-levels {
+  display: flex;
+  gap: var(--lnk-space-2);
+  padding: var(--lnk-space-2) var(--lnk-space-4);
+}
+
+.model-config-level {
+  display: flex;
+  min-height: var(--lnk-touch-target);
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  gap: var(--lnk-space-1);
+  border: 1px solid var(--lnk-border-default);
+  border-radius: var(--lnk-radius-lg);
+  background: transparent;
+  color: var(--lnk-text-secondary);
+  font-size: var(--lnk-text-sm);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.model-config-level.is-selected {
+  border-color: var(--lnk-accent-border);
+  background: var(--lnk-accent-subtle);
+  color: var(--lnk-accent-text);
+}
+
+.model-config-level:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
 
 </style>

@@ -1434,16 +1434,11 @@
     display: none;
   }
 
-  /* ⑤ 面板内弹层卡片（模型 / 尺寸参数）屏宽自适应：
-   * 桌面是 w-[264px] 贴触发器左缘，窄屏下右溢出面板/屏幕。
-   * 移动端改为相对**面板**（position:relative）左右各 12px 铺开，
-   * 高度封顶 48vh + 内部滚动——上拉不会顶出屏幕顶端。 */
+  /* ⑤ 面板内弹层卡片（尺寸参数 ImageParamsSelector）：
+   * 2026-11-20 模型卡已改走全宽 MobileSheet，不再使用本锚定补丁。
+   * 这里仅保留「高度封顶 + 内部滚动」防止尺寸参数卡顶出屏幕；
+   * 不再强制 left/right 12px 铺满面板（那会让锚定卡在窄屏失真）。 */
   .dock-inline-card {
-    left: 12px !important;
-    right: 12px;
-    width: auto !important;
-    min-width: 0 !important;
-    max-width: none;
     max-height: 48vh;
     overflow-y: auto;
     overscroll-behavior: contain;

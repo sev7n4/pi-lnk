@@ -228,16 +228,17 @@ describe('移动端 dock 面板布局（2026-10-21 真机：底行被挤压 / �
     expect(css).toMatch(/^\.bottom-toolbar-actions \{[\s\S]{0,200}flex-wrap: wrap/m)
   })
 
-  it('⑤面板内弹层卡片屏宽自适应（模型 / 尺寸参数）', () => {
+  it('⑤面板内弹层卡片：模型卡已改全宽 Sheet，锚定卡仅尺寸参数保留高度封顶', () => {
     const block = css.match(/\.dock-inline-card \{[^}]*\}/)?.[0] ?? ''
     expect(block, '必须有 dock-inline-card 规则').not.toBe('')
-    expect(block).toContain('left: 12px !important')
-    expect(block).toContain('right: 12px')
+    // 2026-11-20 模型卡 iOS 化：移动端不再用锚定卡左右 12px 铺满，改走全宽 MobileSheet。
+    expect(block).not.toContain('left: 12px !important')
+    expect(block).not.toContain('right: 12px')
     expect(block).toContain('max-height: 48vh')
     expect(block).toContain('overflow-y: auto')
-    // 两个触发器都挂上了该类（桌面固定宽度 + 贴触发器左缘，窄屏会右溢出）
-    for (const p of ['canvas/UniversalModelSelector.vue', 'canvas/ImageParamsSelector.vue']) {
-      expect(readComponent(p), `${p} 的弹层须挂 dock-inline-card`).toContain('dock-inline-card')
-    }
+    // 模型卡已从锚定卡迁移到 MobileSheet（不再挂 dock-inline-card）；
+    // 尺寸参数卡仍挂该类（保留高度封顶）。
+    expect(readComponent('canvas/UniversalModelSelector.vue')).not.toContain('dock-inline-card')
+    expect(readComponent('canvas/ImageParamsSelector.vue'), '尺寸参数卡仍用锚定弹层').toContain('dock-inline-card')
   })
 })
