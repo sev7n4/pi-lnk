@@ -539,6 +539,13 @@ const connectPicker = ref<{
 const blankNodePicker = ref<{ x: number; y: number } | null>(null)
 const selectedEdgeId = ref<string | null>(null)
 const selectedEdgePos = ref({ x: 0, y: 0 })
+/**
+ * 选中连线剪刀的 flow 坐标锚点（2026-11-20 修复）：
+ * 剪刀必须锚在「连线上的点」而非「点击瞬间的屏幕像素」。旧实现把 getEventCoords
+ * 的 clientX/Y 直接存进 selectedEdgePos，pan/zoom 后连线动了、剪刀钉死在旧屏幕点
+ * ⇒ 视觉上「剪刀飘到连线外」。改为点击时锁 flow 坐标，viewport 变化时重投影。
+ */
+const selectedEdgeFlowPos = ref({ x: 0, y: 0 })
 const batchConnectPicker = ref<{ sourceIds: string[]; x: number; y: number } | null>(null)
 const workflowImportInputRef = ref<HTMLInputElement | null>(null)
 
@@ -2672,8 +2679,21 @@ function onEdgeClick({ edge, event }: EdgeMouseEvent) {
   clearSelection()
   selectedEdgeId.value = edge.id
   const coords = getEventCoords(event)
+  // 锁 flow 锚点（而非屏幕像素）：pan/zoom 后由 reprojectSelectedEdge 重投影，剪刀恒贴连线。
+  // 初始渲染仍用 clientX/Y（剪刀按钮 absolute 定位在 .vue-flow 容器内，容器锚在视口 0,0）。
+  selectedEdgeFlowPos.value = screenToFlowPoint(coords.x, coords.y)
   selectedEdgePos.value = { x: coords.x, y: coords.y }
   closeContextMenu()
+}
+
+/** 把选中连线的剪刀锚点从 flow 坐标重投影到当前屏幕坐标（viewport 变化时调用）。 */
+function reprojectSelectedEdge() {
+  if (!selectedEdgeId.value) return
+  const flow = vueFlowRef.value as {
+    flowToScreenCoordinate?: (pos: { x: number; y: number }) => { x: number; y: number }
+  } | null
+  if (!flow?.flowToScreenCoordinate) return
+  selectedEdgePos.value = flow.flowToScreenCoordinate(selectedEdgeFlowPos.value)
 }
 
 function deleteEdgeById(edgeId: string) {
@@ -5852,6 +5872,8 @@ const viewportTracker = createViewportTracker({
 /** vue-flow `viewportChange` 事件入口（模板 `@viewport-change` 挂这个）。 */
 function onViewportChange(payload?: unknown) {
   viewportTracker.note(payload)
+  // 剪刀锚点随视口重投影：pan/zoom 后仍贴在连线点击处（2026-11-20 修复）。
+  reprojectSelectedEdge()
 }
 
 /** 恢复侧：可用 ⇒ `setViewport(clamp(vp), { duration: 0 })`（N5/N6）；脏值 ⇒ 不恢复，走默认 fitView。 */

@@ -62,6 +62,15 @@ describe('WorkspaceTopBar（WEB 工作台顶栏）', () => {
     expect(block).not.toContain('backdrop-filter')
   })
 
+  it('R0 令牌修复（2026-11-20）：导航 hover 用 --lnk-hover-overlay，禁用静默失效的 --lnk-hover', () => {
+    const block = stripComments(topBar)
+    // 正确令牌（双主题成对定义：深 rgba(255,255,255,.06)/浅 rgba(23,25,35,.05)）
+    expect(block).toMatch(/\.wkb-nav:hover\s*\{[^}]*var\(--lnk-hover-overlay\)/)
+    // 旧写法 --lnk-hover 全 src 无定义、静默失效，禁止回潮（连同其 fallback rgba）
+    expect(block).not.toContain('var(--lnk-hover,')
+    expect(block).not.toMatch(/var\(--lnk-hover\)/)
+  })
+
   it('居中页题注（§13.5 v2）：「画布·「项目名称」」，细体小字、绝对居中、超长截断、非交互', () => {
     const block = stripComments(topBar)
     expect(block).toContain('画布·「{{ projectName }}」')
