@@ -82,6 +82,15 @@
 - 返回按钮按 push/pop 逐级回退：`config → list`，`thinking/context → config`（不关 Sheet）；close / 遮罩 / 下滑 → 关整个 Sheet（回到列表态复位 `view`，下次打开从列表起）。
 - 齿轮按钮只在列表页渲染：进入配置/二级页后 header 仅保留返回、标题/副标题、关闭，与参考图一致。
 
+### R3a · PC 锚定卡同规范（2026-11-20 追加，生产走查反馈）
+- **动机**：生产 CDP 走查复测通过后，用户要求 PC 对话页 composer 的模型选择卡与模型配置卡一并按同一规范完成——不能移动端 iOS 化而 PC 停留在旧列表。
+- **单源复用（吃满上游）**：
+  - 状态机抽 `useModelConfigView()`（`list → config → thinking/context`，back 逐级 pop、openConfig、reset），移动 MobileSheet 与 PC popover 共用同一实例逻辑，宿主内不再各自实现。
+  - 配置页模板与样式抽 `ModelConfigPanel.vue`（`components/agent/`），按 `view` prop 渲染 config/thinking/context 三视图，`update:view` 上抛导航、`setThinking` 上抛档位写回；两宿主共用，杜绝模板/样式双源。
+  - `UniversalModelSelector` 增可选 props：`configEnabled`（缺省 false ⇒ studio 4 宿主零变化）、`thinkingSupported`、`thinkingLevel`、`readOnly`、`contextLabel`（缺省走 shared `contextWindowLabel` 派生）；`set-thinking` 事件上抛宿主写回，组件内不持有思考数据源。
+- **PC 交互**（popover 内同构）：列表页顶部标题头（返回 chevron / 标题 / 齿轮 `pc-model-config-open`，28×28 显式尺寸防 0×0）；点齿轮 push 配置页；thinking/context 二级页与移动端同模板；返回逐级 pop；选择模型或关 popover 时视图复位。
+- **AgentSideRail 接线**：PC 分支传 `config-enabled` + `:thinking-supported="showPlanningThinkingControls"` + `:thinking-level="currentThinkingLevel"` + `:read-only` + `@set-thinking="setPlanningThinkingLevel"`（种子逻辑复用 R4，无新增数据源）。
+
 ### R4 · 思考强度按模型种子（`usePreferences.ts` + `AgentSideRail.vue`）
 - `usePreferences` 的 `preferences` 类型加 `thinkingByModel?: Record<string, ThinkingLevel>`；读写走现有 localStorage 通道（`lnkpi.preferences`），不新建 key。
 - `setPlanningThinkingLevel(level)` 增加副作用：若 `planningModel` 当前支持 thinking（`showPlanningThinkingControls`）则写 `thinkingByModel[catalogModelKeyFromValue(planningModel)] = level`；否则仍写（种子与当前能力解耦，切回支持的模型时用得上）。
@@ -107,7 +116,8 @@
 |---|---|---|
 | `MobileSheet.vue` | 加 `showBack`/`back` emit + `headerActions` slot | 存量 8+ 调用点零参数变化；插槽默认空 ⇒ 低风险，但需全量回归 |
 | `AgentSideRail.vue` | 双形态分支 + 种子表写读 + 配置页视图 | 文件 6000+ 行，测试靠 fs-scan，需精确锚点；`thinking.test.ts` 的反转注释要同步 |
-| `UniversalModelSelector.vue` | 抽 composable + 令牌清零 | 现有 5 组单测（可识图/audio/unavailable/health）必须保持绿 |
+| `UniversalModelSelector.vue` | 抽 composable + 令牌清零 + 可选配置视图（R3a） | 现有 5 组单测（可识图/audio/unavailable/health）必须保持绿；`configEnabled` 缺省 false ⇒ studio 4 宿主零变化 |
+| `ModelConfigPanel.vue` + `useModelConfigView.ts`（新增） | 配置页模板/样式与状态机单源（R3a） | 移动端从 AgentSideRail 内联迁移，行为判据移交面板/组合数单测 |
 | `neo-node.css` | 删移动端 12px 覆盖块 | 若有其他调用点依赖该覆盖需先 grep 确认（仅模型卡用） |
 | `usePreferences.ts` | 加 thinkingByModel 字段 | localStorage 反序列化需容错旧值（可选字段） |
 | `packages/shared` + `model-capability.ts` | 规则上移 shared，server reverse-import | 服务端 4 条单测交叉验证；导入方向别造成循环依赖 |

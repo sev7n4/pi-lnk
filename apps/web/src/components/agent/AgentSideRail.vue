@@ -120,6 +120,8 @@ import { useSidebarAttachments, assignRefKeysFor, type FocusNodeLike, type Canva
 import { parseRefMentions } from '@/composables/useRefMentions'
 import MentionInput from '@/components/canvas/MentionInput.vue'
 import MobileSheet from '@/components/mobile/MobileSheet.vue'
+import ModelConfigPanel from './ModelConfigPanel.vue'
+import { useModelConfigView } from '@/composables/useModelConfigView'
 import { isConversationAckResponse, parseConversationAck } from './main-turn-ack'
 import { turnLiveStatus } from './activityLine'
 import { useClickOutside } from '@/composables/useClickOutside'
@@ -983,17 +985,17 @@ const activeSkillId = computed(() => selectedSkillIds.value[0] ?? null)
 const skillSheetOpen = ref(false)
 const manageOpen = ref(false)
 
-/* 2026-11-20 模型选择卡 iOS 化：移动端全宽底部 Sheet（PC 保留 UniversalModelSelector 锚定卡）。
- * 同 Sheet 内四级视图：list → config → thinking/context，返回按 iOS push/pop 逐级回退。 */
-type ModelSheetView = 'list' | 'config' | 'thinking' | 'context'
+/* 2026-11-20 模型选择卡 iOS 化：移动端全宽底部 Sheet；PC 锚定卡同规范（配置视图
+ * 状态机 useModelConfigView 与配置页模板 ModelConfigPanel 与移动端单源共用）。 */
 const modelSheetOpen = ref(false)
-const modelSheetView = ref<ModelSheetView>('list')
-const modelSheetTitle = computed(() => ({
-  list: '选择模型',
-  config: '模型配置',
-  thinking: '思考强度',
-  context: '上下文窗口',
-})[modelSheetView.value])
+const {
+  view: modelSheetView,
+  title: modelSheetTitle,
+  showBack: modelSheetShowBack,
+  back: onModelSheetBack,
+  openConfig: openModelConfig,
+  reset: resetModelSheetView,
+} = useModelConfigView()
 /** 移动端模型 chip 与 Sheet 共用同一选项投影（PC 的 UniversalModelSelector 内部另调一次，数据源同源）。 */
 const modelSelector = useModelSelectorOptions({
   modelValue: () => planningModel.value,
@@ -1005,22 +1007,17 @@ const modelSheetSubtitle = computed(() =>
 )
 function openModelSheet() {
   if (props.readOnly) return
-  modelSheetView.value = 'list'
+  resetModelSheetView()
   modelSheetOpen.value = true
 }
 function onModelSheetClose() {
   modelSheetOpen.value = false
-  modelSheetView.value = 'list'
-}
-/** iOS push/pop 语义：列表←配置←(思考强度|上下文窗口)。 */
-function onModelSheetBack() {
-  if (modelSheetView.value === 'config') modelSheetView.value = 'list'
-  else if (modelSheetView.value === 'thinking' || modelSheetView.value === 'context') modelSheetView.value = 'config'
+  resetModelSheetView()
 }
 /** 思考档位选中后回到配置页（WorkBuddy 的二级选择返回语义）。 */
 function setThinkingFromSheet(level: ThinkingLevel) {
   setPlanningThinkingLevel(level)
-  modelSheetView.value = 'config'
+  openModelConfig()
 }
 /** 选择模型（Sheet 内）：沿用与 PC select 相同的可用性门禁，写回并关闭。 */
 function selectModelFromSheet(id: string) {
@@ -4600,14 +4597,20 @@ defineExpose({
                 </div>
 
                 <div class="agent-dock-params">
-                  <!-- PC：锚定 popover（不动存量行为）；移动端：点击开全宽底部 Sheet -->
+                  <!-- PC：锚定 popover，配置视图与移动 Sheet 同规范（共用状态机 + 配置面板）；
+                       移动端：点击开全宽底部 Sheet -->
                   <UniversalModelSelector
-                    v-if="shouldShowModelChip(activeSkillId) && isDesktopDock"
-                    v-model="planningModel"
-                    type="text"
-                    ghost
-                    class="agent-model-hit"
-                  />
+                  v-if="shouldShowModelChip(activeSkillId) && isDesktopDock"
+                  v-model="planningModel"
+                  type="text"
+                  ghost
+                  class="agent-model-hit"
+                  config-enabled
+                  :thinking-supported="showPlanningThinkingControls"
+                  :thinking-level="currentThinkingLevel"
+                  :read-only="props.readOnly"
+                  @set-thinking="setPlanningThinkingLevel"
+                />
                   <button
                     v-else-if="shouldShowModelChip(activeSkillId)"
                     type="button"
@@ -4667,82 +4670,29 @@ defineExpose({
                   </div>
                 </div>
 
-                <!-- 模型选择卡 iOS 化（2026-11-20）：移动端全宽底部 Sheet；配置页复刻 WorkBuddy
-                     两行 disclosure 列表，思考强度/上下文窗口各自在同 Sheet 内 push 二级页。 -->
+                <!-- 模型选择卡 iOS 化（2026-11-20）：移动端全宽底部 Sheet；配置页模板
+                     ModelConfigPanel 与 PC 锚定卡单源共用，状态机 useModelConfigView 同源。
+                     不传 swipe-to-dismiss ⇒ 继承 MobileSheet 默认开启的下滑手柄关闭。 -->
                 <MobileSheet
                   v-if="modelSheetOpen && !isDesktopDock"
                   :title="modelSheetTitle"
                   :subtitle="modelSheetSubtitle"
-                  :show-back="modelSheetView !== 'list'"
+                  :show-back="modelSheetShowBack"
                   max-height="72vh"
                   @back="onModelSheetBack"
                   @close="onModelSheetClose"
                 >
-                  <template v-if="modelSheetView === 'config'">
-                    <div class="model-config-group">
-                      <button
-                        type="button"
-                        class="model-config-row is-tappable"
-                        data-testid="model-thinking-row"
-                        @click="modelSheetView = 'thinking'"
-                      >
-                        <span class="model-config-label">思考强度</span>
-                        <span class="model-config-trailing">
-                          <span v-if="showPlanningThinkingControls" class="model-config-value">{{ currentThinkingLevel }}</span>
-                          <span v-else class="model-config-value model-config-muted">不支持</span>
-                          <svg viewBox="0 0 24 24" class="model-config-chevron" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 6l6 6-6 6" />
-                          </svg>
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        class="model-config-row is-tappable"
-                        data-testid="model-context-row"
-                        @click="modelSheetView = 'context'"
-                      >
-                        <span class="model-config-label">上下文窗口</span>
-                        <span class="model-config-trailing">
-                          <span class="model-config-value">{{ contextWindowLabel(planningModel) }}</span>
-                          <svg viewBox="0 0 24 24" class="model-config-chevron" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 6l6 6-6 6" />
-                          </svg>
-                        </span>
-                      </button>
-                    </div>
-                  </template>
-                  <template v-else-if="modelSheetView === 'thinking'">
-                    <div class="model-config-group">
-                      <p v-if="!showPlanningThinkingControls" class="model-config-empty">当前模型不支持思考强度</p>
-                      <template v-else>
-                        <button
-                          v-for="lv in THINKING_LEVELS"
-                          :key="lv"
-                          type="button"
-                          class="model-config-row is-tappable"
-                          :class="{ 'is-selected': lv === currentThinkingLevel }"
-                          data-testid="thinking-level-option"
-                          :aria-pressed="lv === currentThinkingLevel"
-                          :disabled="props.readOnly"
-                          @click="setThinkingFromSheet(lv)"
-                        >
-                          <span class="model-config-label">{{ lv }}</span>
-                          <svg v-if="lv === currentThinkingLevel" viewBox="0 0 24 24" class="model-config-check" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
-                        </button>
-                      </template>
-                    </div>
-                  </template>
-                  <template v-else-if="modelSheetView === 'context'">
-                    <div class="model-config-group">
-                      <div class="model-config-row">
-                        <span class="model-config-label">当前窗口</span>
-                        <span class="model-config-value">{{ contextWindowLabel(planningModel) }}</span>
-                      </div>
-                      <p class="model-context-note">由当前模型能力推导，暂不可配置。</p>
-                    </div>
-                  </template>
+                  <!-- 配置页/思考强度/上下文窗口：共用面板（WorkBuddy 两行 disclosure 规范） -->
+                  <ModelConfigPanel
+                    v-if="modelSheetView !== 'list'"
+                    :view="modelSheetView"
+                    :thinking-supported="showPlanningThinkingControls"
+                    :thinking-level="currentThinkingLevel"
+                    :read-only="props.readOnly"
+                    :context-label="contextWindowLabel(planningModel)"
+                    @update:view="modelSheetView = $event"
+                    @set-thinking="setThinkingFromSheet"
+                  />
                   <template v-else>
                     <div class="model-sheet-list">
                       <button
@@ -4755,7 +4705,7 @@ defineExpose({
                         @click="selectModelFromSheet(model.id)"
                       >
                         <span class="model-sheet-name">{{ model.name }}</span>
-                        <span v-if="model.unavailable" class="model-config-muted">暂不可用</span>
+                        <span v-if="model.unavailable" class="model-sheet-muted">暂不可用</span>
                         <span v-else-if="model.id === planningModel" class="model-sheet-check">✓</span>
                       </button>
                     </div>
@@ -6482,99 +6432,8 @@ defineExpose({
   color: var(--lnk-accent-text);
 }
 
-.model-config-group {
-  overflow: hidden;
-  border: 1px solid var(--lnk-border-subtle);
-  border-radius: var(--lnk-radius-xl);
-  background: var(--lnk-surface-base);
-}
-
-/* WorkBuddy 风格 disclosure 行：左标签、右值 + 箭头，整行 44px+ 触控区。 */
-.model-config-row {
-  display: flex;
-  width: 100%;
-  min-height: calc(var(--lnk-touch-target) + var(--lnk-space-3));
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--lnk-space-2);
-  padding: var(--lnk-space-3) var(--lnk-space-4);
-  border: 0;
-  background: transparent;
-  color: var(--lnk-text-primary);
-  font-size: var(--lnk-text-sm);
-  text-align: left;
-}
-
-.model-config-row.is-tappable {
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.model-config-row.is-tappable:active {
-  background: var(--lnk-pressed-overlay);
-}
-
-.model-config-row.is-tappable:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.model-config-row.is-selected {
-  background: var(--lnk-accent-subtle);
-  color: var(--lnk-accent-text);
-}
-
-.model-config-row + .model-config-row {
-  border-top: 1px solid var(--lnk-border-subtle);
-}
-
-.model-config-label {
-  min-width: 0;
-  font-weight: var(--lnk-weight-semibold);
-}
-
-.model-config-trailing {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: var(--lnk-space-2);
-}
-
-.model-config-value {
-  color: var(--lnk-text-secondary);
-}
-
-.model-config-muted {
+.model-sheet-muted {
   color: var(--lnk-text-muted);
-}
-
-.model-config-chevron,
-.model-config-check {
-  width: 16px;
-  height: 16px;
-  flex: none;
-  color: var(--lnk-text-muted);
-}
-
-.model-config-check {
-  color: var(--lnk-accent-text);
-}
-
-.model-config-empty,
-.model-context-note {
-  margin: 0;
-  color: var(--lnk-text-muted);
-  font-size: var(--lnk-text-2xs);
-  line-height: var(--lnk-lh-2xs);
-}
-
-.model-config-empty {
-  padding: var(--lnk-space-3) var(--lnk-space-4);
-}
-
-.model-context-note {
-  padding: 0 var(--lnk-space-4) var(--lnk-space-4);
 }
 
 </style>

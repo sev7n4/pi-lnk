@@ -1,5 +1,6 @@
-// 模型选择卡双形态 + 配置页守卫（2026-11-20 iOS 化 R2/R3）：
-// PC 保留锚定 popover；移动端全宽 MobileSheet + 设置齿轮 + 同 Sheet 内配置二级页 + 上下文只读。
+// 模型选择卡双形态 + 配置页守卫（2026-11-20 iOS 化 R2/R3 + PC 同规范）：
+// 移动端全宽 MobileSheet + 设置齿轮 + 同 Sheet 内配置二级页 + 上下文只读；
+// PC 锚定卡同规范（配置视图状态机 useModelConfigView 与配置页模板 ModelConfigPanel 单源共用）。
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -17,8 +18,15 @@ describe('model selector dual-form (PC popover / mobile sheet)', () => {
     expect(region).toContain('isDesktopDock')
   })
 
+  it('PC branch wires config view (gear entry + thinking + context) into UniversalModelSelector', () => {
+    const at = vue.indexOf('<UniversalModelSelector')
+    const region = vue.slice(at, at + 800)
+    expect(region).toContain('config-enabled')
+    expect(region).toContain('thinking-supported')
+    expect(region).toContain('@set-thinking')
+  })
+
   it('mobile renders full-width MobileSheet titled 选择模型 with swipe default on', () => {
-    expect(vue).toContain("'选择模型'")
     expect(vue).toContain('<MobileSheet')
     // 不传 swipeToDismiss=false ⇒ 默认 true（下滑关闭继承）
     const sheetAt = vue.indexOf('v-if="modelSheetOpen')
@@ -43,33 +51,28 @@ describe('model selector dual-form (PC popover / mobile sheet)', () => {
     expect(block).toContain('margin-left: auto')
   })
 
-  it('config page mirrors WorkBuddy two-row disclosure list', () => {
-    expect(vue).toContain('data-testid="model-thinking-row"')
-    expect(vue).toContain('data-testid="model-context-row"')
-    expect(vue).toContain('model-config-chevron')
-    expect(vue).not.toContain('class="model-config-level"')
-    const at = vue.indexOf('data-testid="model-thinking-row"')
-    expect(vue.slice(at - 200, at + 800)).toContain("modelSheetView = 'thinking'")
+  it('config page template is shared ModelConfigPanel (single source for mobile + PC)', () => {
+    expect(vue).toContain('<ModelConfigPanel')
+    expect(vue).toContain('contextWindowLabel(planningModel)')
+    // 视图状态机走共用 composable，不在宿主内重复实现
+    expect(vue).toContain('useModelConfigView()')
+    expect(vue).not.toContain("type ModelSheetView = 'list'")
   })
 
-  it('in-sheet views push/pop list → config → thinking/context', () => {
-    expect(vue).toMatch(/modelSheetView\s*=\s*ref<[^>]+>\(['"]list['"]\)/)
-    expect(vue).toContain("modelSheetView = 'context'")
-    expect(vue).toContain('data-testid="thinking-level-option"')
+  it('in-sheet views push/pop list → config → thinking/context via shared composable', () => {
+    expect(vue).toContain(':view="modelSheetView"')
+    expect(vue).toContain('@update:view=')
     expect(vue).toContain('setThinkingFromSheet')
-    expect(vue).toContain('function onModelSheetBack()')
-    expect(vue).toContain("modelSheetView.value = 'config'")
-    expect(vue).toContain(':show-back="modelSheetView !== \'list\'"')
+    expect(vue).toContain('back: onModelSheetBack')
+    expect(vue).toContain('@back="onModelSheetBack"')
+    expect(vue).toContain(':show-back="modelSheetShowBack"')
   })
 
-  it('context window detail stays read-only (no input/select, explicit note)', () => {
-    const at = vue.indexOf('model-context-note')
-    expect(at).toBeGreaterThan(-1)
-    const region = vue.slice(at - 400, at + 300)
-    expect(region).toContain('contextWindowLabel(planningModel)')
+  it('context window stays read-only on mobile sheet (no input/select)', () => {
+    const at = vue.indexOf('<ModelConfigPanel')
+    const region = vue.slice(at, at + 700)
     expect(region).not.toContain('<input')
     expect(region).not.toContain('<select')
-    expect(vue).toContain('暂不可配置')
   })
 
   it('old 12px inset patch removed from neo-node.css mobile override', () => {
