@@ -53,10 +53,14 @@ INJECTION_BASELINE: dict[str, int] = {
     "useAgentObserver": 13,  # P1b snapshot resync: +reloadAuthoritativeHistory
     "useNetworkNotice": 1,
     "useAgentThread": 16,
+    # 2026-11-20 模型选择卡 iOS 化：新增第 11 个注入点，抽出模型选项投影供 PC 锚定卡
+    # 与移动底部 Sheet 共用（消双份 selectableOptions/current/角标逻辑）。2 个键均为
+    # getter 回调（modelValue/type），与 useProviderBootstrap/useModelHealth 同源，无新增数据源。
+    "useModelSelectorOptions": 2,
 }
-MAX_INJECTION_POINTS = 10
-MAX_TOTAL_KEYS = 82
-MAX_CALLBACK_KEYS = 18
+MAX_INJECTION_POINTS = 11
+MAX_TOTAL_KEYS = 84
+MAX_CALLBACK_KEYS = 20
 
 _results: list[tuple[str, bool, str]] = []
 
