@@ -76,10 +76,11 @@
 ### R3 · 设置按钮 + 模型配置二级页
 - 列表页 header 右侧插槽放设置齿轮按钮（`aria-label="模型配置"`，`data-testid="model-config-open"`，44×44，SVG 齿轮，禁字符图标 G-16）。
 - 点击 → `view = 'config'`；header 变：显示返回按钮 + title "模型配置" + subtitle "当前模型：{friendlyModelName}"；设置按钮隐藏。
-- 二级页内容（iOS inset-grouped 列表观感）：分组卡 `--lnk-surface-base` + `--lnk-radius-xl` + 1px `--lnk-border-subtle`：
-  - 行 1「思考强度」：右侧显示当前档（`标准/深入/极限`）+ chevron；点击原地展开三档选择（三行 radio，选中态 accent checkmark），选完收起并写回。
-  - 行 2「上下文窗口」：右侧显示 `contextWindowLabel(planningModel)` + 静态文本（无 chevron、不可点，明确只读，`aria-disabled` 语义或纯 `<span>`）。
-- 返回按钮 → `view = 'list'`（不关 Sheet）；close / 遮罩 / 下滑 → 关整个 Sheet（回到列表态复位 `view`，下次打开从列表起）。
+- 二级页内容严格复刻 WorkBuddy 截图（iOS inset-grouped disclosure 列表）：分组卡 `--lnk-surface-base` + `--lnk-radius-xl` + 1px `--lnk-border-subtle`：
+  - 行 1「思考强度」：右侧显示当前档（`标准/深入/极限`）+ chevron；点击 push 到同 Sheet `view='thinking'` 三行 radio 选择页，选中态 accent checkmark，选完自动 pop 回配置页并写回。
+  - 行 2「上下文窗口」：右侧显示 `contextWindowLabel(planningModel)` + chevron；点击 push 到同 Sheet `view='context'` 只读详情页，明确文案"由当前模型能力推导，暂不可配置"，无输入框/选择器。
+- 返回按钮按 push/pop 逐级回退：`config → list`，`thinking/context → config`（不关 Sheet）；close / 遮罩 / 下滑 → 关整个 Sheet（回到列表态复位 `view`，下次打开从列表起）。
+- 齿轮按钮只在列表页渲染：进入配置/二级页后 header 仅保留返回、标题/副标题、关闭，与参考图一致。
 
 ### R4 · 思考强度按模型种子（`usePreferences.ts` + `AgentSideRail.vue`）
 - `usePreferences` 的 `preferences` 类型加 `thinkingByModel?: Record<string, ThinkingLevel>`；读写走现有 localStorage 通道（`lnkpi.preferences`），不新建 key。
