@@ -138,7 +138,7 @@ function toggleGallerySearch() {
   transition: background-color 0.25s ease, box-shadow 0.25s ease;
 }
 .app-header.is-material {
-  background: var(--lnk-surface);
+  background: var(--lnk-surface-overlay);
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   box-shadow: inset 0 -0.5px 0 var(--lnk-border-subtle);

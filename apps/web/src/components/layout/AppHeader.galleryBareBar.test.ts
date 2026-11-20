@@ -61,7 +61,7 @@ describe('AppHeader scroll-edge 材质化（§13.1）', () => {
   })
 
   it('材质态：bg + blur + inset 发丝线阴影（ghost 态零轮廓）', () => {
-    expect(appHeader).toMatch(/\.app-header\.is-material\s*\{[^}]*var\(--lnk-surface\)/)
+    expect(appHeader).toMatch(/\.app-header\.is-material\s*\{[^}]*var\(--lnk-surface-overlay\)/)
     expect(appHeader).toMatch(/\.app-header\.is-material\s*\{[^}]*backdrop-filter/)
     expect(appHeader).toMatch(/\.app-header\.is-material\s*\{[^}]*inset 0 -0\.5px 0 var\(--lnk-border-subtle\)/)
   })

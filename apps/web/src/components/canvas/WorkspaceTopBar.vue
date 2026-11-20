@@ -156,7 +156,7 @@ const emit = defineEmits<{
 }
 
 .wkb-nav:hover {
-  background: var(--lnk-hover, rgba(0, 0, 0, 0.05));
+  background: var(--lnk-hover-overlay);
   color: var(--lnk-text-primary);
 }
 
