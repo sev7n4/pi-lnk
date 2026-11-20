@@ -120,6 +120,8 @@ import { useSidebarAttachments, assignRefKeysFor, type FocusNodeLike, type Canva
 import { parseRefMentions } from '@/composables/useRefMentions'
 import MentionInput from '@/components/canvas/MentionInput.vue'
 import MobileSheet from '@/components/mobile/MobileSheet.vue'
+import ModelConfigPanel from './ModelConfigPanel.vue'
+import { useModelConfigView } from '@/composables/useModelConfigView'
 import { isConversationAckResponse, parseConversationAck } from './main-turn-ack'
 import { turnLiveStatus } from './activityLine'
 import { useClickOutside } from '@/composables/useClickOutside'
@@ -983,24 +985,39 @@ const activeSkillId = computed(() => selectedSkillIds.value[0] ?? null)
 const skillSheetOpen = ref(false)
 const manageOpen = ref(false)
 
-/* 2026-11-20 模型选择卡 iOS 化：移动端全宽底部 Sheet（PC 保留 UniversalModelSelector 锚定卡）。
- * modelSheetView='list' 为模型列表，'config' 为同 Sheet 内的模型配置二级页（返回按钮回列表）。 */
+/* 2026-11-20 模型选择卡 iOS 化：移动端全宽底部 Sheet；PC 锚定卡同规范（配置视图
+ * 状态机 useModelConfigView 与配置页模板 ModelConfigPanel 与移动端单源共用）。 */
 const modelSheetOpen = ref(false)
-const modelSheetView = ref<'list' | 'config'>('list')
+const {
+  view: modelSheetView,
+  title: modelSheetTitle,
+  showBack: modelSheetShowBack,
+  back: onModelSheetBack,
+  openConfig: openModelConfig,
+  reset: resetModelSheetView,
+} = useModelConfigView()
 /** 移动端模型 chip 与 Sheet 共用同一选项投影（PC 的 UniversalModelSelector 内部另调一次，数据源同源）。 */
 const modelSelector = useModelSelectorOptions({
   modelValue: () => planningModel.value,
   type: () => 'text',
 })
 const { currentLabel: modelChipLabel, selectableOptions: modelSheetOptions } = modelSelector
+const modelSheetSubtitle = computed(() =>
+  modelSheetView.value === 'list' ? undefined : `当前模型：${modelSelector.current.value?.name ?? ''}`,
+)
 function openModelSheet() {
   if (props.readOnly) return
-  modelSheetView.value = 'list'
+  resetModelSheetView()
   modelSheetOpen.value = true
 }
 function onModelSheetClose() {
   modelSheetOpen.value = false
-  modelSheetView.value = 'list'
+  resetModelSheetView()
+}
+/** 思考档位选中后回到配置页（WorkBuddy 的二级选择返回语义）。 */
+function setThinkingFromSheet(level: ThinkingLevel) {
+  setPlanningThinkingLevel(level)
+  openModelConfig()
 }
 /** 选择模型（Sheet 内）：沿用与 PC select 相同的可用性门禁，写回并关闭。 */
 function selectModelFromSheet(id: string) {
@@ -4580,14 +4597,20 @@ defineExpose({
                 </div>
 
                 <div class="agent-dock-params">
-                  <!-- PC：锚定 popover（不动存量行为）；移动端：点击开全宽底部 Sheet -->
+                  <!-- PC：锚定 popover，配置视图与移动 Sheet 同规范（共用状态机 + 配置面板）；
+                       移动端：点击开全宽底部 Sheet -->
                   <UniversalModelSelector
-                    v-if="shouldShowModelChip(activeSkillId) && isDesktopDock"
-                    v-model="planningModel"
-                    type="text"
-                    ghost
-                    class="agent-model-hit"
-                  />
+                  v-if="shouldShowModelChip(activeSkillId) && isDesktopDock"
+                  v-model="planningModel"
+                  type="text"
+                  ghost
+                  class="agent-model-hit"
+                  config-enabled
+                  :thinking-supported="showPlanningThinkingControls"
+                  :thinking-level="currentThinkingLevel"
+                  :read-only="props.readOnly"
+                  @set-thinking="setPlanningThinkingLevel"
+                />
                   <button
                     v-else-if="shouldShowModelChip(activeSkillId)"
                     type="button"
@@ -4647,47 +4670,29 @@ defineExpose({
                   </div>
                 </div>
 
-                <!-- 模型选择卡 iOS 化（2026-11-20）：移动端全宽底部 Sheet，配置页同 Sheet 内切换。
+                <!-- 模型选择卡 iOS 化（2026-11-20）：移动端全宽底部 Sheet；配置页模板
+                     ModelConfigPanel 与 PC 锚定卡单源共用，状态机 useModelConfigView 同源。
                      不传 swipe-to-dismiss ⇒ 继承 MobileSheet 默认开启的下滑手柄关闭。 -->
                 <MobileSheet
                   v-if="modelSheetOpen && !isDesktopDock"
-                  :title="modelSheetView === 'config' ? '模型配置' : '选择模型'"
-                  :subtitle="modelSheetView === 'config' ? `当前模型：${modelSelector.current.value?.name ?? ''}` : undefined"
-                  :show-back="modelSheetView === 'config'"
+                  :title="modelSheetTitle"
+                  :subtitle="modelSheetSubtitle"
+                  :show-back="modelSheetShowBack"
                   max-height="72vh"
-                  @back="modelSheetView = 'list'"
+                  @back="onModelSheetBack"
                   @close="onModelSheetClose"
                 >
-                  <template v-if="modelSheetView === 'config'">
-                    <div class="model-config-group">
-                      <div class="model-config-row">
-                        <span>思考强度</span>
-                        <span v-if="showPlanningThinkingControls" class="model-config-value">{{ currentThinkingLevel }}</span>
-                        <span v-else class="model-config-value model-config-muted">不支持</span>
-                      </div>
-                      <div v-if="showPlanningThinkingControls" class="model-config-levels">
-                        <button
-                          v-for="lv in THINKING_LEVELS"
-                          :key="lv"
-                          type="button"
-                          class="model-config-level"
-                          :class="{ 'is-selected': lv === currentThinkingLevel }"
-                          :aria-pressed="lv === currentThinkingLevel"
-                          :disabled="props.readOnly"
-                          @click="setPlanningThinkingLevel(lv)"
-                        >
-                          {{ lv }}
-                          <svg v-if="lv === currentThinkingLevel" viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2.5">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
-                        </button>
-                      </div>
-                      <div class="model-config-row">
-                        <span>上下文窗口</span>
-                        <span class="model-config-value">{{ contextWindowLabel(planningModel) }}</span>
-                      </div>
-                    </div>
-                  </template>
+                  <!-- 配置页/思考强度/上下文窗口：共用面板（WorkBuddy 两行 disclosure 规范） -->
+                  <ModelConfigPanel
+                    v-if="modelSheetView !== 'list'"
+                    :view="modelSheetView"
+                    :thinking-supported="showPlanningThinkingControls"
+                    :thinking-level="currentThinkingLevel"
+                    :read-only="props.readOnly"
+                    :context-label="contextWindowLabel(planningModel)"
+                    @update:view="modelSheetView = $event"
+                    @set-thinking="setThinkingFromSheet"
+                  />
                   <template v-else>
                     <div class="model-sheet-list">
                       <button
@@ -4700,15 +4705,16 @@ defineExpose({
                         @click="selectModelFromSheet(model.id)"
                       >
                         <span class="model-sheet-name">{{ model.name }}</span>
-                        <span v-if="model.unavailable" class="model-config-muted">暂不可用</span>
+                        <span v-if="model.unavailable" class="model-sheet-muted">暂不可用</span>
                         <span v-else-if="model.id === planningModel" class="model-sheet-check">✓</span>
                       </button>
                     </div>
                   </template>
                   <template #headerActions>
                     <button
+                      v-if="modelSheetView === 'list'"
                       type="button"
-                      class="m-sheet-close"
+                      class="m-sheet-close model-config-open"
                       aria-label="模型配置"
                       data-testid="model-config-open"
                       @click="modelSheetView = 'config'"
@@ -6341,6 +6347,38 @@ defineExpose({
 
 /* 2026-11-20 模型选择卡 iOS 化：底部 Sheet 内的模型列表 + 配置分组卡。
  * 全部消费 L2 令牌；选中态用主题稳定的 accent 三件套，禁 hi-bg/hi-text。 */
+/* headerActions 插槽内容属于父组件作用域，拿不到 MobileSheet 的 scoped .m-sheet-close；
+   齿轮必须自带 44px 触控区并右对齐，否则渲染成 0×0（CDP 可点但用户不可见）。 */
+.model-config-open {
+  display: flex;
+  width: var(--lnk-touch-target);
+  height: var(--lnk-touch-target);
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  margin-top: -6px;
+  margin-right: 0;
+  margin-bottom: 0;
+  margin-left: auto;
+  border: none;
+  border-radius: var(--lnk-radius-md);
+  background: transparent;
+  color: var(--lnk-text-muted);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background var(--lnk-duration-fast) ease;
+}
+
+.model-config-open:active {
+  background: var(--lnk-pressed-overlay);
+}
+
+.model-config-open svg {
+  width: 16px;
+  height: 16px;
+}
+
 .model-sheet-list {
   display: flex;
   flex-direction: column;
@@ -6394,69 +6432,8 @@ defineExpose({
   color: var(--lnk-accent-text);
 }
 
-.model-config-group {
-  overflow: hidden;
-  border: 1px solid var(--lnk-border-subtle);
-  border-radius: var(--lnk-radius-xl);
-  background: var(--lnk-surface-base);
-}
-
-.model-config-row {
-  display: flex;
-  min-height: var(--lnk-touch-target);
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--lnk-space-2);
-  padding: var(--lnk-space-2) var(--lnk-space-4);
-  color: var(--lnk-text-primary);
-  font-size: var(--lnk-text-sm);
-}
-
-.model-config-row + .model-config-row,
-.model-config-row + .model-config-levels {
-  border-top: 1px solid var(--lnk-border-subtle);
-}
-
-.model-config-value {
-  color: var(--lnk-text-secondary);
-}
-
-.model-config-muted {
+.model-sheet-muted {
   color: var(--lnk-text-muted);
-}
-
-.model-config-levels {
-  display: flex;
-  gap: var(--lnk-space-2);
-  padding: var(--lnk-space-2) var(--lnk-space-4);
-}
-
-.model-config-level {
-  display: flex;
-  min-height: var(--lnk-touch-target);
-  flex: 1;
-  align-items: center;
-  justify-content: center;
-  gap: var(--lnk-space-1);
-  border: 1px solid var(--lnk-border-default);
-  border-radius: var(--lnk-radius-lg);
-  background: transparent;
-  color: var(--lnk-text-secondary);
-  font-size: var(--lnk-text-sm);
-  cursor: pointer;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.model-config-level.is-selected {
-  border-color: var(--lnk-accent-border);
-  background: var(--lnk-accent-subtle);
-  color: var(--lnk-accent-text);
-}
-
-.model-config-level:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
 }
 
 </style>

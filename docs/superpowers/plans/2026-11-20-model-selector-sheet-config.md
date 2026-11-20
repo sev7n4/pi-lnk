@@ -74,8 +74,23 @@
 
 ## Self-Review
 - 每刀有失败测试先行与真实命令 ✓
-- 守卫锁规则本体（双形态/令牌/种子 key/只读）非接线表象 ✓
+- 守卫锁规则本体（双形态/令牌/种子 key/只读）非接线表象，变异自检逐个证伪 ✓
 - 思考强度作用域经 Claude Code / Codex / WorkBuddy + 上游源码四方取证，混合模式有先例 ✓
 - 上下文窗口只读且单一真相源（shared），不造用户字段、不动后端 ✓
 - 零新增 hex、零翻转令牌、零第二套 sheet 皮肤 ✓
 - 不碰主仓他人未提交改动，独立 worktree ✓
+
+## Task 9 · PC 锚定卡同规范（2026-11-20 追加，生产走查反馈 + 用户拍板）
+> 先在生产 CDP 走查后追加：移动端齿轮 0×0 修复（Task 6.5）+ 配置页 WorkBuddy 化（ce9dea09）已入 PR #967；本刀把 PC 对话页 composer 锚定卡拉齐同一规范。
+
+1. **TDD 失败先行**（已完成 RED 确认）：
+   - `useModelConfigView.test.ts`：状态机 list→config→thinking/context push/pop + reset（4 测）。
+   - `ModelConfigPanel.test.ts`：两行 disclosure、`update:view` 导航、三档 aria-pressed + setThinking、只读上下文、令牌合规（8 测）。
+   - `UniversalModelSelector.configView.test.ts`：缺省零变化 + 齿轮/二级页/返回/复位/齿轮显式尺寸（6 测）。
+   - `AgentSideRail.modelSheetMobile.test.ts` 改写：配置页模板指向共用面板 + PC 接线断言。
+2. **实现**：
+   - 新增 `useModelConfigView.ts`（状态机单源）；`ModelConfigPanel.vue`（模板+样式单源，从 AgentSideRail 内联迁移）。
+   - `UniversalModelSelector.vue`：可选 `configEnabled/thinkingSupported/thinkingLevel/readOnly/contextLabel` props + `set-thinking` emit + popover 标题头（返回/标题/齿轮 28×28）。
+   - `AgentSideRail.vue`：PC 分支接线 config props；移动 Sheet 换用共用面板；样式迁移（删已迁类、补 `.model-sheet-muted`）。
+3. **门禁**：定向 65/65 绿、`vue-tsc -b` 0、`verify-agent-rail-gates.py` 11/11、变异自检 2/2 RED（composable back 分支 + testid 锁本体）后零残留。
+4. **部署与复测**：并入 PR #967 推送 → CI 绿 → squash 合并 → web-only 部署 → 生产 chunk 取证（新串 `pc-model-config-open` / `ums-header`）→ CDP 双端复测（PC 锚定卡配置页 + 移动端回归）。
