@@ -16,12 +16,16 @@ withDefaults(
     /** 三轮 R10（2026-11-19）：关闭手势开关，默认开（HIG bottom sheet 下滑即关）。
      *  对话框型 sheet（有必选动作/表单未保存）可传 false 关闭此手势，避免误关。 */
     swipeToDismiss?: boolean
+    /** 2026-11-20 模型选择卡：可选返回按钮（sheet 内二级页 push/pop）。
+     *  缺省 false——存量 8+ 调用点零变化；仅模型配置页传 true。 */
+    showBack?: boolean
   }>(),
-  { maxHeight: '62vh', swipeToDismiss: true },
+  { maxHeight: '62vh', swipeToDismiss: true, showBack: false },
 )
 
 const emit = defineEmits<{
   close: []
+  back: []
 }>()
 
 /** R10：下拉关闭手势——起点 y、是否从滚动顶部起手势、 dragging 态。
@@ -97,10 +101,24 @@ function dismiss() {
         >
           <div class="m-sheet-handle" data-testid="m-sheet-handle" aria-hidden="true" />
           <header class="m-sheet-head">
+            <button
+              v-if="showBack"
+              type="button"
+              class="m-sheet-back"
+              aria-label="返回"
+              data-testid="m-sheet-back"
+              @click="emit('back')"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 18l-6-6 6-6" />
+              </svg>
+            </button>
             <div class="min-w-0">
               <p class="m-sheet-title">{{ title }}</p>
               <p v-if="subtitle" class="m-sheet-subtitle">{{ subtitle }}</p>
             </div>
+            <!-- 二级操作插槽（模型选择卡的设置齿轮）；缺省为空 ⇒ 存量调用点无差异 -->
+            <slot name="headerActions" />
             <button
               type="button"
               class="m-sheet-close"
@@ -189,6 +207,34 @@ function dismiss() {
   font-size: var(--lnk-text-2xs);
   color: var(--lnk-text-muted);
   line-height: var(--lnk-lh-2xs);
+}
+
+/* 返回按钮：与 close 同尺寸/同令牌，仅 showBack 时渲染（iOS 二级页 push/pop） */
+.m-sheet-back {
+  display: flex;
+  width: var(--lnk-touch-target);
+  height: var(--lnk-touch-target);
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  margin: -6px -4px 0 -8px;
+  border: none;
+  border-radius: var(--lnk-radius-md);
+  background: transparent;
+  color: var(--lnk-text-muted);
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background var(--lnk-duration-fast) ease;
+}
+
+.m-sheet-back:active {
+  background: var(--lnk-pressed-overlay);
+}
+
+.m-sheet-back svg {
+  width: 16px;
+  height: 16px;
 }
 
 .m-sheet-close {
