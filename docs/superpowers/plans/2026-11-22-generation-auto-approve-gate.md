@@ -111,3 +111,35 @@ PR #974 → squash master `7a140a5f`；CI **4/4 绿**；部署 run `45042096920`
 ### 踩坑沉淀（已回写规格 §9.4）
 
 默认会话属他人画布 ⇒ `agentReadOnly` ⇒ composer `disabled` 且 0×0（**必须自建自有会话**）；PC agent 面板默认折叠（**先点 `.agent-fab`**）；未授权轮阻塞等确认 ⇒ **对照必须用两个独立会话**；agent reasoning 里的「让用户确认」会让文本正则误判（**判据只认 DOM 事实**）；探针须**自带开跑归零**；服务端回读须带 `Authorization: Bearer`；本机 headless Chrome 跨 Bash 调用会被清理（**起 Chrome + 跑探针同一次调用**，先清 `Singleton*`）。
+
+---
+
+## UI 迭代执行结果（2026-11-23：从文字徽标到图标）
+
+**触发**：用户投诉「composer 上方这么宽一个常驻卡片，对话页被污染」「『授权自动生成』这么长的一个按钮，卡片显得很脏」。诊断 = 用「文字块」承载了一个「开关状态」。
+
+**方案与实现**（详见规格 §10）：
+
+| 项 | 决定 |
+|---|---|
+| 落点 | composer **工具行**内单枚 15px 图标（模型选择右侧、发送键左侧）；**不进系统层容器**、**不进底部状态带**、**两端顶栏零改动** |
+| 颜色 | 琥珀 `--lnk-warning`（双主题已存在 ⇒ **零新令牌**）；**不用红色**（iOS/macOS 语义里红 = 错误/破坏性，授权是用户自己的选择） |
+| 图形 | 新增 `AutoApproveGlyph.vue`（盾牌+闪电，线框=未开启 / 实心=已开启）；**与提议卡同一枚图形**（跨位置可识别） |
+| 提议卡 | 「授权后续自动生成」文字按钮 → icon-only，文案退到 `title`/`aria-label`；**已授权态不再 `disabled`**（禁用就收不回授权）⇒ 同一枚图标成为 toggle |
+| 移动端 | 删掉底部状态带里的文字徽标 ⇒ 状态带回归「节点状态」单一职责；与 PC **共用同一 composer DOM**（裸条 `display:contents` 摊平）⇒ 一处改动两端生效 |
+| 撤销 | 单击即激活/收回 + toast 带单动作「撤销」（不弹模态确认框） |
+
+**改动文件**：`AutoApproveGlyph.vue`（新）、`AgentSideRail.vue`、`AgentTurnTimeline.vue`、`MobileNodeStatusBar.vue`、`useAutoApproveGeneration.ts`、`styles/main.css`；测试：`AutoApproveGlyph.test.ts`（新）、`AgentSideRail.autoApproveToggle.test.ts`（新）、`AgentTurnTimeline.authorizeAuto.test.ts`（改写）、`MobileNodeStatusBar.authorizeAuto.test.ts`（**翻转为守卫**）、`useAutoApproveGeneration.test.ts`（补 `undoable`）。
+
+**本轮对 2026-11-22 偏差表的两处推翻**（原偏差 3、4 已不成立）：
+
+| 原偏差 | 现状态 |
+|---|---|
+| 3. `AgentSideRail` 未新增白名单类（徽标随系统层在画布视图隐藏） | **整条推翻**：徽标不再进系统层容器 ⇒ 「画布视图隐藏」不再是约束，改为「画布视图也须可见」；白名单类仍为 0（结论不变，但理由变了） |
+| 4. `MobileNodeStatusBar` 只做徽标 + 收回授权 | **整条推翻**：徽标与撤回**全部迁出**该条（授权不是节点状态；且该条空闲时不出现 ⇒ 撤回入口不可达） |
+
+**验证**：定向测试 **27/27 PASS**（5 文件）；`vue-tsc -b` 0 错误；`pnpm verify-agent-rail-gates` 11/11 PASS；**变异验证 3 例全部转红**（默认态加背景块 / 提议卡回退长文字按钮 / 去掉 `v-if`）。
+
+**守卫写法纪律（本刀踩到，已记入规格 §10.4）**：① 注释里禁止出现受看守的选择器字面量（`not.toContain` 会被同文件注释误伤）；② 源码契约辅助函数 `rule()` 必须**只在 `<style>` 段内**搜索，否则模板注释/插值会把 `indexOf` 带偏。
+
+**诚实边界**：本次 UI 改造**尚未在生产真机走查**（规格 §9.2 的 12/12 + 7/7 是图标化之前的结论）；旧探针的两个 testid（`agent-auto-approve-line` / `agent-auto-approve-revoke`）已从源码移除 ⇒ 探针判据须同步改写为 `.auto-approve-toggle` 后重跑。

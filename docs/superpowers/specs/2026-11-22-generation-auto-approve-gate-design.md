@@ -24,7 +24,7 @@
 | 系统级开关存哪                    | **env 总闸**（复用 `GENERATION_AUTO_APPROVE` 范式），admin 可视化列 P2                                                                                                          | 秒级止血、无需发版；项目无 ConfigService，env 是现成系统级通道                                           |
 | 开关主入口                      | **确认卡上的「以后自动生成」快捷开关**为主，设置页为管理入口                                                                                                                                   | 用户在每次被打断的那一刻最有动机切换，设置页是被动入口                                                        |
 | 授权后的代价                     | 必须同时提供「已授权徽标 + 一键收回授权 + 可撤销」                                                                                                                                       | 否则用户不知道自己授权了自动执行，会丧失信任；自动生成放大消耗，需接成本可见性                                            |
-| **徽标/刹车放哪（2026-11-22 修订）** | **不放在画布顶栏**。嵌入既有的「状态+动作」承载面：PC=`AgentSideRail` 的 `.agent-system-layer`（composer 正上方）；移动=`MobileCanvasShell` 底部状态带（与 `MobileSaveStatus`/`MobileNodeStatusBar` 同带互斥） | 全仓无独立对话页；移动端顶栏随 tab 变形、无恒定宿主；项目 2026-10-31 已裁决「等待状态行整条退役」，顶栏从来不承载生成状态。详见 §4.2 / §5 |
+| **徽标/刹车放哪（2026-11-23 再修订）** | **不放在画布顶栏**，也**不放在 composer 正上方**：改为 composer **工具行内的单枚琥珀图标**（15px 盾牌+闪电，与提议卡同一枚图形）；移动端统一到同一图标，底部状态带里的文字徽标删除 | 2026-11-22 版把状态做成系统层通栏徽标（8 字 + 独立按钮），占 composer 正上方的黄金视觉位 ⇒ 用户投诉「对话页被污染」。iOS/macOS 极简口径：**状态属于对象**（agent 的行为模式 ⇒ 挂 composer），且**用图形不用文字块**。详见 §10 |
 
 ---
 
@@ -125,10 +125,11 @@ autoApprove =
 
 ### 3.4 授权模式的护栏（没有这些就不要上线）
 
-1. **可见**：**在对话侧的状态承载面**出现「已授权自动生成」徽标（accent-subtle 底，非翻转令牌）——PC 为 `AgentSideRail` 的 `.agent-system-layer`（composer 正上方、积分条之前），移动并入 `MobileNodeStatusBar` 既有状态带。**不放画布顶栏**（理由见 §4.2）。
-   - **PC 细节**：徽标走系统层容器纪律——**进层即默认安全**（画布视图全隐），**不新增白名单类**（白名单类现为 0，复活即多一条需要守卫测试的常驻面）。
-   - **移动可见性窗口**（与初稿的偏差，实现按此落地）：徽标挂在既有状态带内 ⇒ **状态带可见时**（生成中 / 待确认——正是用户被「没问我就生成了」惊到的时刻）出现；空闲态的常驻可见性由「我的 → 设置」里的开关承担。理由：若让它在无任务时常驻，要么新增第三条状态带，要么破坏 `MobileSaveStatus`（保存失败提示）的互斥——后者会造成**保存失败不可见**的数据风险，不可接受。
-2. **可收回**：点徽标即弹二级确认「收回授权，恢复每次确认？」，一键回到 manual；另在 composer 发送按钮复用既有「停止生成」语义（`DockGenerateButton`，AgentSideRail.vue:4584-4592）。
+1. **可见**：**在对话侧的 composer 工具行内**出现一枚 15px 琥珀图标（盾牌+闪电，实心态 = 已开启；未授权时**不渲染** ⇒ composer 逐像素不变）。**不放画布顶栏**，也**不放 composer 正上方**（理由见 §10）。
+   - **PC 细节**：图标走 composer 工具行既有宿主（`.agent-dock-actions`，模型选择右侧、发送键左侧）；**不进系统层容器**（系统层 = 画布视图全隐的「进层即默认安全」区，而授权态是与输入行为直接相关的常驻状态，须在画布视图也可见）；**不新增白名单类**；24×24 无背景块，hover 才出琥珀柔底 ⇒ 默认态零色块。
+   - **移动端**：与 PC **共用同一 composer DOM**（裸条 `display:contents` 摊平）⇒ 一处改动两端生效；**底部状态带不再承载授权态**（授权不是节点状态；且状态带只在「生成中/待确认」时出现 ⇒ 空闲时用户看不到也点不到撤回，而「随时能自己踩刹车」是硬要求）。
+   - **同款图形贯穿两处**：提议卡内 = 开启入口（线框态）；composer 工具行 = 状态 + 刹车（实心态，点击即收回）。
+2. **可收回**：点 composer 工具行那枚图标**单击即收回**（极简口径：不弹模态确认框），toast 带单动作「撤销」可一秒反悔；另在 composer 发送按钮复用既有「停止生成」语义（`DockGenerateButton`，AgentSideRail.vue:4584-4592）。
 3. **可撤销**：自动生成的卡片保留 `autoApproved:true` 标记与 `proposalEpoch`，复用现有撤销/重提链路，不做新撤销系统。
 4. **成本可见**：授权模式下的生成继续走现有 usage / cost 事件（`LaneSnapshotProjection.stats.usage`），设置项文案提示「授权后生成会直接消耗额度」。
 5. **硬门禁不绕过**：`missing_refs` 短路行为完全保留（canvas-write.ts:480-504），stagedActions 在场一律 fail-closed。
@@ -154,11 +155,10 @@ CSS 直接复用 `ProfilePane.vue:316-345`：轨道 44×26、关=`--lnk-border-s
 
 | 触点              | 位置                                                                                                                                                                     | 职责  | 为什么                                                                            |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | ------------------------------------------------------------------------------ |
-| **主入口（场景内·PC）** | 对话时间线 proposal 卡 `AgentTurnTimeline.vue` 操作区（「落锚生成 / 调整 / 取消」同区）追加「以后自动生成」                                     | 转化  | PC 唯一场景入口（画布 `ProposeConfirmOverlay` 已于 #972 整体退场，见下「与 #972 的交叉」） |
-| **主入口（场景内·移动）** | `MobileNodeStatusBar.vue` 与「去对话处理」同一条（#972 后该条已无决策按钮）                                                                    | 转化  | 移动端决策面归对话页，本条只留状态 + 跳转 + 授权开关                     |
+| **主入口（场景内·PC + 移动）** | 对话时间线 proposal 卡 `AgentTurnTimeline.vue` 操作区（「落锚生成 / 调整 / 取消」同区）追加一枚图标 | 转化 | **该组件是 PC 与移动共用的唯一宿主**（唯一引用方 `AgentSideRail` 同时服务 PC 侧栏与移动端 dock）⇒ 一处改动两端生效；PC 唯一场景入口（画布 `ProposeConfirmOverlay` 已于 #972 整体退场，见下「与 #972 的交叉」）。移动端**不再**在 `MobileNodeStatusBar` 另开一条（该条只留状态 + 跳转） |
 | 管理入口（PC）        | `/settings` → 模型配置弹层 `ProviderConfigDialog` 的 `preferences` Tab                                                                                                        | 治理  | 已有偏好分区，无需新建设置页                                                                 |
 | 管理入口（移动）        | `ProfilePane` → 「设置」二级卡，紧邻触感反馈开关                                                                                                                                       | 治理  | 已有开关范式与落点                                                                      |
-| **状态/刹车（修订）**   | **PC**：`AgentSideRail.vue:3929-3993` `.agent-system-layer`（composer 正上方）；**移动**：`MobileCanvasShell.vue:357-375` 底部状态带（与 `MobileSaveStatus`/`MobileNodeStatusBar` 同带互斥） | 可见性 | 见下方「为什么不放顶栏」                                                                   |
+| **状态/刹车（2026-11-23 修订）** | **PC + 移动共用**：composer 工具行内单枚图标（`AgentSideRail.vue` `.agent-dock-actions` 内，模型选择右侧、发送键左侧）；移动端裸条 `display:contents` 摊平 ⇒ 同一 DOM | 可见性 + 刹车 | 「状态属于对象」：agent 的行为模式挂在 composer 自身的工具行，紧邻发送键 = 「按下去会发生什么」的语义邻位。**不进系统层容器**（该容器在画布视图全隐，而授权态须在画布视图也可见）。详见 §10 |
 | 系统入口（P2）        | admin 配置页 `el-switch` + `AdminAuditLog`                                                                                                                                | 运营  | 全局强制人工 / 灰度，需审计                                                                |
 
 **为什么不放画布顶栏（2026-11-22 修订，基于代码取证）**：
@@ -175,20 +175,20 @@ CSS 直接复用 `ProfilePane.vue:316-345`：轨道 44×26、关=`--lnk-border-s
 `docs/superpowers/specs/2026-11-22-conversation-only-decision-surface-design.md` §3.3 已点名本规格并给出改写指令：
 
 - PC 场景内入口**从 `ProposeConfirmOverlay` 改挂 `AgentTurnTimeline` proposal 卡操作区**（该 overlay 已于 #972 整文件删除，静态守卫 `CanvasPage.decisionSurface.test.ts` 断言其不存在）——本规格不得再触碰画布确认面。
-- 移动场景内入口**仍挂 `MobileNodeStatusBar`**，但不再与「确认 / 拒绝」并列（#972 已删除该两钮），改为与「去对话处理」同条。
-- 本规格的**状态徽标落点不受影响**（PC `AgentSideRail.agent-system-layer` / 移动底部状态带）。
+- 移动场景内入口随 **共用组件 `AgentTurnTimeline`** 一并覆盖（该组件是 PC 与移动的唯一共同宿主）⇒ 不在 `MobileNodeStatusBar` 另开一条。
+- 本规格的**状态落点在 2026-11-23 修订**（PC/移动统一到 composer 工具行图标，见 §10）；这是对 #972「决策面收归对话页」的顺延——决策面在对话页，状态面也回到对话页自己的 composer 侧。
 
 |  |  |  |
 | --- | --- | --- |
-**承载面互斥规则**：移动底部状态带现有 `MobileSaveStatus` 与 `MobileNodeStatusBar` 互斥（`MobileCanvasShell.vue:357-375`，判据 `hasNodeTaskState = generatingCount > 0 || pendingNodes.length > 0`）。授权徽标**不新增第三条**，而是并入 `MobileNodeStatusBar` 的 `hasTask` 判据（`MobileNodeStatusBar.vue:56-102`）——`autoApprove && 无任何节点任务` 时也渲染该条，仅显示「已授权自动生成 · 收回授权」；有任务时与生成中/待确认状态共存于同条，不抢占决策按钮。PC system-layer 同理追加一条，复用 `creditsLine` 的「层末、贴输入区、不进 SSE 滚动」纪律。
+**承载面互斥规则（2026-11-23 修订：授权态已迁出状态带）**：移动底部状态带现有 `MobileSaveStatus` 与 `MobileNodeStatusBar` 互斥（`MobileCanvasShell.vue:357-375`，判据 `hasNodeTaskState = generatingCount > 0 || pendingNodes.length > 0`）。**授权态不再并入该条**——它不是「节点状态」，且该条只在有节点任务时出现（空闲时用户看不到授权态、也点不到撤回）。迁出后，原「徽标仅在状态带可见时出现，否则破坏 `MobileSaveStatus` 互斥」的妥协条件**一并消失**（状态带回归「节点状态」单一职责，互斥判据回到原样）。授权态的新落点见 §10.2。
 
 ### 4.3 文案（遵守 Design_system §4：动词开头、克制、第二人称、说出后果）
 
 - 开关标题：**授权自动生成**
 - 未授权说明：**未授权。每张卡片生成前都会先问你。**
 - 已授权说明：**已授权。agent 生成卡片时不再等待确认，会直接消耗额度。可随时收回授权。**
-- 确认卡快捷项：**授权后续自动生成**
-- 对话侧状态徽标：**已授权自动生成** → 点击「收回授权，恢复每次确认？」（PC 在系统层、移动在底部状态带）
+- 提议卡快捷项：**授权后续自动生成** → 2026-11-23 起视觉上**不出现文字**（icon-only），文案退到 `title` / `aria-label`（可访问性不降级）
+- 对话侧状态：**已授权自动生成** → 2026-11-23 起视觉上为**单枚琥珀图标**（无文字块），`aria-label` = 「已授权自动生成，点击收回授权」，点击即收回（toast 带「撤销」可反悔）
 - 系统强制态（置灰）：**管理员已开启强制确认，当前无法授权自动生成。**
 - 禁止用「确定 / 取消」；危险后果必须说出（「直接消耗额度」）。
 
@@ -199,8 +199,8 @@ CSS 直接复用 `ProfilePane.vue:316-345`：轨道 44×26、关=`--lnk-border-s
 - **PC**：头像菜单 → 设置（已存在，`AccountUserMenu.vue:41-45,133-141`）→ `SettingsPage.vue:101-118` 的「模型配置」行 → `ProviderConfigDialog` 的 `preferences` Tab 新增一行开关。不新增路由、不新增弹层。
 - **移动**：`MobileCanvasShell.vue:377` 承载的 `ProfilePane.vue:127-173`「设置」二级卡，在触感反馈开关下方新增一行。遵循移动端编排归壳的规则，不新建 `*Mobile*` 组件。
 - **场景内（PC 对话侧唯一入口）**：`AgentTurnTimeline.vue` proposal 卡操作区追加「以后自动生成」次级项（与「落锚生成 / 调整 / 取消」同区）；画布侧**不再有确认面**（#972 已删 `ProposeConfirmOverlay`）。点击即写服务端偏好，不阻断本次确认流程（本次仍需确认，下次生效）——避免"点了却还弹"的错觉，文案说清「下次生效」。
-- **场景内（移动）**：`MobileNodeStatusBar.vue` 与「去对话处理」同一条加次级项（#972 后该条已无决策按钮，无并列冲突）。
-- **状态/刹车**：PC 追加到 `AgentSideRail.vue:3929-3993` `.agent-system-layer` 层末（紧邻 `creditsLine`，遵守 `3923-3928` 的「必须进层 + 新增常显卡须立白名单类并加守卫测试」）；移动并入 `MobileNodeStatusBar`（见 §4.2 互斥规则）；**不新增画布顶栏元素**，两端顶栏保持现状。
+- **场景内（移动）**：无需单独落点——提议卡由共用组件 `AgentTurnTimeline` 渲染（PC/移动同一 DOM），图标自动覆盖两端。
+- **状态/刹车（2026-11-23 修订）**：composer 工具行内单枚图标（PC/移动同一 DOM）；**不进系统层容器**、**不进底部状态带**、**不新增画布顶栏元素**（两端顶栏保持现状）。详见 §10。
 - **系统级**：P0 用 env；P2 复用 `AdminRoutesPage.vue:55-58` 的 `el-switch` + audit 范式做可视化。
 
 ---
@@ -250,11 +250,11 @@ manual: → pending_confirm → SSE waiting_user → 确认卡 → /answers → 
 | 3 | `web/src/services/provider-api.ts` + `useProviderBootstrap.ts` | draft 字段 + patchPreferences | P1 |
 | 4 | `agent-canvas-tools.service.ts` | `resolveAutoApprove` 纯函数替换 `isAutoApproveMediaType`；补 image/video/audio auto 分支（复用 start-*）；保留 missing_refs 短路与 epoch 不变式 | P1 |
 | 5 | `services/pi-runtime/src/tools/canvas-write.ts` | **不改**——既有短路判据（`autoApproved===true && status==='generating'`）逐字节沿用，跨服务零改动（因此本刀无需部署 pi-runtime） | — |
-| 6 | `AgentTurnTimeline.vue`（+ 移动 `MobileNodeStatusBar.vue`） | PC 对话时间线 proposal 卡快捷开关；移动与「去对话处理」同条；写入偏好，本次确认流程不变（**不碰画布确认面——#972 已删 `ProposeConfirmOverlay`**） | P2 |
+| 6 | `AgentTurnTimeline.vue` | 对话时间线 proposal 卡授权图标（**PC + 移动共用组件**，一处改动两端生效）；写入偏好，本次确认流程不变（**不碰画布确认面——#972 已删 `ProposeConfirmOverlay`**） | P2 |
 | 6b | `apps/web/src/composables/useAutoApproveGeneration.ts`（**本方案唯一新增前端文件**） | 薄接线：读 `useProviderBootstrap().preferences.autoApproveGenerations`；写走 `providerApi.updatePreferences`（部分字段 PUT）+ `patchPreferences`；**不新建通道、不缓存 localStorage** | P2 |
 | 7 | `SettingsPage.vue` / `ProviderConfigDialog.vue` / `ProfilePane.vue` | PC/移动设置开关（管理入口） | P2 |
-| 7b | `AgentSideRail.vue` `.agent-system-layer`（层末、`creditsLine` 旁） | PC 已授权徽标 + 收回授权按钮；建白名单类 + 守卫测试（遵守 `3923-3928`）；**顶栏零改动** | P2 |
-| 7c | `MobileNodeStatusBar.vue` + `MobileCanvasShell.vue` | 移动徽标并入既有底部状态带 `hasTask` 判据，不发第三条；**顶栏零改动** | P2 |
+| 7b | `AgentSideRail.vue` composer 工具行（`.agent-dock-actions` 内） | 已授权图标 + 收回（单击即收回 + toast 撤销）；24×24 零背景块；**不进系统层容器**、**不建白名单类**；**顶栏零改动** | P2 |
+| 7c | `MobileNodeStatusBar.vue` | **2026-11-23 修订：授权徽标迁出**（该条回归「节点状态」单一职责）；移动端状态与刹车由 7b 的共用 composer DOM 承担；**顶栏零改动** | P2 |
 | 8 | `apps/server/.env.example`（env 由 Nest api 消费，真源 `/opt/lnkpi/.env`） | 补 `GENERATION_APPROVAL_MODE` / `GENERATION_AUTO_APPROVE` 可见性 | P1 |
 | 9 | admin 配置页 + audit | 系统级可视化与强制人工 | P2 |
 
@@ -274,7 +274,7 @@ manual: → pending_confirm → SSE waiting_user → 确认卡 → /answers → 
 |---|---|---|
 | **P0 规格** | 本文件拍板（作用域、默认值、优先级公式） | 决策表逐项确认 |
 | **P1 判定源升级（后端）** | `resolveAutoApprove` + UserAiPreferences 列 + provider 通道 + image/video/audio auto 分支 | `approval-tier.test.ts` 新增：user_auto 全介质生成、system forced_manual 覆盖、missing_refs 不被绕过、客户端参数被忽略、默认行为不变；变异守卫锁**规则本体**而非仅接线 |
-| **P2 UI 与入口** | PC 对话时间线 proposal 卡快捷项 / 移动状态带快捷项（与「去对话处理」同条）+ PC/移动设置开关 + 对话侧徽标与刹车（**顶栏零改动**） | `AgentTurnTimeline.proposal.test.ts` / `MobileNodeStatusBar.test.ts` 开关与互斥测试 / `AgentSideRail` system-layer 白名单守卫 / `design-token.test.ts` / `settings-domain-tokens.test.ts` |
+| **P2 UI 与入口** | 对话时间线 proposal 卡授权图标（PC+移动共用）+ PC/移动设置开关 + composer 工具行状态图标与刹车（**顶栏零改动**） | `AgentTurnTimeline.authorizeAuto.test.ts` / `AgentSideRail.autoApproveToggle.test.ts` 落点守卫 / `MobileNodeStatusBar.authorizeAuto.test.ts` 迁出守卫 / `AutoApproveGlyph.test.ts` / `design-token.test.ts` / `settings-domain-tokens.test.ts` |
 | **P3 系统级可视化** | admin el-switch + audit + env 可见性 | admin 页开关与审计日志回归 |
 
 **纪律**：遵循仓库分支纪律（先开分支）、vitest nvm node24 + `--maxWorkers=1 --no-file-parallelism`、`vue-tsc -b` 不加 `--noEmit`；改令牌必跑 `design-token.test.ts`；合并后按 prod 复测纪律做 web/runtime 部署与生产走查（CDP PC 先点 `.agent-fab`、移动用单会话触摸仿真）。
@@ -308,7 +308,7 @@ manual: → pending_confirm → SSE waiting_user → 确认卡 → /answers → 
 
 ### 9.2 CDP 生产走查（探针 `.workbuddy/e2e-cdp/`）
 
-- **主探针 `generation-auto-approve-probe.mjs`：12/12 PASS**——PC 偏好 Tab 开关（`role=switch`、44×26、初始 `aria-checked=false`）、授权后 `aria-checked=true` 且 **服务端 bootstrap 回读 `auto`**、对话侧系统层徽标（`.agent-system-layer` 内，491×54，非 0×0 假绿）+「收回授权」、收回后回读 `manual` 且徽标消失；移动端「我的→设置」开关 + 授权/收回往返。
+- **主探针 `generation-auto-approve-probe.mjs`：12/12 PASS**——PC 偏好 Tab 开关（`role=switch`、44×26、初始 `aria-checked=false`）、授权后 `aria-checked=true` 且 **服务端 bootstrap 回读 `auto`**、对话侧系统层徽标（`.agent-system-layer` 内，491×54，非 0×0 假绿）+「收回授权」、收回后回读 `manual` 且徽标消失；移动端「我的→设置」开关 + 授权/收回往返。> ⚠️ 该结论基于**图标化之前**的 UI（通栏文字徽标 + 长文字按钮）；2026-11-23 图标化后旧 testid 已移除，须重跑探针（见 §10.5）。
 - **活体对照 `autoapprove-p6-own-session.mjs`：7/7 PASS**——两个**独立自有会话**同题对照：
   - 未授权：agent「设置生成参数…**提交给用户确认**」⇒ 提议卡 `pending_confirm` + 「落锚生成」按钮，**0 积分消耗**；
   - 已授权：agent「已创建节点并**启动生成**…状态：生成中（**自动批准**）」⇒ **零待确认卡**，`已生成 1 张 · 12s · 已结算实耗 33 积分`，画布实出图。
@@ -333,3 +333,63 @@ manual: → pending_confirm → SSE waiting_user → 确认卡 → /answers → 
 - **探针必须自带开跑归零**：上一轮若中途挂死，偏好会残留 `auto`，把下一轮「初始未授权」判据全部假失败。
 - 服务端回读必须带 `Authorization: Bearer <localStorage.token>`（裸 `fetch` 会 401 ⇒ 假失败）。
 - 本机 Chrome headless 实例**跨 Bash 调用会被环境清理**（`chrome-profile` 残留 `SingletonLock` 亦会阻止重启）⇒ 起 Chrome + 跑探针放同一次调用，并先清 `Singleton*`。
+
+---
+
+## 10. UI 迭代（2026-11-23）：从「文字徽标」到「图标」
+
+### 10.1 问题诊断（用户投诉原文）
+
+> 「当被授权自动生成后，在composer 上方这么宽一个常驻卡片，感觉对话页 composer 上面不干净，被污染的感觉。非常糟糕的设计。」
+> 「针对提议生成卡片，【授权自动生成】，有没有考虑做成警示或强调类的图标设计？……而不是一个【授权自动生成】这么长的一个按钮。很丑，卡片显得很脏，内容太多。」
+
+**病根**：用「文字块」承载了一个「开关状态」。
+
+| 载体                                | 信息量        | 实际视觉重量                                                                    | 失衡点                                                                                          |
+| --------------------------------- | ------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| 系统层通栏徽标（8 字 + 独立按钮） | 「已开启，可关」 | 占 composer 正上方的**黄金视觉位**，且是页面唯一高饱和色块                        | 视觉重量 ≫ 信息量 ⇒ 对话页被「污染」                                                          |
+| 提议卡里的「授权后续自动生成」按钮 | 一个开关动作    | 8 个字，把卡片撑宽、把次级动作的最大视觉面积占掉                                  | 同排「参数微调」「取消」都是 icon-btn，**只有它**是文字按钮 ⇒ 形状不统一，卡片显得脏          |
+
+### 10.2 落点决策（iOS / macOS 极简口径）
+
+1. **状态属于对象** ⇒ 挂在 **composer 工具行**（`.agent-dock-actions`，模型选择右侧、发送键左侧），不挂画布顶栏、不占 composer 正上方。
+   - 红利：PC 与移动**共用同一 composer DOM**（移动端裸条 `display:contents` 摊平）⇒ 一处改动两端生效。
+   - 移动端顺带删掉底部状态带里的文字徽标——授权状态不是「节点状态」，放节点状态带本就错位；且状态带只在「生成中/待确认」时出现，空闲时用户看不到也点不到撤回（而「随时能自己踩刹车」是硬要求）。
+2. **颜色：琥珀 `--lnk-warning`，不用红色**。红色在 iOS/macOS 语义里 = 错误 / 破坏性，而「已授权」是用户自己的主动选择；琥珀才是「注意，agent 正在替你行动」。红色留给「收回」这个动作本身。`--lnk-warning` / `--lnk-warning-bg` / `--lnk-warning-border` **双主题已存在 ⇒ 零新令牌**。
+3. **一套图形贯穿两处**：新增 `AutoApproveGlyph.vue`（盾牌 = 权限护栏 + 闪电 = 自动执行）。
+   - 提议卡里 = 开启入口（线框态）；composer 工具行里 = 状态 + 刹车（实心态，点击即收回）。
+   - 形状避让：闪电已被积分 chip 占用（`data-test="credit-chip"`）、推子已被参数微调占用。
+   - 未开启也用琥珀描边 ⇒ 入口自带警示色动作的可发现性，不会被中性灰淹没。
+4. **提议卡动作行形状纪律**：同排次级动作**一律 icon-only**；文案退到 `title` / `aria-label`（可访问性不降级，视觉零文字占位）。
+5. **极简撤销**：单击即激活/收回 + toast 带单动作「撤销」（不弹模态确认框）——误点 3 秒内可反悔。
+
+### 10.3 改动清单（逐文件）
+
+| 文件                                                                                                     | 改动                                                                                          |
+| -------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `apps/web/src/components/agent/AutoApproveGlyph.vue`                                                      | **新增**：盾牌 + 闪电两段 path；`on` 控制线框/实心；纯展示、不持状态、不发事件            |
+| `apps/web/src/components/agent/AgentSideRail.vue`                                                        | 删系统层通栏徽标（模板 + CSS + 依赖）；composer 工具行内新增单枚图标按钮（24×24、零背景块）  |
+| `apps/web/src/components/agent/AgentTurnTimeline.vue`                                                    | 「授权后续自动生成」文字按钮 → 同一枚图标；已授权态不再 `disabled`（禁用就收不回授权）      |
+| `apps/web/src/components/mobile/MobileNodeStatusBar.vue`                                                 | 删授权徽标（模板 + CSS + composable 依赖）⇒ 状态带回归「节点状态」单一职责                 |
+| `apps/web/src/composables/useAutoApproveGeneration.ts`                                                  | `setAuthorized` 增加 `undoable` 选项（toast 内单动作「撤销」，反向写回服务端）              |
+| `apps/web/src/styles/main.css`                                                                           | toast 内「撤销」按钮样式（`ElMessage` 内容节点在 body 下 ⇒ 不能 scoped，故放全局）          |
+| `apps/web/src/components/agent/AutoApproveGlyph.test.ts`（新）                                           | 图标契约：形状 / 两态 / 令牌                                                               |
+| `apps/web/src/components/agent/AgentSideRail.autoApproveToggle.test.ts`（新）                             | **落点守卫**：通栏徽标不得复活、图标契约、提议卡与 composer 同一枚图形                       |
+| `apps/web/src/components/agent/AgentTurnTimeline.authorizeAuto.test.ts`（改写）                           | 图标化契约：icon-only、无长文字、已授权态可点（三动作不受影响）                              |
+| `apps/web/src/components/mobile/MobileNodeStatusBar.authorizeAuto.test.ts`（改写为守卫）                  | 从「断言徽标存在」翻转为「断言徽标不存在」——防日后把通栏文字徽标塞回状态带                 |
+
+### 10.4 守卫与变异验证
+
+- 变异 1：图标默认态加背景块（= 用户投诉的污染回退）⇒ 守卫转红 ✅
+- 变异 2：提议卡回退成长文字按钮（`icon-btn` → `btn-secondary`）⇒ 守卫转红 ✅
+- 变异 3：去掉 `v-if="autoApproveAuthorized"`（未授权也常驻）⇒ 守卫转红 ✅
+- `vue-tsc -b` 0 错误；`pnpm verify-agent-rail-gates` 11/11 PASS。
+
+> ⚠️ 守卫写法纪律（本刀踩到）：**注释里禁止出现受看守的选择器字面量**——`not.toContain('agent-auto-approve-line')` 会被同文件注释里的同名类名误伤；`rule()` 辅助函数必须**只在 `<style>` 段内**搜索，否则模板注释/插值会把 `indexOf` 带偏（曾把 `{{ ... }}` 当成规则体）。
+
+### 10.5 诚实边界
+
+- 本次迭代**尚未在生产环境复测**（§9.2 的 12/12 + 7/7 是**图标化之前**的结论，走的是旧通栏徽标与长文字按钮）。
+- ✅ **探针判据已同步改写**（本地 `.workbuddy/e2e-cdp/generation-auto-approve-probe.mjs` 的 P4/P5 段）：旧 testid `agent-auto-approve-line` / `agent-auto-approve-revoke` 已从源码移除 ⇒ 改为断言 `.auto-approve-toggle`（在 `.agent-dock-actions` 内 / 有图形 / `is-on` / 尺寸 ≤32px / **旧徽标不得复活** / 点击即收回）。⇒ 上线后重跑该探针即可判定图标化未回归。
+- ✅ **本地真机效果已实证**（本地生产构建 + 生产 API 代理，未合并代码）：PC 工具行 24×24 / 图标 15×15 / 背景 `rgba(0,0,0,0)` / 琥珀 `rgb(138,82,0)` / `is-on=true`；移动端裸条同款且 `legacyBar=false`；提议卡触控区 44×44 / 图标 16px / **`text=''`（零文字）** / `on=false`（线框）；两端 `legacy=false`。
+- ⚠️ **生产复测时的环境前置（本刀踩到）**：① `apps/web/vite.config.js` 是被 git 跟踪的 tsc 编译产物且 vite 优先加载它；② `vite dev` 依赖增量优化会删 `node_modules/.vite/deps_temp_*` ⇒ 与沙箱批量删除守卫冲突（阈值 50）⇒ 改用 `vite build` + `vite preview`；③ 走查账号默认模型若已停用 ⇒ `sendMessage` 早退「当前规划模型已停用」⇒ **完全发不出消息**，须先切到可选模型。

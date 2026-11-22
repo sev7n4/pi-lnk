@@ -306,3 +306,35 @@
       12 12,
     crosshair !important;
 }
+
+/* 授权自动生成 · toast 内的单动作「撤销」（2026-11-23 UI 迭代）。
+   ⚠️ ElMessage 的内容节点由 element-plus 渲染在 body 下 ⇒ 不能用 scoped，
+      故放全局；类名前缀隔离，避免与其它 toast 冲突。
+   极简口径：单一 action（不弹模态确认框），琥珀色呼应图标语义。 */
+.auto-approve-toast {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.auto-approve-toast-text {
+  font-size: var(--lnk-text-sm);
+}
+
+.auto-approve-toast-undo {
+  flex: none;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 0.5px solid var(--lnk-warning-border);
+  border-radius: var(--lnk-radius-full);
+  background: transparent;
+  color: var(--lnk-warning);
+  font-size: var(--lnk-text-sm);
+  font-weight: var(--lnk-weight-medium);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.auto-approve-toast-undo:hover {
+  background: var(--lnk-warning-bg);
+}

@@ -24,6 +24,7 @@ import AgentAssetPicker from '@/components/agent/AgentAssetPicker.vue'
 import AgentCanvasOutputs from '@/components/agent/AgentCanvasOutputs.vue'
 import AgentExecutionTrace from '@/components/agent/AgentExecutionTrace.vue'
 import AgentTurnTimeline from '@/components/agent/AgentTurnTimeline.vue'
+import AutoApproveGlyph from '@/components/agent/AutoApproveGlyph.vue'
 import SubagentTaskSheet from '@/components/agent/SubagentTaskSheet.vue'
 import type { TimelinePart } from '@/components/agent/turnTimeline'
 
@@ -866,13 +867,18 @@ const { panelTeleported, asidePanelWidth, toggleFloating, startDrag, startResize
 const { preferences, load: loadProviderBootstrap } = useProviderBootstrap()
 /**
  * 授权自动生成（规格 2026-11-22-generation-auto-approve-gate-design §3.4/§4.2）：
- * 徽标 + 一键收回授权。账号级偏好（服务端 SSOT），判定在服务端。
+ * composer 工具行内的状态 + 刹车图标（2026-11-23 UI 迭代：原系统层通栏徽标已迁出）。
+ * 账号级偏好（服务端 SSOT），判定在服务端。
  */
 const { authorized: autoApproveAuthorized, setAuthorized: setAutoApproveAuthorized } =
   useAutoApproveGeneration()
 
 async function onRevokeAutoApprove() {
-  await setAutoApproveAuthorized(false)
+  // 极简口径：单击即收回 + toast 带「撤销」（误点可一秒反悔），不弹模态确认框。
+  await setAutoApproveAuthorized(false, {
+    successMessage: '已收回授权 · 恢复每次确认',
+    undoable: true,
+  })
 }
 
 const planningModel = ref(preferences.value?.defaultTextModel ?? '')
@@ -4023,24 +4029,10 @@ defineExpose({
                 发起新任务
               </button>
             </div>
-            <!-- 授权自动生成徽标（规格 2026-11-22-generation-auto-approve-gate-design §3.4/§4.2）：
-                 授权后必须「看得见 + 能一键收回」——用户忘了自己授权过就会丧失信任。
-                 ⚠️ 走系统层容器纪律：进层即默认安全（画布视图全隐），**不新增白名单类**
-                 （白名单类现为 0，复活即新增一条需要守卫测试的常驻面）。 -->
-            <div
-              v-if="autoApproveAuthorized"
-              class="agent-auto-approve-line"
-              data-testid="agent-auto-approve-line"
-            >
-              <span class="agent-auto-approve-text">已授权自动生成</span>
-              <button
-                type="button"
-                class="agent-auto-approve-revoke"
-                data-testid="agent-auto-approve-revoke"
-                aria-label="收回授权，恢复每次确认"
-                @click="onRevokeAutoApprove"
-              >收回授权</button>
-            </div>
+            <!-- 授权自动生成：状态 + 刹车**已迁至 composer 工具行**（2026-11-23 UI 迭代）。
+                 原系统层通栏徽标已删除——它把「已开启，可关」8 个字放大成页面唯一高饱和色块，
+                 正压在 composer 正上方的黄金位 ⇒ 视觉重量 ≫ 信息量（对话页被污染）。
+                 新落点见下方 composer 工具行内的授权图标（图标按钮，无背景块）。 -->
             <!-- 会话积分常驻条：系统层最末（见层顶注释——紧贴输入区，WorkBuddy 同位）。
                  Epic 3 Task 7（2026-11-04）：生成扣费落账后追加「（对话 M · 生成 K）」拆分，
                  回应「已消耗与余额对不上」的口径可读性诉求；纯文本回合无生成费不显示。 -->
@@ -4720,6 +4712,26 @@ defineExpose({
                   </template>
                 </MobileSheet>
 
+                <!-- 已授权自动生成：composer 工具行内的**状态 + 刹车**（2026-11-23 UI 迭代）。
+                     ⭐ 落点纪律「状态属于对象」：它描述的是 agent 的行为模式（我把控制权交出去了），
+                     故挂在 composer 自身的工具行，紧邻发送键 = 「按下去会发生什么」的语义邻位。
+                     · 未授权时**不渲染** ⇒ composer 与改造前逐像素一致（零污染）。
+                     · 不占输入区、不新增背景块、只有 15px 图形本身（面积换注意）。
+                     · PC / 移动同一 DOM（移动端裸条 display:contents 摊平）⇒ 一处改动两端生效。
+                     · 移动端空闲态连发送键都消失，故图标独立成子元素而非挂在发送键上，
+                       保证「空闲时也能看到自己开了自动模式并随时踩刹车」。 -->
+                <button
+                  v-if="autoApproveAuthorized"
+                  type="button"
+                  class="auto-approve-toggle"
+                  data-testid="agent-auto-approve-toggle"
+                  aria-label="已授权自动生成，点击收回授权"
+                  title="已授权自动生成 · 点击收回，恢复每次确认"
+                  @click="onRevokeAutoApprove"
+                >
+                  <AutoApproveGlyph :on="true" :size="15" />
+                </button>
+
                 <div class="agent-dock-primary">
                   <!-- P2-2.1：麦克风改 press-and-hold——press 开始、release 转写填入（不自动提交）、上滑取消 -->
                   <DockGenerateButton
@@ -5015,38 +5027,39 @@ defineExpose({
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- 授权自动生成徽标（2026-11-22 规格 §3.4）----
- * 令牌纪律同积分条：--lnk-*、不加白名单类（随系统层在画布视图隐藏）。
- * 选中态用 --lnk-accent-subtle/--lnk-accent-text，**禁用**随主题翻转的 --lnk-hi-bg/--lnk-hi-text。 */
-.agent-auto-approve-line {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin: 0 4px 4px;
-  padding: 4px 8px;
-  border: 0.5px solid var(--lnk-accent-border);
-  border-radius: var(--lnk-radius-md);
-  background: var(--lnk-accent-subtle);
-  color: var(--lnk-accent-text);
-  font-size: var(--lnk-text-2xs);
-  line-height: var(--lnk-lh-2xs);
-}
-.agent-auto-approve-revoke {
+/* ---- 授权自动生成 · composer 工具行图标（2026-11-23 UI 迭代）----
+ * 取代原系统层通栏徽标（已删）。
+ * 令牌纪律：--lnk-*、零新令牌（--lnk-warning 双主题已存在）、不加白名单类。
+ * 形状：24×24 无背景按钮，内含 15px 盾牌+闪电；hover 才出琥珀柔底（默认零色块）。 */
+.auto-approve-toggle {
   flex: none;
-  min-height: var(--lnk-touch-target);
-  padding: 0 8px;
-  border: 0.5px solid var(--lnk-accent-border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0.5px solid transparent;
   border-radius: var(--lnk-radius-sm);
   background: transparent;
-  color: var(--lnk-accent-text);
-  font-size: var(--lnk-text-2xs);
+  color: var(--lnk-warning);
   cursor: pointer;
   touch-action: manipulation;
+  transition: background-color 120ms ease, border-color 120ms ease;
 }
-.agent-auto-approve-revoke:focus-visible {
+.auto-approve-toggle:hover {
+  background: var(--lnk-warning-bg);
+  border-color: var(--lnk-warning-border);
+}
+.auto-approve-toggle:focus-visible {
   outline: 2px solid var(--lnk-border-focus);
   outline-offset: 2px;
+}
+/* 移动端裸条摊平（display:contents）⇒ 需显式 order 排到模型 chip 之后、发送键之前。
+   同 order 按 DOM 顺序：params(2) → toggle(2) → primary(3)；空闲态 params/primary 隐藏时
+   toggle 仍在（hint order:2 且 DOM 更早 ⇒ toggle 落在最右）。 */
+.agent-panel-mobile-dock .composer-bare-bar .auto-approve-toggle {
+  order: 2;
 }
 
 /* ---- 2026-11-03 回合实时状态灰字（WorkBuddy 同款，积分条上沿） ----
