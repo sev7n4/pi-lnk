@@ -1,6 +1,6 @@
 # superpowers 文档索引
 
-> 全部 **596 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
+> 全部 **598 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
 > **文档正文未改动** —— 本索引只做导航与状态标注。
 
 ## 怎么用这份索引
@@ -13,19 +13,19 @@
 
 | 状态 | 份数 | 含义 |
 |---|---|---|
-| 🟢 living | 197 | 仍在演进，改动前先看这份 |
-| 🔒 frozen | 384 | 内容已定稿或功能已落地，作为历史依据 |
-| ⛔ superseded | 15 | 已被后续决策取代，勿再参考 |
+| 🟢 living | 195 | 仍在演进，改动前先看这份 |
+| 🔒 frozen | 386 | 内容已定稿或功能已落地，作为历史依据 |
+| ⛔ superseded | 17 | 已被后续决策取代，勿再参考 |
 
 ## 主题分布
 
 | 主题 | 份数 | 其中 living |
 |---|---|---|
-| 其他 | 186 | 47 |
+| 其他 | 188 | 47 |
 | 画布工具与交互 | 89 | 42 |
 | 工具与运行时内核 | 46 | 12 |
 | 生成管线（图像/视频/3D） | 45 | 9 |
-| Agent 交互与可见性 | 39 | 20 |
+| Agent 交互与可见性 | 39 | 18 |
 | 画布产品能力（原子/意图/neowow） | 34 | 8 |
 | 规划与执行计划 | 30 | 6 |
 | 图片编辑器与精修台 | 30 | 5 |
@@ -42,7 +42,7 @@
 
 ## 按主题浏览
 
-### 其他（186 份）
+### 其他（188 份）
 
 <details><summary>🟢 living · 47 份</summary>
 
@@ -96,8 +96,10 @@
 
 </details>
 
-<details><summary>🔒 frozen · 133 份</summary>
+<details><summary>🔒 frozen · 135 份</summary>
 
+- `docs/superpowers/plans/2026-11-22-turn-inline-status-checklist.md`
+- `docs/superpowers/specs/2026-11-22-turn-inline-status-checklist-design.md` ★design
 - `docs/superpowers/plans/2026-11-20-model-selector-sheet-config.md`
 - `docs/superpowers/plans/2026-11-19-viewport-bounds-guard.md`
 - `docs/superpowers/plans/2026-11-19-model-settings-relocation-theme-distinction.md`
@@ -473,10 +475,8 @@
 
 ### Agent 交互与可见性（39 份）
 
-<details><summary>🟢 living · 20 份</summary>
+<details><summary>🟢 living · 18 份</summary>
 
-- `docs/superpowers/plans/2026-11-22-turn-phase-progress.md`
-- `docs/superpowers/specs/2026-11-22-turn-phase-progress-design.md` ★design
 - `docs/superpowers/plans/2026-11-17-p3-import-chip-manage.md`
 - `docs/superpowers/plans/2026-11-15-composer-paste-text-chip.md`
 - `docs/superpowers/specs/2026-11-15-composer-paste-text-chip-design.md` ★design
@@ -521,8 +521,10 @@
 
 </details>
 
-<details><summary>⛔ superseded · 1 份</summary>
+<details><summary>⛔ superseded · 3 份</summary>
 
+- `docs/superpowers/plans/2026-11-22-turn-phase-progress.md`
+- `docs/superpowers/specs/2026-11-22-turn-phase-progress-design.md` ★design
 - `docs/superpowers/plans/2026-08-09-sidebar-ref-image-routing.md`
 
 </details>

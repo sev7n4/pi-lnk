@@ -21,7 +21,6 @@ import { applyPiUserMessageEvent } from '@/components/agent/queueBubbleSync'
 import AgentRefStrip from '@/components/agent/AgentRefStrip.vue'
 import AgentSelectionBindingChip from '@/components/agent/AgentSelectionBindingChip.vue'
 import AgentAssetPicker from '@/components/agent/AgentAssetPicker.vue'
-import AgentTaskProgressCard from '@/components/agent/AgentTaskProgressCard.vue'
 import AgentCanvasOutputs from '@/components/agent/AgentCanvasOutputs.vue'
 import AgentExecutionTrace from '@/components/agent/AgentExecutionTrace.vue'
 import AgentTurnTimeline from '@/components/agent/AgentTurnTimeline.vue'
@@ -124,7 +123,6 @@ import ModelConfigPanel from './ModelConfigPanel.vue'
 import ModelOptionRow from './ModelOptionRow.vue'
 import { useModelConfigView } from '@/composables/useModelConfigView'
 import { isConversationAckResponse, parseConversationAck } from './main-turn-ack'
-import { turnLiveStatus } from './activityLine'
 import { useClickOutside } from '@/composables/useClickOutside'
 import { useProviderBootstrap } from '@/composables/useProviderBootstrap'
 import { catalogModelKeyFromValue, supportsThinkingLevel } from '@/constants/studioModels'
@@ -540,14 +538,6 @@ const propose = useAgentPropose({
 const taskProgress = ref<AgentTaskProgressState>(emptyTaskProgress())
 const showTaskCard = computed(() => taskProgress.value.items.length > 0)
 
-/**
- * composer 上沿同一时刻只允许挂一层：有待发气泡时任务卡让位，排队发出后自动回来。
- * ⚠️ 这里只管「卡片是否渲染」；`showTaskCard`（本轮是否有任务）仍被 isLiveTurnMessage /
- * canShowMessageActions 用来判定「本轮是否活跃」，不能被排队状态带偏，否则会在排队期间
- * 把本轮消息的操作按钮提前放出来。
- */
-const showTaskCardAtComposer = computed(() => showTaskCard.value && queuedSlots.value.length === 0)
-
 const lastAssistantMessageId = computed(() =>
   [...agent.messages].reverse().find((m) => m.role === 'assistant')?.id,
 )
@@ -592,18 +582,6 @@ function canvasOutputsForMessage(msg: AgentStreamMessage) {
  * ——挂起回合等待确认时也在消耗挂账期，用户须看到累计在涨）。空闲时不渲染（不盯死）。
  */
 const creditsLineVisible = computed(() => agent.isStreaming || mainTurnSuspended.value)
-
-/**
- * 2026-11-03 WorkBuddy 同款回合实时状态灰字（移动端复测追加需求）：钉在积分常驻条上沿，
- * 实时播报「等待模型响应 / 深度思考中 / 生成回复中 / 正在<工具人话> / 等待你确认」。
- * 数据源 = 时间线单一真相（activityLine.turnLiveStatus，与对话流内联卡同源，结构性防抢跑）；
- * 显隐与积分条同口径（turn 活跃期 isStreaming ∪ mainTurnSuspended，空闲不盯死）。
- */
-const turnLiveStatusText = computed(() => {
-  if (!creditsLineVisible.value) return null
-  const last = [...agent.messages].reverse().find((m) => m.role === 'assistant')
-  return turnLiveStatus(last?.timeline?.parts)
-})
 
 /** 根治规格（2026-10-28）：对话流内联 proposal 卡的确认 / 取消——复用既有确认面语义，
  *  不再走对话流外浮卡。confirmProposeWait / cancelProposeForNode 已 defineExpose 给画布节点。 */
@@ -3902,12 +3880,6 @@ defineExpose({
                 >{{ lastTurnReceipt.undoTurn }}</button>
               </span>
             </div>
-            <AgentTaskProgressCard
-              v-if="showTaskCardAtComposer"
-              class="mx-3"
-              :progress="taskProgress"
-              @focus-node="onFocusNode($event)"
-            />
             <!-- 2026-10-15（三滚动条治理 2/2）：live 态对话内容移回主滚动流——
                  用户口径「composer 上方的对话内容是一整套页面，只有思考消息流自带滚动条」。
                  此前这些块挂在 dock 外层独立滚动容器（.agent-dock-scroll--scrollable）里，
@@ -4037,16 +4009,6 @@ defineExpose({
               >
                 发起新任务
               </button>
-            </div>
-            <!-- 2026-11-03 WorkBuddy 同款回合实时状态灰字（移动端复测追加需求）：
-                 时间线单一真相派生（activityLine.turnLiveStatus，与对话流内联卡同源），
-                 显隐与积分条同口径（turn 活跃期）；画布视图随层隐藏（同积分条）。 -->
-            <div
-              v-if="turnLiveStatusText"
-              class="agent-live-status-line"
-              data-testid="turn-live-status"
-            >
-              {{ turnLiveStatusText }}
             </div>
             <!-- 会话积分常驻条：系统层最末（见层顶注释——紧贴输入区，WorkBuddy 同位）。
                  Epic 3 Task 7（2026-11-04）：生成扣费落账后追加「（对话 M · 生成 K）」拆分，
