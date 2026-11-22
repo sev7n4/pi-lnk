@@ -389,7 +389,38 @@ manual: → pending_confirm → SSE waiting_user → 确认卡 → /answers → 
 
 ### 10.5 诚实边界
 
-- 本次迭代**尚未在生产环境复测**（§9.2 的 12/12 + 7/7 是**图标化之前**的结论，走的是旧通栏徽标与长文字按钮）。
+- 本次迭代**已在生产复测通过**（2026-11-23，master `1fa0a13e`）—— 见 §10.6。（§9.2 的 12/12 + 7/7 是**图标化之前**的结论，走的是旧通栏徽标与长文字按钮。）
 - ✅ **探针判据已同步改写**（本地 `.workbuddy/e2e-cdp/generation-auto-approve-probe.mjs` 的 P4/P5 段）：旧 testid `agent-auto-approve-line` / `agent-auto-approve-revoke` 已从源码移除 ⇒ 改为断言 `.auto-approve-toggle`（在 `.agent-dock-actions` 内 / 有图形 / `is-on` / 尺寸 ≤32px / **旧徽标不得复活** / 点击即收回）。⇒ 上线后重跑该探针即可判定图标化未回归。
 - ✅ **本地真机效果已实证**（本地生产构建 + 生产 API 代理，未合并代码）：PC 工具行 24×24 / 图标 15×15 / 背景 `rgba(0,0,0,0)` / 琥珀 `rgb(138,82,0)` / `is-on=true`；移动端裸条同款且 `legacyBar=false`；提议卡触控区 44×44 / 图标 16px / **`text=''`（零文字）** / `on=false`（线框）；两端 `legacy=false`。
 - ⚠️ **生产复测时的环境前置（本刀踩到）**：① `apps/web/vite.config.js` 是被 git 跟踪的 tsc 编译产物且 vite 优先加载它；② `vite dev` 依赖增量优化会删 `node_modules/.vite/deps_temp_*` ⇒ 与沙箱批量删除守卫冲突（阈值 50）⇒ 改用 `vite build` + `vite preview`；③ 走查账号默认模型若已停用 ⇒ `sendMessage` 早退「当前规划模型已停用」⇒ **完全发不出消息**，须先切到可选模型。
+
+
+### 10.6 生产复测结论（2026-11-23，master `1fa0a13e`）
+
+**链路**：PR #978 → CI **4/4 绿**（含 web 全量 555 文件 / 4600 用例）→ squash 合并 `1fa0a13e`（**合并树 `3690e6c0` == CI 验证 head 树**）→ 部署 run `45061972240`：`Deploy web` success、`Build API` **skipped**（web-only 分流正确，本刀纯前端）。
+
+**产物取证**：递归抓取线上 114 个 chunk，4 个标记全命中——`auto-approve-toggle`（CanvasPage chunk）、`auto-approve-glyph`（AgentTurnTimeline chunk）、两处 aria 文案。
+
+**主探针 `.workbuddy/e2e-cdp/generation-auto-approve-probe.mjs` → 14/14 PASS**（较 2026-11-22 的 12 项新增 P4b/P4c）：
+
+| 判据 | 实测 |
+|---|---|
+| P4 composer 工具行图标 | `w=24 h=24`、glyph `15×15`、`glyphOn=true`、**`text=''`（零文字）**、`inDockActions=true`、`aria="已授权自动生成，点击收回授权"` |
+| P4b 旧通栏徽标未复活 | `legacyBanner=false`（对话页零污染） |
+| P4c 视觉体量克制 | `24×24 ≤ 32px`（不占大位） |
+| P5/P5b 收回闭环 | 点图标 ⇒ 服务端回读 `manual` ⇒ 图标消失 |
+| P0–P3 / M1–M3 | 设置开关 44×26 `role=switch`、bootstrap 回读 `auto`/`manual`、移动端往返，全 PASS |
+
+> ⚠️ 探针本轮同步改造：**自建自有会话**（`POST /api/sessions`）—— 旧默认 `SESSION_URL` 属他人画布 ⇒ `agentReadOnly` ⇒ input-dock 隐藏 ⇒ **composer 工具行不渲染 ⇒ P4 必然假失败**；走查结束删除会话。
+
+**提议卡图标生产实证**（专项脚本，真实生成一触即发）：
+
+| 项 | 实测 |
+|---|---|
+| 提议卡状态 | `pending_confirm`（含「待确认」徽标、消耗 33 积分） |
+| 授权按钮 | 触控区 **44×44**、图标 **16px**、**`text=''`（零文字）**、`on=false`（**线框=未开启**）、颜色 `rgb(138,82,0)`、`aria="授权后续自动生成，本次仍需确认，下次生效"` |
+| 同行元素 | `rowText="落锚生成"` ⇒ 与「落锚生成 / 参数微调 / 取消」**形状同构**，卡片不再被长文字撑开 |
+
+**双主题**：浅色 `rgb(138,82,0)`（深琥珀）/ 深色 `rgb(251,191,36)`（亮琥珀）⇒ `--lnk-warning` 双主题自适应，**零新令牌**。
+
+**诚实边界（剩余）**：① audio 介质未活体（沿用 §9.3）；② 本刀**未重跑活体对照 7/7**（P6 拆在独立脚本，逻辑未受本次前端改动影响，但未复跑）；③ `defaultTextModel` 停用缺陷属**既存产品问题**，本刀不修。
