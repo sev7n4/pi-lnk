@@ -111,7 +111,8 @@ class UpdateChannelDto {
   models?: ChannelModelDto[]
 }
 
-class UpdatePreferencesDto {
+// 导出以便写 DTO 透传回归测试（全局 ValidationPipe whitelist 会剥掉无装饰属性）。
+export class UpdatePreferencesDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
@@ -195,6 +196,13 @@ class UpdatePreferencesDto {
   @IsOptional()
   @IsString()
   systemPrompt?: string | null
+
+  // 授权自动生成（规格 2026-11-22-generation-auto-approve-gate-design）：
+  // manual = 未授权（每次确认，缺省）；auto = 已授权（image/audio 免确认）。
+  // ⚠️ 必须带装饰器——ValidationPipe 会剥掉无装饰属性（漏了即静默丢字段）。
+  @IsOptional()
+  @IsIn(['manual', 'auto'])
+  autoApproveGenerations?: string
 }
 
 class UpdateWebdavDto {

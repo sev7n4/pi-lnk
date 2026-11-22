@@ -125,6 +125,7 @@ import { useModelConfigView } from '@/composables/useModelConfigView'
 import { isConversationAckResponse, parseConversationAck } from './main-turn-ack'
 import { useClickOutside } from '@/composables/useClickOutside'
 import { useProviderBootstrap } from '@/composables/useProviderBootstrap'
+import { useAutoApproveGeneration } from '@/composables/useAutoApproveGeneration'
 import { catalogModelKeyFromValue, supportsThinkingLevel } from '@/constants/studioModels'
 import {
   agentInputPlaceholder,
@@ -863,6 +864,17 @@ const { panelTeleported, asidePanelWidth, toggleFloating, startDrag, startResize
 })
 
 const { preferences, load: loadProviderBootstrap } = useProviderBootstrap()
+/**
+ * 授权自动生成（规格 2026-11-22-generation-auto-approve-gate-design §3.4/§4.2）：
+ * 徽标 + 一键收回授权。账号级偏好（服务端 SSOT），判定在服务端。
+ */
+const { authorized: autoApproveAuthorized, setAuthorized: setAutoApproveAuthorized } =
+  useAutoApproveGeneration()
+
+async function onRevokeAutoApprove() {
+  await setAutoApproveAuthorized(false)
+}
+
 const planningModel = ref(preferences.value?.defaultTextModel ?? '')
 /** PI 链路深度思考：默认关，Dock 可开（与文本节点对齐）。
  * 可见条件必须与 pi-runtime 的能力判定同源（shared `supportsThinkingLevel`）——
@@ -4011,6 +4023,24 @@ defineExpose({
                 发起新任务
               </button>
             </div>
+            <!-- 授权自动生成徽标（规格 2026-11-22-generation-auto-approve-gate-design §3.4/§4.2）：
+                 授权后必须「看得见 + 能一键收回」——用户忘了自己授权过就会丧失信任。
+                 ⚠️ 走系统层容器纪律：进层即默认安全（画布视图全隐），**不新增白名单类**
+                 （白名单类现为 0，复活即新增一条需要守卫测试的常驻面）。 -->
+            <div
+              v-if="autoApproveAuthorized"
+              class="agent-auto-approve-line"
+              data-testid="agent-auto-approve-line"
+            >
+              <span class="agent-auto-approve-text">已授权自动生成</span>
+              <button
+                type="button"
+                class="agent-auto-approve-revoke"
+                data-testid="agent-auto-approve-revoke"
+                aria-label="收回授权，恢复每次确认"
+                @click="onRevokeAutoApprove"
+              >收回授权</button>
+            </div>
             <!-- 会话积分常驻条：系统层最末（见层顶注释——紧贴输入区，WorkBuddy 同位）。
                  Epic 3 Task 7（2026-11-04）：生成扣费落账后追加「（对话 M · 生成 K）」拆分，
                  回应「已消耗与余额对不上」的口径可读性诉求；纯文本回合无生成费不显示。 -->
@@ -4983,6 +5013,40 @@ defineExpose({
   text-align: center;
   color: var(--lnk-text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+/* ---- 授权自动生成徽标（2026-11-22 规格 §3.4）----
+ * 令牌纪律同积分条：--lnk-*、不加白名单类（随系统层在画布视图隐藏）。
+ * 选中态用 --lnk-accent-subtle/--lnk-accent-text，**禁用**随主题翻转的 --lnk-hi-bg/--lnk-hi-text。 */
+.agent-auto-approve-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 4px 4px;
+  padding: 4px 8px;
+  border: 0.5px solid var(--lnk-accent-border);
+  border-radius: var(--lnk-radius-md);
+  background: var(--lnk-accent-subtle);
+  color: var(--lnk-accent-text);
+  font-size: var(--lnk-text-2xs);
+  line-height: var(--lnk-lh-2xs);
+}
+.agent-auto-approve-revoke {
+  flex: none;
+  min-height: var(--lnk-touch-target);
+  padding: 0 8px;
+  border: 0.5px solid var(--lnk-accent-border);
+  border-radius: var(--lnk-radius-sm);
+  background: transparent;
+  color: var(--lnk-accent-text);
+  font-size: var(--lnk-text-2xs);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.agent-auto-approve-revoke:focus-visible {
+  outline: 2px solid var(--lnk-border-focus);
+  outline-offset: 2px;
 }
 
 /* ---- 2026-11-03 回合实时状态灰字（WorkBuddy 同款，积分条上沿） ----

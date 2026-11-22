@@ -67,6 +67,8 @@ import {
 import { PiRuntimeClient } from './pi-runtime/pi-runtime.client'
 import { GenerationRecoveryService } from './generation-recovery/generation-recovery.service'
 import { loadReadMediaImage } from './read-media'
+// 授权自动生成（2026-11-22 规格 §3.2）：审批分级纯函数——判定权在服务端 SSOT。
+import { resolveAutoApproveTier, type AutoApproveReason } from './generation-approval'
 import { PLATFORM_CHANNEL_ID, ProviderService } from '../provider/provider.service'
 // B2 S2-1e：模型能力判定/audioKind 派生切 DB 目录缓存（DB 是唯一真源）——
 // admin 后台新增的模型不在常量目录，旧实现会误判（如 music 模型判 voice、
@@ -764,6 +766,12 @@ type AccountGenPrefs = {
   audioFormat: string
   audioSpeed: number
   audioInstructions: string | null
+  /**
+   * 授权自动生成（规格 2026-11-22-generation-auto-approve-gate-design §3.2）：
+   * 账号级用户偏好，`manual` = 每次确认（缺省），`auto` = 已授权。
+   * 作用域 = image + audio（video 不对用户级开放，见 USER_AUTO_ELIGIBLE_MEDIA）。
+   */
+  autoApproveGenerations: 'manual' | 'auto'
 }
 
 const HARDCODE_PREFS: AccountGenPrefs = {
@@ -782,6 +790,7 @@ const HARDCODE_PREFS: AccountGenPrefs = {
   audioFormat: 'mp3',
   audioSpeed: 1,
   audioInstructions: null,
+  autoApproveGenerations: 'manual',
 }
 
 function pickString(value: unknown, fallback: string): string {
@@ -927,6 +936,7 @@ export class AgentCanvasToolsService {
       audioFormat: row.audioFormat || 'mp3',
       audioSpeed: row.audioSpeed ?? 1,
       audioInstructions: row.audioInstructions ?? null,
+      autoApproveGenerations: row.autoApproveGenerations === 'auto' ? 'auto' : 'manual',
     }
   }
 
@@ -1487,32 +1497,44 @@ export class AgentCanvasToolsService {
 
     // P1-D（spec 2026-11-02-p1d-approval-tiering-design §3）：审批分级。
     // 判定权在服务端 SSOT（agent/客户端不可传入 tier——防自declare 低风险提权）。
-    // v1 白名单机制通用但仅实现 text 通道（成本≈0）：env 配其他介质不生效（保守，
-    // 未来介质 auto 化时在此加对应 start-* 分支）。auto 路径保持「重提即纪元」不变式：
-    // 先落新 epoch（不带 status，节点保持 draft），再直调 start-text 同一函数——
-    // 吃 P0-1 dedup + epoch 断言 + 锚点纪律，零新增幂等键；不产生 pending_confirm
-    // （C0 守卫面零接触）。
-    if (node.type === 'text' && this.isAutoApproveMediaType('text')) {
+    // 2026-11-22 升级（spec generation-auto-approve-gate-design §3.2/§8）：判定源从
+    // 「单一 env 白名单」升级为「系统模式 ∧ tier 白名单 ∧ 用户级账号偏好」的合取，
+    // auto 分支从 v1 仅实现 text 通道扩到 image/video/audio（各自直调既有 start-*，
+    // 吃 P0-1 dedup + epoch 断言 + 锚点纪律，零新增幂等键）。
+    // auto 路径保持「重提即纪元」不变式：先落新 epoch（不带 status，节点保持 draft），
+    // 再直调 start-<media> 同一函数；不产生 pending_confirm（C0 守卫面零接触）。
+    // ⚠️ 硬门禁（missing_refs / B1 生成中守卫）在到达此处之前已 fail-closed，授权不绕过。
+    const tier = await this.resolveAutoApprove(node.type, input.userId)
+    if (tier.auto) {
       await this.applyOrStage(
         input.sessionId,
-        [{ type: 'update_node', payload: { id: node.id, data: { proposalEpoch } } }],
+        [
+          {
+            type: 'update_node',
+            payload: {
+              id: node.id,
+              data: { proposalEpoch, ...(inlineDataPatch ?? {}) },
+            },
+          },
+        ],
         false,
       )
-      const start = await this.startTextGeneration({
+      const started = await this.startAutoGeneration(node.type, {
         sessionId: input.sessionId,
         userId: input.userId,
         nodeId: input.nodeId,
         proposalEpoch,
+        params: input.params,
       })
       this.logger.warn(
-        `[approval_tier_bypassed] sessionId=${input.sessionId} nodeId=${node.id} mediaType=text deduped=${start.deduped ?? false}`,
+        `[approval_tier_bypassed] sessionId=${input.sessionId} nodeId=${node.id} mediaType=${node.type} reason=${tier.reason} deduped=${started.deduped ?? false}`,
       )
       return {
         nodeId: node.id,
         status: 'generating',
-        generationRecordId: start.generationRecordId,
+        generationRecordId: started.generationRecordId,
         autoApproved: true,
-        actions: start.actions,
+        actions: started.actions,
       }
     }
 
@@ -1527,6 +1549,61 @@ export class AgentCanvasToolsService {
     ]
     await this.applyOrStage(input.sessionId, actions, false)
     return { nodeId: node.id, status: 'pending_confirm', summary, actions }
+  }
+
+  /**
+   * auto 分支的介质分派（2026-11-22 授权自动生成，规格 §6.3 接线 #4）。
+   *
+   * 复用既有 `start-*` 函数——P0-1 dedup、epoch 断言、锚点纪律、积分盖章全部原样生效，
+   * **零新增幂等键、零新增执行路径**。人工确认通道走的是同一批函数，两条路径只有
+   * 「谁来按下开始」不同，落库与治理完全一致。
+   *
+   * 音频内联参数（kind/voice/scripts…）与人工确认通道同语义：优先 `input.params`，
+   * 缺省才沿用节点上已落的 `audio*` 字段（propose 时已随 inlineDataPatch 落节点）。
+   */
+  private async startAutoGeneration(
+    mediaType: string,
+    input: {
+      sessionId: string
+      userId: string
+      nodeId: string
+      proposalEpoch: number
+      params?: {
+        kind?: string
+        voice?: string
+        emotion?: string
+        roles?: Array<{ role: string; voice: string }>
+        scripts?: Array<{ role?: string; text: string }>
+        instruction?: string
+        caption?: string
+        lyrics?: string
+        instrumental?: boolean
+      }
+    },
+  ): Promise<{ generationRecordId?: string; actions: CanvasAction[]; deduped?: boolean }> {
+    const base = {
+      sessionId: input.sessionId,
+      userId: input.userId,
+      nodeId: input.nodeId,
+      proposalEpoch: input.proposalEpoch,
+    }
+    if (mediaType === 'text') {
+      const r = await this.startTextGeneration(base)
+      return { generationRecordId: r.generationRecordId, actions: r.actions, deduped: r.deduped }
+    }
+    if (mediaType === 'image') {
+      const r = await this.startImageGeneration(base)
+      return { generationRecordId: r.generationRecordId, actions: r.actions, deduped: r.deduped }
+    }
+    if (mediaType === 'video') {
+      const r = await this.startVideoGeneration(base)
+      return { generationRecordId: r.generationRecordId, actions: r.actions, deduped: r.deduped }
+    }
+    if (mediaType === 'audio') {
+      const r = await this.startAudioGeneration({ ...base, ...(input.params ?? {}) })
+      return { generationRecordId: r.generationRecordId, actions: r.actions, deduped: r.deduped }
+    }
+    throw new BadRequestException(`节点类型 ${mediaType} 不支持自动生成通道`)
   }
 
   /**
@@ -4427,19 +4504,31 @@ export class AgentCanvasToolsService {
   }
 
   /**
-   * P1-D（spec 2026-11-02-p1d-approval-tiering-design §3.1/§3.4）：审批分级判定。
-   * 静态规则表：介质类型 ∈ env 白名单 ⇒ auto；否则人工确认。
-   * `GENERATION_AUTO_APPROVE` 逗号分隔介质白名单，缺省 'text'；置空 ⇒ 全人工
-   * （部署级回滚开关）。每次调用现读 env（低频路径），改 env 重启即生效且测试可注入。
+   * P1-D（spec 2026-11-02-p1d-approval-tiering-design §3.1/§3.4）+ 授权自动生成
+   * （spec 2026-11-22-generation-auto-approve-gate-design §3.2）：审批分级判定。
+   *
+   * 判定权在服务端 SSOT（agent/客户端不可传入 tier——防自声明提权）：
+   *   ① 系统模式 `GENERATION_APPROVAL_MODE`（tiered 缺省 / full_manual 强制人工 / auto_all 全放开）
+   *   ② tier 白名单 `GENERATION_AUTO_APPROVE`（逗号分隔介质，缺省 'text'；置空 ⇒ 白名单空）
+   *   ③ 用户级账号偏好 `UserAiPreferences.autoApproveGenerations`（manual 缺省 / auto 已授权）
+   *
+   * 两段式取数：先按 env 判（命中即返回，text 缺省路径**零 DB 读**）；未命中且介质在
+   * 用户可授权集内（image/audio）才读账号偏好——避免每次 propose 都打 DB。
+   * 每次调用现读 env（低频路径），改 env 重启即生效且测试可注入。
    */
-  private isAutoApproveMediaType(mediaType: string): boolean {
-    const raw = (process.env.GENERATION_AUTO_APPROVE ?? 'text').trim()
-    if (raw === '') return false
-    return raw
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .includes(mediaType)
+  private async resolveAutoApprove(
+    mediaType: string,
+    userId: string,
+  ): Promise<{ auto: boolean; reason: AutoApproveReason }> {
+    const env = {
+      mode: process.env.GENERATION_APPROVAL_MODE,
+      whitelistRaw: process.env.GENERATION_AUTO_APPROVE,
+    }
+    const phase1 = resolveAutoApproveTier({ mediaType, ...env })
+    if (phase1.auto) return phase1
+    if (phase1.reason !== 'user_pref_unknown') return phase1
+    const prefs = await this.loadAccountGenPrefs(userId)
+    return resolveAutoApproveTier({ mediaType, ...env, userPref: prefs.autoApproveGenerations })
   }
 
   private async applyOrStage(

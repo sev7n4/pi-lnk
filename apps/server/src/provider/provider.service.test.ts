@@ -46,6 +46,8 @@ type PreferencesRow = {
   audioSpeed: number
   audioInstructions: string | null
   systemPrompt: string | null
+  /** 授权自动生成（manual = 未授权缺省 / auto = 已授权）。 */
+  autoApproveGenerations: string
 }
 
 type WebdavRow = {
@@ -769,8 +771,28 @@ describe('ProviderService', () => {
     )
   })
 
-  it('S1-1: 播种平台渠道时条目统一带 availability=unknown', async () => {
+  // ── 授权自动生成（规格 2026-11-22-generation-auto-approve-gate-design §3.2）──
+  it('授权自动生成：缺省未授权（manual），updatePreferences 落库并回读（账号级偏好）', async () => {
+    const boot = await svc.bootstrap('u1')
+    expect(boot.preferences.autoApproveGenerations).toBe('manual')
+
+    const authorized = await svc.updatePreferences('u1', { autoApproveGenerations: 'auto' })
+    expect(authorized.autoApproveGenerations).toBe('auto')
+    expect((await svc.bootstrap('u1')).preferences.autoApproveGenerations).toBe('auto')
+
+    const revoked = await svc.updatePreferences('u1', { autoApproveGenerations: 'manual' })
+    expect(revoked.autoApproveGenerations).toBe('manual')
+  })
+
+  it('授权自动生成：非法值 400（脏值不得落库，判定侧不兜底静默丢用户意图）', async () => {
     await svc.bootstrap('u1')
+    await expect(
+      svc.updatePreferences('u1', { autoApproveGenerations: 'yes' }),
+    ).rejects.toBeInstanceOf(BadRequestException)
+    expect((await svc.bootstrap('u1')).preferences.autoApproveGenerations).toBe('manual')
+  })
+
+  it('S1-1: 播种平台渠道时条目统一带 availability=unknown', async () => {    await svc.bootstrap('u1')
     const stored = JSON.parse(prisma._channels.get('platform')!.models) as {
       name: string
       availability?: string
@@ -919,6 +941,7 @@ function makePrefsRow(userId: string, overrides: Partial<PreferencesRow> = {}): 
     audioSpeed: 1,
     audioInstructions: null,
     systemPrompt: null,
+    autoApproveGenerations: 'manual',
     ...overrides,
   }
 }

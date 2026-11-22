@@ -86,6 +86,12 @@ export type PreferencesPublic = {
   audioSpeed: number
   audioInstructions: string | null
   systemPrompt: string | null
+  /**
+   * 授权自动生成（规格 2026-11-22-generation-auto-approve-gate-design §3.2）：
+   * `manual` = 未授权（每次确认，缺省）；`auto` = 已授权（image/audio 免确认）。
+   * 账号级、跨设备；判定仍在服务端（客户端不可传入 tier）。
+   */
+  autoApproveGenerations: 'manual' | 'auto'
 }
 
 export type WebdavPublic = {
@@ -135,6 +141,8 @@ export type UpdatePreferencesInput = {
   audioSpeed?: number
   audioInstructions?: string | null
   systemPrompt?: string | null
+  /** 授权自动生成：`manual` | `auto`（service 内做白名单校验，非法值 400）。 */
+  autoApproveGenerations?: string
 }
 
 export type UpdateWebdavInput = {
@@ -266,6 +274,8 @@ function defaultPreferencesData(userId: string) {
     audioSpeed: 1,
     audioInstructions: null as string | null,
     systemPrompt: null as string | null,
+    // 授权自动生成：缺省未授权（每次确认）——账号级偏好，服务端裁决。
+    autoApproveGenerations: 'manual',
   }
 }
 
@@ -533,6 +543,15 @@ export class ProviderService {
         throw new BadRequestException('defaultVideoDuration must be an integer between 5 and 15')
       }
     }
+    // 授权自动生成：枚举白名单校验（manual/auto），非法值直接拒——避免脏值落库后
+    // 判定侧被迫兜底成 manual（静默丢用户意图）。
+    if (
+      input.autoApproveGenerations !== undefined &&
+      input.autoApproveGenerations !== 'manual' &&
+      input.autoApproveGenerations !== 'auto'
+    ) {
+      throw new BadRequestException('autoApproveGenerations must be manual or auto')
+    }
 
     const data: Record<string, unknown> = {}
     if (input.selectableImageModels !== undefined) {
@@ -581,6 +600,7 @@ export class ProviderService {
       'audioSpeed',
       'audioInstructions',
       'systemPrompt',
+      'autoApproveGenerations',
     ] as const) {
       if (input[key] !== undefined) data[key] = input[key]
     }
@@ -910,6 +930,7 @@ export class ProviderService {
     audioSpeed: number
     audioInstructions: string | null
     systemPrompt: string | null
+    autoApproveGenerations: string
   }): PreferencesPublic {
     return {
       selectableImageModels: parseStringArray(row.selectableImageModels),
@@ -932,6 +953,7 @@ export class ProviderService {
       audioSpeed: row.audioSpeed,
       audioInstructions: row.audioInstructions,
       systemPrompt: row.systemPrompt,
+      autoApproveGenerations: row.autoApproveGenerations === 'auto' ? 'auto' : 'manual',
     }
   }
 

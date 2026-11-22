@@ -17,6 +17,7 @@ import {
   type ModelCapability,
 } from '@lnkpi/shared'
 import { useProviderBootstrap } from '@/composables/useProviderBootstrap'
+import { useAutoApproveGeneration } from '@/composables/useAutoApproveGeneration'
 import {
   apiErrorMessage,
   providerApi,
@@ -27,6 +28,8 @@ import {
 } from '@/services/provider-api'
 
 const open = defineModel<boolean>({ default: false })
+
+const { setAuthorized } = useAutoApproveGeneration()
 
 const {
   load,
@@ -86,6 +89,8 @@ const prefsDraft = reactive({
   audioSpeed: 1,
   audioInstructions: '',
   systemPrompt: '',
+  /** 授权自动生成（manual = 未授权缺省 / auto = 已授权）。 */
+  autoApproveGenerations: 'manual' as 'manual' | 'auto',
 })
 const webdavDraft = reactive({
   url: '',
@@ -218,6 +223,7 @@ function hydrateFromBootstrap() {
     prefsDraft.audioSpeed = prefs.audioSpeed
     prefsDraft.audioInstructions = prefs.audioInstructions ?? ''
     prefsDraft.systemPrompt = prefs.systemPrompt ?? ''
+    prefsDraft.autoApproveGenerations = prefs.autoApproveGenerations ?? 'manual'
   }
   const wd = webdav.value
   if (wd) {
@@ -507,6 +513,7 @@ function buildPreferencesPayload(): ProviderPreferencesPublic {
     audioSpeed: Math.max(0.25, Math.min(4, Number(prefsDraft.audioSpeed) || 1)),
     audioInstructions: prefsDraft.audioInstructions.trim() || null,
     systemPrompt: prefsDraft.systemPrompt.trim() || null,
+    autoApproveGenerations: prefsDraft.autoApproveGenerations,
   }
 }
 
@@ -528,8 +535,18 @@ async function saveWebdav(): Promise<ProviderWebdavPublic> {
   return updated
 }
 
-async function finish() {
-  saving.value = true
+/**
+ * 授权自动生成开关（PC 管理入口，规格 2026-11-22-generation-auto-approve-gate-design §4）：
+ * **立即写服务端**（不走本弹层的「完成」批量保存）——授权是行为开关，用户期待即时生效。
+ * 写成功后同步 draft，保证弹层「完成」的全量 PUT 不会把授权态改回去。
+ */
+async function onToggleAutoApprove() {
+  const next = prefsDraft.autoApproveGenerations !== 'auto'
+  const ok = await setAuthorized(next)
+  if (ok) prefsDraft.autoApproveGenerations = next ? 'auto' : 'manual'
+}
+
+async function finish() {  saving.value = true
   try {
     for (const draft of channelDrafts.value.filter((c) => !c.readOnly)) {
       await persistChannel(draft)
@@ -978,6 +995,39 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
               placeholder="例如：你是一位擅长电影感写实摄影的视觉导演。"
             />
           </label>
+
+          <!-- 授权自动生成（规格 2026-11-22-generation-auto-approve-gate-design §4）：
+               PC 管理入口。账号级偏好，写服务端即生效（不走本弹层的「完成」批量保存）。
+               作用域限定说明必须写清——否则用户会误以为删除/覆盖等写操作也免确认。 -->
+          <section class="mt-4 rounded-lg border border-line p-3">
+            <div class="flex items-start justify-between gap-3">
+              <div class="min-w-0">
+                <div class="text-sm font-semibold text-fg">授权自动生成</div>
+                <div class="mt-1 text-xs text-fg-3">
+                  {{
+                    prefsDraft.autoApproveGenerations === 'auto'
+                      ? '已授权。agent 生成图片 / 音频卡片时不再逐次确认，会直接消耗额度。可随时收回授权。'
+                      : '未授权。每张图片 / 音频卡片生成前都会先问你。视频始终需要确认。'
+                  }}
+                </div>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                class="auto-approve-switch"
+                :aria-checked="prefsDraft.autoApproveGenerations === 'auto'"
+                :aria-label="
+                  prefsDraft.autoApproveGenerations === 'auto'
+                    ? '收回授权，恢复每次确认'
+                    : '授权自动生成，后续图片与音频卡片不再逐次确认'
+                "
+                data-testid="auto-approve-switch"
+                @click="onToggleAutoApprove"
+              >
+                <span class="auto-approve-knob" />
+              </button>
+            </div>
+          </section>
         </el-tab-pane>
 
         <!-- WebDAV -->
@@ -1064,6 +1114,43 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
 </template>
 
 <style>
+/* 授权自动生成开关（2026-11-22 规格 §4.1）：复刻 ProfilePane 触感开关的轨道规格
+   （44×26），只用 L2/L3 令牌——禁用随主题翻转的 --lnk-hi-bg/--lnk-hi-text。 */
+.provider-config-dialog .auto-approve-switch {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--lnk-border-subtle);
+  cursor: pointer;
+  transition: background-color var(--lnk-duration-fast) var(--lnk-ease-standard);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.provider-config-dialog .auto-approve-switch[aria-checked='true'] {
+  background: var(--lnk-accent);
+}
+.provider-config-dialog .auto-approve-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--lnk-text-on-accent);
+  transition: transform var(--lnk-duration-fast) var(--lnk-ease-standard);
+}
+.provider-config-dialog .auto-approve-switch[aria-checked='true'] .auto-approve-knob {
+  transform: translateX(18px);
+}
+.provider-config-dialog .auto-approve-switch:focus-visible {
+  outline: 2px solid var(--lnk-border-focus);
+  outline-offset: 2px;
+}
+
 .provider-config-dialog .el-dialog {
   background: var(--lnk-surface-raised);
   border: 1px solid var(--lnk-border-default);

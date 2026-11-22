@@ -1,0 +1,294 @@
+# 授权自动生成卡片：用户级 / 系统级可配置授权开关设计（规格）
+
+> 语义说明：用户可见概念统一为「**授权 / 收回授权**」；代码机制层（approval tiering、治理门）仍称「闸门」，指「是否等待人工确认」的技术裁决，与产品语义分离。
+
+> 状态：**已拍板（2026-11-22），进入实施**——拍板结论见 §8  
+> 计划：`docs/superpowers/plans/2026-11-22-generation-auto-approve-gate.md`  
+> 日期：2026-11-22  
+> 范围：`apps/web` 设置面、`apps/server` 审批分级、`services/pi-runtime` 确认等待  
+> 上游规格：`2026-11-02-p1d-approval-tiering-design.md`（审批分级 P1-D）、`2026-10-06-selection-as-default-reference-design.md`（指代≠授权）
+
+
+
+---
+
+## 0. 结论先行（决策建议）
+
+**可以做，而且几乎不需要造新东西**：项目里已经有一条完整、被测试锁死的「免确认自动生成」链路（P1-D 审批分级），只是判定源写死在部署级 env、且只对文本生效。要做的不是新建"开关系统"，而是**把判定源从单一 env 白名单升级为「系统总闸 + 用户偏好 + 介质风险」的合取判定，再把 auto 分支补齐到图片/视频/音频**，UI 挂到现有的设置页与移动端「我的」页。
+
+| 决策点                        | 建议                                                                                                                                                                 | 理由                                                                                 |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| 「闸门」到底是哪个门                 | 只授权**用户授权门**；提议单飞门、服务端治理门**不可关**                                                                                                                                   | 后两者是防重复提议与事务完整性护栏，关了会丢更新/死循环                                                       |
+| 默认状态                       | **默认未授权（每次确认）**；作用域限定为 image/video/audio；text 保持现状免确认                                                                                                              | 现状 text 已默认 auto（零成本、用户预期即时），这样定义「默认未授权」与今天行为一致，零回归                                |
+| 用户级开关存哪                    | **账号级：`UserAiPreferences` 加列**，走 `/provider/bootstrap` + `/provider/preferences`                                                                                   | 服务端已有「判定权在 SSOT、客户端不可传入 tier」纪律（service:1489）；localStorage 只能做 UI 记忆，不能当裁决源        |
+| 系统级开关存哪                    | **env 总闸**（复用 `GENERATION_AUTO_APPROVE` 范式），admin 可视化列 P2                                                                                                          | 秒级止血、无需发版；项目无 ConfigService，env 是现成系统级通道                                           |
+| 开关主入口                      | **确认卡上的「以后自动生成」快捷开关**为主，设置页为管理入口                                                                                                                                   | 用户在每次被打断的那一刻最有动机切换，设置页是被动入口                                                        |
+| 授权后的代价                     | 必须同时提供「已授权徽标 + 一键收回授权 + 可撤销」                                                                                                                                       | 否则用户不知道自己授权了自动执行，会丧失信任；自动生成放大消耗，需接成本可见性                                            |
+| **徽标/刹车放哪（2026-11-22 修订）** | **不放在画布顶栏**。嵌入既有的「状态+动作」承载面：PC=`AgentSideRail` 的 `.agent-system-layer`（composer 正上方）；移动=`MobileCanvasShell` 底部状态带（与 `MobileSaveStatus`/`MobileNodeStatusBar` 同带互斥） | 全仓无独立对话页；移动端顶栏随 tab 变形、无恒定宿主；项目 2026-10-31 已裁决「等待状态行整条退役」，顶栏从来不承载生成状态。详见 §4.2 / §5 |
+
+---
+
+## 1. 第一原则：吃满上游、不重复造轮子
+
+**声明**：任何新增判据 / 工具 / 数据字段 / 引擎，立项前必须过三判据——① 等价物检索；② 接线优先于新建，判据锚到既有结构化数据面；③ 禁造数 / 禁自报。本节逐项给出结论。
+
+### 1.1 等价物检索结论表
+
+| 候选等价物                                                                                            | 真实路径                                                                                                                                                        | 结论                   | 本方案如何接线                                                   |
+| ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | --------------------------------------------------------- |
+| **P1-D 审批分级 + auto 短路全链路**                                                                       | `apps/server/src/agent/agent-canvas-tools.service.ts:4435-4443,1495-1517`；`services/pi-runtime/src/tools/canvas-write.ts:505-514`                           | ✅ 直接复用（核心）           | 不新建确认/免确认机制，只替换 `isAutoApproveMediaType` 的判定源、扩 auto 分支介质 |
+| `GENERATION_AUTO_APPROVE` env 白名单                                                                | 同上 `:4436`（默认 `'text'`，置空=全人工）                                                                                                                              | ✅ 直接复用为系统总闸          | 保留语义，升级为三态/增加总闸开关                                         |
+| `ASK_USER_BLOCKING` / `PI_RUNTIME_PLAN_GATE` / `PI_RUNTIME_PROPOSE_GATE`                         | `services/pi-runtime/src/runtime-config.ts:274,314,326`                                                                                                     | ✅ 复用为部署级 kill switch | 不改，作为最外层总闸兜底                                              |
+| `UserAiPreferences` + `/provider/bootstrap` `/provider/preferences`                              | `apps/server/prisma/schema.prisma:164-188`；`provider.service.ts:280-298,515-593`；`web/src/services/provider-api.ts:120-121`                                 | ✅ 复用（需加列）            | 加 `autoApproveGenerations` 布尔列；前端 draft 三处同步；账号级跨设备       |
+| `usePreferences`（localStorage 单例）                                                                | `apps/web/src/composables/usePreferences.ts:9-47`                                                                                                           | ⚠️ 仅做 UI 记忆          | 只缓存上次选择用于首屏渲染，裁决仍以服务端返回为准（禁客户端自声明 tier）                   |
+| env kill switch 范式（默认 on/off）                                                                    | `apps/server/src/agent/agent.service.ts:2627-2667`                                                                                                          | ✅ 复用写法               | `!== 'off'` / `=== 'on'` 两种默认值范式照抄                        |
+| `startTextGeneration` / `startImageGeneration` / `startVideoGeneration` / `startAudioGeneration` | `agent-canvas-tools.service.ts`（auto 分支当前只调 text）                                                                                                           | ✅ 复用已有执行函数           | auto 分支补介质分派，吃 P0-1 dedup + epoch 断言，零新增幂等键               |
+| 手写 `role="switch"` + L2/L3 令牌                                                                    | `web/src/components/mobile/ProfilePane.vue:154-165,316-345`；`skills/SkillDiscoverPanel.vue:372-375,536-540`                                                 | ✅ 直接复用 CSS 模式        | 44×26 轨道，开=`--lnk-accent`、关=`--lnk-border-subtle`         |
+| `ProfilePane` 设置二级卡 / `SettingsPage` / `ProviderConfigDialog`                                    | `web/src/components/mobile/ProfilePane.vue:127-173`；`web/src/pages/SettingsPage.vue:45-118`；`web/src/components/canvas/ProviderConfigDialog.vue:43,603-612` | ✅ 复用为入口              | PC 挂 Preferences Tab，移动挂设置二级卡，不新建设置容器                     |
+| admin `el-switch` + `AdminAuditLog`                                                              | `web/src/pages/admin/AdminRoutesPage.vue:55-58`；`schema.prisma:701-714`                                                                                     | ✅ 复用（P2）             | 系统级可视化配置 + 审计，非首刀                                         |
+
+**检索结论**：无需新建开关基础设施、无需新建确认卡、无需新建前后端通道、无需新建幂等键。**唯一新增是一个 DB 布尔列与一个纯判定函数。**
+
+### 1.2 禁造数 / 禁自报约束
+
+- 闸门状态**不得**由前端请求参数声明（`propose_generation` 入参不得带 `autoApprove`）——沿袭 service:1489 已有纪律「agent/客户端不可传入 tier」。
+- 免确认结果必须有服务端客观证据：返回 `status==='generating' && autoApproved===true` 才短路（canvas-write.ts:510 双条件），不得用「提示词里写了自动生成」当证据。
+
+---
+
+## 2. 现状取证：闸门到底是什么
+
+代码里是**三层正交机制**，不可混为一谈：
+
+| 层        | 名字                                                 | 真实实现                                                                                                                                                                                                               | 关掉会怎样                      |
+| -------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------- |
+| ① 用户授权门  | 前端确认卡 + runtime 阻塞等待                               | `web/src/components/canvas/ProposeConfirmOverlay.vue:94-99`（可见判据：时间线 `pending_confirm` ∥ 节点 status）；`pi-runtime/src/tools/canvas-write.ts:530-532`（`registry.waitForUser`，`answered`=确认、`aborted`=取消、`timeout`=超时） | **本方案要配置的就是这一层**           |
+| ② 提议单飞门  | `propose-gate.ts` latch/pending/in-flight 三臂       | `services/pi-runtime/src/gate/propose-gate.ts:123-136`                                                                                                                                                             | 关掉会重复提议、生成风暴 —— **必须保留**   |
+| ③ 服务端治理门 | 事务内读最新 + `applyCanvasActions` + `stagedActions` 退让 | `apps/server/src/sessions/canvas-op-write.ts:82-99`；`canvas-write-governance.test.ts:7-11`                                                                                                                         | 关掉会丢更新 —— **必须保留，与用户确认无关** |
+
+**已有免确认能力（关键发现）**：
+
+- `agent-canvas-tools.service.ts:4435-4443`：`GENERATION_AUTO_APPROVE` 默认 `'text'`，逗号分隔白名单，置空 = 全人工（部署级回滚开关）。
+- `agent-canvas-tools.service.ts:1495-1517`：命中白名单 ⇒ 不落 `pending_confirm`，直调 `startTextGeneration`，返回 `autoApproved:true`。
+- `canvas-write.ts:505-514`：tool 识别 `autoApproved && status==='generating'` ⇒ 不进阻塞等待，记 `onProposeOutcome('auto_approved', true)`。
+- ⚠️ **v1 只实现 text**：注释 service:1490-1491 明说「env 配其他介质不生效（保守）」。所以「全介质免确认」需要补 start-* 分支，不是改个开关就行。
+- ⚠️ 其他 kill switch：`ASK_USER_BLOCKING`（关=非阻塞 v1）、`PI_RUNTIME_PLAN_GATE`、`PI_RUNTIME_PROPOSE_GATE`，默认全开、部署级重启生效、无 UI、无用户粒度。
+- ⚠️ `GENERATION_AUTO_APPROVE` 未写入 charts/.env.example，靠代码默认静默生效 —— 本方案应顺手补运维可见性。
+
+**一句话**：免确认链路早已存在且被测试锁死，缺的是「谁能决定、在哪决定、用户能否自己决定」。
+
+---
+
+## 3. 产品方案
+
+### 3.1 闸门作用域（先划边界）
+
+「授权自动生成」在产品上必须拆成两句话，写进 UI 文案与文档：
+
+- ✅ 授权后：**生成卡片不再等你点「确认生成」，由 agent 自动执行**。
+- ❌ 授权后**不是**：agent 获得全局写授权——删除、覆盖、参数变更等其他写操作仍按原路径确认；也不绕过画布治理、参考图绑定校验、stagedActions、配额。
+
+**授权只管「是否等待人」，不管「是否合法写入」，也不扩大写范围。**
+
+> **语义拍板（2026-11-22）**：用户可见概念从「关闭确认闸门」改为「**授权 agent 自动化执行**」。理由：①正向委托框架（授权=赋予、可收回）优于负向放弃框架（关闸门=拆保护）；②与项目原生交互契约对齐——AGENTS.md 已定义「指代 ≠ 授权（写操作仍走确认门）」，「授权」是本仓库区分「指着说」与「允许做」的既有权词；③避免用户误以为所有写操作都免确认。技术字段 `autoApproveGenerations` 保留（避免无谓迁移），用户可见文案统一为「授权 / 收回授权」。
+
+作用域限定：**图片 / 视频 / 音频卡片的生成确认**。文本卡片维持现状（零成本、即时预览、默认 auto），不纳入本开关——这样"默认未授权"与今天的产品行为逐字节一致。
+
+### 3.2 三层优先级模型（核心公式）
+
+```
+autoApprove =
+    systemGateAllowsAuto                    // 系统总闸：env / admin，默认允许
+ && !systemForceManual                      // 系统强制人工（最高优先级，覆盖用户选择）
+ && userPrefersAuto                         // 用户级：UserAiPreferences 账号级偏好
+ && mediaTierPermits(mediaType)             // 风险分级：介质白名单 / 成本阈值
+ && noHardBlock                             // missing_refs / stagedActions / 配额不足等硬门禁
+```
+
+**优先级语义**：
+
+- 系统级 = **上限与总闸**：管理员可「强制全人工」（此时用户开关置灰，附原因文案）；也可设「默认自动」作为新用户初始值。
+- 用户级 = **个人偏好**：在系统允许的范围内生效；用户随时可切回确认模式，无需管理员介入。
+- 风险分级 = **不可越权的下限**（已拍板）：用户级授权作用域 = `image + audio`；**video 不对用户级开放**，仅系统 `auto_all` 放行；text 不纳入本开关（经 tier 白名单维持现状 auto）。
+- 硬门禁 = **与闸门无关的独立门**：参考图未绑定（`missing_refs`）、stagedActions 在场、配额不足，任何模式下都 fail-closed。
+
+### 3.3 状态机与默认值
+
+| 层级    | 键                                                                                     | 默认     | 关闭/开启含义                            |
+| ----- | ------------------------------------------------------------------------------------- | ------ | ---------------------------------- |
+| 系统总闸  | `GENERATION_APPROVAL_MODE`（建议 `full_manual` / `tiered` / `auto_all`，默认 `tiered` 兼容现状） | tiered | full_manual=强制全人工；auto_all=允许全介质自动 |
+| 系统白名单 | `GENERATION_AUTO_APPROVE`（保留，默认 `text`）                                               | text   | tiered 模式下逐介质放行                    |
+| 用户偏好  | `UserAiPreferences.autoApproveGenerations`（枚举 `manual` / `auto`，默认 `manual`）        | manual | 未授权/已授权；已授权作用域 = image + audio                          |
+| 会话临时  | 不落库，P2 可选                                                                             | —      | 「本次会话自动」便于试用                       |
+
+**关键**：用户默认值 `manual` + 系统默认 `tiered(text auto)` ⇒ 新用户体验与今天完全一致，无需迁移、无行为回归。
+
+### 3.4 授权模式的护栏（没有这些就不要上线）
+
+1. **可见**：**在对话侧的状态承载面**出现「已授权自动生成」徽标（accent-subtle 底，非翻转令牌）——PC 为 `AgentSideRail` 的 `.agent-system-layer`（composer 正上方、积分条之前），移动并入 `MobileNodeStatusBar` 既有状态带。**不放画布顶栏**（理由见 §4.2）。
+   - **PC 细节**：徽标走系统层容器纪律——**进层即默认安全**（画布视图全隐），**不新增白名单类**（白名单类现为 0，复活即多一条需要守卫测试的常驻面）。
+   - **移动可见性窗口**（与初稿的偏差，实现按此落地）：徽标挂在既有状态带内 ⇒ **状态带可见时**（生成中 / 待确认——正是用户被「没问我就生成了」惊到的时刻）出现；空闲态的常驻可见性由「我的 → 设置」里的开关承担。理由：若让它在无任务时常驻，要么新增第三条状态带，要么破坏 `MobileSaveStatus`（保存失败提示）的互斥——后者会造成**保存失败不可见**的数据风险，不可接受。
+2. **可收回**：点徽标即弹二级确认「收回授权，恢复每次确认？」，一键回到 manual；另在 composer 发送按钮复用既有「停止生成」语义（`DockGenerateButton`，AgentSideRail.vue:4584-4592）。
+3. **可撤销**：自动生成的卡片保留 `autoApproved:true` 标记与 `proposalEpoch`，复用现有撤销/重提链路，不做新撤销系统。
+4. **成本可见**：授权模式下的生成继续走现有 usage / cost 事件（`LaneSnapshotProjection.stats.usage`），设置项文案提示「授权后生成会直接消耗额度」。
+5. **硬门禁不绕过**：`missing_refs` 短路行为完全保留（canvas-write.ts:480-504），stagedActions 在场一律 fail-closed。
+
+---
+
+## 4. 开关 UX 设计
+
+### 4.1 开关本体（复用现有模式，零新建组件）
+
+```vue
+<button type="button" role="switch" :aria-checked="autoApprove"
+        :aria-label="autoApprove ? '收回授权，恢复每次确认' : '授权自动生成，后续卡片不再逐次确认'"
+        class="auto-approve-switch" @click="toggle">
+  <span class="auto-approve-knob" />
+</button>
+```
+
+CSS 直接复用 `ProfilePane.vue:316-345`：轨道 44×26、关=`--lnk-border-subtle`、开=`--lnk-accent`、旋钮=`--lnk-text-on-accent`，`--lnk-duration-fast` / `--lnk-ease-standard`。  
+**令牌硬约束**：只用 L2/L3；开态优先 `--lnk-accent-subtle` + `--lnk-accent-text`；**禁用** `--lnk-hi-bg` / `--lnk-hi-text`（随主题翻转，禁用于选中态）。focus-visible 2px `border-focus` 外环 + 2px offset；移动端命中区 ≥44px。
+
+### 4.2 五个触点（分工不同）
+
+| 触点              | 位置                                                                                                                                                                     | 职责  | 为什么                                                                            |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- | ------------------------------------------------------------------------------ |
+| **主入口（场景内·PC）** | 对话时间线 proposal 卡 `AgentTurnTimeline.vue` 操作区（「落锚生成 / 调整 / 取消」同区）追加「以后自动生成」                                     | 转化  | PC 唯一场景入口（画布 `ProposeConfirmOverlay` 已于 #972 整体退场，见下「与 #972 的交叉」） |
+| **主入口（场景内·移动）** | `MobileNodeStatusBar.vue` 与「去对话处理」同一条（#972 后该条已无决策按钮）                                                                    | 转化  | 移动端决策面归对话页，本条只留状态 + 跳转 + 授权开关                     |
+| 管理入口（PC）        | `/settings` → 模型配置弹层 `ProviderConfigDialog` 的 `preferences` Tab                                                                                                        | 治理  | 已有偏好分区，无需新建设置页                                                                 |
+| 管理入口（移动）        | `ProfilePane` → 「设置」二级卡，紧邻触感反馈开关                                                                                                                                       | 治理  | 已有开关范式与落点                                                                      |
+| **状态/刹车（修订）**   | **PC**：`AgentSideRail.vue:3929-3993` `.agent-system-layer`（composer 正上方）；**移动**：`MobileCanvasShell.vue:357-375` 底部状态带（与 `MobileSaveStatus`/`MobileNodeStatusBar` 同带互斥） | 可见性 | 见下方「为什么不放顶栏」                                                                   |
+| 系统入口（P2）        | admin 配置页 `el-switch` + `AdminAuditLog`                                                                                                                                | 运营  | 全局强制人工 / 灰度，需审计                                                                |
+
+**为什么不放画布顶栏（2026-11-22 修订，基于代码取证）**：
+
+1. **没有独立对话页**：`router/index.ts:11-26` 只有 `/workflow`（品牌页 `WorkflowPage.vue:121-130`）和 `/workflow/:sessionId`（`CanvasPage`）；画布与 `AgentSideRail` 同页并排，且侧栏被 `flex-row-reverse` 翻到**左侧**（`CanvasPage.vue:6224-6228`）。创作交互的物理中心一直在对话侧栏。
+2. **移动端顶栏没有恒定宿主**：`MobileTopBar.vue:103-135` 随 `tab` 变形（chat=分享会话、canvas=适应画布），形态切换在**底部 TabBar**（`MobileTabBar.vue:21-26`），顶栏不固定属于对话或画布；`useAgentMobileLayout.ts` 只返回单布尔，真正三态在 `CanvasPage.vue:5976-6008`（`mobileCanvasView` / `mobileCanvasImm` / `mobileAppTab`）。
+3. **纯画布满屏态连 composer 都隐藏**：`AgentSideRail.vue:4843-4848` 的 CSS 在 `is-canvas-view` 下隐藏 header/chat-wrap，`.is-canvas-imm` 再隐藏 input-dock——正如你判断的「移动端画布页更多是查看生成内容」，此时顶栏徽标只会是无人操作的死状态。
+4. **历史裁决不允许**：`AgentSideRail.vue:3943-3947` 明确记录 2026-10-31 用户裁决「等待状态行整条退役，只保留 SSE 对话流，等待呈现由时间线内联 proposal 与画布确认面承载」。顶栏从未承载生成状态；新增顶部模式条等于开倒车。
+5. **有现成更好的宿主**：PC `.agent-system-layer` 有硬约束「新增系统层卡片必须放进本容器」（`AgentSideRail.vue:3923-3928`，防三次漏登事故）；移动 `MobileNodeStatusBar` 已是「状态 + 多动作」同构胶囊（`bottom: calc(dock-h + tabbar-h + safe-area + 22px)`、`z-index:55`、44px 触控、`.is-primary` accent 三件套）。两处都零新建容器。
+
+
+**与 #972「决策面收归对话页」的交叉（2026-11-22 master 已落地，本规格同步对齐）**：
+
+`docs/superpowers/specs/2026-11-22-conversation-only-decision-surface-design.md` §3.3 已点名本规格并给出改写指令：
+
+- PC 场景内入口**从 `ProposeConfirmOverlay` 改挂 `AgentTurnTimeline` proposal 卡操作区**（该 overlay 已于 #972 整文件删除，静态守卫 `CanvasPage.decisionSurface.test.ts` 断言其不存在）——本规格不得再触碰画布确认面。
+- 移动场景内入口**仍挂 `MobileNodeStatusBar`**，但不再与「确认 / 拒绝」并列（#972 已删除该两钮），改为与「去对话处理」同条。
+- 本规格的**状态徽标落点不受影响**（PC `AgentSideRail.agent-system-layer` / 移动底部状态带）。
+
+|  |  |  |
+| --- | --- | --- |
+**承载面互斥规则**：移动底部状态带现有 `MobileSaveStatus` 与 `MobileNodeStatusBar` 互斥（`MobileCanvasShell.vue:357-375`，判据 `hasNodeTaskState = generatingCount > 0 || pendingNodes.length > 0`）。授权徽标**不新增第三条**，而是并入 `MobileNodeStatusBar` 的 `hasTask` 判据（`MobileNodeStatusBar.vue:56-102`）——`autoApprove && 无任何节点任务` 时也渲染该条，仅显示「已授权自动生成 · 收回授权」；有任务时与生成中/待确认状态共存于同条，不抢占决策按钮。PC system-layer 同理追加一条，复用 `creditsLine` 的「层末、贴输入区、不进 SSE 滚动」纪律。
+
+### 4.3 文案（遵守 Design_system §4：动词开头、克制、第二人称、说出后果）
+
+- 开关标题：**授权自动生成**
+- 未授权说明：**未授权。每张卡片生成前都会先问你。**
+- 已授权说明：**已授权。agent 生成卡片时不再等待确认，会直接消耗额度。可随时收回授权。**
+- 确认卡快捷项：**授权后续自动生成**
+- 对话侧状态徽标：**已授权自动生成** → 点击「收回授权，恢复每次确认？」（PC 在系统层、移动在底部状态带）
+- 系统强制态（置灰）：**管理员已开启强制确认，当前无法授权自动生成。**
+- 禁止用「确定 / 取消」；危险后果必须说出（「直接消耗额度」）。
+
+---
+
+## 5. 入口设计（贴现有代码落点）
+
+- **PC**：头像菜单 → 设置（已存在，`AccountUserMenu.vue:41-45,133-141`）→ `SettingsPage.vue:101-118` 的「模型配置」行 → `ProviderConfigDialog` 的 `preferences` Tab 新增一行开关。不新增路由、不新增弹层。
+- **移动**：`MobileCanvasShell.vue:377` 承载的 `ProfilePane.vue:127-173`「设置」二级卡，在触感反馈开关下方新增一行。遵循移动端编排归壳的规则，不新建 `*Mobile*` 组件。
+- **场景内（PC 对话侧唯一入口）**：`AgentTurnTimeline.vue` proposal 卡操作区追加「以后自动生成」次级项（与「落锚生成 / 调整 / 取消」同区）；画布侧**不再有确认面**（#972 已删 `ProposeConfirmOverlay`）。点击即写服务端偏好，不阻断本次确认流程（本次仍需确认，下次生效）——避免"点了却还弹"的错觉，文案说清「下次生效」。
+- **场景内（移动）**：`MobileNodeStatusBar.vue` 与「去对话处理」同一条加次级项（#972 后该条已无决策按钮，无并列冲突）。
+- **状态/刹车**：PC 追加到 `AgentSideRail.vue:3929-3993` `.agent-system-layer` 层末（紧邻 `creditsLine`，遵守 `3923-3928` 的「必须进层 + 新增常显卡须立白名单类并加守卫测试」）；移动并入 `MobileNodeStatusBar`（见 §4.2 互斥规则）；**不新增画布顶栏元素**，两端顶栏保持现状。
+- **系统级**：P0 用 env；P2 复用 `AdminRoutesPage.vue:55-58` 的 `el-switch` + audit 范式做可视化。
+
+---
+
+## 6. 架构方案
+
+### 6.1 裁决点必须在服务端（最重要的架构判断）
+
+**不能**只在前端隐藏确认卡：runtime 的 `registry.waitForUser` 仍在阻塞，30min timeout 后返回「未确认」，用户看到的是卡消失但生成没发生。
+
+**必须**让 Nest 在 `/agent/internal/propose-generation` 时就判出 auto，返回 `status:'generating', autoApproved:true`，runtime 走既有短路（canvas-write.ts:510）。这条链路已经存在，零跨服务改动。
+
+判定函数建议（纯函数 + 单测友好）：
+
+```ts
+private resolveAutoApprove(input: {
+  userId: string; mediaType: string; nodeType: string;
+  missingRefs: boolean; staged: boolean;
+  prefs: { autoApproveGenerations: 'manual' | 'auto' };
+  env = process.env,
+}): { auto: boolean; reason: 'user_auto' | 'tier_whitelist' | 'system_off' | 'forced_manual' | 'hard_block' }
+```
+
+- 判定顺序：**硬门禁 → 系统强制人工 → 系统总闸 → 用户偏好 → 介质白名单**（fail-closed 优先）。
+- `userId` 来自 runtime 内部调用的 `input.userId`（canvas-write.ts:472），沿用现有可信通道；**不新增客户端传参**。
+- `reason` 用于日志与 `onProposeOutcome` 归因，保证观测分母不失真。
+
+### 6.2 数据流（零新建通道）
+
+```
+用户切开关 → PUT /provider/preferences → UserAiPreferences 落库（账号级）
+agent propose_generation → runtime POST /agent/internal/propose-generation (带 userId)
+  → Nest resolveAutoApprove(查 UserAiPreferences + env + 硬门禁)
+  → auto: 落 proposalEpoch + 直调 start-* → 返回 autoApproved:true
+  → runtime 短路，不 waitForUser，记 auto_approved
+  → 卡片 status=generating（用户看到已授权徽标 + 生成中）
+  → 落库仍走 applier / 治理门（完全不变）
+manual: → pending_confirm → SSE waiting_user → 确认卡 → /answers → 原链路
+```
+
+### 6.3 接线清单（逐文件）
+
+| # | 文件 | 改动 | 刀次 |
+|---|---|---|---|
+| 1 | `apps/server/prisma/schema.prisma` | `UserAiPreferences` 加 `autoApproveGenerations String @default("manual")`（用字符串枚举避免 PG enum 迁移风险） | P1 |
+| 2 | `apps/server/src/provider/*`（dto / service / controller） | bootstrap 暴露字段 + updatePreferences 白名单透传（⚠️ ValidationPipe 剥无装饰 DTO 属性，必须写透传回归） | P1 |
+| 3 | `web/src/services/provider-api.ts` + `useProviderBootstrap.ts` | draft 字段 + patchPreferences | P1 |
+| 4 | `agent-canvas-tools.service.ts` | `resolveAutoApprove` 纯函数替换 `isAutoApproveMediaType`；补 image/video/audio auto 分支（复用 start-*）；保留 missing_refs 短路与 epoch 不变式 | P1 |
+| 5 | `services/pi-runtime/src/tools/canvas-write.ts` | **不改**——既有短路判据（`autoApproved===true && status==='generating'`）逐字节沿用，跨服务零改动（因此本刀无需部署 pi-runtime） | — |
+| 6 | `AgentTurnTimeline.vue`（+ 移动 `MobileNodeStatusBar.vue`） | PC 对话时间线 proposal 卡快捷开关；移动与「去对话处理」同条；写入偏好，本次确认流程不变（**不碰画布确认面——#972 已删 `ProposeConfirmOverlay`**） | P2 |
+| 6b | `apps/web/src/composables/useAutoApproveGeneration.ts`（**本方案唯一新增前端文件**） | 薄接线：读 `useProviderBootstrap().preferences.autoApproveGenerations`；写走 `providerApi.updatePreferences`（部分字段 PUT）+ `patchPreferences`；**不新建通道、不缓存 localStorage** | P2 |
+| 7 | `SettingsPage.vue` / `ProviderConfigDialog.vue` / `ProfilePane.vue` | PC/移动设置开关（管理入口） | P2 |
+| 7b | `AgentSideRail.vue` `.agent-system-layer`（层末、`creditsLine` 旁） | PC 已授权徽标 + 收回授权按钮；建白名单类 + 守卫测试（遵守 `3923-3928`）；**顶栏零改动** | P2 |
+| 7c | `MobileNodeStatusBar.vue` + `MobileCanvasShell.vue` | 移动徽标并入既有底部状态带 `hasTask` 判据，不发第三条；**顶栏零改动** | P2 |
+| 8 | `apps/server/.env.example`（env 由 Nest api 消费，真源 `/opt/lnkpi/.env`） | 补 `GENERATION_APPROVAL_MODE` / `GENERATION_AUTO_APPROVE` 可见性 | P1 |
+| 9 | admin 配置页 + audit | 系统级可视化与强制人工 | P2 |
+
+### 6.4 不可越权的不变量（写进测试）
+
+1. 服务端治理门、stagedActions 退让、P0-1 dedup、proposalEpoch 重提语义：**任何模式下不变**。
+2. `missing_refs` 硬门禁：auto 模式下仍 fail-closed（复用 canvas-write.ts:480-504 短路）。
+3. 前端传入的 `autoApprove` 参数：服务端**一律忽略**（防自声明提权）。
+4. auto 短路双条件：`status==='generating' && autoApproved===true` 缺一不可。
+5. 默认行为回归：新用户 + 默认 env ⇒ text auto、image/video/audio 仍确认。
+
+---
+
+## 7. 分刀计划与测试锁
+
+| 刀 | 内容 | 验收判据（TDD 先红后绿） |
+|---|---|---|
+| **P0 规格** | 本文件拍板（作用域、默认值、优先级公式） | 决策表逐项确认 |
+| **P1 判定源升级（后端）** | `resolveAutoApprove` + UserAiPreferences 列 + provider 通道 + image/video/audio auto 分支 | `approval-tier.test.ts` 新增：user_auto 全介质生成、system forced_manual 覆盖、missing_refs 不被绕过、客户端参数被忽略、默认行为不变；变异守卫锁**规则本体**而非仅接线 |
+| **P2 UI 与入口** | PC 对话时间线 proposal 卡快捷项 / 移动状态带快捷项（与「去对话处理」同条）+ PC/移动设置开关 + 对话侧徽标与刹车（**顶栏零改动**） | `AgentTurnTimeline.proposal.test.ts` / `MobileNodeStatusBar.test.ts` 开关与互斥测试 / `AgentSideRail` system-layer 白名单守卫 / `design-token.test.ts` / `settings-domain-tokens.test.ts` |
+| **P3 系统级可视化** | admin el-switch + audit + env 可见性 | admin 页开关与审计日志回归 |
+
+**纪律**：遵循仓库分支纪律（先开分支）、vitest nvm node24 + `--maxWorkers=1 --no-file-parallelism`、`vue-tsc -b` 不加 `--noEmit`；改令牌必跑 `design-token.test.ts`；合并后按 prod 复测纪律做 web/runtime 部署与生产走查（CDP PC 先点 `.agent-fab`、移动用单会话触摸仿真）。
+
+---
+
+## 8. 诚实边界与拍板结论
+
+1. **已拍板（2026-11-22，产品负责人裁决，用户授权全链推进）**：
+   - ① **text 排除在本开关外**：维持现状默认 auto（经 tier 白名单），零回归；用户级授权只作用于 image/audio。
+   - ② **video 不放给用户级**：用户级授权作用域 = `image + audio`；video 仅系统 `auto_all` 模式放行（成本放大，运营决策而非个人偏好）。
+   - ③ **系统级 P0 用 env 三态** `GENERATION_APPROVAL_MODE`（`full_manual` / `tiered` 默认 / `auto_all`）；admin 可视化 + 审计留 P3，本轮不搭车。
+2. **未实现**：`thinkingByModel` 仍只在设计文档（本次不搭车）；`ModelConfigPanel` 组件名在源码不存在，实际是 `ProviderConfigDialog`。
+3. **风险**：auto 分支补 image/video/audio 会放大成本消耗，必须与配额/成本护栏同刀上线；`UserAiPreferences` 加列需 DB 迁移 + DTO/Public 类型/前端 draft 三处同步，漏一处即静默丢字段。
+4. **不做**：不新建 Switch 组件、不新建设置页、不新建前后端通道、不引入 ConfigService、不改服务端治理门、**不在画布顶栏加任何状态元素**（两端顶栏保持现状）。
+
+> 本规格不写 ALL_PASS。闭环判据以上线后生产复测为准。
