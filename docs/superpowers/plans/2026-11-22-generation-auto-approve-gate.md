@@ -82,3 +82,32 @@ auto = mode!=='full_manual'
 ## 不做
 
 不新建 Switch 组件、不新建设置页/路由、不新建前后端通道、不引 ConfigService、不改治理门/stagedActions/dedup/epoch 不变式、不动两端顶栏、video 不对用户级开放、admin UI 不搭车（P3）。
+
+---
+
+## 执行结果（2026-11-22 实跑）
+
+### 链路
+
+PR #974 → squash master `7a140a5f`；CI **4/4 绿**；部署 run `45042096920`：`Deploy web` success + `Build API` success（镜像 `lnkpi-api:7a140a5f…`，`/api/health` ok，API 侧 smoke 全过）。**pi-runtime 零改动零部署**。
+
+### 实现与本计划的偏差（4 处，均为计划过时或收紧，非漏做）
+
+| # | 计划原文 | 实际 | 原因 |
+|---|---|---|---|
+| 1 | migration `20261122120000_…` | `20261122130000_generation_auto_approve_prefs` | 与同批 migration 时间戳撞车顺延 |
+| 2 | `row.autoApproveGenerations \|\| 'manual'` | `row.autoApproveGenerations === 'auto' ? 'auto' : 'manual'` | 收紧：脏值（如 `'true'`/`'AUTO'`）一律降级 manual，不因「非空即真」而越权放行 |
+| 3 | `AgentSideRail` **新增白名单类** + 守卫测试 | **未新增白名单类**（白名单类仍为 0） | 规格 §3.4 修订后的口径：徽标随 `.agent-system-layer` 整体在画布视图隐藏（进层即默认安全），**不复活已退役的白名单类**（复活即新增一条需守卫测试的常驻面） |
+| 4 | `MobileNodeStatusBar` 加「授权后续自动生成」快捷项 | 只做**徽标 + 收回授权**（与「去对话处理」同条容器内） | 移动端「去对话处理」进的是对话页时间线，那里才有 proposal 卡；状态带本身不在决策面，加快捷项无落点。授权入口由移动设置页承担 |
+
+另：计划第 10 项「proposal 卡快捷项『授权后续自动生成』」**已实现并上线**（`AgentTurnTimeline.vue`，`data-test="authorize-auto"`）；其「本次仍需确认 / 下次生效」文案按规格写入。
+
+### 复测结果
+
+- **主探针** `.workbuddy/e2e-cdp/generation-auto-approve-probe.mjs` → **12/12 PASS**（PC 设置开关 + 服务端回读 + 对话侧徽标 + 收回授权 + 移动端往返）。
+- **活体对照** `.workbuddy/e2e-cdp/autoapprove-p6-own-session.mjs` → **7/7 PASS**（双独立会话同题对照：未授权 ⇒ `pending_confirm` + 「落锚生成」+ 0 消耗；已授权 ⇒ 零待确认卡 + 「生成中（自动批准）」+ 12s 出图 + 实耗 33 积分）。
+- 详见规格 §9（含**未覆盖边界**：audio 未活体、video/`auto_all`/env 三态未在生产实证、跨设备未二次复核、P3 不搭车）。
+
+### 踩坑沉淀（已回写规格 §9.4）
+
+默认会话属他人画布 ⇒ `agentReadOnly` ⇒ composer `disabled` 且 0×0（**必须自建自有会话**）；PC agent 面板默认折叠（**先点 `.agent-fab`**）；未授权轮阻塞等确认 ⇒ **对照必须用两个独立会话**；agent reasoning 里的「让用户确认」会让文本正则误判（**判据只认 DOM 事实**）；探针须**自带开跑归零**；服务端回读须带 `Authorization: Bearer`；本机 headless Chrome 跨 Bash 调用会被清理（**起 Chrome + 跑探针同一次调用**，先清 `Singleton*`）。
