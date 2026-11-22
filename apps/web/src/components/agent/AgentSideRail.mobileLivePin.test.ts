@@ -42,7 +42,8 @@ describe('移动端 live 钉显 + 状态行退役（2026-10-31）', () => {
     expect(rail, 'describeActivityFromTimeline import 不得复生').not.toMatch(
       /describeActivityFromTimeline/,
     )
-    expect(rail, 'turnLiveStatus（新灰字数据源）必须存在').toMatch(/turnLiveStatus/)
+    // B 形态：composer 灰字已删，turnLiveStatus 派生函数迁到 timeline 侧做轮首单源。
+    expect(rail, 'composer 灰字 testid 不得复生').not.toMatch(/data-testid="turn-live-status"/)
   })
 
   it('②③ 流式归一：钉底/镜像双轨防复生（live 内容必须在消息流内联）', () => {
@@ -85,16 +86,22 @@ describe('移动端 live 钉显 + 状态行退役（2026-10-31）', () => {
     ).toBeGreaterThan(-1)
   })
 
-  it('⑤ 临时阶段条不得变成播报式状态行（2026-11-22 spec）：无 ticker / 无新持久 notice / 无钉底', () => {
-    // 阶段小结 = 临时进度 + 完成时收口（WorkBuddy 规则）。一旦有人给 turnPhaseView 加
-    // Date.now/setInterval 秒表、或把阶段小结写成持久 notice part、或复活 turnStatusLine，
-    // 就回到 2026-10-31「播报式状态行」老路 —— 在此锁死。
-    const view = stripComments(readFileSync(resolve(__dirname, 'turnPhaseView.ts'), 'utf8'))
-    expect(view, '禁止秒表时钟').not.toMatch(/Date\.now|setInterval/)
-    expect(view, '禁止复活 turnStatusLine').not.toMatch(/turnStatusLine/)
+  it('⑤ B 形态不得复辟旧三阶段/播报状态行（2026-11-22 spec）：无秒表 / 无持久 notice / 无钉底', () => {
+    // 旧三阶段方案（turnPhaseView + 阶段条 + composer 卡/灰字）已被 B 形态取代。
+    // 锁死：turnPhaseView 模块不存在、timeline 无三阶段词/序号、无秒表、无新持久 notice、
+    // composer 区无任务卡/灰字、内联通道仍在。
+    const t = stripComments(readFileSync(resolve(__dirname, 'AgentTurnTimeline.vue'), 'utf8'))
+    expect(t, '旧三阶段视图模块不得复生').not.toMatch(/turnPhaseView|deriveTurnPhaseView/)
+    expect(t, '阶段条 testid 不得复生').not.toMatch(/turn-phase-strip/)
+    expect(t, '①②③ 序号不得复生').not.toMatch(/PHASE_INDEX_LABELS|「①」/)
+    expect(t, '轮首拼装小结不得复生').not.toMatch(/小结：/)
+    expect(t, '秒表时钟不得出现').not.toMatch(/Date\.now|setInterval/)
+    const view = stripComments(readFileSync(resolve(__dirname, 'turnChecklistView.ts'), 'utf8'))
+    expect(view, '秒表时钟不得出现').not.toMatch(/Date\.now|setInterval/)
+    expect(view, 'turnStatusLine 不得复生').not.toMatch(/turnStatusLine/)
     const timeline = stripComments(readFileSync(resolve(__dirname, 'turnTimeline.ts'), 'utf8'))
     expect(timeline, '禁止把阶段小结写成持久 notice').not.toMatch(/notice:phase-/)
-    expect(rail, 'composer 灰字必须仍在').toMatch(/turnLiveStatus/)
+    expect(rail, 'composer 任务卡不得复生').not.toMatch(/AgentTaskProgressCard/)
     expect(rail, '内联时间线通道必须仍在').toMatch(/v-if="useTimeline\(msg\)"/)
   })
 })

@@ -1,3 +1,6 @@
+> ⛔ SUPERSEDED（2026-11-22）：用户生产复测否定三阶段并列 / ①②③ 序号 / UI 拼装小结 / 钉底任务卡。
+> 本方案由 `2026-11-22-turn-inline-status-checklist-design.md` 取代，保留本文仅供决策轨迹追溯。
+
 # 一轮 Turn 内阶段性状态与阶段小结（临时进度）实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: `superpowers:executing-plans`（推荐）或

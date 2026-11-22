@@ -11,8 +11,7 @@ import AgentSideRail from './AgentSideRail.vue'
  * 2026-11-03 WorkBuddy 同款回合实时状态灰字（移动端复测追加需求）：
  * - 纯函数 `turnLiveStatus`：时间线 parts 尾扫派生全谱状态（等待模型响应 / 深度思考中 /
  *   生成回复中 / 正在<工具人话> / 正在生成产物 / 等待你确认）。
- * - 组件接线：状态行钉在积分常驻条上沿（agent-system-layer 内，data-testid=turn-live-status），
- *   显隐与积分条同口径（turn 活跃期），空闲不渲染。
+ * - 纯函数保留为轮首状态行单源（B 形态）；composer 上沿灰字渲染已删除，反向守卫见本文件接线 describe。
  */
 
 vi.mock('@/services/sessions-api', () => ({
@@ -125,11 +124,11 @@ async function mountRail() {
   return w
 }
 
-describe('AgentSideRail 接线：实时状态灰字钉在积分条上沿', () => {
+describe('AgentSideRail 接线：B 形态当前态不在 composer 上沿（灰字退役，轮首单源）', () => {
   beforeEach(() => setActivePinia(createPinia()))
   afterEach(() => vi.unstubAllGlobals())
 
-  it('turn 活跃期：状态行显示（thinking → 深度思考中），且位于积分条之前', async () => {
+  it('turn 活跃期：composer 上沿不再有灰字（当前态已移入对话流轮首）', async () => {
     const w = await mountRail()
     const agent = useAgentStore()
     agent.messages.push({
@@ -145,15 +144,12 @@ describe('AgentSideRail 接线：实时状态灰字钉在积分条上沿', () =>
     agent.isStreaming = true
     await flushPromises()
 
-    const status = w.find('[data-testid="turn-live-status"]')
-    expect(status.exists()).toBe(true)
-    expect(status.text()).toBe('深度思考中')
-    // 位置不变量：状态行在积分常驻条上沿（WorkBuddy 同位）
-    const html = w.html()
-    expect(html.indexOf('turn-live-status')).toBeLessThan(html.indexOf('session-credits-line'))
+    expect(w.find('[data-testid="turn-live-status"]').exists()).toBe(false)
+    // 积分条仍按原口径在活跃期渲染（本次不触碰）
+    expect(w.find('[data-testid="session-credits-line"]').exists()).toBe(true)
   })
 
-  it('空闲期：状态行与积分条都不渲染（不盯死）', async () => {
+  it('空闲期：灰字与积分条都不渲染（不盯死）', async () => {
     const w = await mountRail()
     await flushPromises()
     expect(w.find('[data-testid="turn-live-status"]').exists()).toBe(false)

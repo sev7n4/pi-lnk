@@ -1,12 +1,12 @@
 {
- "total": 596,
+ "total": 598,
  "by_status": {
-  "living": 197,
-  "frozen": 384,
-  "superseded": 15
+  "living": 195,
+  "frozen": 386,
+  "superseded": 17
  },
  "by_topic": {
-  "other": 186,
+  "other": 188,
   "canvas-tool": 89,
   "tool-runtime": 46,
   "generation-pipeline": 45,
@@ -28,7 +28,7 @@
   "2026-08": 79,
   "2026-09": 155,
   "2026-10": 147,
-  "2026-11": 174
+  "2026-11": 176
  },
  "items": [
   {
@@ -2741,12 +2741,21 @@
    "topic": "other"
   },
   {
+   "path": "docs/superpowers/specs/2026-11-22-turn-inline-status-checklist-design.md",
+   "name": "2026-11-22-turn-inline-status-checklist-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
    "path": "docs/superpowers/specs/2026-11-22-turn-phase-progress-design.md",
    "name": "2026-11-22-turn-phase-progress-design.md",
    "month": "2026-11",
    "kind": "spec",
-   "status": "living",
-   "reason": "文内标注待实现/待评审/进行中",
+   "status": "superseded",
+   "reason": "文内标注已废弃/被取代",
    "topic": "agent-ux"
   },
   {
@@ -5387,12 +5396,21 @@
    "topic": "other"
   },
   {
+   "path": "docs/superpowers/plans/2026-11-22-turn-inline-status-checklist.md",
+   "name": "2026-11-22-turn-inline-status-checklist.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
    "path": "docs/superpowers/plans/2026-11-22-turn-phase-progress.md",
    "name": "2026-11-22-turn-phase-progress.md",
    "month": "2026-11",
    "kind": "plan",
-   "status": "living",
-   "reason": "2026-11 活跃主题（agent-ux）",
+   "status": "superseded",
+   "reason": "文内标注已废弃/被取代",
    "topic": "agent-ux"
   }
  ]
