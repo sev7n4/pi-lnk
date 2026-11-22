@@ -96,3 +96,17 @@
 - 既有 propose 契约（须保留）：`docs/superpowers/specs/2026-10-06-propose-confirm-deterministic-design.md`
 - 既有"画布即确认入口"拍板（须延续）：同上规格 + 2026-10-13 规格 §1.4 行业对比
 - 实现排期：`docs/superpowers/plans/2026-10-19-propose-confirm-single-surface.md`
+
+---
+
+## 状态注（2026-11-22，决策面收归对话页）
+
+**本 ADR 的「画布节点 = 单一确认面」已被后续裁决取代，画布侧确认面全面退场。** 原文保留作历史记录，以下为当前生效边界：
+
+- **决定 1（画布节点内联确认/取消）**：❌ 已退场。`ProposeConfirmOverlay` 组件与其测试删除；画布节点仅保留 `NodePendingPrompt` 的「待确认 + 提示词摘要」**状态展示**（查看面），不再有确认/取消/编辑按钮。
+- **决定 2（对话流降权为只读日志）**：❌ 已反转。对话时间线 proposal 卡（三动作：落锚生成 / 调整 / 取消 + 页脚定位）现在是**唯一决策面**；`ProposeTuneSheet` 真写回参数（取代原「编辑 → dock」路径）。
+- **决定 3（dock 门控不自动弹）**：✅ 保留并加强。原「显式编辑意图」放行路径随画布编辑按钮退场而删除，`dockGatedByPendingConfirm` 退化为恒真（待确认节点选中时 dock 恒不自动弹）。
+- **决定 4/5（窗态纪律、确定性确认契约）**：✅ 不变。`POST /answers {callId, decision}` 仍为确认/拒绝的唯一确定性信号。
+- **移动端**：`MobileNodeStatusBar` 的确认/拒绝两钮同样退场，保留状态文案与「去对话处理」跳转（`go-chat` → `onTabChange('chat')`）。
+
+**演进脉络**：10-19 本 ADR（解三带叠罗汉，当时对话卡只有定位/取消、dock 是唯一确认入口）→ 10-28 等待态单一真相 = 时间线 part → 11-02 画布=预览+产物二次编辑、TuneSheet 真写回 → **11-22 画布确认面整体退场，决策收归对话页**。裁决依据与等价物检索见 `docs/superpowers/specs/2026-11-22-conversation-only-decision-surface-design.md`。

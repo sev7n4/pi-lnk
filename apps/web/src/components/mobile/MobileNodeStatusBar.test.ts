@@ -12,12 +12,12 @@ const SRC = readFileSync(join(HERE, 'MobileNodeStatusBar.vue'), 'utf8')
  * 移动端壳层聚合状态栏（R3-T4）。
  *
  * D-C 状态机：「把『生成中/待确认』从逐卡堆砌收敛到瓦片轻态 + 壳层状态栏聚合」。
- * 桌面已有 `SelectionBatchProgressCard` 做批量聚合；本组件是**单会话节点级**的
- * 移动端对应物（画布上散落各节点的生成中 / 待确认，收敛成一条）。
+ * ⭐ 2026-11-22 决策面收归对话页：本组件只留**状态面**（查看），确认/拒绝两钮退场，
+ *   新增「去对话处理」跳转（不代发答案、不改节点状态）——决策唯一入口在对话时间线卡。
  *
  * ⭐ 不显示假百分比——只显示「N 个生成中」+ 已耗时。
  */
-describe('MobileNodeStatusBar（壳层聚合状态栏）', () => {
+describe('MobileNodeStatusBar（壳层聚合状态栏 — 状态面）', () => {
   it('无任务时不渲染（不占位、不噪音）', () => {
     const w = mount(MobileNodeStatusBar, {
       props: { generatingCount: 0, pendingNodes: [] },
@@ -45,48 +45,50 @@ describe('MobileNodeStatusBar（壳层聚合状态栏）', () => {
     w.unmount()
   })
 
-  it('有待确认 → 显示「待确认」+ 确认 / 拒绝两个按钮', () => {
+  it('待确认态显示「待确认」文案，但不再有确认/拒绝决策按钮', () => {
     const w = mount(MobileNodeStatusBar, {
       props: { generatingCount: 0, pendingNodes: [{ id: 'n1', title: '我的图' }] },
     })
     expect(w.text()).toContain('待确认')
-    expect(w.find('.mobile-node-status-confirm').exists()).toBe(true)
-    expect(w.find('.mobile-node-status-cancel').exists()).toBe(true)
+    expect(w.find('.mobile-node-status-confirm').exists()).toBe(false)
+    expect(w.find('.mobile-node-status-cancel').exists()).toBe(false)
     w.unmount()
   })
 
-  it('点确认 → emit confirm(nodeId)', async () => {
+  it('待确认态显示「去对话处理」，点击 emit go-chat（只切 Tab，不发答案）', async () => {
     const w = mount(MobileNodeStatusBar, {
-      props: { generatingCount: 0, pendingNodes: [{ id: 'n1' }] },
+      props: { generatingCount: 0, pendingNodes: [{ id: 'n1', title: '我的图' }] },
     })
-    await w.find('.mobile-node-status-confirm').trigger('click')
-    expect(w.emitted('confirm')?.[0]).toEqual(['n1'])
+    const btn = w.find('[data-testid="mobile-node-status-go-chat"]')
+    expect(btn.exists()).toBe(true)
+    expect(btn.text()).toContain('去对话处理')
+    await btn.trigger('click')
+    expect(w.emitted('go-chat')).toHaveLength(1)
+    expect(w.emitted('confirm')).toBeUndefined()
+    expect(w.emitted('cancel')).toBeUndefined()
     w.unmount()
   })
 
-  it('点拒绝 → emit cancel(nodeId)', async () => {
+  it('无待确认时不渲染「去对话处理」（只在有待办时给跳转）', () => {
     const w = mount(MobileNodeStatusBar, {
-      props: { generatingCount: 0, pendingNodes: [{ id: 'n2' }] },
+      props: { generatingCount: 2, pendingNodes: [] },
     })
-    await w.find('.mobile-node-status-cancel').trigger('click')
-    expect(w.emitted('cancel')?.[0]).toEqual(['n2'])
+    expect(w.find('[data-testid="mobile-node-status-go-chat"]').exists()).toBe(false)
     w.unmount()
   })
 
-  it('多个待确认 → 显示数量且只渲染一组按钮（取第一个）', () => {
+  it('多个待确认 → 文案显示数量，跳转仍只有一个', () => {
     const w = mount(MobileNodeStatusBar, {
       props: { generatingCount: 0, pendingNodes: [{ id: 'n1' }, { id: 'n2' }] },
     })
     expect(w.text()).toContain('2')
-    expect(w.findAll('.mobile-node-status-confirm')).toHaveLength(1)
+    expect(w.findAll('[data-testid="mobile-node-status-go-chat"]')).toHaveLength(1)
     w.unmount()
   })
 
-  // ⭐ B1（2026-10-31 生产实证 cmvvaw8ar000moe01fdolrugb）：确认/拒绝必须**点名**目标节点。
-  // 等待期 proposal 节点被 unshift 到队首，条上只写「待确认 · 2」⇒ 用户按画布上可见的
-  // 另一个 pending 节点（小青蛙）的心智点「确认」，实际打到队首的小蝌蚪（等待开始
-  // 8 秒后即被 answered，用户不知情）。点名后「点谁」在按下前可见。
-  it('B1 回归：待确认文案点名目标节点标题（按下前可见「确认的是谁」）', () => {
+  // ⭐ B1（2026-10-31 生产实证）保留点名纪律：虽然不再有确认按钮，
+  //   状态文案仍须点名目标节点——用户去对话页后知道要找哪张卡。
+  it('B1 回归：待确认文案点名目标节点标题（按待确认时刻可见）', () => {
     const w = mount(MobileNodeStatusBar, {
       props: {
         generatingCount: 0,
@@ -98,35 +100,9 @@ describe('MobileNodeStatusBar（壳层聚合状态栏）', () => {
     })
     const target = w.find('[data-testid="mobile-node-status-pending-target"]')
     expect(target.exists()).toBe(true)
-    // 点名队首（实际确认目标），不是用户可能心智归属的另一个节点
     expect(target.text()).toContain('小蝌蚪')
     expect(target.text()).not.toContain('小青蛙')
-    // 多项时保留数量提示
     expect(target.text()).toContain('2')
-    w.unmount()
-  })
-
-  it('B1 回归：确认/拒绝 aria-label 带节点标题（读屏可辨目标）', () => {
-    const w = mount(MobileNodeStatusBar, {
-      props: { generatingCount: 0, pendingNodes: [{ id: 'tadpole', title: '小蝌蚪' }] },
-    })
-    expect(w.find('.mobile-node-status-confirm').attributes('aria-label')).toContain('小蝌蚪')
-    expect(w.find('.mobile-node-status-cancel').attributes('aria-label')).toContain('小蝌蚪')
-    w.unmount()
-  })
-
-  it('B1 回归：多项时确认仍 emit 队首节点 id（点名与行为一致）', async () => {
-    const w = mount(MobileNodeStatusBar, {
-      props: {
-        generatingCount: 0,
-        pendingNodes: [
-          { id: 'tadpole', title: '小蝌蚪' },
-          { id: 'frog', title: '小青蛙' },
-        ],
-      },
-    })
-    await w.find('.mobile-node-status-confirm').trigger('click')
-    expect(w.emitted('confirm')?.[0]).toEqual(['tadpole'])
     w.unmount()
   })
 
@@ -140,9 +116,9 @@ describe('MobileNodeStatusBar（壳层聚合状态栏）', () => {
     w.unmount()
   })
 
-  it('触控目标 ≥ 44px（两个按钮）', () => {
+  it('触控目标 ≥ 44px（去对话处理钮）', () => {
     const block = /<style scoped>([\s\S]*?)<\/style>/.exec(SRC)?.[1] ?? ''
-    const rule = /\.mobile-node-status-btn[^{]*\{([^}]*)\}/.exec(block)?.[1] ?? ''
+    const rule = /\.mobile-node-status-go-chat[^{]*\{([^}]*)\}/.exec(block)?.[1] ?? ''
     expect(rule).toMatch(/min-width:\s*var\(--lnk-touch-target\)/)
     expect(rule).toMatch(/min-height:\s*var\(--lnk-touch-target\)/)
   })
@@ -160,7 +136,7 @@ describe('MobileNodeStatusBar（壳层聚合状态栏）', () => {
     expect(rule).toMatch(/bottom:/)
   })
 
-  it('点「N 个生成中」区 → emit open-tasks（§16-① 顶栏退役后的任务入口承接）', async () => {
+  it('点「N 个生成中」区 → emit open-tasks（任务入口承接）', async () => {
     const w = mount(MobileNodeStatusBar, {
       props: { generatingCount: 2, pendingNodes: [] },
     })

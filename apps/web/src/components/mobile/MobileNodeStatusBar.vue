@@ -6,14 +6,15 @@ import type { MobilePendingNode } from '@/composables/mobileNodeTaskSummary'
  * 移动端壳层聚合状态栏（R3-T4，D-C 状态机的「壳层状态栏聚合」）。
  *
  * ⭐ 目的：把散落在画布各节点上的**生成中 / 待确认**收敛成一条。
- *   用户不必逐个节点去看，就知道整体在干什么、还有什么等着我拍板。
+ *   用户不必逐个节点去看，就知道整体在干什么、还有什么等着我处理。
  *
  * ⭐ **不显示假百分比**：全仓无生成进度字段（唯一百分比 `uploadProgress` 仅上传态）
  *   ⇒ 只显示「N 个生成中」+ 已耗时（`elapsedText` 由调用方算）。
  *
- * ⭐ 确认 / 拒绝动作**复用桌面同一套语义**（批次 2 confirm）：
- *   调用方转 `handleAgentGenerateNode` / `handleProposeConfirmCancel`，
- *   本组件只 emit，不自己发请求。
+ * ⭐ 2026-11-22 决策面收归对话页：本组件只承载**状态面**（查看）——确认 / 拒绝
+ *   两钮退场（它们是对话时间线 proposal 卡三动作的第二入口）。有待确认时显示
+ *   「去对话处理」跳转（emit `go-chat`，壳层转 `onTabChange('chat')`）：只切 Tab，
+ *   不发答案、不改节点状态。决策唯一入口 = 对话时间线 proposal 卡。
  */
 const props = defineProps<{
   /** 正在生成的节点数 */
@@ -25,8 +26,8 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  confirm: [nodeId: string]
-  cancel: [nodeId: string]
+  /** 待确认态跳对话页拍板（2026-11-22 决策面收归对话页；只切 Tab，不发答案） */
+  'go-chat': []
   /** 点「N 个生成中」区打开任务 sheet（§16-① 顶栏退役后的任务入口承接，2026-10-27） */
   'open-tasks': []
 }>()
@@ -37,12 +38,12 @@ const hasTask = computed(() => props.generatingCount > 0 || props.pendingNodes.l
 const firstPending = computed(() => props.pendingNodes[0])
 
 /**
- * B1（2026-10-31 生产实证 cmvvaw8ar000moe01fdolrugb）：确认必须**点名**目标节点。
+ * B1（2026-10-31 生产实证 cmvvaw8ar000moe01fdolrugb）：状态文案必须**点名**目标节点。
  *
  * 事故：等待期 proposal 节点（小蝌蚪）被 unshift 到队首，画布上用户心智里的待确认
- * 却是小青蛙——条上只写「待确认 · 2」，用户按青蛙的心智点「确认」，实际打到小蝌蚪
- * （/answers 带小蝌蚪 callId，等待开始 8 秒后即被 answered，用户根本不知情）。
- * 修法：文案与 aria-label 都写出将要确认/拒绝的节点标题，让「点谁」在按下前可见。
+ * 却是小青蛙——条上只写「待确认 · 2」，用户按青蛙的心智点「确认」，实际打到小蝌蚪。
+ * 2026-11-22 决策按钮虽已退场，点名纪律仍保留：用户带这个名字跳到对话页后，
+ * 知道要找哪张 proposal 卡拍板。
  */
 const pendingTargetText = computed(() => {
   const first = firstPending.value
@@ -75,27 +76,21 @@ const pendingTargetText = computed(() => {
       <span v-if="elapsedText" class="mobile-node-status-elapsed">{{ elapsedText }}</span>
     </button>
 
-    <!-- 待确认：拍板动作（复用批次 2 confirm 语义）。⭐ B1：点名目标节点——
-         「确认的是谁」必须在按下前可见（2026-10-31 蝌蚪误确认事故）。 -->
+    <!-- 待确认：只报状态 + 一个跳对话页的入口。⭐ B1：点名目标节点——
+         「等的是谁」必须可见（2026-10-31 蝌蚪误确认事故），
+         用户带这个名字去对话页找对应 proposal 卡拍板。 -->
     <span v-if="firstPending" class="mobile-node-status-pending">
       <span class="mobile-node-status-text" data-testid="mobile-node-status-pending-target">
         {{ pendingTargetText }}
       </span>
       <button
         type="button"
-        class="mobile-node-status-btn mobile-node-status-cancel"
-        :aria-label="`拒绝${firstPending.title ? `「${firstPending.title}」` : '该'}提议`"
-        @click="emit('cancel', firstPending.id)"
+        class="mobile-node-status-go-chat"
+        data-testid="mobile-node-status-go-chat"
+        :aria-label="`去对话页处理${firstPending.title ? `「${firstPending.title}」` : '待确认'}提议`"
+        @click="emit('go-chat')"
       >
-        拒绝
-      </button>
-      <button
-        type="button"
-        class="mobile-node-status-btn mobile-node-status-confirm is-primary"
-        :aria-label="`确认${firstPending.title ? `「${firstPending.title}」` : '该'}提议`"
-        @click="emit('confirm', firstPending.id)"
-      >
-        确认
+        去对话处理
       </button>
     </span>
   </div>
@@ -169,30 +164,26 @@ button.mobile-node-status-generating {
   font-variant-numeric: tabular-nums;
 }
 
-/* 拍板按钮：44px 触控目标（移动端硬约束） */
-.mobile-node-status-btn {
+/* 去对话处理：44px 触控目标（移动端硬约束），accent 次级态。
+   2026-11-22 决策按钮退场后，本钮是状态带上唯一动作——只切 Tab，不代发答案。 */
+.mobile-node-status-go-chat {
   display: inline-flex;
   min-width: var(--lnk-touch-target);
   min-height: var(--lnk-touch-target);
   align-items: center;
   justify-content: center;
   padding: 0 var(--lnk-space-2);
-  border: 0.5px solid var(--lnk-border-subtle);
+  border: 0.5px solid var(--lnk-accent-border);
   border-radius: var(--lnk-radius-full);
-  background: var(--lnk-surface-raised);
-  color: var(--lnk-text-secondary);
+  background: var(--lnk-accent-subtle);
+  color: var(--lnk-accent-text);
   font-size: var(--lnk-text-2xs);
   line-height: var(--lnk-lh-2xs);
   cursor: pointer;
+  white-space: nowrap;
 }
 
-.mobile-node-status-btn.is-primary {
-  border-color: var(--lnk-accent-border);
-  background: var(--lnk-accent-subtle);
-  color: var(--lnk-accent-text);
-}
-
-.mobile-node-status-btn:active {
+.mobile-node-status-go-chat:active {
   transform: scale(0.96);
 }
 </style>

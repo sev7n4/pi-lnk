@@ -757,11 +757,12 @@ const railHiddenByTab = computed(
  * （registry → aborted ⇒ tool result reason=aborted），再清画布 SSOT；
  * 前者失败不阻断后者（轮询兜底仍在，且画布状态必须收敛）。
  *
- * ADR-0011 T1（2026-10-19）：泛化为**节点级**入口——画布节点内联确认面
- * （ProposeConfirmOverlay）与时间线内联卡共用本函数、同一语义。
+ * ADR-0011 T1（2026-10-19）：泛化为**节点级**入口——原画布节点内联确认面与时间线
+ * 内联卡共用本函数、同一语义。2026-11-22 决策面收归对话页后，画布确认面已退场，
+ * 本函数由对话时间线 proposal 卡的取消入口调用。
  * nodeId 缺省 = 当前阻塞等待所属节点；
- * 传入 nodeId = 画布节点语义，与当前等待的 nodeId 不一致时**安全 no-op**
- * （浮层竞态残留防护：宁可不发，也不把 decline 发到别的节点上）。
+ * 传入 nodeId 时若与当前等待的 nodeId 不一致则**安全 no-op**
+ * （竞态残留防护：宁可不发，也不把 decline 发到别的节点上）。
  */
 /**
  * ⭐ 2026-10-31 大章鱼回合生产实证（cmvvaw8ar000moe01fdolrugb，nginx 17:01:25-27）：
@@ -3977,8 +3978,8 @@ defineExpose({
                  之上）——首版放在层顶，被长 pinned 时间线顶到流中部，用户实测误读为
                  「混进 SSE 滚动流」。WorkBuddy 位置 = 紧贴输入框。 -->
             <!-- 根治规格（2026-10-28）：对话流外浮卡已移除——「提议生成」决策点改为时间线内联
-                 proposal part（见 AgentTurnTimeline.vue），与画布节点 ProposeConfirmOverlay
-                 同读一份单一真相。桌面 = 对话流内联卡；移动端画布视图 = 节点内联面。
+                 proposal part（见 AgentTurnTimeline.vue），读同一份单一真相。
+                 2026-11-22 决策面收归对话页：画布确认胶囊亦退场，proposal 卡成唯一决策面。
                  （2026-10-31：状态行退役，ambient 播报职责由时间线内联卡独自承载。） -->
             <!-- 2026-10-31 用户裁决：状态行整条退役（"等待你在画布上确认生成 还剩 N 分钟"等
                  running/waiting/failed/settled 播报全部不再显示），只保留 SSE 对话流——

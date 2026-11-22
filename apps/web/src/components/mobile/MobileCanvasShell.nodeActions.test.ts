@@ -90,8 +90,6 @@ function baseProps(overrides: Record<string, unknown> = {}) {
     nodeGeneratingCount: 0,
     nodePendingNodes: [],
     nodeGeneratingElapsed: '',
-    onNodePendingConfirm: vi.fn(),
-    onNodePendingCancel: vi.fn(),
     ...overrides,
   }
 }
@@ -339,13 +337,25 @@ describe('MobileCanvasShell §16 真机走查二轮（2026-10-27）', () => {
     nodePendingNodes: [{ id: 'n9', title: '图' }],
   }
 
-  it('§16-② 窗态（tab=chat + canvasViewVisible）→ 状态栏常驻（定位落地即见确认/取消）', () => {
+  it('§16-② 窗态（tab=chat + canvasViewVisible）→ 状态栏常驻（定位落地即见状态与去对话处理）', () => {
     const w = mount(MobileCanvasShell, {
       props: baseProps({ mobileAppTab: 'chat', ...taskProps }),
       attachTo: document.body,
       global: { stubs: { teleport: true } },
     })
     expect(w.find('[data-testid="mobile-node-status-bar"]').exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('2026-11-22 待确认态点「去对话处理」→ onTabChange(chat)（只切 Tab，不发答案）', async () => {
+    const onTabChange = vi.fn()
+    const w = mount(MobileCanvasShell, {
+      props: baseProps({ mobileAppTab: 'canvas', onTabChange, ...taskProps }),
+      attachTo: document.body,
+      global: { stubs: { teleport: true } },
+    })
+    await w.find('[data-testid="mobile-node-status-go-chat"]').trigger('click')
+    expect(onTabChange).toHaveBeenCalledWith('chat')
     w.unmount()
   })
 

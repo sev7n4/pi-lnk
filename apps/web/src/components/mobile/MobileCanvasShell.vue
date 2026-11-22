@@ -171,10 +171,8 @@ const props = defineProps<{
   nodePendingNodes: MobilePendingNode[]
   /** 生成已耗时（无则不显示） */
   nodeGeneratingElapsed?: string
-  /** 确认 = 走桌面同一套 propose confirm 语义 */
-  onNodePendingConfirm: (nodeId: string) => void
-  /** 拒绝 = 走桌面同一套 propose cancel 语义 */
-  onNodePendingCancel: (nodeId: string) => void
+  /** 2026-11-22 决策面收归对话页：状态带只发 go-chat（切 Tab），
+   *  壳层转发到既有 onTabChange('chat')；不再有确认/拒绝 prop。 */
   /** 会话级分享：chat 页签「分享会话」入口触发（可选，测试挂载可不传）。
    *  2026-11-05：勾选态/取消桥接已下线——对话页只有这一个入口，其余全在卡片内。 */
   onShare?: () => void
@@ -185,7 +183,7 @@ const props = defineProps<{
  * §17 v2（拍板①，2026-10-27）：pending 审核层 =【批注】【编辑】两键 ——
  *   「拒绝/改词/确认」三键退役：无条件确认=编辑→保存→回画布再确认；
  *   无条件拒绝=批注→⚓（锚下即标拒绝，经 /answers decline 结算 §17.8）。
- *   画布状态胶囊的确认/拒绝入口不受影响（§17.2，MobileNodeStatusBar 原样）。
+ *   2026-11-22 画布状态胶囊的确认/拒绝亦退场——决策唯一入口在对话时间线卡。
  * confirmed / 其它有产物节点：仅「改词」（改词 sheet 原路径）。
  */
 const viewerBottomActions = computed(() => {
@@ -219,7 +217,7 @@ const viewerBottomActions = computed(() => {
     // §17 v2（拍板①，2026-10-27）：审核层底栏收敛为【批注】【编辑】两键 ——
     // 「拒绝/改词/确认」三键退役：无条件确认=编辑→保存→确认生成；无条件拒绝=
     // 批注→⚓（锚下即标拒绝，经 /answers decline 结算 §17.8）。画布状态胶囊
-    // 的确认/拒绝入口不受影响（§17.2，MobileNodeStatusBar 原样）。
+    // 的确认/拒绝入口已于 2026-11-22 退场（决策收归对话时间线卡）。
     actions.push({ key: 'annotate', label: '批注', variant: 'primary' })
     actions.push({ key: 'edit', label: '编辑' })
     return actions
@@ -362,15 +360,15 @@ watch(
   />
   <!-- R3-T4：壳层聚合状态栏——把画布各节点的「生成中 / 待确认」收敛成一条。
        门控（§16-② 修订，2026-10-27 真机实证）：**画布视图可见即常驻**——
-       窗态（定位切画布、页签停对话）/ 沉浸满屏 / 画布页签门态三形态都在眼前；
-       原门控 `mobileAppTab==='canvas'` 漏掉窗态 ⇒ 定位落地后确认/取消不可见。 -->
+       窗态（定位切画布、页签停对话）/ 沉浸满屏 / 画布页签门态三形态都在眼前。
+       2026-11-22 决策面收归对话页：状态带只报状态 + 「去对话处理」跳转，
+       确认/拒绝已退场（决策唯一入口 = 对话时间线 proposal 卡）。 -->
   <MobileNodeStatusBar
     v-if="canvasViewVisible && !multiSelectActive && hasNodeTaskState"
     :generating-count="nodeGeneratingCount"
     :pending-nodes="nodePendingNodes"
     :elapsed-text="nodeGeneratingElapsed"
-    @confirm="onNodePendingConfirm"
-    @cancel="onNodePendingCancel"
+    @go-chat="onTabChange('chat')"
     @open-tasks="showMobileTaskSheet = true"
   />
   <DiscoverPane v-if="mobileAppTab === 'discover'" @open-skill-center="showSkillCenterSheet = true" />

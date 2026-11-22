@@ -783,9 +783,9 @@ export const useAgentStore = defineStore('agent', () => {
    *
    * ADR-0011 T8（2026-10-20）：本事件是**阻塞态**（内核把决策权交回 host，等用户），
    * 与工具产出事件不同类；上游等价物为 `ui_prompt_start` / `ui_prompt_end`
-   * （vendor coding-agent `core/extensions/types.ts:745-759`）。渲染落点由 ADR-0011
-   * 收敛为**单一锚定表面**：propose 类阻塞的确认面在画布节点内联（ProposeConfirmOverlay），
-   * 对话流只保留只读 notice。传输名不改（见 turnTimeline.ts 同名事件的注）。
+   * （vendor coding-agent `core/extensions/types.ts:745-759`）。渲染落点 2026-11-22
+   * 收归为**对话时间线内联 proposal 卡**（唯一决策面）；画布只保留状态摘要，
+   * 不再有确认/取消入口。传输名不改（见 turnTimeline.ts 同名事件的注）。
    */
   function trackWaitingUser(data: {
     status?: string

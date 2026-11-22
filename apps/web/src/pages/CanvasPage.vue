@@ -123,7 +123,6 @@ import {
 } from '@/composables/useCanvasGrouping'
 import { useModelProviderSettings } from '@/composables/useModelProviderSettings'
 import MultiSelectToolbarOverlay from '@/components/canvas/MultiSelectToolbarOverlay.vue'
-import ProposeConfirmOverlay from '@/components/canvas/ProposeConfirmOverlay.vue'
 import CanvasNodeGroup from '@/components/canvas/CanvasNodeGroup.vue'
 import GuideLines from '@/components/canvas/GuideLines.vue'
 import SelectionBatchProgressCard from '@/components/canvas/SelectionBatchProgressCard.vue'
@@ -882,17 +881,15 @@ const canvasChromeHidden = computed(() =>
 )
 
 /**
- * ADR-0011 T1：画布上处于 pending_confirm 的节点 = 节点内联确认面（ProposeConfirmOverlay）锚点。
+ * 2026-11-22 决策面收归对话页后：本 computed 只服务**待确认节点的状态展示**
+ * （NodePendingPrompt 的 proposeWaiting / 批量进度卡门控 `!proposeConfirmNode`），
+ * 不再是「节点内联确认面」锚点——那个操作面已退场，决策唯一入口在对话时间线卡。
  *
- * 不依赖选中态——「节点即确认面」：确认 / 取消贴在节点上，用户无需先选中再找入口
- * （选中节点是「查看 / 编辑」语义，与「待确认」是两件事）。至多一个（propose 阻塞期
- * 一次只有一笔等待），find 取首个防御性兜底。与 selectionActionBarNode 天然互斥
- * （后者要求 url 非空，待确认节点还没有产物）。编辑浮层 / 精修 / 宫格工作台打开时让位。
+ * 至多一个（propose 阻塞期一次只有一笔等待），find 取首个防御性兜底。编辑浮层 /
+ * 精修 / 宫格工作台打开时让位。
  *
- * ⭐ P0-2 锚点换源（规格 2026-10-30-propose-confirm-execution-unity §4.3）：判定走
- * `deriveProposeConfirmAnchor`——proposal part（waiting_user 事件，第一真相）∥ 节点
- * status 双源 OR。等待期 update_node{pending_confirm} 随 tool_result 迟到 ⇒ 此前节点
- * 恒 draft、确认面消失（2026-10-29 生产事故）；part 锚在事件到达瞬间即可见。
+ * ⭐ P0-2 锚点换源（规格 2026-10-30 §4.3）仍保留：proposal part（waiting_user，第一真相）
+ * ∥ 节点 status 双源 OR——等待期节点 status 迟到为 draft 时摘要也必须可见。
  */
 const proposeWaitNodeId = computed(() => useAgentStore().pendingProposal?.nodeId ?? null)
 const proposeConfirmNode = computed((): EditableFlowNode | null => {
@@ -909,26 +906,11 @@ const proposeConfirmNode = computed((): EditableFlowNode | null => {
 })
 
 /**
- * ADR-0011 T4：节点内联「编辑」按钮置位的**显式编辑意图**——覆盖 pending_confirm dock
- * 门控，让用户改提示词 / 参数后仍走同一确认路径（dock 生成按钮 → confirmProposeWait）。
- * 纯自动弹出仍被门控（决定 3）；节点离开待确认态（确认 / 取消 / 恢复）即失效。
+ * 2026-11-22：待确认节点选中时 studio dock 恒不自动弹（画布=纯预览）。
+ * 原 ADR-0011 T4 的「显式编辑意图」由画布内联「编辑」按钮置位以放行 dock；
+ * 该按钮随决策面收归对话页一并退场 ⇒ 门控退化为恒真，dock 只由用户主动展开。
  */
-const proposeConfirmEditIntent = ref(false)
-
-/** T4：选中节点待确认且无显式编辑意图 ⇒ studio dock 不自动弹（ADR-0011 决定 3）。 */
-const dockGatedByPendingConfirm = computed(
-  () => isPendingConfirmNode(editorNode.value) && !proposeConfirmEditIntent.value,
-)
-
-watch(proposeConfirmNode, (node) => {
-  if (!node) proposeConfirmEditIntent.value = false
-})
-
-/** 编辑意图仅对「当前选中的待确认节点」有效：选中切离（选别的 / 点空白）即收回，
- *  避免用户逛一圈回来 dock 又自动弹（那会退化成 T4 要消灭的自动弹）。 */
-watch(editorNode, (node) => {
-  if (!node || node.id !== proposeConfirmNode.value?.id) proposeConfirmEditIntent.value = false
-})
+const dockGatedByPendingConfirm = computed(() => isPendingConfirmNode(editorNode.value))
 
 /** 单选 + 可操作图像节点时显示选中浮层（多选不出现；节点直裁/扩图/重绘进行中让位） */
 const selectionActionBarNode = computed((): EditableFlowNode | null => {
@@ -2267,8 +2249,8 @@ function onNodesChange(changes: NodeChange[]) {
 
   // 引用拾取模式（2026-10-18 方案 A 裁决）：吞掉全部 select 变更——点节点只做「选为引用」，
   // 不落画布选中态。否则选中 → studio dock / 快捷工具行弹出，与拾取流互相踩（三带叠罗汉扳机）。
-  // ADR-0011（2026-10-19）：propose pending_confirm 态的同类扳机已由 T4 门控消除
-  // （dockGatedByPendingConfirm + ProposeConfirmOverlay 节点内联确认）；拾取模式的吞 select 保留。
+  // pending_confirm 态的同类扳机已由 dock 门控消除（决策面 2026-11-22 收归对话页后，
+  // 画布无内联确认面，仅保留状态摘要）；拾取模式的吞 select 保留。
   if (pickMode.active.value) {
     changes = changes.filter((change) => change.type !== 'select')
     if (!changes.length) return
@@ -4829,25 +4811,6 @@ async function handleAgentGenerateNode(nodeId: string) {
 }
 
 /**
- * ADR-0011 T1：节点内联确认面「取消」——AgentSideRail 节点级 decline
- * （POST /answers {decision:'decline'} + clearProposeGeneration → 节点回 draft），
- * 与侧栏琥珀卡取消同源同语义；无匹配等待时安全 no-op（不发错误信号）。
- */
-async function handleProposeConfirmCancel(nodeId: string, note?: string) {
-  const cancelled =
-    (await agentRailRef.value?.cancelProposeForNode(nodeId, note ? { note } : undefined)) ?? false
-  if (cancelled) return
-  // ⚠️ 孤儿兜底（2026-10-31 生产实证）：无活跃等待态时，pending_confirm 节点直接翻
-  // draft（丢弃预览图），避免按钮静默 no-op 卡死。
-  const node = nodes.value.find((n) => n.id === nodeId)
-  const data = (node?.data ?? {}) as Record<string, unknown>
-  if (data.status === NODE_PENDING_CONFIRM_STATUS) {
-    await debouncedNodePatch.flush()
-    patchNodeData(nodeId, { status: NODE_GENERATION_STATUS.draft })
-  }
-}
-
-/**
  * R3-T4：移动端壳层聚合状态栏的数据源。
  *
  * 把画布各节点的「生成中 / 待确认」收敛成一条（判据来自纯函数
@@ -4913,16 +4876,6 @@ watch(
 onBeforeUnmount(() => {
   if (mobileNodeTaskTimer) clearInterval(mobileNodeTaskTimer)
 })
-
-/**
- * ADR-0011 T1/T4：节点内联「编辑」——置**显式编辑意图**并选中该节点：
- * dock 门控放行（用户要改提示词 / 参数），改完仍走 dock 生成按钮确认
- * （同一 confirmProposeWait → /answers 路径，不新造第二套确认语义）。
- */
-function handleProposeConfirmEdit(nodeId: string) {
-  proposeConfirmEditIntent.value = true
-  selectOnlyNode(nodeId)
-}
 
 /** Phase 2c.1: cancel propose → Nest Jwt clear-propose, then local draft patch. */
 async function handleClearProposeGeneration(nodeId: string) {
@@ -5994,7 +5947,8 @@ function onMobileTabChange(tab: MobileAppTab) {
     mobileCanvasView.value = true
     mobileCanvasImm.value = true
     // C3（2026-10-31 皮皮虾回合真机反馈）：切画布页签时若存在阻塞等待的提议节点，
-    // 自动定位一次（fitView + 定位闪烁）——用户此刻切画布的动机就是去找确认入口。
+    // 自动定位一次（fitView + 定位闪烁）——用户此刻切画布的动机是去看提议的产物预览
+    // （2026-11-22 决策面收归对话页后，画布不再有确认入口，拍板要回对话 tab）。
     // focusNodeById 在已处画布视图时不改入口语义（保持本页签切换设定的满屏态）；
     // 节点尚未上屏（canvas_action 在途）时不定位也不告警（focusNodeById 的 warning
     // 只该给显式点击，这里静默跳过）。
@@ -6401,17 +6355,10 @@ onUnmounted(() => {
             @stop-selection="handleSelectionBatchStop"
             @blocked-hint="handleSelectionBatchBlocked"
           />
-          <!-- ADR-0011 T1：pending_confirm 节点内联确认面（单一锚定表面）。
-               确认 = handleAgentGenerateNode（confirmProposeWait + 生成，与 dock 同路径）；
-               取消 = AgentSideRail 节点级 decline（与侧栏同源）；编辑 = 显式意图开 dock。 -->
-          <ProposeConfirmOverlay
-            v-if="proposeConfirmNode && !isMobileLayout"
-            :node="proposeConfirmNode"
-            :propose-waiting="proposeWaitNodeId != null && proposeConfirmNode.id === proposeWaitNodeId"
-            @confirm="handleAgentGenerateNode"
-            @cancel="handleProposeConfirmCancel"
-            @edit="handleProposeConfirmEdit"
-          />
+          <!-- 2026-11-22 决策面收归对话页：画布的节点内联确认胶囊（确认生成/编辑/取消）
+               已整体退场——它只是对话时间线 proposal 卡三动作的第二入口。
+               节点上的「待确认 + 提示词摘要」由 NodePendingPrompt 继续承载（状态面=查看，
+               与操作面正交）；决策唯一入口 = 对话时间线 proposal 卡。 -->
           <!-- 等确认期不报进度（2026-10-20 真机走查）：此刻批量 state 仍是 running，但
                0% 且**不会推进**——真正的进度是「等你点确认生成」（AgentSideRail 的
                propose-wait-hint 已如实说明）。留着卡片有三重害：① 满宽卡片把 ＋FAB 与
@@ -6732,8 +6679,6 @@ onUnmounted(() => {
       :node-generating-count="mobileNodeTaskSummary.generatingCount"
       :node-pending-nodes="mobileNodeTaskSummary.pendingNodes"
       :node-generating-elapsed="mobileNodeTaskElapsed"
-      :on-node-pending-confirm="handleAgentGenerateNode"
-      :on-node-pending-cancel="handleProposeConfirmCancel"
     />
 
     <MembershipModal v-model="showMembership" />

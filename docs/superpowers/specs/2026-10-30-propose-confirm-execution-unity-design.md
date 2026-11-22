@@ -257,3 +257,14 @@ flowchart TD
 - 执行入口 == 1 ✅：前端 propose 确认路径已无 `generateForNode`；生成启动仅 runtime → Nest start/run 系。
 - 呈现权只读 ✅：无 patch draft；P0-4 守卫测试钉死 draft 覆盖回写。
 - turn 终态来源 == 服务端 ✅：活跃等待 part 时主流断流不标失败（AgentSideRail 门控 + 生产字面量取证）。
+
+---
+
+## 状态注（2026-11-22，决策面收归对话页）
+
+本文涉及的「PC overlay 残留 / MobileNodeStatusBar 确认拒绝入口」等**呈现层**已随 2026-11-22 裁决调整，原文作历史记录保留：
+
+- **§4.3 / §14 F1 的「双源锚点判定」（`deriveProposeConfirmAnchor`）**：✅ 保留，但用途从「确认面可见性」收窄为「待确认状态摘要的可见性」——等待期 part 锚命中时 `NodePendingPrompt` 仍须立即可见。
+- **执行统一不变量（执行入口==1 / 呈现权只读 / turn 终态来源==服务端）**：✅ 完全不变，本次只移入口位置、不动确认语义与 `/answers` 确定性信号。
+- **画布侧的确认/取消按钮**：已退场（PC overlay 删除、移动状态带两钮删除）；决策唯一入口 = 对话时间线 proposal 卡。移动端新增「去对话处理」跳转（只切 Tab，不发答案）。
+- 依据：`docs/superpowers/specs/2026-11-22-conversation-only-decision-surface-design.md`。
