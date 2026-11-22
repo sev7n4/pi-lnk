@@ -389,4 +389,7 @@ manual: → pending_confirm → SSE waiting_user → 确认卡 → /answers → 
 
 ### 10.5 诚实边界
 
-- 本次迭代**尚未在生产真机走查截图验证**（§9.2 的 12/12 + 7/7 是**图标化之前**的结论，走的是旧通栏徽标与长文字按钮）；UI 改造上线后需重跑主探针（`agent-auto-approve-line` / `agent-auto-approve-revoke` 两个 testid 已从源码移除 ⇒ 旧探针判据会失配，须同步改写为 `.auto-approve-toggle`）。
+- 本次迭代**尚未在生产环境复测**（§9.2 的 12/12 + 7/7 是**图标化之前**的结论，走的是旧通栏徽标与长文字按钮）。
+- ✅ **探针判据已同步改写**（本地 `.workbuddy/e2e-cdp/generation-auto-approve-probe.mjs` 的 P4/P5 段）：旧 testid `agent-auto-approve-line` / `agent-auto-approve-revoke` 已从源码移除 ⇒ 改为断言 `.auto-approve-toggle`（在 `.agent-dock-actions` 内 / 有图形 / `is-on` / 尺寸 ≤32px / **旧徽标不得复活** / 点击即收回）。⇒ 上线后重跑该探针即可判定图标化未回归。
+- ✅ **本地真机效果已实证**（本地生产构建 + 生产 API 代理，未合并代码）：PC 工具行 24×24 / 图标 15×15 / 背景 `rgba(0,0,0,0)` / 琥珀 `rgb(138,82,0)` / `is-on=true`；移动端裸条同款且 `legacyBar=false`；提议卡触控区 44×44 / 图标 16px / **`text=''`（零文字）** / `on=false`（线框）；两端 `legacy=false`。
+- ⚠️ **生产复测时的环境前置（本刀踩到）**：① `apps/web/vite.config.js` 是被 git 跟踪的 tsc 编译产物且 vite 优先加载它；② `vite dev` 依赖增量优化会删 `node_modules/.vite/deps_temp_*` ⇒ 与沙箱批量删除守卫冲突（阈值 50）⇒ 改用 `vite build` + `vite preview`；③ 走查账号默认模型若已停用 ⇒ `sendMessage` 早退「当前规划模型已停用」⇒ **完全发不出消息**，须先切到可选模型。
