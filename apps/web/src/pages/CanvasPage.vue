@@ -5947,7 +5947,8 @@ function onMobileTabChange(tab: MobileAppTab) {
     mobileCanvasView.value = true
     mobileCanvasImm.value = true
     // C3（2026-10-31 皮皮虾回合真机反馈）：切画布页签时若存在阻塞等待的提议节点，
-    // 自动定位一次（fitView + 定位闪烁）——用户此刻切画布的动机就是去找确认入口。
+    // 自动定位一次（fitView + 定位闪烁）——用户此刻切画布的动机是去看提议的产物预览
+    // （2026-11-22 决策面收归对话页后，画布不再有确认入口，拍板要回对话 tab）。
     // focusNodeById 在已处画布视图时不改入口语义（保持本页签切换设定的满屏态）；
     // 节点尚未上屏（canvas_action 在途）时不定位也不告警（focusNodeById 的 warning
     // 只该给显式点击，这里静默跳过）。
