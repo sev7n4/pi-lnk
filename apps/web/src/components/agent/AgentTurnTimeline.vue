@@ -1548,8 +1548,8 @@ const rootClass = computed(() =>
 .subagent-task-card:hover { background: var(--lnk-surface-canvas); }
 .subagent-avatar { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; flex-shrink: 0; border-radius: 50%; background: var(--lnk-hi-bg); color: var(--lnk-hi-text); font-size: 10px; font-weight: 600; }
 
-/* 临时阶段条（2026-11-22 spec §6.3）——只亮活跃行；禁 --lnk-hi-*（深主题黑底白字）
-   与 --neo-*；分隔符「·」弱分隔；移动端/PC 同构无媒体查询。 */
+/* 临时阶段条（2026-11-22 spec §6.3）——只亮活跃行；禁 hi 系令牌（深主题黑底白字）
+   与 neo 前缀旧令牌；分隔符「·」弱分隔；移动端/PC 同构无媒体查询。 */
 .turn-phase-strip {
   display: flex;
   flex-direction: column;
