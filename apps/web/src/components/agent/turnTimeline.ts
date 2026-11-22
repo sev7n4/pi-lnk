@@ -108,6 +108,11 @@ export type TimelinePart =
       id: string
       label: string
       nodeId?: string
+      /**
+       * 同型同文动作折叠计数（2026-11-22 序列化修复）：connect_nodes 一次派 13 条
+       * add_edge，折叠为一行「连接画布节点 ×13」。>1 时渲染层 label 已带计数。
+       */
+      count?: number
     }
   | {
       kind: 'artifact'
@@ -310,6 +315,12 @@ export type TimelineEvent =
         title?: string
         /** 自动取消倒计时（ms，决策 6）。 */
         timeoutMs?: number
+        /**
+         * 题面（2026-11-22 序列化修复）：ask_user 等待若事件自带题面则在此建/补 question
+         * part——账本只落 waiting_user（当前生产形态不带题面，题面由 interruption state
+         * 兜底补全），live 的 ask_user 事件/重连同步可能携带完整题面。
+         */
+        questions?: QuestionItem[]
       }
     }
   | {
@@ -764,13 +775,31 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
         timeline.pendingNodeMeta[String(nodeId)] = { nodeType, title }
         return
       }
-      // 其它 canvas 动作（remove/connect/…）走 canvas part
-      timeline.parts.push({
-        kind: 'canvas',
-        id: nextPartId('canvas'),
-        label: canvasActionLabel(action),
-        nodeId: nodeId ? String(nodeId) : undefined,
-      })
+      // 其它 canvas 动作（remove/connect/…）走 canvas part。
+      // 2026-11-22 序列化修复：connect_nodes 一次派 13 条 add_edge ⇒ 原实现 13 行同文
+      // 「连接画布节点」连排（生产 85-part 回合 idx46-58）。同 type+同 label 折叠为一行
+      // 并带 ×N 计数；不同 label（逐节点标题，如 remove_node「海报」/「大纲」）保持独立
+      // 行以保留定位语义。live 与 replay 同路径，天然幂等。
+      const label = canvasActionLabel(action)
+      const canvasId = `canvas:${type}:${label}`
+      const existingCanvas = timeline.parts.find(
+        (p): p is Extract<TimelinePart, { kind: 'canvas' }> =>
+          p.kind === 'canvas' && p.id === canvasId,
+      )
+      if (existingCanvas) {
+        const n = (existingCanvas.count ?? 1) + 1
+        existingCanvas.count = n
+        existingCanvas.label = `${label} ×${n}`
+        existingCanvas.nodeId = undefined
+      } else {
+        timeline.parts.push({
+          kind: 'canvas',
+          id: canvasId,
+          label,
+          count: 1,
+          nodeId: nodeId ? String(nodeId) : undefined,
+        })
+      }
       return
     }
     case 'node_status': {
@@ -962,6 +991,34 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
       } else {
         timeline.parts.push({ kind: 'notice', id: waitingNoticeId, text, tone: 'warn' })
       }
+      // 2026-11-22 序列化修复（生产 cmwrxue4w 85-part 回合实证）：ask_user 等待在此按
+      // callId 原位 upsert question part。账本只落 waiting_user、无独立 ask_user 事件，
+      // replay 原本不建卡 ⇒ reconcile 安全网把卡补到整轮末尾（question 沉底 idx84，
+      // 正文与产物卡之后）。live 的 ask_user 事件与此 upsert 同 id（question:${callId}），
+      // 两路收敛不重复；resolved 分支既有逻辑原位翻终态。
+      if (d.toolName === 'ask_user' && d.callId) {
+        const qid = `question:${d.callId}`
+        const existingQ = timeline.parts.find(
+          (p): p is Extract<TimelinePart, { kind: 'question' }> =>
+            p.kind === 'question' && p.id === qid,
+        )
+        const questions = Array.isArray(d.questions) && d.questions.length ? d.questions : undefined
+        if (existingQ) {
+          existingQ.status = 'pending_answer'
+          existingQ.callId = d.callId
+          if (questions) existingQ.questions = questions
+        } else {
+          timeline.parts.push({
+            kind: 'question',
+            id: qid,
+            callId: d.callId,
+            title: d.title ?? '需要你回答',
+            status: 'pending_answer',
+            questions: questions ?? [],
+            startedAt: Date.now(),
+          })
+        }
+      }
       return
     }
     case 'plan_proposed': {
@@ -1081,14 +1138,11 @@ export function applyTimelineEvent(timeline: TurnTimeline, event: TimelineEvent)
                 ? String((item as { errorHint?: string }).errorHint ?? '生成失败，可重试')
                 : undefined,
           })
-        } else {
-          timeline.parts.push({
-            kind: 'notice',
-            id: nextPartId('notice'),
-            text: String((item as { title?: string }).title ?? '批量生成任务'),
-            tone: 'info',
-          })
         }
+        // 2026-11-22 序列化修复：无 nodeId 的任务项不再逐事件发 notice——同一批任务
+        // 文案在长回合重复渲染 3 组 10 行（生产 85-part 回合 idx7-10/22-25/43-44/66），
+        // 且与轮首折叠清单完全同文。结构化进度由清单（taskProgress）单源承载，
+        // 时间线只保留「☑️记录任务」工具行作叙事锚。
       }
       return
     }
@@ -1149,7 +1203,9 @@ function upsertArtifact(
 /** 回合结束：收口 running 态、补摘要 notice（设计 §4 规则 4：摘要是末尾 notice）。 */
 export function finalizeTurnTimeline(timeline: TurnTimeline): void {
   const now = Date.now()
-  timeline.turnEndedAt = now
+  // 2026-11-22 F4：不覆盖已有 turnEndedAt——replay 用账本 ts 推导的真实收束时刻
+  // 先于 finalize 到达，墙钟覆盖会把历史回合时长变成「重放瞬间差」（用时 1ms）。
+  timeline.turnEndedAt = timeline.turnEndedAt ?? now
   for (const p of timeline.parts) {
     if (p.kind === 'thinking' && p.status === 'running') {
       p.status = 'done'
@@ -1468,8 +1524,24 @@ export function replayTimelineEvents(
     ? [...events].sort((a, b) => sortKey(a) - sortKey(b))
     : events
   const timeline = createTurnTimeline()
+  // 2026-11-22 F4（生产 85-part 回合「用时 1ms」实证）：账本事件自带服务端落库墙钟
+  // ts ⇒ 回合起止用真实事件区间。仅当账本以 turn_settled 权威收束时才写 turnEndedAt
+  // （截断账本不冒充完整时长）；finalizeTurnTimeline 配套改为不覆盖已有值。
+  const firstTs = (ordered[0] as { ts?: number } | undefined)?.ts
+  const lastEvent = ordered[ordered.length - 1] as { ts?: number; type?: string } | undefined
   for (const event of ordered) {
     applyTimelineEvent(timeline, normalizePersistedTimelineEvent(event) as TimelineEvent)
+  }
+  if (typeof firstTs === 'number' && Number.isFinite(firstTs)) {
+    timeline.turnStartedAt = firstTs
+  }
+  if (
+    lastEvent?.type === 'turn_settled' &&
+    typeof lastEvent.ts === 'number' &&
+    Number.isFinite(lastEvent.ts) &&
+    (typeof firstTs !== 'number' || lastEvent.ts >= firstTs)
+  ) {
+    timeline.turnEndedAt = lastEvent.ts
   }
   // 历史无 text_delta：若没有任何文本块但有消息正文，补一个 done 文本块（避免时间线缺失正文）
   if (!timeline.parts.some((p) => p.kind === 'text') && bodyText && bodyText.trim()) {

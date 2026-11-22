@@ -1,15 +1,15 @@
 {
- "total": 598,
+ "total": 603,
  "by_status": {
-  "living": 195,
-  "frozen": 386,
+  "living": 198,
+  "frozen": 388,
   "superseded": 17
  },
  "by_topic": {
-  "other": 188,
+  "other": 191,
   "canvas-tool": 89,
+  "generation-pipeline": 47,
   "tool-runtime": 46,
-  "generation-pipeline": 45,
   "agent-ux": 39,
   "canvas-product": 34,
   "planning": 30,
@@ -28,7 +28,7 @@
   "2026-08": 79,
   "2026-09": 155,
   "2026-10": 147,
-  "2026-11": 176
+  "2026-11": 181
  },
  "items": [
   {
@@ -2741,6 +2741,24 @@
    "topic": "other"
   },
   {
+   "path": "docs/superpowers/specs/2026-11-22-conversation-only-decision-surface-design.md",
+   "name": "2026-11-22-conversation-only-decision-surface-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-22-generation-auto-approve-gate-design.md",
+   "name": "2026-11-22-generation-auto-approve-gate-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "generation-pipeline"
+  },
+  {
    "path": "docs/superpowers/specs/2026-11-22-turn-inline-status-checklist-design.md",
    "name": "2026-11-22-turn-inline-status-checklist-design.md",
    "month": "2026-11",
@@ -2757,6 +2775,15 @@
    "status": "superseded",
    "reason": "文内标注已废弃/被取代",
    "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-22-turn-timeline-serialization-fix.md",
+   "name": "2026-11-22-turn-timeline-serialization-fix.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-11 非活跃主题",
+   "topic": "other"
   },
   {
    "path": "docs/superpowers/plans/2026-07-09-neowow-workflow.md",
@@ -5394,6 +5421,24 @@
    "status": "frozen",
    "reason": "2026-11 非活跃主题",
    "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-11-22-conversation-only-decision-surface.md",
+   "name": "2026-11-22-conversation-only-decision-surface.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-11 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-11-22-generation-auto-approve-gate.md",
+   "name": "2026-11-22-generation-auto-approve-gate.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "generation-pipeline"
   },
   {
    "path": "docs/superpowers/plans/2026-11-22-turn-inline-status-checklist.md",

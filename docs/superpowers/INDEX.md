@@ -1,6 +1,6 @@
 # superpowers 文档索引
 
-> 全部 **598 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
+> 全部 **603 份** spec/plan 的索引。生成于 2026-10-03，判定依据见文末「状态判定规则」。
 > **文档正文未改动** —— 本索引只做导航与状态标注。
 
 ## 怎么用这份索引
@@ -13,18 +13,18 @@
 
 | 状态 | 份数 | 含义 |
 |---|---|---|
-| 🟢 living | 195 | 仍在演进，改动前先看这份 |
-| 🔒 frozen | 386 | 内容已定稿或功能已落地，作为历史依据 |
+| 🟢 living | 198 | 仍在演进，改动前先看这份 |
+| 🔒 frozen | 388 | 内容已定稿或功能已落地，作为历史依据 |
 | ⛔ superseded | 17 | 已被后续决策取代，勿再参考 |
 
 ## 主题分布
 
 | 主题 | 份数 | 其中 living |
 |---|---|---|
-| 其他 | 188 | 47 |
+| 其他 | 191 | 48 |
 | 画布工具与交互 | 89 | 42 |
+| 生成管线（图像/视频/3D） | 47 | 11 |
 | 工具与运行时内核 | 46 | 12 |
-| 生成管线（图像/视频/3D） | 45 | 9 |
 | Agent 交互与可见性 | 39 | 18 |
 | 画布产品能力（原子/意图/neowow） | 34 | 8 |
 | 规划与执行计划 | 30 | 6 |
@@ -42,10 +42,11 @@
 
 ## 按主题浏览
 
-### 其他（188 份）
+### 其他（191 份）
 
-<details><summary>🟢 living · 47 份</summary>
+<details><summary>🟢 living · 48 份</summary>
 
+- `docs/superpowers/specs/2026-11-22-conversation-only-decision-surface-design.md` ★design
 - `docs/superpowers/specs/2026-11-20-model-selector-sheet-config-design.md` ★design
 - `docs/superpowers/specs/2026-11-19-viewport-bounds-guard-design.md` ★design
 - `docs/superpowers/specs/2026-11-19-model-settings-relocation-theme-distinction-design.md` ★design
@@ -96,10 +97,12 @@
 
 </details>
 
-<details><summary>🔒 frozen · 135 份</summary>
+<details><summary>🔒 frozen · 137 份</summary>
 
+- `docs/superpowers/specs/2026-11-22-turn-timeline-serialization-fix.md` ★design
 - `docs/superpowers/plans/2026-11-22-turn-inline-status-checklist.md`
 - `docs/superpowers/specs/2026-11-22-turn-inline-status-checklist-design.md` ★design
+- `docs/superpowers/plans/2026-11-22-conversation-only-decision-surface.md`
 - `docs/superpowers/plans/2026-11-20-model-selector-sheet-config.md`
 - `docs/superpowers/plans/2026-11-19-viewport-bounds-guard.md`
 - `docs/superpowers/plans/2026-11-19-model-settings-relocation-theme-distinction.md`
@@ -353,6 +356,65 @@
 
 </details>
 
+### 生成管线（图像/视频/3D）（47 份）
+
+<details><summary>🟢 living · 11 份</summary>
+
+- `docs/superpowers/plans/2026-11-22-generation-auto-approve-gate.md`
+- `docs/superpowers/specs/2026-11-22-generation-auto-approve-gate-design.md` ★design
+- `docs/superpowers/specs/2026-10-13-generation-failure-recovery-and-motion-prompt-design.md` ★design
+- `docs/superpowers/specs/2026-09-13-minimax-h3-full-video-design.md` ★design
+- `docs/superpowers/plans/2026-09-13-fal-h3-max-video-min.md`
+- `docs/superpowers/specs/2026-09-13-fal-h3-max-video-min-design.md` ★design
+- `docs/superpowers/specs/2026-09-11-image-prompting-guide-catalog-fill-design.md` ★design
+- `docs/superpowers/specs/2026-09-11-image-prompting-guide-catalog-design.md` ★design
+- `docs/superpowers/specs/2026-09-10-wave-a-delivery-program-design.md` ★design
+- `docs/superpowers/specs/2026-08-08-media-storage-download-deferred-design.md` ★design
+- `docs/superpowers/specs/2026-08-05-turnaround-image-pipeline-design.md` ★design
+
+</details>
+
+<details><summary>🔒 frozen · 36 份</summary>
+
+- `docs/superpowers/plans/2026-11-14-c2a-acceptance-generation-oracle-plan.md`
+- `docs/superpowers/specs/2026-11-14-c2a-acceptance-generation-oracle-design.md` ★design
+- `docs/superpowers/specs/2026-11-04-generation-terminal-projection-design.md` ★design
+- `docs/superpowers/plans/2026-11-03-e1-generation-terminal-write-tap.md`
+- `docs/superpowers/specs/2026-11-01-p1b-generation-job-design.md` ★design
+- `docs/superpowers/plans/2026-10-13-pr3-generation-failure-recovery.md`
+- `docs/superpowers/plans/2026-10-04-media-generation-pipeline.md`
+- `docs/superpowers/specs/2026-10-04-media-generation-audit.md` ★design
+- `docs/superpowers/plans/2026-09-29-p0-abort-cascade-sse-resume.md`
+- `docs/superpowers/specs/2026-09-26-byok-into-pi-runtime-design.md` ★design
+- `docs/superpowers/plans/2026-09-14-minimax-h3-p1-reference.md`
+- `docs/superpowers/plans/2026-09-14-minimax-h3-p0-video.md`
+- `docs/superpowers/plans/2026-09-12-wave-a-a1-upscale.md`
+- `docs/superpowers/specs/2026-09-12-wave-a-a1-sts-upscale-design.md` ★design
+- `docs/superpowers/plans/2026-09-12-wave-a-a1-sts-direct-upload.md`
+- `docs/superpowers/plans/2026-09-11-image-prompting-guide-catalog.md`
+- `docs/superpowers/plans/2026-09-11-image-prompting-guide-catalog-fill.md`
+- `docs/superpowers/plans/2026-09-10-wave-a-a3-media-persist.md`
+- `docs/superpowers/specs/2026-09-10-wave-a-a3-media-persist-design.md` ★design
+- `docs/superpowers/plans/2026-08-15-media-inspector.md`
+- `docs/superpowers/specs/2026-08-15-media-inspector-design.md` ★design
+- `docs/superpowers/specs/2026-08-15-i2v-upstream-capability-audit-design.md` ★design
+- `docs/superpowers/plans/2026-08-15-i2v-capability-productization.md`
+- `docs/superpowers/plans/2026-08-14-unified-image-to-video-pipeline.md`
+- `docs/superpowers/specs/2026-08-14-unified-image-to-video-pipeline-design.md` ★design
+- `docs/superpowers/plans/2026-08-08-seedance-agnes-video-adapter.md`
+- `docs/superpowers/specs/2026-08-08-seedance-agnes-video-adapter-design.md` ★design
+- `docs/superpowers/plans/2026-08-06-seedream-gpt-image2-apimart.md`
+- `docs/superpowers/specs/2026-08-06-seedream-gpt-image2-apimart-design.md` ★design
+- `docs/superpowers/plans/2026-08-05-turnaround-image-pipeline.md`
+- `docs/superpowers/plans/2026-07-21-node-generation-failure-diagnostics.md`
+- `docs/superpowers/specs/2026-07-21-node-generation-failure-diagnostics-design.md` ★design
+- `docs/superpowers/plans/2026-07-19-c2-canvas-generation-adapter.md`
+- `docs/superpowers/specs/2026-07-19-c2-canvas-generation-adapter-design.md` ★design
+- `docs/superpowers/plans/2026-07-19-byok-provider-channels.md`
+- `docs/superpowers/specs/2026-07-19-byok-provider-channels-design.md` ★design
+
+</details>
+
 ### 工具与运行时内核（46 份）
 
 <details><summary>🟢 living · 12 份</summary>
@@ -413,63 +475,6 @@
 
 - `docs/superpowers/specs/2026-11-15-b3-tool-guidelines-design.md` ★design
 - `docs/superpowers/plans/2026-11-11-subagent-invocation-escalation.md`
-
-</details>
-
-### 生成管线（图像/视频/3D）（45 份）
-
-<details><summary>🟢 living · 9 份</summary>
-
-- `docs/superpowers/specs/2026-10-13-generation-failure-recovery-and-motion-prompt-design.md` ★design
-- `docs/superpowers/specs/2026-09-13-minimax-h3-full-video-design.md` ★design
-- `docs/superpowers/plans/2026-09-13-fal-h3-max-video-min.md`
-- `docs/superpowers/specs/2026-09-13-fal-h3-max-video-min-design.md` ★design
-- `docs/superpowers/specs/2026-09-11-image-prompting-guide-catalog-fill-design.md` ★design
-- `docs/superpowers/specs/2026-09-11-image-prompting-guide-catalog-design.md` ★design
-- `docs/superpowers/specs/2026-09-10-wave-a-delivery-program-design.md` ★design
-- `docs/superpowers/specs/2026-08-08-media-storage-download-deferred-design.md` ★design
-- `docs/superpowers/specs/2026-08-05-turnaround-image-pipeline-design.md` ★design
-
-</details>
-
-<details><summary>🔒 frozen · 36 份</summary>
-
-- `docs/superpowers/plans/2026-11-14-c2a-acceptance-generation-oracle-plan.md`
-- `docs/superpowers/specs/2026-11-14-c2a-acceptance-generation-oracle-design.md` ★design
-- `docs/superpowers/specs/2026-11-04-generation-terminal-projection-design.md` ★design
-- `docs/superpowers/plans/2026-11-03-e1-generation-terminal-write-tap.md`
-- `docs/superpowers/specs/2026-11-01-p1b-generation-job-design.md` ★design
-- `docs/superpowers/plans/2026-10-13-pr3-generation-failure-recovery.md`
-- `docs/superpowers/plans/2026-10-04-media-generation-pipeline.md`
-- `docs/superpowers/specs/2026-10-04-media-generation-audit.md` ★design
-- `docs/superpowers/plans/2026-09-29-p0-abort-cascade-sse-resume.md`
-- `docs/superpowers/specs/2026-09-26-byok-into-pi-runtime-design.md` ★design
-- `docs/superpowers/plans/2026-09-14-minimax-h3-p1-reference.md`
-- `docs/superpowers/plans/2026-09-14-minimax-h3-p0-video.md`
-- `docs/superpowers/plans/2026-09-12-wave-a-a1-upscale.md`
-- `docs/superpowers/specs/2026-09-12-wave-a-a1-sts-upscale-design.md` ★design
-- `docs/superpowers/plans/2026-09-12-wave-a-a1-sts-direct-upload.md`
-- `docs/superpowers/plans/2026-09-11-image-prompting-guide-catalog.md`
-- `docs/superpowers/plans/2026-09-11-image-prompting-guide-catalog-fill.md`
-- `docs/superpowers/plans/2026-09-10-wave-a-a3-media-persist.md`
-- `docs/superpowers/specs/2026-09-10-wave-a-a3-media-persist-design.md` ★design
-- `docs/superpowers/plans/2026-08-15-media-inspector.md`
-- `docs/superpowers/specs/2026-08-15-media-inspector-design.md` ★design
-- `docs/superpowers/specs/2026-08-15-i2v-upstream-capability-audit-design.md` ★design
-- `docs/superpowers/plans/2026-08-15-i2v-capability-productization.md`
-- `docs/superpowers/plans/2026-08-14-unified-image-to-video-pipeline.md`
-- `docs/superpowers/specs/2026-08-14-unified-image-to-video-pipeline-design.md` ★design
-- `docs/superpowers/plans/2026-08-08-seedance-agnes-video-adapter.md`
-- `docs/superpowers/specs/2026-08-08-seedance-agnes-video-adapter-design.md` ★design
-- `docs/superpowers/plans/2026-08-06-seedream-gpt-image2-apimart.md`
-- `docs/superpowers/specs/2026-08-06-seedream-gpt-image2-apimart-design.md` ★design
-- `docs/superpowers/plans/2026-08-05-turnaround-image-pipeline.md`
-- `docs/superpowers/plans/2026-07-21-node-generation-failure-diagnostics.md`
-- `docs/superpowers/specs/2026-07-21-node-generation-failure-diagnostics-design.md` ★design
-- `docs/superpowers/plans/2026-07-19-c2-canvas-generation-adapter.md`
-- `docs/superpowers/specs/2026-07-19-c2-canvas-generation-adapter-design.md` ★design
-- `docs/superpowers/plans/2026-07-19-byok-provider-channels.md`
-- `docs/superpowers/specs/2026-07-19-byok-provider-channels-design.md` ★design
 
 </details>
 
