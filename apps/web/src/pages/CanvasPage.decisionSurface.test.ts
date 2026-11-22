@@ -18,11 +18,11 @@ describe('决策面收归对话页 — 画布不再渲染确认胶囊（PC）', 
     expect(PAGE).not.toContain('ProposeConfirmOverlay')
   })
 
-  it('仅服务 PC 胶囊的 edit handler 已清理（核心生成入口保留）', () => {
+  it('仅服务两处胶囊的 handler 已清理（核心生成入口保留）', () => {
     expect(PAGE).not.toContain('handleProposeConfirmEdit')
-    // handleAgentGenerateNode 是生成核心入口（批量/移动端仍用），必须在
+    expect(PAGE).not.toContain('handleProposeConfirmCancel')
+    // handleAgentGenerateNode 是生成核心入口（批量/@generate-node 仍用），必须在
     expect(PAGE).toContain('handleAgentGenerateNode')
-    // handleProposeConfirmCancel 同服务移动端状态带，随刀 2 一起清理
   })
 
   it('待确认节点的状态展示仍保留（proposeConfirmNode / NodePendingPrompt 门控）', () => {

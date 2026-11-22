@@ -6678,8 +6678,6 @@ onUnmounted(() => {
       :node-generating-count="mobileNodeTaskSummary.generatingCount"
       :node-pending-nodes="mobileNodeTaskSummary.pendingNodes"
       :node-generating-elapsed="mobileNodeTaskElapsed"
-      :on-node-pending-confirm="handleAgentGenerateNode"
-      :on-node-pending-cancel="handleProposeConfirmCancel"
     />
 
     <MembershipModal v-model="showMembership" />
