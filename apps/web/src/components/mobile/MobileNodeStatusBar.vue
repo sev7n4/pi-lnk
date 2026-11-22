@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { MobilePendingNode } from '@/composables/mobileNodeTaskSummary'
-import { useAutoApproveGeneration } from '@/composables/useAutoApproveGeneration'
 
 /**
  * 移动端壳层聚合状态栏（R3-T4，D-C 状态机的「壳层状态栏聚合」）。
@@ -34,18 +33,6 @@ const emit = defineEmits<{
 }>()
 
 const hasTask = computed(() => props.generatingCount > 0 || props.pendingNodes.length > 0)
-
-/**
- * 授权自动生成（规格 2026-11-22-generation-auto-approve-gate-design §3.4/§4.2）：
- * 授权后必须让用户看得见 + 能一键收回。
- *
- * ⚠️ 徽标**并入本条**（不新增第三条状态带）：它只在状态带可见时出现
- * （生成中 / 待确认——正是用户被「没问我就生成了」惊到的时刻）；
- * 空闲态的常驻可见性由「我的 → 设置」里的开关承担。
- * 收回授权走账号级偏好（服务端 SSOT），与状态带无耦合。
- */
-const { authorized: autoApproveAuthorized, setAuthorized: setAutoApproveAuthorized } =
-  useAutoApproveGeneration()
 
 /** 有多个待确认时只对第一个给动作（其余等处理完再露出——避免一排按钮挤爆底栏）。 */
 const firstPending = computed(() => props.pendingNodes[0])
@@ -107,24 +94,13 @@ const pendingTargetText = computed(() => {
         </button>
       </span>
 
-      <!-- 已授权自动生成：徽标 + 一键收回（规格 2026-11-22 §3.4）。
-           授权态下不会再有「待确认」——本徽标出现的意义是解释「为什么没问我就生成了」。 -->
-      <span
-        v-if="autoApproveAuthorized"
-        class="mobile-node-status-auto"
-        data-testid="mobile-node-status-auto"
-      >
-        <span class="mobile-node-status-text">已授权自动生成</span>
-        <button
-          type="button"
-          class="mobile-node-status-auto-revoke"
-          data-testid="mobile-node-status-auto-revoke"
-          aria-label="收回授权，恢复每次确认"
-          @click="setAutoApproveAuthorized(false)"
-        >
-          收回授权
-        </button>
-      </span>
+      <!-- 已授权自动生成徽标**已迁出本条**（2026-11-23 UI 迭代）：
+           ① 授权状态不是「节点状态」，放节点状态带本就错位 ⇒ 本条回归单一职责；
+           ② 本条只在「生成中 / 待确认」时出现 ⇒ 空闲时用户看不到授权态、也点不到撤回，
+              而「随时能自己踩刹车」是硬要求；
+           ③ 迁出后原规格里「徽标仅在状态带可见时出现，否则破坏 MobileSaveStatus 互斥」
+              的妥协条件一并消失。
+           新落点：移动端 composer 裸条工具行（与 PC 同一枚图标，见 AgentSideRail）。 -->
     </div>
 </template>
 
@@ -219,30 +195,5 @@ button.mobile-node-status-generating {
   transform: scale(0.96);
 }
 
-/* 已授权自动生成徽标（2026-11-22 规格 §3.4）：并入本条，不新增第三条状态带。
-   令牌纪律同「去对话处理」钮：accent 三件套（accent-border/accent-subtle/accent-text）。 */
-.mobile-node-status-auto {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--lnk-space-2);
-}
-.mobile-node-status-auto-revoke {
-  display: inline-flex;
-  min-width: var(--lnk-touch-target);
-  min-height: var(--lnk-touch-target);
-  align-items: center;
-  justify-content: center;
-  padding: 0 var(--lnk-space-2);
-  border: 0.5px solid var(--lnk-accent-border);
-  border-radius: var(--lnk-radius-full);
-  background: var(--lnk-accent-subtle);
-  color: var(--lnk-accent-text);
-  font-size: var(--lnk-text-2xs);
-  line-height: var(--lnk-lh-2xs);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.mobile-node-status-auto-revoke:active {
-  transform: scale(0.96);
-}
+
 </style>

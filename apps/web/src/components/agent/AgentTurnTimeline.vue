@@ -19,6 +19,7 @@ import DockTypeIcon from '@/components/canvas/dock-studio/shared/DockTypeIcon.vu
 import CanvasLocateButton from '@/components/shared/CanvasLocateButton.vue'
 import CanvasLocatePinIcon from '@/components/shared/CanvasLocatePinIcon.vue'
 import AskUserCard from '@/components/agent/AskUserCard.vue'
+import AutoApproveGlyph from '@/components/agent/AutoApproveGlyph.vue'
 import { presentToolStep } from '@/components/agent/toolPresentation'
 import { useDisclosure } from '@/components/agent/useDisclosure'
 import type { TimelinePart, ThinkingPart } from '@/components/agent/turnTimeline'
@@ -178,7 +179,12 @@ function onCancelProposal(nodeId?: string) {
  * 文案必须说清，否则用户点了却还弹确认卡，会以为功能坏了。
  */
 async function onAuthorizeAuto() {
-  await setAutoApprove(true, { successMessage: '已授权 · 本次仍需确认，下次生效' })
+  // 已授权态下点同一枚图标 = 收回授权（同一图形、一套语义；误点有 toast「撤销」兜底）。
+  const next = !autoApproveAuthorized.value
+  await setAutoApprove(next, {
+    successMessage: next ? '已授权自动生成 · 下次生效' : '已收回授权 · 恢复每次确认',
+    undoable: true,
+  })
 }
 
 /**
@@ -833,18 +839,20 @@ const rootClass = computed(() =>
             aria-label="取消"
             @click="onCancelProposal(part.nodeId)"
           ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg></button>
-          <!-- 场景内快捷项：授权后续自动生成（规格 2026-11-22 §4）。
+          <!-- 场景内快捷项：授权后续自动生成（规格 2026-11-22 §4；2026-11-23 UI 迭代图标化）。
                ⚠️ 本次提议仍需确认（确认卡三动作不变），授权从下一次生成生效——
-               文案写清「下次生效」，否则用户点了还弹确认卡会以为功能坏了。 -->
+               文案写清「下次生效」，否则用户点了还弹确认卡会以为功能坏了。
+               ⭐ 形状纪律：同一动作行内次级动作一律 icon-only（参数微调 / 取消 已是同构），
+               长文字按钮会把卡片撑宽、把行撑脏 ⇒ 改为与 composer 工具行**同一枚图形**
+               （盾牌+闪电），文案退到 title / aria-label。 -->
           <button
             type="button"
-            class="btn-secondary"
+            class="icon-btn auto-approve-action"
             data-test="authorize-auto"
-            :disabled="autoApproveAuthorized"
-            :title="autoApproveAuthorized ? '已授权自动生成' : '授权后，后续图片与音频卡片不再逐次确认（本次仍需确认）'"
-            :aria-label="autoApproveAuthorized ? '已授权自动生成' : '授权后续自动生成，本次仍需确认'"
+            :title="autoApproveAuthorized ? '已授权自动生成 · 本次仍需确认' : '授权后续自动生成（本次仍需确认，下次生效）'"
+            :aria-label="autoApproveAuthorized ? '已授权自动生成，本次仍需确认' : '授权后续自动生成，本次仍需确认，下次生效'"
             @click="onAuthorizeAuto"
-          >{{ autoApproveAuthorized ? '已授权' : '授权后续自动生成' }}</button>
+          ><AutoApproveGlyph :on="autoApproveAuthorized" :size="16" /></button>
           <!-- 定位收敛纪律：决策行不排定位图标——出口由页脚 tether 唯一承载
                （同卡三入口治理 2026-11-02；artifact 卡不受此限，其 CanvasLocateButton 是唯一入口） -->
         </div>

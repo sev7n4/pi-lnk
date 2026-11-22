@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue'
+import { computed, h, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { providerApi } from '@/services/provider-api'
 import { useProviderBootstrap } from './useProviderBootstrap'
@@ -37,10 +37,12 @@ export function useAutoApproveGeneration() {
    * @param next true = 授权；false = 收回授权
    * @param opts.successMessage 自定义成功文案（场景内快捷项要说明「下次生效」）；
    * @param opts.silent         不弹 toast（由调用方自行呈现）
+   * @param opts.undoable       toast 内带「撤销」单动作（iOS/macOS 极简：
+   *                            轻量提示层 + 唯一 action，不弹模态确认框）
    */
   async function setAuthorized(
     next: boolean,
-    opts?: { successMessage?: string; silent?: boolean },
+    opts?: { successMessage?: string; silent?: boolean; undoable?: boolean },
   ): Promise<boolean> {
     const value = next ? 'auto' : 'manual'
     try {
@@ -49,10 +51,39 @@ export function useAutoApproveGeneration() {
       lastConfirmedAuthorized.value = next
       patchPreferences(prefs)
       if (!opts?.silent) {
-        ElMessage.success(
+        const text =
           opts?.successMessage ??
-            (next ? '已授权自动生成' : '已收回授权 · 恢复每次确认'),
-        )
+          (next ? '已授权自动生成' : '已收回授权 · 恢复每次确认')
+        if (opts?.undoable) {
+          // 单 action 撤销：点「撤销」⇒ 反向写回服务端 + 收掉本 toast。
+          let instance: { close: () => void } | null = null
+          instance = ElMessage({
+            type: next ? 'success' : 'info',
+            duration: 4000,
+            message: h('span', { class: 'auto-approve-toast' }, [
+              h('span', { class: 'auto-approve-toast-text' }, text),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  class: 'auto-approve-toast-undo',
+                  'data-testid': 'auto-approve-undo',
+                  onClick: () => {
+                    instance?.close()
+                    void setAuthorized(!next, { silent: true }).then(() => {
+                      ElMessage.success(
+                        next ? '已收回授权 · 恢复每次确认' : '已授权自动生成',
+                      )
+                    })
+                  },
+                },
+                '撤销',
+              ),
+            ]),
+          })
+        } else {
+          ElMessage.success(text)
+        }
       }
       return true
     } catch (err) {
