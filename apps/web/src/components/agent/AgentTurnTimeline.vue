@@ -299,9 +299,9 @@ function deliveryDurationLabel(nodeId: string): string {
 }
 
 /**
- * D-d 左下类型小字（2026-11-06 补齐）：tile 只按 nodeType 分图标时，
- * 纯文本 / HTML 产物 / 画布总览三者共用同一文档图标、点开后却分别是
- * 阅读器与沙箱预览，入口零提示。这里按 format / digest 派生可读类型名。
+ * 可读类型名（2026-11-06 补齐；v2 2026-11-22 转用途）：左下类型小字已退役，
+ * 现供 aria-label / title（见 deliveryTileAria）——类型字退役后的可及性载体。
+ * 纯文本 / HTML 产物 / 画布总览三者图标语义靠媒体区表达，读屏走本派生。
  * ⚠️ 纯派生自 DeliveryItem，不读节点正文、不做内容嗅探（文本节点规格 §4.2）。
  */
 function deliveryTypeLabel(item: DeliveryItem): string {
@@ -311,6 +311,12 @@ function deliveryTypeLabel(item: DeliveryItem): string {
   if (item.nodeType === 'video') return '视频'
   if (item.nodeType === 'image') return '图片'
   return ''
+}
+
+/** v2 媒体卡：类型字退役后的可及性载体——aria-label / title = 「类型 · 名称」。 */
+function deliveryTileAria(item: DeliveryItem): string {
+  const type = deliveryTypeLabel(item)
+  return type ? `${type} · ${item.title}` : item.title
 }
 
 /** tile 缩略图地址：复用 artifactUrl（part.url 优先、resolveNodeUrl 兜底）。 */
@@ -921,8 +927,8 @@ const rootClass = computed(() =>
     </template>
 
     <!-- E2-a 回合产物幽灵摘要（规格 2026-11-04-e2a-ghost-delivery-summary §3）：
-         收起 = tint 文本行 + chevron；展开 = 横向 64px tile 条（D-d 横滑，不推走对话流）。
-         tile tap：viewer 解析+inject 命中 ⇒ 直开（一跳）；否则定位兜底（D-c）。
+         收起 = tint 文本行 + chevron；展开 = 横向 96px 媒体卡条（v2 2026-11-22：媒体区 64px + 名称行；
+         D-d 横滑，不推走对话流）。tile tap：viewer 解析+inject 命中 ⇒ 直开（一跳）；否则定位兜底（D-c）。
          定位角标独立命中区（::after 外扩 44px，E-d）。 -->
     <div v-if="!deliveryHidden" class="delivery-summary" data-test="delivery-summary">
       <button
@@ -951,9 +957,11 @@ const rootClass = computed(() =>
             type="button"
             class="delivery-tile"
             :data-test="'delivery-tile-' + item.nodeId"
-            :aria-label="'预览 ' + item.title"
+            :aria-label="deliveryTileAria(item)"
+            :title="deliveryTileAria(item)"
             @click="onDeliveryTileOpen(item)"
           >
+            <span class="tile-media-box">
             <video
               v-if="deliveryThumbOf(item.nodeId) && item.nodeType === 'video'"
               :src="`${deliveryThumbOf(item.nodeId)}#t=0.1`"
@@ -1026,9 +1034,18 @@ const rootClass = computed(() =>
               stroke-linejoin="round"
               aria-hidden="true"
             ><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="1.6" /><path d="M4.5 18.5 10 13l4 4 2.5-2.5 3 3" /></svg>
-            <!-- D-d 左下类型小字：与右下时长徽标对称，补齐规格未落项 -->
-            <span v-if="deliveryTypeLabel(item)" class="tile-type" data-testid="delivery-tile-type">{{ deliveryTypeLabel(item) }}</span>
-            <span v-if="deliveryDurationLabel(item.nodeId)" class="duration">{{ deliveryDurationLabel(item.nodeId) }}</span>
+              <!-- v2 恒显 ▶（2026-11-22 媒体卡改造）：首帧与图片同貌，▶ 是视频唯一稳定区分器；
+                   不依赖时长元数据（时长徽标缺省隐藏口径不变）。glyph 形态同 AgentCanvasOutputs。 -->
+              <span
+                v-if="item.nodeType === 'video' && deliveryThumbOf(item.nodeId)"
+                class="tile-play"
+                data-testid="delivery-tile-play"
+                aria-hidden="true"
+              ><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13l11-6.5z" /></svg></span>
+              <span v-if="deliveryDurationLabel(item.nodeId)" class="duration">{{ deliveryDurationLabel(item.nodeId) }}</span>
+            </span>
+            <!-- v2 名称行（2026-11-22 媒体卡改造）：D-a 派生 title 从 aria 提升为可见层 -->
+            <span class="tile-name" data-testid="delivery-tile-name">{{ item.title }}</span>
           </button>
           <button
             type="button"
@@ -1487,14 +1504,21 @@ const rootClass = computed(() =>
 .delivery-tile {
   position: relative;
   display: block;
-  width: 64px;
-  height: 64px;
+  width: 96px;
   padding: 0;
   border: 0.5px solid var(--lnk-border-default);
-  border-radius: var(--lnk-control-sm);
-  background: var(--lnk-surface-sunken);
+  border-radius: var(--lnk-radius-md);
+  background: var(--lnk-surface-raised);
   overflow: hidden;
   cursor: pointer;
+}
+/* v2 媒体区（2026-11-22）：64px 高保持预览辨识力；媒体自明元素（▶/时长）锚定此盒 */
+.delivery-tile .tile-media-box {
+  position: relative;
+  display: block;
+  height: 64px;
+  background: var(--lnk-surface-sunken);
+  border-bottom: 0.5px solid var(--lnk-border-default);
 }
 .delivery-tile .tile-media {
   width: 100%;
@@ -1519,16 +1543,35 @@ const rootClass = computed(() =>
   font-size: 10px;
   color: var(--lnk-hi-text);
 }
-/* D-d 左下类型小字：与右下时长徽标对称，令牌同源（禁硬编码色） */
-.delivery-tile .tile-type {
+/* v2 名称行（2026-11-22）：D-a 派生 title 提升为可见层；text-primary 实色 + 单行截断 */
+.delivery-tile .tile-name {
+  display: block;
+  padding: 4px 6px;
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: left;
+  color: var(--lnk-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* v2 恒显 ▶（2026-11-22）：视频类型自明符号；hi 底 hi 字令牌同源（禁硬编码色） */
+.delivery-tile .tile-play {
   position: absolute;
-  left: 4px;
-  bottom: 3px;
-  padding: 0 3px;
-  border-radius: 4px;
+  inset: 0;
+  margin: auto;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
   background: var(--lnk-hi-bg);
-  font-size: 10px;
   color: var(--lnk-hi-text);
+}
+.delivery-tile .tile-play svg {
+  width: 10px;
+  height: 10px;
 }
 .delivery-locate {
   position: absolute;

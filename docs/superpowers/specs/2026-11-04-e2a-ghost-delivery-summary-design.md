@@ -41,7 +41,7 @@
 
 **D-c viewer 直开路由判据**：tile tap → 按 nodeId 从 canvas store 解析节点本体，经 `inject(MOBILE_NODE_OPEN_VIEWER_KEY)` 传 `{ id, type, data }`（与 `NodeRenderer.vue:72` 同款契约，type 映射 image/video/audio/text；路由见图 1）；节点缺失（已删）→ tile 降级类型图标且 tap 无 viewer（可定位则定位）；**桌面端 tap 走 focus_node 定位**（emit 既有 `focusNode`，与查看按钮同路由）。文本节点 tap 直开阅读器（不复制画布上 MobileNodeTile 的长文 TTS 分流——对话流语义=阅读）。
 
-**D-d 展开清单排列判据**：横向滑动缩略图条，64px 圆角 tile；无图产物（audio=波形 tile / text=文档 tile）+ 左下类型小字；video 右下时长徽标（节点实况，缺省隐藏）；定位 = 20px 圆形角标贴 tile 右上，透明外扩凑满 44px 命中区（`AgentSideRail` mic 先例）。
+**D-d 展开清单排列判据（2026-11-22 v2 媒体卡修订）**：横向滑动媒体卡条，96px 卡 = 媒体区 64px 高 + 名称行（11px `--lnk-text-primary`，单行截断 + `title` 悬停全文；圆角 `--lnk-radius-md`——旧版误用 `--lnk-control-sm`=32px 致正圆，见 §9.2）；媒体自明——image=内容铺满 / video=首帧+**恒显 ▶**（22px 圆 `--lnk-hi-bg`，不依赖时长元数据）/ audio=波形 / text=文档 / html=代码 / digest=网格，**左下类型小字退役**，类型移入 `aria-label` + `title`（读屏/悬停可及）；video 右下时长徽标（节点实况，缺省隐藏）；定位 = 20px 圆形角标贴卡右上，透明外扩凑满 44px 命中区（`AgentSideRail` mic 先例）。
 
 **E-d 交互形态判据（iOS 极简）**：幽灵行 = accent tint 文本行 + chevron，非按钮堆；展开/收起 chevron 旋转 + 高度过渡（`--lnk-duration-fast` + `--lnk-ease-decelerate`，reduced-motion 降级为直切）；样式仅 `--lnk-*` 令牌（禁 `--neo-*` / 新增 hex）；图标内联 SVG 24 网格 stroke:2（零图标库纪律）；触控目标移动端 ≥44px。
 
@@ -106,6 +106,17 @@ flowchart LR
 1. **文本/HTML 产物不进交付条**：根因三段——文本生成自动审批（P1-D）无确认点建卡 + 完成通报走 `notifyGenerationTerminal` 只入 followUp 不派 node_status + 画布对账回填（`reconcileFromNodes`）的归属预筛只认「已有 artifact part」。修复 = 归属集并入 `pendingNodeMeta`（`collectBackfillOwnableNodeIds`，归属≠判 done，W11 probe 仍要求 content/url 正据）。E2-b 的「补拍派 node_status」届时仍做（秒级翻正），本修复只解决「有没有」。
 2. **已删节点残留在展开清单**：`remove_node` 不回写事件投影（part 恒 done）。修复 = `turnDeliveryItems(parts, canvasNodes?)` 画布存在性过滤；null/undefined（未接线/预览）保守不过滤。
 3. **交付条上沿裁切**：`.delivery-locate` 角标 `top:-5px` 上溢，`overflow-x:auto` 令 overflow-y 同为 auto ⇒ 被滚动容器裁掉。修复 = strip 头部 `padding-top:11px`（margin 换 padding：padding 在滚动内容盒内不裁），静态契约锁定 ≥6px。
+
+## 9.2 v2 媒体卡改造状态注（2026-11-22）
+
+用户走查发现生产 tile 呈**正圆**：`.delivery-tile` 的 `border-radius: var(--lnk-control-sm)`（=32px）作用在 64×64 方块上恰为半径——控件胶囊圆角令牌被误用为 tile 圆角，属令牌语义错位而非有意设计；顺带两处瑕疵：预览被圆形裁切、左下类型 pill 被弧线切角（overflow:hidden）。本次改造（用户逐轮拍板）：
+
+1. **tile → 96px 媒体卡**：媒体区保持 64px 高（预览辨识力不变），名称行 11px 单行截断——`DeliveryItem.title`（D-a 已派生，此前只进 aria-label）提升为可见层；圆角回归 `--lnk-radius-md`。
+2. **类型字退役、媒体自明**：图片=内容自明；视频补**恒显 ▶**（首帧与图片同貌，▶ 是唯一稳定区分器，不依赖时长元数据——时长缺省隐藏是既有口径）；音频=波形唯一形态；文本/HTML/总览图标既有分叉不变。类型移入 aria-label + title 保可及性。
+3. **音频不补 ▶**：波形已是交付条唯一形态零歧义；▶ 会制造「就地播放」预期差（tap 语义=开 viewer 一跳）而信息增量为零；内联起播归 E2-b（埋点准入后按数据决策）。
+4. **rule-of-three 备注**：▶ 为全仓第 3 处内联 glyph（AgentCanvasOutputs / AgentAssetPicker / 本次），暂不抽共享组件；出现第 4 处消费再收敛。
+
+等价物检索结论（第一原则）：名称=`DeliveryItem.title`（零新字段）；类型文案=`deliveryTypeLabel`（转 aria 用途）；时长=`deliveryDurationLabel`；缩略=`deliveryThumbOf`；首帧=`video#t=0.1` 既有形态；▶=`AgentCanvasOutputs` 同款内联 glyph 形态；音频播放器=MobileNodeViewer+MobileNodeWaveform+useNodeWaveform+audioPlayback（不进交付条）。**零新组件、零新字段、零新令牌**。
 
 ## 10. 配图规范自检
 
