@@ -219,7 +219,7 @@ function readSelf(): string {
 
 // ── 2026-11-06：文本/HTML/总览 tile 分叉（规格 #636 §4.7 + E2-a D-d）───────
 describe('AgentTurnTimeline — 交付条文本系产物可区分', () => {
-  it('纯文本 ⇒ 文档图标 + 左下「文本」小字，无 HTML/总览图标', async () => {
+  it('纯文本 ⇒ 文档图标 + 名称行可见，无 HTML 图标且类型字已退役', async () => {
     const w = mountTimeline([artifact({ nodeId: 't1', nodeType: 'text', title: '文案' })], {
       nodes: [canvasNode('t1', 'text', { content: '一段文案' })],
     })
@@ -227,18 +227,20 @@ describe('AgentTurnTimeline — 交付条文本系产物可区分', () => {
     const tile = w.find('[data-test="delivery-tile-t1"]')
     expect(tile.exists()).toBe(true)
     expect(tile.find('[data-testid="delivery-tile-icon-html"]').exists()).toBe(false)
-    expect(tile.find('[data-testid="delivery-tile-type"]').text()).toBe('文本')
+    expect(tile.find('[data-testid="delivery-tile-name"]').text()).toBe('文案')
+    expect(tile.find('[data-testid="delivery-tile-type"]').exists(), 'v2 类型字退役（媒体自明）').toBe(false)
     w.unmount()
   })
 
-  it('format:html ⇒ 代码图标 + 左下「HTML」小字（入口即可预期沙箱预览）', async () => {
+  it('format:html ⇒ 代码图标 + 名称行可见（入口即可预期沙箱预览，类型走 aria）', async () => {
     const w = mountTimeline([artifact({ nodeId: 't1', nodeType: 'text', title: '落地页' })], {
       nodes: [canvasNode('t1', 'text', { format: 'html', content: '<html><title>落地页</title></html>' })],
     })
     await w.find('[data-test="delivery-toggle"]').trigger('click')
     const tile = w.find('[data-test="delivery-tile-t1"]')
     expect(tile.find('[data-testid="delivery-tile-icon-html"]').exists()).toBe(true)
-    expect(tile.find('[data-testid="delivery-tile-type"]').text()).toBe('HTML')
+    expect(tile.find('[data-testid="delivery-tile-name"]').text()).toBe('落地页')
+    expect(tile.find('[data-testid="delivery-tile-type"]').exists(), 'v2 类型字退役（媒体自明）').toBe(false)
     w.unmount()
   })
 
@@ -272,5 +274,55 @@ describe('AgentTurnTimeline — 交付条文本系产物可区分', () => {
     await entry.trigger('click')
     expect(viewer).toHaveBeenCalledTimes(1)
     w.unmount()
+  })
+})
+
+// ── 2026-11-22：v2 媒体卡改造（D-d 修订：64px 圆 tile → 96px 媒体卡 + 名称行）──
+describe('AgentTurnTimeline — 交付条媒体卡 v2', () => {
+  it('video tile 恒显 ▶（首帧在场即出，不依赖时长元数据）；image tile 无 ▶', async () => {
+    const w = mountTimeline(
+      [
+        artifact({ nodeId: 'v1', nodeType: 'video', title: '宣传片', url: 'https://x/v.mp4' }),
+        artifact({ nodeId: 'i1', title: '主视觉', url: 'https://x/i.png' }),
+      ],
+      {
+        nodes: [
+          canvasNode('v1', 'video', { url: 'https://x/v.mp4' }),
+          canvasNode('i1', 'image', { url: 'https://x/i.png' }),
+        ],
+      },
+    )
+    await w.find('[data-test="delivery-toggle"]').trigger('click')
+    expect(w.find('[data-test="delivery-tile-v1"] [data-testid="delivery-tile-play"]').exists()).toBe(true)
+    expect(w.find('[data-test="delivery-tile-i1"] [data-testid="delivery-tile-play"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('名称行可见 + aria-label 携带类型（类型字退役后的可及性载体）', async () => {
+    const w = mountTimeline([artifact({ nodeId: 'v1', nodeType: 'video', title: '宣传片', url: 'https://x/v.mp4' })], {
+      nodes: [canvasNode('v1', 'video', { url: 'https://x/v.mp4' })],
+    })
+    await w.find('[data-test="delivery-toggle"]').trigger('click')
+    const tile = w.find('[data-test="delivery-tile-v1"]')
+    expect(tile.find('[data-testid="delivery-tile-name"]').text()).toBe('宣传片')
+    expect(tile.attributes('aria-label')).toContain('视频')
+    expect(tile.attributes('aria-label')).toContain('宣传片')
+    w.unmount()
+  })
+
+  it('静态契约：圆角回归 --lnk-radius-md（control-sm 32px 误用致正圆的修复）、卡宽 96px、名称行/▶ 样式在位、类型字样式退役', () => {
+    const src = readSelf()
+    const rule = src.match(/\.delivery-tile \{[^}]*\}/)
+    expect(rule, '.delivery-tile 规则必须在位').toBeTruthy()
+    expect(rule![0]).toContain('width: 96px')
+    expect(rule![0]).toContain('var(--lnk-radius-md)')
+    expect(rule![0], 'control-sm 在 64~96px 方块上=正圆/胶囊，禁再用于 tile').not.toContain('control-sm')
+    expect(src).toContain('.tile-media-box')
+    expect(src).toContain('.tile-play')
+    expect(src).not.toContain('.tile-type')
+    const nameRule = src.match(/\.delivery-tile \.tile-name \{[^}]*\}/)
+    expect(nameRule, '.tile-name 规则必须在位').toBeTruthy()
+    expect(nameRule![0]).toContain('var(--lnk-text-primary)')
+    expect(nameRule![0]).toContain('text-overflow: ellipsis')
   })
 })
