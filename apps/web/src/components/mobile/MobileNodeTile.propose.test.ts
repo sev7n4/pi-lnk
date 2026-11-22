@@ -28,7 +28,7 @@ function setMobile(on: boolean) {
  * ⭐ 用户的原始设计意图：「提示词直接在节点瓦片上，省去了点击的二次动作」。
  *
  * 取证事实：
- * - PC 真正显示提议内容的不是 `ProposeConfirmOverlay`（它只有「待确认」标签 + 三个按钮，
+ * - PC 真正显示提议内容的不是节点内联确认胶囊（它只有「待确认」标签 + 三个按钮，
  *   props 只有 id + data.status），而是**节点体内的 `NodePendingPrompt`**。
  * - 提议的 prompt / 模型 / 比例**早于 propose 就写进了 node.data**
  *   （建节点时写 prompt + imageAspect + videoSettings；`propose_generation` 只把

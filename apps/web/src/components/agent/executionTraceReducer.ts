@@ -18,7 +18,7 @@ import type { AgentPresentationEnvelope, NodeGraphBodyPayload } from '@/componen
  * `waiting_user` 是**阻塞态**——run 停在这里等 host 把决策交回用户，语义等价于上游
  * coding-agent 的 `ui_prompt_start/end`（`core/extensions/types.ts:745-759`）：
  * 把「正在等用户」建模成事件，而不是让 host 从工具结果反推。
- * 渲染落点（唯一锚定表面）见 ProposeConfirmOverlay / ADR-0011。
+ * 渲染落点（唯一决策表面）见 AgentTurnTimeline 的 proposal 卡（2026-11-22 决策面收归对话页）。
  */
 export type ExecutionStepStatus =
   | 'pending'

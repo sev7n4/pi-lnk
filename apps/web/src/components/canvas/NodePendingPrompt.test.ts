@@ -14,7 +14,19 @@ describe('NodePendingPrompt（ADR-0011 决定 1 节点内联提示词摘要）',
     expect(wrapper.find('[data-testid="node-pending-prompt"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="node-pending-prompt-chip"]').text()).toBe('待确认')
     expect(wrapper.get('[data-testid="node-pending-prompt-text"]').text()).toBe('一只在雨中的柴犬，电影感侧光')
-    expect(wrapper.text()).toContain('可在提示词卡片上「编辑」后确认')
+    // 决策面收归对话页（2026-11-22）：画布不再有编辑/确认入口，引导文案指向对话卡
+    expect(wrapper.text()).toContain('在对话卡上调整后确认')
+    expect(wrapper.text()).not.toContain('可在提示词卡片上「编辑」后确认')
+    wrapper.unmount()
+  })
+
+  it('P0-2 part 锚：proposeWaiting=true 时 draft 节点也渲染摘要（等待期 status 迟到不吞状态展示）', () => {
+    // 2026-10-30 §4.3：等待期 update_node{pending_confirm} 随 tool_result 迟到 ⇒
+    // status 仍 draft。此判据原在已删除的节点内联确认面测试，
+    // 决策面收归后由本组件承接（状态面唯一载体）。
+    const wrapper = mountPrompt({ status: 'draft', proposeWaiting: true })
+    expect(wrapper.find('[data-testid="node-pending-prompt"]').exists()).toBe(true)
+    expect(wrapper.get('[data-testid="node-pending-prompt-text"]').text()).toBe('一只在雨中的柴犬，电影感侧光')
     wrapper.unmount()
   })
 
