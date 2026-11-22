@@ -143,3 +143,15 @@ PR #974 → squash master `7a140a5f`；CI **4/4 绿**；部署 run `45042096920`
 **守卫写法纪律（本刀踩到，已记入规格 §10.4）**：① 注释里禁止出现受看守的选择器字面量（`not.toContain` 会被同文件注释误伤）；② 源码契约辅助函数 `rule()` 必须**只在 `<style>` 段内**搜索，否则模板注释/插值会把 `indexOf` 带偏。
 
 **诚实边界**：本次 UI 改造**尚未在生产真机走查**（规格 §9.2 的 12/12 + 7/7 是图标化之前的结论）；旧探针的两个 testid（`agent-auto-approve-line` / `agent-auto-approve-revoke`）已从源码移除 ⇒ 探针判据须同步改写为 `.auto-approve-toggle` 后重跑。
+
+### 上线与生产复测（2026-11-23）
+
+PR #978 → CI **4/4 绿**（web 全量 555 文件 / 4600 用例）→ squash 合并 master `1fa0a13e`（**合并树 `3690e6c0` == CI 验证 head 树**）→ 部署 run `45061972240`：`Deploy web` success、`Build API` **skipped**（web-only 分流正确——本刀纯前端，零 API/DB 改动）。
+
+- **产物取证**：线上 114 chunk 全抓，`auto-approve-toggle` / `auto-approve-glyph` / 两处 aria 文案 **4/4 命中**。
+- **主探针 14/14 PASS**（较 12 项新增 P4b「旧通栏徽标未复活」/ P4c「视觉体量 ≤32px」）。
+- **提议卡图标生产实证**：提议卡 `pending_confirm`；授权按钮 44×44 / 图标 16px / **`text=''`（零文字）** / 线框态 / `aria` 完整 / 与「落锚生成」同行同构。
+- **双主题**：浅色 `rgb(138,82,0)`、深色 `rgb(251,191,36)` ⇒ `--lnk-warning` 自适应，零新令牌。
+- **探针本轮改造**：必须**自建自有会话**（`POST /api/sessions`）——旧默认 `SESSION_URL` 属他人画布 ⇒ `agentReadOnly` ⇒ input-dock 隐藏 ⇒ composer 工具行不渲染 ⇒ P4 假失败；走查结束删会话。
+
+**剩余诚实边界**：audio 未活体（沿用 §9.3）；**活体对照 7/7 本轮未复跑**（P6 在独立脚本，逻辑未受前端改动影响）；走查账号 `defaultTextModel` 停用属**既存产品缺陷**（发不出消息且无修复路径），本刀不修、仅记录。
