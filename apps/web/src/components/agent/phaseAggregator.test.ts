@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { derivePhase, PHASE_BADGE } from './phaseAggregator'
+import { derivePhase, phaseForToolName, PHASE_BADGE } from './phaseAggregator'
 import { applyToolCall, createExecutionTrace, type ExecutionStep } from './executionTraceReducer'
 
 describe('derivePhase（P1#4 阶段徽章）', () => {
@@ -42,5 +42,24 @@ describe('derivePhase（P1#4 阶段徽章）', () => {
     expect(PHASE_BADGE.exploring.label).toBe('探索中')
     expect(PHASE_BADGE.creating.label).toBe('创作中')
     expect(PHASE_BADGE.wrapping.label).toBe('收尾中')
+  })
+})
+
+describe('phaseForToolName（阶段分类单源析出，2026-11-22）', () => {
+  it('与 derivePhase 分类同源（同一份 WRITE_TOOLS）', () => {
+    expect(phaseForToolName('get_canvas_summary')).toBeNull()
+    expect(phaseForToolName('set_node_text')).toBe('creating')
+    expect(phaseForToolName('upsert_media_node')).toBe('creating')
+    expect(phaseForToolName('run_image')).toBe('creating')
+    expect(phaseForToolName('cancel_generation')).toBe('wrapping')
+    expect(phaseForToolName('brand_new_tool')).toBeNull()
+
+    // 等价性：derivePhase 对同一 trace 的结果 = 逐工具 phaseForToolName 的单调推进
+    // （read-only 序列 derivePhase 返回 'exploring'，不能用 reduce 初始 null 做等价断言）
+    const t = createExecutionTrace()
+    applyToolCall(t, 'get_canvas_summary', { ok: 1 })
+    applyToolCall(t, 'run_image', { ok: 1 })
+    applyToolCall(t, 'cancel_generation', { ok: 1 })
+    expect(derivePhase(t.steps)).toBe('wrapping')
   })
 })

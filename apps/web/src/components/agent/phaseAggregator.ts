@@ -19,19 +19,21 @@ const WRITE_TOOLS = new Set([
   'introduce_nodes_to_agent',
 ])
 
+/** 只判工具名对应的阶段；与 derivePhase 共用同一份 WRITE_TOOLS，禁止另造分类表。 */
+export function phaseForToolName(toolName: string): AgentPhase | null {
+  if (toolName === 'cancel_generation') return 'wrapping'
+  if (WRITE_TOOLS.has(toolName) || toolName.startsWith('run_')) return 'creating'
+  return null
+}
+
 /** 按时间序扫工具步，推导当前阶段；未知工具不推进（避免新工具打乱叙事）。 */
 export function derivePhase(steps: ExecutionStep[]): AgentPhase | null {
   const toolSteps = steps.filter((s) => s.kind === 'tool')
   if (toolSteps.length === 0) return null
   let phase: AgentPhase = 'exploring'
   for (const s of toolSteps) {
-    const name = s.meta?.toolName ?? ''
-    if (name === 'cancel_generation') {
-      phase = 'wrapping'
-      continue
-    }
-    if (WRITE_TOOLS.has(name) || name.startsWith('run_')) phase = 'creating'
-    // read 类与未知工具：保持当前阶段（exploring 起步）
+    const next = phaseForToolName(s.meta?.toolName ?? '')
+    if (next) phase = next
   }
   return phase
 }

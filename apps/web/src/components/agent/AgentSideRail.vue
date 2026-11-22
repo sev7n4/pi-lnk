@@ -3634,6 +3634,7 @@ defineExpose({
                   :resolve-node-url="resolveCanvasNodeUrl"
                   :canvas-nodes="canvasNodes"
                   :digest-entry="digestEntryForTurn(sessionDigestEntry, msg.id === lastTimelineAssistantId)"
+                  :task-progress="isLiveTurnMessage(msg) ? taskProgress : undefined"
                   @retry-node="emit('generateNode', $event)"
                   @retry-turn="onRetryTurn"
                   @focus-node="onFocusNode($event)"

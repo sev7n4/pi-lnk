@@ -34,6 +34,8 @@ import { CANVAS_NODE_CANCEL_KEY, isViewableNodeType, MOBILE_NODE_OPEN_VIEWER_KEY
 import { deliveryCountLabel, hasRunningGeneration, turnDeliveryItems, type DeliveryItem } from '@/components/agent/deliverySummary'
 import { observeDeliveryCard } from '@/components/agent/deliveryMetrics'
 import ProposeTuneSheet from './ProposeTuneSheet.vue'
+import type { AgentTaskProgressState } from './agentTaskProgress'
+import { deriveTurnPhaseView, isTurnFinalized } from './turnPhaseView'
 
 const props = defineProps<{
   parts: TimelinePart[]
@@ -57,6 +59,12 @@ const props = defineProps<{
    * 消除「live dense trace vs history 气泡」两套组件导致(vii)的布局跳变（设计 §3 现象 5）。
    */
   dense?: boolean
+  /**
+   * 2026-11-22 临时阶段条（spec 2026-11-22-turn-phase-progress-design.md）：任务进度态
+   * （task_* 事件聚合，SideRail 只对最新活跃轮传入，见 isLiveTurnMessage 门禁）。
+   * 只作阶段 detail 的可读细节源，不改 task 卡的 composer 呈现（双通道并存）。
+   */
+  taskProgress?: AgentTaskProgressState | null
 }>()
 
 const emit = defineEmits<{
@@ -364,6 +372,21 @@ const toneClass = (tone: 'info' | 'warn' | 'error') =>
 
 const hasContent = computed(() => props.parts.length > 0)
 
+// ===== 2026-11-22 临时阶段条（spec 2026-11-22-turn-phase-progress-design.md）=====
+// 渲染期纯派生（turnPhaseView，零落库）；收口双门禁：streaming 且未出现稳定 id
+// notice:turn-summary。收口/历史轮整块消失 = WorkBuddy「临时进度 + 完成时收口」，
+// 不写 parts、不进历史（结构保证：视图不落任何存储）。
+const PHASE_STATUS_LABEL: Record<string, string> = {
+  done: '已完成',
+  running: '进行中',
+  pending: '待开始',
+}
+const PHASE_INDEX_LABELS = ['①', '②', '③'] as const
+const phaseView = computed(() => deriveTurnPhaseView(props.parts, props.taskProgress))
+const stripVisible = computed(
+  () => Boolean(props.streaming && phaseView.value && !isTurnFinalized(props.parts)),
+)
+
 /**
  * 思考块的折叠契约（2026-10-14）：用户意图优先于展示默认值。
  *
@@ -436,6 +459,25 @@ const rootClass = computed(() =>
 
 <template>
   <div v-if="hasContent" :class="rootClass">
+    <div v-if="stripVisible" class="turn-phase-strip" data-testid="turn-phase-strip">
+      <div
+        v-for="(stage, idx) in phaseView!.stages"
+        :key="stage.id"
+        class="turn-phase-strip__row"
+        :class="`is-${stage.status}`"
+      >
+        <span class="turn-phase-strip__index">{{ PHASE_INDEX_LABELS[idx] }}</span>
+        <span
+          class="turn-phase-strip__label"
+          :aria-live="stage.status === 'running' ? 'polite' : undefined"
+        >「{{ stage.label }}」</span>
+        <span class="turn-phase-strip__status">· {{ PHASE_STATUS_LABEL[stage.status] }}</span>
+        <span v-if="stage.detail" class="turn-phase-strip__detail">· {{ stage.detail }}</span>
+        <span v-if="stage.summary" class="turn-phase-strip__summary">
+          小结：{{ stage.summary }}<template v-if="stage.durationLabel">（{{ stage.durationLabel }}）</template>
+        </span>
+      </div>
+    </div>
     <template v-for="part in parts" :key="part.id">
       <!-- thinking：折叠契约（2026-10-14）——展示默认值（running 展开 / done 收起）仅在
            用户未表达意图时生效；用户点过后由 @toggle 记录意图，后续 patch 不再改写。
@@ -1505,4 +1547,34 @@ const rootClass = computed(() =>
 .subagent-task-card { cursor: pointer; transition: background 0.15s ease; }
 .subagent-task-card:hover { background: var(--lnk-surface-canvas); }
 .subagent-avatar { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; flex-shrink: 0; border-radius: 50%; background: var(--lnk-hi-bg); color: var(--lnk-hi-text); font-size: 10px; font-weight: 600; }
+
+/* 临时阶段条（2026-11-22 spec §6.3）——只亮活跃行；禁 --lnk-hi-*（深主题黑底白字）
+   与 --neo-*；分隔符「·」弱分隔；移动端/PC 同构无媒体查询。 */
+.turn-phase-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--lnk-border-default);
+  border-radius: 8px;
+  background: var(--lnk-surface-raised);
+}
+.turn-phase-strip__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  color: var(--lnk-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.turn-phase-strip__row.is-running {
+  color: var(--lnk-accent-text);
+  background: var(--lnk-accent-subtle);
+  border-radius: 4px;
+  padding: 1px 4px;
+  margin: 0 -4px;
+}
+.turn-phase-strip__row.is-done { color: var(--lnk-text-secondary); }
+.turn-phase-strip__index { opacity: 0.7; }
 </style>
