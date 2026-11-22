@@ -1,6 +1,6 @@
 # 一轮 Turn 时间线序列化修复（question 沉底 / todo 通知洪水 / canvas 连排 / replay 用时 1ms）
 
-> 状态：🟢 living（2026-11-22 生产走查实证后推翻性修正；取代前序 B 形态规格中受影响的两条假设）
+> 状态：🔒 frozen（2026-11-22 生产走查实证后推翻性修正，PR #975 全链闭环：CI 4/4 → squash 合并 → web 部署 → 生产四判据复测 PASS，见 §5；取代前序 B 形态规格中受影响的两条假设）
 > 前序：`2026-11-22-turn-inline-status-checklist-design.md`（B 形态，本修复不改动其 UI 形态裁决，只修数据序列化）
 
 ## 0. 第一原则
@@ -49,3 +49,19 @@ ask_user 在 seq 5-10），缺陷全在客户端 live/replay 两条路径的合�
 - 产物卡（artifact）在收口后由画布对账（`reconcileFromNodes` 第二通道）批量回填、聚合在
   summary notice 之后——这是既有「成果区」设计，本修复不移动它。
 - F4 只认 `turn_settled` 为权威收束；截断账本（truncated）不冒充完整时长。
+
+## 5. 生产验证（2026-11-22 收口，PR #975 → master 6544cde6 → web 部署）
+
+纯客户端 replay 修正，**现有生产账本重载即验证**（无需新发 turn）。目标回合 cmwrxue4w
+（屎壳郎短剧，85-part 原始账本）：
+
+| 判据 | 修复前（重载） | 修复后（生产实测） |
+| --- | --- | --- |
+| G1 question 位置 | qIdx=-1 整卡丢失 | **idx4**：thinking→tool→tool→waiting notice→question（账本位，answered） |
+| G2 任务 notice | 12 条（11 洪水） | **2 条**（waiting + turn-summary，洪水归零） |
+| G3 canvas | 13 行连排 | **1 行「连接画布节点 ×13」**（count=13） |
+| G4 用时 | 0ms（双墙钟） | **204s**（账本 ts 区间，含 question 等待与后续生成的真实收束） |
+
+parts 总数 84→63 = 84 − 10（洪水）− 12（折叠）+ 1（question 复活），账目闭合。
+旁证：同会话纯 live 回合（无账本 executionEvents）行为不变（question 在真实到达位、
+dur 真实），确认修复零回归面。
