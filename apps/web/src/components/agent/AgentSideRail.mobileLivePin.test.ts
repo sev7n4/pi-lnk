@@ -84,4 +84,17 @@ describe('移动端 live 钉显 + 状态行退役（2026-10-31）', () => {
       '软断链分支之前必须先有挂起静默分支（挂起回合不追加任何断链文案）',
     ).toBeGreaterThan(-1)
   })
+
+  it('⑤ 临时阶段条不得变成播报式状态行（2026-11-22 spec）：无 ticker / 无新持久 notice / 无钉底', () => {
+    // 阶段小结 = 临时进度 + 完成时收口（WorkBuddy 规则）。一旦有人给 turnPhaseView 加
+    // Date.now/setInterval 秒表、或把阶段小结写成持久 notice part、或复活 turnStatusLine，
+    // 就回到 2026-10-31「播报式状态行」老路 —— 在此锁死。
+    const view = stripComments(readFileSync(resolve(__dirname, 'turnPhaseView.ts'), 'utf8'))
+    expect(view, '禁止秒表时钟').not.toMatch(/Date\.now|setInterval/)
+    expect(view, '禁止复活 turnStatusLine').not.toMatch(/turnStatusLine/)
+    const timeline = stripComments(readFileSync(resolve(__dirname, 'turnTimeline.ts'), 'utf8'))
+    expect(timeline, '禁止把阶段小结写成持久 notice').not.toMatch(/notice:phase-/)
+    expect(rail, 'composer 灰字必须仍在').toMatch(/turnLiveStatus/)
+    expect(rail, '内联时间线通道必须仍在').toMatch(/v-if="useTimeline\(msg\)"/)
+  })
 })
