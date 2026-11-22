@@ -8,6 +8,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { usePreferences } from '@/composables/usePreferences'
+import { useAutoApproveGeneration } from '@/composables/useAutoApproveGeneration'
 import ThemeToggle from '@/components/layout/ThemeToggle.vue'
 import TopupModal from '@/components/membership/TopupModal.vue'
 import { OFFICIAL_SITE_URL } from '@/constants/brand'
@@ -29,6 +30,13 @@ const router = useRouter()
 
 /** 偏好（localStorage 持久化）：触感反馈开关默认开（R-C5 / R-C6）。 */
 const prefs = usePreferences()
+
+/**
+ * 授权自动生成（规格 2026-11-22-generation-auto-approve-gate-design §4）：
+ * **账号级**偏好（服务端 SSOT，跨设备），与触感反馈（本地偏好）性质不同——
+ * 判定在服务端，前端只写偏好。作用域 = 图片 / 音频卡片，视频始终确认。
+ */
+const { authorized: autoApproveAuthorized, setAuthorized: setAutoApprove } = useAutoApproveGeneration()
 
 const nickname = computed(() => auth.user?.nickname || '未登录')
 
@@ -151,19 +159,48 @@ function onLogout() {
         </div>
         <!-- PR MOBILE-CONN-ENH：触感反馈开关（S-5 / S-6）。受偏好门控；iOS 无 Vibration
              API ⇒ 开关仍显示但静默 no-op（N-1 平台限制，已在设置文案诚实告知）。 -->
-        <div class="row-item is-static haptics-row">
-          <span class="row-label">触感反馈</span>
-          <button
-            type="button"
-            class="haptics-switch"
-            role="switch"
-            :aria-checked="prefs.haptics"
-            :aria-label="prefs.haptics ? '关闭触感反馈' : '开启触感反馈'"
-            @click="prefs.haptics = !prefs.haptics"
-          >
-            <span class="haptics-knob" />
-          </button>
-        </div>
+          <div class="row-item is-static haptics-row">
+            <span class="row-label">触感反馈</span>
+            <button
+              type="button"
+              class="haptics-switch"
+              role="switch"
+              :aria-checked="prefs.haptics"
+              :aria-label="prefs.haptics ? '关闭触感反馈' : '开启触感反馈'"
+              @click="prefs.haptics = !prefs.haptics"
+            >
+              <span class="haptics-knob" />
+            </button>
+          </div>
+          <!-- 授权自动生成（2026-11-22 规格 §4）：账号级授权，写服务端即生效。
+               作用域说明写在副文案里——否则用户会误以为删除/覆盖等写操作也免确认。 -->
+          <div class="row-item is-static auto-approve-row">
+            <span class="row-label">
+              授权自动生成
+              <span class="row-label-sub">
+                {{
+                  autoApproveAuthorized
+                    ? '已授权 · 图片与音频卡片不再逐次确认'
+                    : '未授权 · 每张图片与音频卡片生成前都会先问你'
+                }}
+              </span>
+            </span>
+            <button
+              type="button"
+              class="auto-approve-switch"
+              role="switch"
+              :aria-checked="autoApproveAuthorized"
+              :aria-label="
+                autoApproveAuthorized
+                  ? '收回授权，恢复每次确认'
+                  : '授权自动生成，后续图片与音频卡片不再逐次确认'
+              "
+              data-testid="auto-approve-switch"
+              @click="setAutoApprove(!autoApproveAuthorized)"
+            >
+              <span class="auto-approve-knob" />
+            </button>
+          </div>
         <button type="button" class="row-item" @click="emit('open-model-settings')">
           <span class="row-label">模型配置</span>
           <svg class="row-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
@@ -342,6 +379,53 @@ function onLogout() {
 }
 .haptics-switch[aria-checked='true'] .haptics-knob {
   transform: translateX(18px);
+}
+
+/* 授权自动生成开关（2026-11-22 规格 §4.1）：与触感开关同款轨道规格（44×26），
+   仅消费 L2/L3 令牌（R-C9）。账号级授权，写服务端即生效。 */
+.auto-approve-row {
+  justify-content: space-between;
+}
+.row-label-sub {
+  display: block;
+  margin-top: 2px;
+  color: var(--lnk-text-muted);
+  font-size: var(--lnk-text-2xs);
+  line-height: var(--lnk-lh-2xs);
+}
+.auto-approve-switch {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--lnk-border-subtle);
+  cursor: pointer;
+  transition: background-color var(--lnk-duration-fast) var(--lnk-ease-standard);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+.auto-approve-switch[aria-checked='true'] {
+  background: var(--lnk-accent);
+}
+.auto-approve-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--lnk-text-on-accent);
+  transition: transform var(--lnk-duration-fast) var(--lnk-ease-standard);
+}
+.auto-approve-switch[aria-checked='true'] .auto-approve-knob {
+  transform: translateX(18px);
+}
+.auto-approve-switch:focus-visible {
+  outline: 2px solid var(--lnk-border-focus);
+  outline-offset: 2px;
 }
 
 /* 退出登录：唯一居中文本（用户裁决），其余行全部左对齐 */

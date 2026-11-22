@@ -45,6 +45,12 @@ export type ProviderPreferencesPublic = {
   audioSpeed: number
   audioInstructions: string | null
   systemPrompt: string | null
+  /**
+   * 授权自动生成（规格 2026-11-22-generation-auto-approve-gate-design §3.2）：
+   * `manual` = 未授权（每次确认，缺省）；`auto` = 已授权（image/audio 免确认）。
+   * 账号级、跨设备；判定在服务端（客户端不可传入 tier）。
+   */
+  autoApproveGenerations: 'manual' | 'auto'
 }
 
 export type ProviderWebdavPublic = {

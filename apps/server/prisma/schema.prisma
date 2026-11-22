@@ -185,6 +185,10 @@ model UserAiPreferences {
   audioSpeed             Float   @default(1)
   audioInstructions      String?
   systemPrompt           String?
+  /// 授权自动生成（规格 2026-11-22-generation-auto-approve-gate-design §3.2）：
+  /// manual = 未授权（每次确认，缺省）；auto = 已授权（image/audio 免确认）。
+  /// 账号级偏好；判定仍在服务端（客户端不可传入 tier）。
+  autoApproveGenerations String  @default("manual")
 }
 
 model UserWebdavConfig {

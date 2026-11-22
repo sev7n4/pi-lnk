@@ -31,6 +31,7 @@ import {
 } from '@/composables/useProposalNodeData'
 import { resolveModelDisplayName } from '@/utils/model-display'
 import { tuneSheetOpen, tuneNodeId, openProposeTuneSheet } from './proposeWaitActions'
+import { useAutoApproveGeneration } from '@/composables/useAutoApproveGeneration'
 import { CANVAS_NODE_CANCEL_KEY, isViewableNodeType, MOBILE_NODE_OPEN_VIEWER_KEY } from '@/composables/canvasNodeActions'
 import { deliveryCountLabel, hasRunningGeneration, turnDeliveryItems, type DeliveryItem } from '@/components/agent/deliverySummary'
 import { observeDeliveryCard } from '@/components/agent/deliveryMetrics'
@@ -86,6 +87,10 @@ const emit = defineEmits<{
 const VIDEO_URL_RE = /\.(mp4|webm|mov)(\?|$)/i
 /** 音频扩展名：音频 url 不能塞 <img>（裂图），回退 DockTypeIcon 类型图标。 */
 const AUDIO_URL_RE = /\.(mp3|wav|m4a|aac|ogg|flac)(\?|$)/i
+
+/** 授权自动生成（账号级偏好，服务端 SSOT）——场景内快捷项与徽标共用。 */
+const { authorized: autoApproveAuthorized, setAuthorized: setAutoApprove } =
+  useAutoApproveGeneration()
 
 function isVideoUrl(url: string): boolean {
   return VIDEO_URL_RE.test(url)
@@ -164,6 +169,16 @@ function onConfirmProposal(nodeId?: string) {
 }
 function onCancelProposal(nodeId?: string) {
   if (nodeId) emit('cancelProposal', nodeId)
+}
+
+/**
+ * 场景内快捷项：授权后续自动生成（规格 2026-11-22-generation-auto-approve-gate-design §4）。
+ *
+ * **本次提议仍需确认**（确认卡的三动作不变），授权从下一次生成生效——
+ * 文案必须说清，否则用户点了却还弹确认卡，会以为功能坏了。
+ */
+async function onAuthorizeAuto() {
+  await setAutoApprove(true, { successMessage: '已授权 · 本次仍需确认，下次生效' })
 }
 
 /**
@@ -818,6 +833,18 @@ const rootClass = computed(() =>
             aria-label="取消"
             @click="onCancelProposal(part.nodeId)"
           ><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12"/><path d="M18 6L6 18"/></svg></button>
+          <!-- 场景内快捷项：授权后续自动生成（规格 2026-11-22 §4）。
+               ⚠️ 本次提议仍需确认（确认卡三动作不变），授权从下一次生成生效——
+               文案写清「下次生效」，否则用户点了还弹确认卡会以为功能坏了。 -->
+          <button
+            type="button"
+            class="btn-secondary"
+            data-test="authorize-auto"
+            :disabled="autoApproveAuthorized"
+            :title="autoApproveAuthorized ? '已授权自动生成' : '授权后，后续图片与音频卡片不再逐次确认（本次仍需确认）'"
+            :aria-label="autoApproveAuthorized ? '已授权自动生成' : '授权后续自动生成，本次仍需确认'"
+            @click="onAuthorizeAuto"
+          >{{ autoApproveAuthorized ? '已授权' : '授权后续自动生成' }}</button>
           <!-- 定位收敛纪律：决策行不排定位图标——出口由页脚 tether 唯一承载
                （同卡三入口治理 2026-11-02；artifact 卡不受此限，其 CanvasLocateButton 是唯一入口） -->
         </div>
@@ -1438,6 +1465,36 @@ const rootClass = computed(() =>
 .btn-stop:hover { border-color: var(--lnk-accent-border); color: var(--lnk-accent-text); }
 .btn-stop.danger { border-color: var(--lnk-error-border); color: var(--lnk-error); }
 .btn-stop.danger:hover { background: var(--lnk-error-bg); }
+
+/* 次级文字按钮（授权后续自动生成，2026-11-22 规格 §4）：与 .btn-stop 同规格，
+   语义独立（不叫 stop），仅消费 L2/L3 令牌。 */
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: var(--lnk-touch-target);
+  padding: 0 14px;
+  border-radius: var(--lnk-radius-md);
+  font-size: var(--lnk-text-xs);
+  font-weight: var(--lnk-weight-semibold);
+  cursor: pointer;
+  border: 1px solid var(--lnk-border-default);
+  background: var(--lnk-surface-raised);
+  color: var(--lnk-text-secondary);
+  transition: all var(--lnk-duration-fast) var(--lnk-ease-standard);
+}
+.btn-secondary:hover:not(:disabled) {
+  border-color: var(--lnk-accent-border);
+  color: var(--lnk-accent-text);
+}
+.btn-secondary:disabled {
+  cursor: default;
+  color: var(--lnk-text-muted);
+}
+.btn-secondary:focus-visible {
+  outline: 2px solid var(--lnk-border-focus);
+  outline-offset: 2px;
+}
 
 /* 查看结果↗（强调版锚链回链） */
 .view-result { color: var(--lnk-accent-text); font-weight: var(--lnk-weight-semibold); }
