@@ -2,7 +2,7 @@
 
 > 语义说明：用户可见概念统一为「**授权 / 收回授权**」；代码机制层（approval tiering、治理门）仍称「闸门」，指「是否等待人工确认」的技术裁决，与产品语义分离。
 
-> 状态：**已拍板（2026-11-22），进入实施**——拍板结论见 §8  
+> 状态：**已上线（2026-11-22）**——PR #974 → master `7a140a5f`（CI 4/4 绿）→ 部署 run `45042096920`（web + API 均 success）；生产 CDP 复测结论见 §9  
 > 计划：`docs/superpowers/plans/2026-11-22-generation-auto-approve-gate.md`  
 > 日期：2026-11-22  
 > 范围：`apps/web` 设置面、`apps/server` 审批分级、`services/pi-runtime` 确认等待  
@@ -292,3 +292,44 @@ manual: → pending_confirm → SSE waiting_user → 确认卡 → /answers → 
 4. **不做**：不新建 Switch 组件、不新建设置页、不新建前后端通道、不引入 ConfigService、不改服务端治理门、**不在画布顶栏加任何状态元素**（两端顶栏保持现状）。
 
 > 本规格不写 ALL_PASS。闭环判据以上线后生产复测为准。
+
+---
+
+## 9. 上线与生产复测结论（2026-11-22）
+
+### 9.1 链路状态
+
+| 环节 | 证据 |
+|---|---|
+| PR / 合并 | #974 → master `7a140a5f`（squash），CI **4/4 绿**（spec figures / rollback guard / monorepo build / API image） |
+| 部署 | run `45042096920`：`Deploy web` success、`Build API` success（镜像 `lnkpi-api:7a140a5f…`，`/api/health` ok）；pi-runtime **零改动零部署**（既有短路判据逐字节沿用） |
+| web 产物 | 线上 chunk 命中 `useAutoApproveGeneration-*.js`、`ProviderConfigDialog.*`、`AgentTurnTimeline.*`（含「授权自动生成」文案） |
+| DB 迁移 | `UserAiPreferences.autoApproveGenerations` 列由 `prisma migrate deploy` 落库——**间接强证据**：bootstrap 能回读 `auto`/`manual`（Prisma schema 缺列会直接 500）；SSH 不可用，未做 sqlite 只读直查 |
+
+### 9.2 CDP 生产走查（探针 `.workbuddy/e2e-cdp/`）
+
+- **主探针 `generation-auto-approve-probe.mjs`：12/12 PASS**——PC 偏好 Tab 开关（`role=switch`、44×26、初始 `aria-checked=false`）、授权后 `aria-checked=true` 且 **服务端 bootstrap 回读 `auto`**、对话侧系统层徽标（`.agent-system-layer` 内，491×54，非 0×0 假绿）+「收回授权」、收回后回读 `manual` 且徽标消失；移动端「我的→设置」开关 + 授权/收回往返。
+- **活体对照 `autoapprove-p6-own-session.mjs`：7/7 PASS**——两个**独立自有会话**同题对照：
+  - 未授权：agent「设置生成参数…**提交给用户确认**」⇒ 提议卡 `pending_confirm` + 「落锚生成」按钮，**0 积分消耗**；
+  - 已授权：agent「已创建节点并**启动生成**…状态：生成中（**自动批准**）」⇒ **零待确认卡**，`已生成 1 张 · 12s · 已结算实耗 33 积分`，画布实出图。
+
+⇒ **核心命题「授权后 agent 自动生成、不再逐次确认」已在生产活体验证**；未授权零回归同时成立。
+
+### 9.3 诚实边界（本刀未覆盖，不得当已验）
+
+1. **audio 介质未活体跑**：有单测锁（image/audio 同分支 + `startAudioGeneration` 参数透传），但生产只实跑了 image。
+2. **video 未活体验证**：设计上不对用户级开放；系统级 `auto_all` 路径有单测，生产 env 未设 `GENERATION_APPROVAL_MODE` ⇒ 走缺省 `tiered`，`auto_all` 未经生产实证。
+3. **系统级 env 三态未在生产实操**（`full_manual` / `auto_all` / 白名单置空）——生产为缺省 `tiered`。
+4. **跨设备同步未实证**：账号级偏好在单一浏览器 profile 内验证；「换设备同账号生效」依赖账号级存储语义，未做第二端复核。
+5. **P3 admin 可视化按计划不做**（不搭车）。
+6. **未验「授权本次仍需确认」提示语**：proposal 卡「授权后续自动生成」按钮已上线，但其「本次仍需确认 / 下次生效」文案只在未授权→点授权那一瞬出现，未被专门断言。
+
+### 9.4 走查踩坑（沉淀给后续 CDP 探针）
+
+- **默认会话属他人画布 ⇒ `agentReadOnly=true` ⇒ composer `disabled` 且 `rect 0×0`**：活体验证必须**自建自有会话**（`POST /api/sessions`）。
+- **PC 端 agent 面板默认折叠**（`.agent-panel-shell` `display:none`）：发消息前必须点 `.agent-fab` 展开，否则 textarea 0×0、`Input.insertText` 静默失败（`len=0`）。
+- **未授权轮会阻塞等确认**（runtime `waitForUser`）⇒ 同会话的第二条消息只会排队；授权/未授权对照**必须用两个独立会话**。
+- **文本正则不能当判据**：agent 的 reasoning 摘要里会出现「…让用户确认…」，会被误判成确认请求；判据只认 DOM 事实（`[data-test="confirm"]` 计数、proposal 卡 `state-*`）与产出信号。
+- **探针必须自带开跑归零**：上一轮若中途挂死，偏好会残留 `auto`，把下一轮「初始未授权」判据全部假失败。
+- 服务端回读必须带 `Authorization: Bearer <localStorage.token>`（裸 `fetch` 会 401 ⇒ 假失败）。
+- 本机 Chrome headless 实例**跨 Bash 调用会被环境清理**（`chrome-profile` 残留 `SingletonLock` 亦会阻止重启）⇒ 起 Chrome + 跑探针放同一次调用，并先清 `Singleton*`。
