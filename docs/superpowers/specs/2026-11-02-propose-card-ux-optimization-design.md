@@ -325,3 +325,14 @@ flowchart LR
 - **参数微调 Sheet（A-now）= 预览 + 估算，不写回节点**。生产侧无 web 端写回节点 params 的函数；「保存并确认」沿用节点既有 params 直接 emit `confirmProposal`，真正改参数走「在画布精修」→ dock（既有写路径，§5 不变式 2）。mockup 的 Sheet 为静态示意。
 - **`ProposeTuneSheet` 必须挂载**于 `AgentTurnTimeline` 并转发 emit，否则永不出现（实施计划 R-C）。
 - **`CANVAS_NODE_CANCEL_KEY`** 来自 `@/composables/canvasNodeActions`（Symbol 注入键），非 `useNodeGeneration`。
+
+---
+
+## 状态注（2026-11-22，决策面收归对话页）
+
+本文「画布 = 预览 + 产物二次编辑/再生成主场」的裁决在 2026-11-22 被推到终态，画布侧确认面整体退场，原文作历史记录保留：
+
+- **对话提议卡三动作（落锚生成 / 调整 / 取消）**：✅ 完全不变，且成为**唯一决策面**——PC 画布 `ProposeConfirmOverlay` 与移动端 `MobileNodeStatusBar` 的确认/取消/编辑入口均已删除。
+- **§12.5「参数微调 Sheet = 预览 + 估算，不写回节点」**：❌ 该注记已被 11-02 同日的 PM 裁决取代（见 `ProposeTuneSheet.vue` 文件头）——`ProposeTuneSheet` 现为真写回（模型/比例/分辨率/提示词/张数 `patchNodeData` + 落库成功才 `confirmProposal`）。此条与本次收口无关，仅一并澄清历史漂移。
+- **画布二次编辑（「在画布精修」逃生钮）**：✅ 保留——它属产物编辑，不是提议决策。
+- 依据：`docs/superpowers/specs/2026-11-22-conversation-only-decision-surface-design.md`。
