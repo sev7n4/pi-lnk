@@ -1,26 +1,26 @@
 {
- "total": 565,
+ "total": 596,
  "by_status": {
-  "living": 187,
-  "frozen": 365,
-  "superseded": 13
+  "living": 197,
+  "frozen": 384,
+  "superseded": 15
  },
  "by_topic": {
-  "other": 167,
+  "other": 186,
   "canvas-tool": 89,
+  "tool-runtime": 46,
   "generation-pipeline": 45,
-  "tool-runtime": 44,
+  "agent-ux": 39,
   "canvas-product": 34,
-  "agent-ux": 34,
   "planning": 30,
   "image-editor": 30,
   "workflow-exchange": 21,
+  "account-auth": 20,
   "ui-interaction": 18,
-  "account-auth": 18,
   "memory": 11,
+  "context-engineering": 9,
   "vision": 8,
   "deploy-infra": 6,
-  "context-engineering": 6,
   "prompt-registry": 4
  },
  "by_month": {
@@ -28,7 +28,7 @@
   "2026-08": 79,
   "2026-09": 155,
   "2026-10": 147,
-  "2026-11": 143
+  "2026-11": 174
  },
  "items": [
   {
@@ -2588,6 +2588,15 @@
    "topic": "other"
   },
   {
+   "path": "docs/superpowers/specs/2026-11-16-builtin-skills-discoverability-design.md",
+   "name": "2026-11-16-builtin-skills-discoverability-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-11 非活跃主题",
+   "topic": "other"
+  },
+  {
    "path": "docs/superpowers/specs/2026-11-16-c3-durable-migration-eval-design.md",
    "name": "2026-11-16-c3-durable-migration-eval-design.md",
    "month": "2026-11",
@@ -2604,6 +2613,141 @@
    "status": "frozen",
    "reason": "2026-11 非活跃主题",
    "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-17-ack-mainstream-observer-subscription-death-design.md",
+   "name": "2026-11-17-ack-mainstream-observer-subscription-death-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-17-e2e-followup-ui-fixes-design.md",
+   "name": "2026-11-17-e2e-followup-ui-fixes-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-17-p3-import-chip-manage-design.md",
+   "name": "2026-11-17-p3-import-chip-manage-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-17-p3-ui-hotfix-design.md",
+   "name": "2026-11-17-p3-ui-hotfix-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-17-subagent-sse-visibility-design.md",
+   "name": "2026-11-17-subagent-sse-visibility-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-18-m1-remaining-closeout-design.md",
+   "name": "2026-11-18-m1-remaining-closeout-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-18-skill-ui-ux-polish-design.md",
+   "name": "2026-11-18-skill-ui-ux-polish-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-18-skill-ui-ux-round2-design.md",
+   "name": "2026-11-18-skill-ui-ux-round2-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-19-invite-section-label-design.md",
+   "name": "2026-11-19-invite-section-label-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "frozen",
+   "reason": "2026-11 非活跃主题",
+   "topic": "account-auth"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-19-model-settings-design-tokens-refactor-design.md",
+   "name": "2026-11-19-model-settings-design-tokens-refactor-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "context-engineering"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-19-model-settings-relocation-theme-distinction-design.md",
+   "name": "2026-11-19-model-settings-relocation-theme-distinction-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-19-viewport-bounds-guard-design.md",
+   "name": "2026-11-19-viewport-bounds-guard-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-20-canvas-domain-design-tokens-refactor-design.md",
+   "name": "2026-11-20-canvas-domain-design-tokens-refactor-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "context-engineering"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-20-model-selector-sheet-config-design.md",
+   "name": "2026-11-20-model-selector-sheet-config-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/specs/2026-11-22-turn-phase-progress-design.md",
+   "name": "2026-11-22-turn-phase-progress-design.md",
+   "month": "2026-11",
+   "kind": "spec",
+   "status": "living",
+   "reason": "文内标注待实现/待评审/进行中",
+   "topic": "agent-ux"
   },
   {
    "path": "docs/superpowers/plans/2026-07-09-neowow-workflow.md",
@@ -5067,8 +5211,8 @@
    "name": "2026-11-15-d1-creative-asset-contract.md",
    "month": "2026-11",
    "kind": "plan",
-   "status": "frozen",
-   "reason": "2026-11 非活跃主题",
+   "status": "superseded",
+   "reason": "文内标注已废弃/被取代",
    "topic": "other"
   },
   {
@@ -5090,6 +5234,15 @@
    "topic": "context-engineering"
   },
   {
+   "path": "docs/superpowers/plans/2026-11-16-builtin-skills-discoverability.md",
+   "name": "2026-11-16-builtin-skills-discoverability.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "superseded",
+   "reason": "文内标注已废弃/被取代",
+   "topic": "other"
+  },
+  {
    "path": "docs/superpowers/plans/2026-11-16-d1-creative-asset-contract-finalization.md",
    "name": "2026-11-16-d1-creative-asset-contract-finalization.md",
    "month": "2026-11",
@@ -5108,6 +5261,15 @@
    "topic": "other"
   },
   {
+   "path": "docs/superpowers/plans/2026-11-16-m1-skills-acceptance-walkthrough.md",
+   "name": "2026-11-16-m1-skills-acceptance-walkthrough.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-11 非活跃主题",
+   "topic": "other"
+  },
+  {
    "path": "docs/superpowers/plans/2026-11-16-m1-skills-control-plane.md",
    "name": "2026-11-16-m1-skills-control-plane.md",
    "month": "2026-11",
@@ -5115,6 +5277,123 @@
    "status": "frozen",
    "reason": "2026-11 非活跃主题",
    "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-11-16-p3b-admin-page-convergence.md",
+   "name": "2026-11-16-p3b-admin-page-convergence.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-11-17-p3-import-chip-manage.md",
+   "name": "2026-11-17-p3-import-chip-manage.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-11 活跃主题（agent-ux）",
+   "topic": "agent-ux"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-11-17-p3-ui-hotfix.md",
+   "name": "2026-11-17-p3-ui-hotfix.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-11-17-subagent-sse-visibility.md",
+   "name": "2026-11-17-subagent-sse-visibility.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "tool-runtime"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-11-18-m1-remaining-closeout.md",
+   "name": "2026-11-18-m1-remaining-closeout.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-11-18-skill-ui-ux-polish.md",
+   "name": "2026-11-18-skill-ui-ux-polish.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-11 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-11-18-skill-ui-ux-round2.md",
+   "name": "2026-11-18-skill-ui-ux-round2.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-11-19-invite-section-label.md",
+   "name": "2026-11-19-invite-section-label.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "文内标注已实现/已交付",
+   "topic": "account-auth"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-11-19-model-settings-design-tokens-refactor.md",
+   "name": "2026-11-19-model-settings-design-tokens-refactor.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-11 活跃主题（context-engineering）",
+   "topic": "context-engineering"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-11-19-model-settings-relocation-theme-distinction.md",
+   "name": "2026-11-19-model-settings-relocation-theme-distinction.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-11 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-11-19-viewport-bounds-guard.md",
+   "name": "2026-11-19-viewport-bounds-guard.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-11 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-11-20-model-selector-sheet-config.md",
+   "name": "2026-11-20-model-selector-sheet-config.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "frozen",
+   "reason": "2026-11 非活跃主题",
+   "topic": "other"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-11-22-turn-phase-progress.md",
+   "name": "2026-11-22-turn-phase-progress.md",
+   "month": "2026-11",
+   "kind": "plan",
+   "status": "living",
+   "reason": "2026-11 活跃主题（agent-ux）",
+   "topic": "agent-ux"
   }
  ]
 }
