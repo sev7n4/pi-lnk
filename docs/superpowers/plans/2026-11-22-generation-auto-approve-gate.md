@@ -155,3 +155,28 @@ PR #978 → CI **4/4 绿**（web 全量 555 文件 / 4600 用例）→ squash �
 - **探针本轮改造**：必须**自建自有会话**（`POST /api/sessions`）——旧默认 `SESSION_URL` 属他人画布 ⇒ `agentReadOnly` ⇒ input-dock 隐藏 ⇒ composer 工具行不渲染 ⇒ P4 假失败；走查结束删会话。
 
 **剩余诚实边界**：audio 未活体（沿用 §9.3）；**活体对照 7/7 本轮未复跑**（P6 在独立脚本，逻辑未受前端改动影响）；走查账号 `defaultTextModel` 停用属**既存产品缺陷**（发不出消息且无修复路径），本刀不修、仅记录。
+
+### UI 迭代二（2026-11-23）：composer 入口改版「状态胶囊 + 锚定浮层」
+
+**触发**：用户给出 WorkBuddy 权限胶囊的实现截图，问「可以考虑参考这个实现？或是你有更加好的方案」。拍板：采用参考实现的交互骨架，否决其暗红开关与全局权限口径（规格 §11.2）。
+
+**方案与实现**（详见规格 §11）：
+
+| 项 | 决定 |
+|---|---|
+| 入口 | PC：composer 工具行**状态胶囊**（14px 图形 +「自动生成」+ 箭头，模型 chip 之后 / 发送键之前）；移动：**icon-only 触发器**（裸条三件套纪律） |
+| 容器 | PC 锚定浮层（复用 `.neo-popover` + `useClickOutside`）；移动底部 Sheet（复用 `MobileSheet`）——沿用模型选择卡「PC popover / 移动 Sheet」规范 |
+| 状态三通道 | 图形（线框/实心）+ 配色（弱化/琥珀高亮）+ 浮层文案；胶囊**常驻** ⇒ 关闭态也有开启入口（§10 的图标只在已授权时渲染 ⇒ 无入口） |
+| 双向同处 | 说明 + `role=switch` 开关都在浮层里 ⇒ 开 / 收回同一点；开关即状态真身 |
+| 作用域 | 浮层文案写清「图片与音频免确认；视频仍逐次确认」（照抄参考的全局口径 = 越权承诺） |
+| 颜色 | 琥珀 `--lnk-warning`（三处开关 ON 色统一由 `--lnk-accent` 改为琥珀；旋钮 `--lnk-surface-canvas` 随主题保对比） |
+| 单一来源 | 面板文案/开关抽 `AutoApprovePanel.vue`（PC 浮层与移动 Sheet 各渲染一次，禁复制）；触感开关样式提升到 `styles/main.css` 共享段（PC 设置弹窗 / 移动设置 / 新浮层三处同一实现） |
+| 不动 | 服务端判定、DB 列、偏好 API、提议卡形态（§10 的 icon-only 入口保留 = 「当下这次」的上下文授权，与全局状态入口并存是有意保留） |
+
+**改动文件**：`AutoApproveControl.vue`（新）、`AutoApprovePanel.vue`（新）、`AgentSideRail.vue`、`styles/main.css`、`ProviderConfigDialog.vue`、`ProfilePane.vue`；测试：`AutoApproveControl.test.ts`（新）、`AgentSideRail.autoApproveEntry.test.ts`（新，替代 `…autoApproveToggle.test.ts`）、`ProviderConfigDialog.authorizeAuto.test.ts`（改）。
+
+**验证**：定向测试 20/20 PASS（3 文件）；`vue-tsc -b` 0 错误；`pnpm verify-agent-rail-gates` 11/11 PASS；**变异 4 例全部转红**（M1 胶囊失去琥珀 / M2 开关退化普通按钮 / M3 说明丢作用域 / M4 ON 色回 accent）。
+
+**本刀踩到的两个坑（已入规格 §11.6）**：① 变异只替换 1/2 处文案 ⇒ 守卫假绿，必须**全量替换**再判；② `verify-agent-rail-gates` 的 G4 会解析 `AgentSideRail.*.test.ts` 里的 `join(here, …)` 目标，跨目录引用必须写成**单个字符串**（`'../../styles/main.css'`），写成多段 `'..', '..'` 会被判 missing ⇒ 11/11 直接挂。
+
+**诚实边界**：纯前端改动（服务端零改动）⇒ §9.2 的活体对照结论继续适用；但**移动 Sheet 与 PC 浮层的实机视觉**、**开关 ON 色改琥珀的全站违和感**需生产走查实证。

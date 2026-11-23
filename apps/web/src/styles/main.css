@@ -307,6 +307,55 @@
     crosshair !important;
 }
 
+/* 授权自动生成 · **共享触感开关**（2026-11-23 UI 迭代 §11）。
+   ⭐ 为什么放全局：本能力有三个开关落点——PC 设置弹窗（生成偏好 Tab）、
+      移动「我的→设置」、composer 工具行胶囊的锚定浮层。三处必须是**同一实现**：
+      同一轨道尺寸、同一 ON 颜色、同一 a11y 语义（role=switch + aria-checked）。
+      规格沿用 ProfilePane 触感开关（44×26 轨道 / 20px 旋钮 / translateX(18px)）。
+   ⭐ ON 色 = 琥珀 --lnk-warning（不是 --lnk-accent）：本能力语义是
+      「agent 正在替你行动」的**注意**态，与主行动色（accent）区分；
+      关闭态沿用既有 --lnk-border-subtle 轨道。
+   ⚠️ 旋钮色用 --lnk-surface-canvas（浅色近白 / 深色近黑）而非固定白：
+      深色主题下轨道是亮琥珀 #fbbf24，白旋钮对比不足（≈1.7:1）。 */
+.auto-approve-switch {
+  position: relative;
+  flex: none;
+  width: 44px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 999px;
+  background: var(--lnk-border-subtle);
+  cursor: pointer;
+  transition: background-color var(--lnk-duration-fast) var(--lnk-ease-standard);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.auto-approve-switch[aria-checked='true'] {
+  background: var(--lnk-warning);
+}
+
+.auto-approve-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--lnk-surface-canvas);
+  transition: transform var(--lnk-duration-fast) var(--lnk-ease-standard);
+}
+
+.auto-approve-switch[aria-checked='true'] .auto-approve-knob {
+  transform: translateX(18px);
+}
+
+.auto-approve-switch:focus-visible {
+  outline: 2px solid var(--lnk-border-focus);
+  outline-offset: 2px;
+}
+
 /* 授权自动生成 · toast 内的单动作「撤销」（2026-11-23 UI 迭代）。
    ⚠️ ElMessage 的内容节点由 element-plus 渲染在 body 下 ⇒ 不能用 scoped，
       故放全局；类名前缀隔离，避免与其它 toast 冲突。
