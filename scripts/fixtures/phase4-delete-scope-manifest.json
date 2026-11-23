@@ -130,7 +130,8 @@
       "name": "NodeViewerView.vue",
       "kind": "vue",
       "prod_refs": [
-        "components/mobile/MobileNodeViewer.vue"
+        "components/mobile/MobileNodeViewer.vue",
+        "pages/CanvasPage.vue"
       ]
     },
     {
