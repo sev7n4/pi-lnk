@@ -103,6 +103,12 @@
 | [`superpowers/specs/2026-11-22-turn-phase-progress-design.md`](./superpowers/specs/2026-11-22-turn-phase-progress-design.md) | **一轮 Turn 内阶段性状态 + 阶段小结**——用户拍板「临时进度 + 完成时收口」（WorkBuddy 规则、历史干净）；含三家行业一手取证、代码逐行现状、渲染期派生数据契约、双通道不回退裁决与验收判据 | 活资产 —— 实施依据（待评审） |
 | [`superpowers/plans/2026-11-22-turn-phase-progress.md`](./superpowers/plans/2026-11-22-turn-phase-progress.md) | **Turn 阶段视图实施计划**——R0 分支基线 → R1 阶段分类单源 → R2 纯派生视图 → R3 内联阶段条 → R4 接线与守卫 → R5 PR/CI/web-only 部署/生产 CDP；逐 task 带 TDD 片段、Review Focus 与回滚顺序 | 活资产 —— 实施依据（待执行） |
 
+## Coding agent 编码能力基础设施决策（2026-11-23 起）
+
+| 文件 | 内容 | 性质 |
+|---|---|---|
+| [`discussion/2026-11-23-coding-agent-infra-decision-discussion.md`](./discussion/2026-11-23-coding-agent-infra-decision-discussion.md) | **Coding agent 编码能力是否作为基础设施 + runToolCall 证伪**——「编码能力」拆为 coding agent 产品形态 vs code-as-action 范式；不做底座升级裁决；第一原则等价物检索结论表（6 项）；`runToolCall` 三条硬证据（低层 AgentLoop 体系 / harness hook 不互通 / 6→4 参签名不兼容）推翻「纯接线零风险」初判；三路线裁决（用户采纳「撤销 runToolCall 部分」）+ 三条重启判据 + 业界 Code Mode 对照 | 已结项 —— 决策来源（零代码改动） |
+
 ## 保留的目录
 
 | 目录 | 内容 | 性质 |
