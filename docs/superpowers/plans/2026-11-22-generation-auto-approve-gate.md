@@ -276,3 +276,24 @@ PR #983 → CI **3/3 绿**（`Build monorepo` + `Verify spec figures` + `Verify 
 **本轮踩到的两个坑（新增）**：
 1. **`rule()` 助手只截 `{...}` 规则体，选择器列表不在体内** ⇒ 断言「idle 规则里含 `.auto-approve-control`」在规则体上**永远失败**（首跑 1 failed）。正解：拆成两步 —— ① 断言**完整选择器列表字符串**（正向，防假绿）；② 断言规则体含 `display: none`。
 2. **跨行正则会把自己也吃掉**：想验证「PC 侧未被误挂」的 `not.toMatch(/…[^{]*…/)` 把**移动端那条规则本身**也匹配上了 ⇒ 误报 failed。正解：改为**按行判定作用域前缀**（命中行 + 上一行都必须含 `.agent-panel-mobile-dock`）。
+
+### 上线与生产复测（2026-11-23，UI 迭代四）
+
+PR #985 → CI **3/3 绿**（web 全量 **557 文件 / 4627 用例全绿**，28min36s）→ squash 合并 master `596cae89`（**合并树 `9e035c00` == CI 验证 head 树**）→ deploy 自动触发 success。
+
+**产物取证**（chunk `CanvasPage-BBf5sV7O.js` + CSS `CanvasPage-D98L_BGN.css`）：
+- `.auto-approve-chip.is-on{…;background:transparent}` ⇒ **无柔底** ✅；`:hover{background:var(--lnk-surface-raised)}` ⇒ hover 回中性面
+- `.auto-approve-chip-auto{font-family:var(--lnk-font-mono);…}` ⇒ **mono 等宽** ✅
+- idle 隐藏选择器列表**含** `.is-idle .auto-approve-control` ✅
+- `auto-approve-trigger` **0 次**；残留 `--lnk-warning-bg` 均在 `media-ref-badge` / `dock-ref-warning` / `agent-readonly-btn`（与胶囊无关）✅
+
+**生产探针 34/34 PASS**（新增 P4e2 / P4f2 / M4a / M4a2 / M4b / M5a）：
+- 开启态 `text: "Auto"`、`79×28`、`bg`/`borderTopColor` 均 `rgba(0,0,0,0)` ⇒ **既无描边也无柔底**
+- **M4a 空闲态**：`barCls: "composer-bare-bar is-idle is-empty-draft"` ⇒ 胶囊 `visible: false`；`paramsVisible/primaryVisible: false`、`hintVisible: true` ⇒ 裸条只剩 ＋ + 提示语
+- **M4b 输入态**：真实触摸手势展开后 `barIsIdle: false` ⇒ 胶囊 `visible: true`、`60×26`、`isMobile: true`、`hasCaret: false`
+- M5a（点前可见）+ M5（Sheet 展开）；P7 关闭态 `text: ""`；会话删除 + 偏好归零
+
+**本轮探针修掉的两个坑（重要）**：
+1. **对隐藏元素 `.click()` 会假 PASS**：M5 直接 `el.click()` 断言 Sheet 展开 —— 但 `display:none` 的胶囊调 `.click()` **仍派发 click** ⇒ 必然假绿。⇒ 加前置判据 M5a「点之前 `visible === true`」。
+2. **移动端展开不是 click 触发**：绑的是 **pointerdown → pointerup 手势对**（`AgentSideRail.vue:1509/1521`）+ `classifyGesture()` 判 `tap`（dy ≤10px）。`el.click()` 只派发 click ⇒ 展开永不发生（M4b 首跑假失败）。⇒ 用 CDP `Input.dispatchTouchEvent` 派发真实 `touchStart`/`touchEnd`，命中**提示语 span**（非 button/input ⇒ 不被 `onBarGestureOnChild` 拦掉）。
+3. **两态采样**：idle 与展开后各采一次，单次绝对断言会与前序段遗留状态耦合。

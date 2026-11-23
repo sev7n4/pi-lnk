@@ -732,3 +732,40 @@ manual: → pending_confirm → SSE waiting_user → 确认卡 → /answers → 
 - 去柔底后，开启态在工具行里**不再有色块视觉重量**（实测琥珀像素：开启态仅「实心盾 + Auto 字」，关闭态仅线框盾）⇒ 开启态的显著性低于 §12 版本；已用实心填充 + 文字双重信号补偿，但**未做真人可发现性测试**。
 - `Auto` 保持 mono 等宽（用户拍板）—— 等宽字体下的 `Auto` 与正文字体的 `Auto` 视觉重量不同，**未做 A/B 观感评估**。
 - 本刀的移动端 idle 隐藏规则**尚未生产实证**（需部署后 CDP 复测 idle / stacked / queued 三态）。
+
+### 13.6 生产复测结论（2026-11-23，master `596cae89`）
+
+**上线链路**：PR #985（squash，CI 3/3 绿；web 全量 **557 文件 / 4627 用例全绿**，28min36s）→ master `596cae89` → deploy 自动触发（`apps/web/**` 命中）→ **success**。
+**合并证据**：合并后 master 的 tree `9e035c00` == CI 验证 head 的 tree `9e035c00` ⇒ 一致。
+
+**产物取证**（生产 chunk `CanvasPage-BBf5sV7O.js` + CSS `CanvasPage-D98L_BGN.css`）：
+- `.auto-approve-chip.is-on{color:var(--lnk-warning);background:transparent}` ⇒ **开启态无柔底** ✅
+- `.auto-approve-chip.is-on:hover{background:var(--lnk-surface-raised)}` ⇒ hover 回中性面 ✅
+- `.auto-approve-chip-auto{font-family:var(--lnk-font-mono);font-size:11px;…}` ⇒ **mono 等宽** ✅
+- idle 隐藏选择器列表**含** `.agent-panel-mobile-dock .composer-bare-bar.is-idle .auto-approve-control` ✅
+- `auto-approve-trigger` 出现 **0 次** ⇒ 旧 icon-only 触发器未复活 ✅
+- 产物中残留的 `--lnk-warning-bg` 均在**其他组件**（`media-ref-badge` / `dock-ref-warning` / `agent-readonly-btn`），与胶囊无关 ✅
+
+**生产探针 34/34 PASS**（判据已按 §13 改写，新增 P4e2 无柔底 / P4f2 `Auto` 非 `[auto]` / M4a 空闲隐藏 / M4a2 裸条纪律 / M4b 输入态可见 / M5a 点前可见）：
+
+| 判据 | 实测值 | 结论 |
+|---|---|---|
+| P4 开启态胶囊 | `text: "Auto"`、`79×28`、`glyphOn: true`、`chipOn: true` | 短标记 + 实心盾 ✅ |
+| **P4e / P4e2** | `borderTopColor: rgba(0,0,0,0)`、`bg: rgba(0,0,0,0)` | **既无描边也无柔底** ✅ |
+| **P4f2** | `autoText: "Auto"`、无 `[auto]` | 去方括号 + 首字母大写 ✅ |
+| P5 / P5d / P5b / P5c | 浮层展开、说明含状态词、`manual`↔`auto` 往返 | 卡片仍是唯一解释位 ✅ |
+| **M4a 空闲态** | `barCls: "composer-bare-bar is-idle is-empty-draft"` ⇒ `visible: false`；`paramsVisible: false`、`primaryVisible: false`、`hintVisible: true` | **idle 隐藏生效**，裸条只剩 ＋ + 提示语 ✅ |
+| **M4b 输入态** | 真实触摸手势展开后 `barIsIdle: false` ⇒ `visible: true`、`60×26`、`isMobile: true`、`hasCaret: false` | **输入态可见**，同一枚胶囊 ✅ |
+| M5a / M5 | 点前 `visible: true` ⇒ Sheet 展开（同一份面板 + 开关 + 作用域说明） | 底部 Sheet ✅ |
+| P7 / P7b / P7c / P7d | 关闭态 `text: ""`、`bg/border 透明`、`autoExists: false`；卡片含「每次先问」括注 | 关闭态零文字 ✅ |
+| 走查卫生 | 自建会话 `delete-status-200`；账号偏好收尾归零 `manual` | 无残留 ✅ |
+
+**⚠️ 本轮探针修掉的一个假阳性（M5）**：上一版 M5 直接 `el.click()` 就断言 Sheet 展开 —— 但对 `display:none` 的**隐藏胶囊**调 `.click()` 仍会派发 click 事件 ⇒ **必然假 PASS**。修正：加 M5a 前置判据「点之前胶囊 `visible === true`」。
+**⚠️ 另一个真 bug（M4b 首跑假失败）**：移动端展开**不是 click 触发** —— `AgentSideRail.vue:1509/1521` 绑的是 **pointerdown → pointerup 手势对**，且 `classifyGesture()` 必须判为 `tap`（纵向位移 ≤10px）。`el.click()` 只派发 click ⇒ 展开永不发生。修正：用 CDP `Input.dispatchTouchEvent` 派发真实 `touchStart`/`touchEnd`（浏览器合成 pointer 事件），命中**提示语 span**（非 button/input ⇒ 不被 `onBarGestureOnChild` 拦掉）。
+**采样纪律（延续）**：`barIsIdle` / `visible` 必须**分两态采样**（idle 一次 + 展开后一次），单次绝对断言会与前序段遗留状态耦合。
+
+### 13.7 剩余诚实边界（生产复测后收窄）
+
+- 移动端**空闲态隐藏**已在生产实证（M4a）；但**堆叠态**（stacked，有引用芯片）与**生成中**（queued）未单独取证 —— 两者都非 idle ⇒ 入口可见（由 CSS 规则推得，未逐态实测）。
+- 移动端用户在**不点按输入框**的情况下看不到该入口 ⇒ 移动端发现路径只剩「点按输入框」与「设置页开关」两处（用户裁定的直接后果，非缺陷）。
+- 去柔底后开启态在工具行里**不再有色块视觉重量**（实测琥珀像素仅「实心盾 + Auto 字」）⇒ 已用实心填充 + 文字双重信号补偿，但**未做真人可发现性测试**。
