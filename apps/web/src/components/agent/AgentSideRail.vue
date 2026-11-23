@@ -4695,19 +4695,26 @@ defineExpose({
                   </template>
                 </MobileSheet>
 
-                <!-- 授权自动生成 · composer 入口（2026-11-23 UI 迭代 §11 / §12 / §13：状态胶囊 + 锚定浮层）。
+                <!-- 授权自动生成 · composer 入口（2026-11-23 UI 迭代 §11 / §12 / §13 / §14：状态胶囊 + 锚定浮层）。
                      ⭐ 落点纪律「状态属于对象」：它描述的是 agent 的行为模式（我把控制权交出去了），
                      故挂在 composer 自身的工具行，紧邻发送键 = 「按下去会发生什么」的语义邻位。
                      · PC = 状态胶囊（图形 + `Auto` 标记 + 箭头）：开启态琥珀字 + 实心盾，
                        **无描边无柔底**（§12 去描边 / §13 去柔底）；说明与开关收进锚定浮层
                        ⇒ 文案不常驻屏幕。
                      · 移动 = **与 PC 同一枚胶囊**（§12：实测 430/390/360/320px 均放得下），
-                       仅**不带箭头**（移动开底部 Sheet，箭头语义相反）；**空闲态隐藏**
-                       （§13：裸条只留 ＋ + 提示时，入口是唯一还杵着的功能项 ⇒ 与裸条纪律不一致）。
+                       仅**不带箭头**（移动开底部 Sheet，箭头语义相反）。
+                     · **收缩态（`collapsed` = mobileBarIdle）整个入口不渲染**（§14）：
+                       裸条只留 ＋ + 提示时，入口是唯一还杵着的功能项（§13）⇒ 与裸条纪律不一致；
+                       且 CSS 级隐藏会让它在「点输入框展开」这一瞬间被同一次触摸误触
+                       ⇒ 凭空弹出【自动生成】设置卡片（真机走查实证）。
                      · 不占输入区、不做通栏卡片（那是被投诉的旧形态）；胶囊上不出现中文长文案
                        （「自动生成」/「每次先问」下沉到浮层卡片说明）。
                      · 授权态读写全在 `AutoApproveControl` 内（服务端 SSOT，判定在服务端）。 -->
-                <AutoApproveControl :desktop="isDesktopDock" :read-only="props.readOnly" />
+                <AutoApproveControl
+                  :desktop="isDesktopDock"
+                  :read-only="props.readOnly"
+                  :collapsed="mobileBarIdle"
+                />
 
                 <div class="agent-dock-primary">
                   <!-- P2-2.1：麦克风改 press-and-hold——press 开始、release 转写填入（不自动提交）、上滑取消 -->
@@ -5004,13 +5011,14 @@ defineExpose({
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- 授权自动生成 · composer 入口的**位置**（2026-11-23 UI 迭代 §11 / §12 / §13）----
+/* ---- 授权自动生成 · composer 入口的**位置**（2026-11-23 UI 迭代 §11 / §12 / §13 / §14）----
  * 外观全在 `AutoApproveControl.vue` 内（胶囊 / 浮层），此处只保留「排在哪」
  * ——composer 工具行内、模型 chip 之后、发送键之前。
  * 移动端裸条摊平（display:contents）⇒ 需显式 order 排到模型 chip 之后、发送键之前。
  * 同 order 按 DOM 顺序：params(2) → control(2) → primary(3)。
- * §13：空闲态（is-idle）胶囊**也隐藏**（裸条纪律一致，见下方 is-idle 规则），
- *      故不再有「空闲态 control 仍在、落在最右」的情形。
+ * §14：收缩态（移动端 idle）入口**由组件级 `collapsed` prop 不渲染**（不是 CSS 隐藏），
+ *      根容器 `is-collapsed` 只负责消除占位 ⇒ 收缩态不存在可命中目标，
+ *      杜绝「点输入框 → 入口在同一次触摸里滑到落点下 → 弹出设置卡片」。
  * ⚠️ 选择器命中的是子组件的**根元素**（Vue scoped 规则对子组件根节点生效）。 */
 .agent-panel-mobile-dock .composer-bare-bar .auto-approve-control {
   order: 2;
@@ -6185,10 +6193,14 @@ defineExpose({
  * ⭐ 只影响移动端裸条（`.agent-panel-mobile-dock` 作用域），PC 端不受影响。 */
 .agent-panel-mobile-dock .composer-bare-bar.is-idle .agent-composer__input-wrap,
 .agent-panel-mobile-dock .composer-bare-bar.is-idle .agent-dock-params,
-.agent-panel-mobile-dock .composer-bare-bar.is-idle .agent-dock-primary,
-.agent-panel-mobile-dock .composer-bare-bar.is-idle .auto-approve-control {
+.agent-panel-mobile-dock .composer-bare-bar.is-idle .agent-dock-primary {
   display: none;
 }
+/* ⚠️ §14：**auto-approve 入口已从这条 idle 隐藏规则里移除**。
+ * 收缩态的隐藏改由组件自身的 `collapsed` prop 承担（DOM 级 v-if 不渲染入口本体），
+ * 因为 CSS 级 display:none 会让元素「在场但不可见」—— 形态切换瞬间它会被
+ * 同一次触摸的 click 命中（真机 touchend 落点判定）⇒ 凭空弹出设置卡片。
+ * ⭐ 只影响移动端裸条（`.agent-panel-mobile-dock` 作用域），PC 端不受影响。 */
 
 /* 输入/生成态：条上控件 = ＋/模型/发送 3 个（spec §5.5）——思考槽位、独立 mic 隐藏
  *（技能入口已收敛进「＋」菜单，原 .agent-skill-trigger 隐藏规则随之删除） */

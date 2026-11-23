@@ -18,27 +18,77 @@
  *
  * ⭐ 单一数据源：授权态读写全部走 `useAutoApproveGeneration`（服务端 SSOT），
  * 本组件不缓存 localStorage、不做本地判定。开关文案与开关本体在 `AutoApprovePanel`（单源）。
+ *
+ * ⭐ §14「误弹」修复（2026-11-23 真机走查：收缩态点输入框 ⇒ 凭空弹出自动生成设置卡片）：
+ * 根因链（四层，逐层都可单独复发，故四层齐修）：
+ *  1. `mobileBarIdle` 的语义是「**未展开**」而非「空闲」⇒ 点输入框必然摘掉 `is-idle`；
+ *  2. 展开动作发生在 **pointerup 处理器内**（`AgentSideRail.onBarPointerUp` 同步置
+ *     `composerExpanded=true`）⇒ chip 在**同一次触摸尚未结束**时就变成可点；
+ *  3. iOS Safari 的 click 按 **touchend 落点**判定（Chrome 按 pointerdown/pointerup
+ *     共同祖先）⇒ 这次「点输入框」的 click 落在刚出现的 chip 上；
+ *  4. Sheet 经 `Teleport` 挂到 body ⇒ 父级 `display:none` 杀不掉它（残留在别的形态也还在）。
+ * 三道防线：
+ *  - **防线 A（存在性下沉到 DOM）**：`collapsed` 为真时**不渲染 chip 按钮**（`v-if`），
+ *    而不是 CSS 隐藏 —— 收缩态不存在任何可命中目标。
+ *  - **防线 B（意图守卫）**：click 的「意图来源」必须与 pointerdown 落点一致；
+ *    pointerdown 落在别处 ⇒ 判定为上一次触摸的延续 ⇒ 忽略本次 click。
+ *    ⚠️ 监听器必须**常驻**（组件不整体卸载），否则展开前那次 pointerdown 录不到。
+ *  - **防线 C（形态复位）**：`collapsed` 转真时复位 `open` ⇒ 杜绝 Sheet 跨形态残留。
  */
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import AutoApproveGlyph from './AutoApproveGlyph.vue'
 import AutoApprovePanel from './AutoApprovePanel.vue'
 import MobileSheet from '@/components/mobile/MobileSheet.vue'
 import { useAutoApproveGeneration } from '@/composables/useAutoApproveGeneration'
 import { useClickOutside } from '@/composables/useClickOutside'
 
-const props = withDefaults(defineProps<{ desktop?: boolean; readOnly?: boolean }>(), {
+const props = withDefaults(defineProps<{ desktop?: boolean; readOnly?: boolean; collapsed?: boolean }>(), {
   desktop: true,
   readOnly: false,
+  collapsed: false,
 })
 
 const { authorized, setAuthorized } = useAutoApproveGeneration()
 
 const open = ref(false)
 const rootRef = ref<HTMLElement | null>(null)
+const chipRef = ref<HTMLElement | null>(null)
 /** 移动端 Sheet 内容（Teleport 到 body）不是 root 的后代 ⇒ 纳入「内部」判定，
  *  否则点开关会被 click-outside 判成外部而顺手关掉 Sheet。 */
 const sheetRef = ref<HTMLElement | null>(null)
 useClickOutside(rootRef, () => { open.value = false }, [sheetRef])
+
+/* ---- §14 防线 B：click 的意图来源守卫 ----
+ * 判据只看 **pointerdown 的落点**，不看时间窗：
+ *  · pointerdown 落在 chip 内 ⇒ 用户确实想点它 ⇒ 放行；
+ *  · pointerdown 落在别处（收缩态提示语 / 输入框 / 任意控件）⇒ 形态切换后 chip
+ *    恰好滑到落点下方 ⇒ 这次 click 属于「上一次触摸的延续」⇒ 忽略；
+ *  · 完全没有 pointerdown 记录 ⇒ 键盘 Enter/Space 激活 ⇒ 放行（无障碍不可断）。
+ * ⚠️ 必须用 **capture 阶段 + document**：画布/裸条会 stopPropagation，
+ *    冒泡阶段收不到 ⇒ 防线形同虚设。 */
+let pointerDownOnChip = false
+let pointerDownSeen = false
+function onDocPointerDown(e: PointerEvent) {
+  pointerDownSeen = true
+  const node = e.target as Node | null
+  pointerDownOnChip = !!(node && chipRef.value && chipRef.value.contains(node))
+}
+onMounted(() => document.addEventListener('pointerdown', onDocPointerDown, true))
+onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointerDown, true))
+
+function onChipClick() {
+  if (pointerDownSeen && !pointerDownOnChip) return
+  open.value = !open.value
+}
+
+/* ---- §14 防线 C：形态复位 —— 收缩时关掉 Sheet。
+ * Sheet 是 Teleport 到 body 的，父级 display:none 杀不掉它 ⇒ 必须显式复位，
+ * 否则「误开过一次」的 Sheet 会跨形态残留（这正是真机看到的「无故弹出」）。 */
+watch(
+  () => props.collapsed,
+  (v) => { if (v) open.value = false },
+)
+
 
 const triggerLabel = computed(() =>
   authorized.value
@@ -53,13 +103,23 @@ async function onToggle() {
 </script>
 
 <template>
-  <div ref="rootRef" class="auto-approve-control" data-testid="auto-approve-control">
+  <!-- ⚠️ 根容器**常驻不卸载**（§14 防线 B 要它记录展开前那次 pointerdown），
+       收缩态靠 `is-collapsed` 消除占位；**入口本体（chip）用 v-if 不渲染**（防线 A）。 -->
+  <div
+    ref="rootRef"
+    class="auto-approve-control"
+    :class="{ 'is-collapsed': props.collapsed }"
+    data-testid="auto-approve-control"
+  >
     <!-- 胶囊（PC + 移动**同一枚**，规格 §12.2 / §13）：
          · 图形 = 盾牌+闪电（线框=关 / 实心=开），零文字「自动生成」；
          · 开启态追加 `Auto` 短标记（mono 等宽技术标记，非中文长文案）；
          · **无描边、无柔底**（§12 去描边 / §13 去柔底）⇒ 开启态纯「实心盾 + 琥珀字」；
-         · 箭头仅 PC（PC 开锚定浮层↑ / 移动开底部 Sheet↓，箭头语义相反 ⇒ 移动端不带箭头）。 -->
+         · 箭头仅 PC（PC 开锚定浮层↑ / 移动开底部 Sheet↓，箭头语义相反 ⇒ 移动端不带箭头）。
+         · §14：收缩态（移动端 idle）**整个按钮不渲染** ⇒ 收缩态不存在可命中目标。 -->
     <button
+      v-if="!props.collapsed"
+      ref="chipRef"
       type="button"
       class="auto-approve-chip"
       :class="{ 'is-on': authorized, 'is-open': open, 'is-mobile': !props.desktop }"
@@ -69,7 +129,7 @@ async function onToggle() {
       :aria-expanded="open"
       aria-haspopup="dialog"
       data-testid="auto-approve-chip"
-      @click="open = !open"
+      @click="onChipClick"
     >
       <AutoApproveGlyph :on="authorized" :size="14" />
       <span v-if="authorized" class="auto-approve-chip-auto" data-testid="auto-approve-chip-auto">Auto</span>
@@ -118,6 +178,12 @@ async function onToggle() {
   position: relative;
   display: inline-flex;
   flex: none;
+}
+
+/* §14 防线 A 配套：收缩态（移动端 idle）根容器**不占位**。
+   ⚠️ 这里只用 display:none 消除占位与命中面，**入口本体已由 v-if 不渲染**（不是"隐藏"）。 */
+.auto-approve-control.is-collapsed {
+  display: none;
 }
 
 /* ---- PC + 移动共用的状态胶囊（规格 §12） ---- */
