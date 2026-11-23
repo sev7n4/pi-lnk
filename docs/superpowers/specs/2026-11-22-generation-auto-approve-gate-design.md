@@ -588,15 +588,74 @@ manual: → pending_confirm → SSE waiting_user → 确认卡 → /answers → 
 
 | 文件 | 改动 |
 |---|---|
-| `apps/web/src/components/agent/AutoApproveControl.vue` | ① 胶囊文字「自动生成」→ `[auto]` 标记（mono 11px 琥珀）；② `is-on` 去掉 `border-color`（保留柔底 + 琥珀字 + 实心盾）；③ **删除移动端 icon-only 分支**，移动端改用同一枚胶囊（去箭头）；④ 关闭态文字区留空但保留占位宽度 |
+| `apps/web/src/components/agent/AutoApproveControl.vue` | ① 胶囊文字「自动生成」→ `[auto]` 标记（mono 11px 琥珀）；② `is-on` 去掉 `border-color`（保留柔底 + 琥珀字 + 实心盾）；③ **删除移动端 icon-only 分支**（连同 `.auto-approve-trigger` 样式一并删除），移动端改用同一枚胶囊（去箭头）；④ 关闭态**不显示任何文字**（不预留空位 —— 预留会在视觉上留下「这里本来有字」的怪痕） |
 | `apps/web/src/components/agent/AutoApprovePanel.vue` | 说明段两态文案对齐「自动生成 / 每次先问」对照；开关行标签保持「自动生成」 |
-| `apps/web/src/components/agent/AgentSideRail.vue` | 移动端裸条让位：模型 chip `min-width:0` 链式（`params`/`model-btn`/`span`），320px 下截断让位不换行 |
-| `apps/web/src/components/agent/AutoApproveControl.test.ts` | 改：胶囊文字 = `[auto]`；移动端**不再是 icon-only**；两态宽度一致 |
-| `apps/web/src/components/agent/AgentSideRail.autoApproveEntry.test.ts` | 改/加守卫：`[auto]` 标记形态、**「自动生成」不得出现在胶囊上**、开启态**无 border-color**、移动端**与 PC 同一枚**、窄屏让位规则 |
+| `apps/web/src/components/agent/AgentSideRail.vue` | 移动端裸条让位：模型 chip `min-width:0` 链式（`.agent-dock-params` → `.dock-ghost-ctl` → `span`），320px 下截断让位不换行 |
+| `apps/web/src/components/agent/AutoApproveControl.test.ts` | 改：开启态胶囊文字 = `[auto]`、关闭态**零文字**；移动端**不再是 icon-only**（同一枚胶囊、无箭头、点击开 Sheet）；移动端已授权亦显示 `[auto]` |
+| `apps/web/src/components/agent/AgentSideRail.autoApproveEntry.test.ts` | 改/加守卫：`[auto]` 标记形态（mono + 零新令牌）、**「自动生成 / 每次先问」不得出现在胶囊内部可见内容**、开启态**无 border-color**、移动端**与 PC 同一枚**（正向断言：胶囊与 testid 各只出现 1 次）、窄屏让位规则**规则体**含 `min-width: 0` |
 | `apps/web/src/components/agent/AutoApproveGlyph.test.ts` | 不改（图形零改动） |
 
 ### 12.5 诚实边界
 
 - 本刀**只改前端呈现**：服务端判定 / DB 列 / 偏好 API 零改动 ⇒ §9.2 活体对照结论（未授权 ⇒ 待确认卡；已授权 ⇒ 零待确认卡）继续适用。
-- 移动端胶囊的**实机视觉**与 320px 截断效果需生产走查实证（本刀未在生产验证）。
-- 关闭态胶囊**文字区留空**后，其可发现性依赖图形与箭头 ⇒ 未做用户可发现性测试（无真人测试场）。
+- 关闭态胶囊**零文字**后，其可发现性依赖图形与箭头 ⇒ 未做用户可发现性测试（无真人测试场）。
+- `AutoApproveGlyph` 的**关闭态配色**未改（仍恒琥珀）：理由见 §12.6.3 —— 这是**有意的设计裁定**而非疏漏，但代价是关闭态与开启态的图形**颜色完全一致**，状态全靠「线框 vs 实心 + 柔底 + `[auto]`」承担。
+
+### 12.6 生产复测结论（2026-11-23，master `aba000c2`）
+
+**上线链路**：PR #983（squash，CI 3 项全绿）→ master `aba000c2` → deploy 自动触发（`apps/web/**` 命中触发条件）→ **部署 success**。
+**合并证据**：合并后 master 的 tree `69c3b6c6` == CI 验证 head 的 tree `69c3b6c6` ⇒ 合并树与 CI 验证树一致。
+**产物取证**（生产 chunk `CanvasPage-Cd21xSiS.js`）：`auto-approve-chip-auto` / `auto-approve-chip-caret` / `is-mobile` 均在；**`auto-approve-trigger` 出现 0 次**（旧 icon-only 触发器已随本次发布消失）。
+
+#### 12.6.1 探针判据（28/28 PASS）
+
+探针 `.workbuddy/e2e-cdp/generation-auto-approve-probe.mjs` 已按 §12 新形态改判据（P4 改「有图形 + 开启态实心 + `[auto]`」、新增 P4e 描边 / P4f 中文文案 / P4g 旧触发器 / P5d 卡片状态词 / M4b 移动端无箭头 / P7c 关闭态零文案 / P7d 卡片括注）。
+
+| 判据 | 实测值 | 结论 |
+|---|---|---|
+| P4 开启态胶囊 | `text: "[auto]"`、`w: 92`、`h: 28`、`inDockActions: true`、`glyphOn: true` | 胶囊在工具行内 + `[auto]` 短标记 ✅ |
+| **P4e 开启态描边** | `borderTopColor: "rgba(0, 0, 0, 0)"` | **无可见描边**（Q1 闭环）✅ |
+| **P4f 胶囊中文文案** | `text: "[auto]"`（不含「自动生成」/「每次先问」） | **长文案已清除**（Q2 闭环）✅ |
+| P4g 旧移动端触发器 | `legacyMobileTrigger: false` | 未复活 ✅ |
+| P5 / P5d 浮层卡片 | desc = 「当前为自动生成：…视频仍会逐次确认。」 | 卡片承接状态对照 ✅ |
+| P5b/P5c 往返 | `manual` → `auto`，服务端回读一致 | 双向闭环 ✅ |
+| **M4 移动端胶囊** | `isMobile: true`、`hasGlyph: true`、`hasCaret: false`、`legacyTrigger: false`、`w: 73` | **两端同一枚胶囊**（Q3 闭环）✅ |
+| M5 移动端 Sheet | Sheet 展开 + 同一份面板 + 开关 + 作用域说明 | 同一面板单源 ✅ |
+| **P7 关闭态胶囊** | `text: ""`、`autoExists: false`、`bg: rgba(0,0,0,0)`、`chipOn: false`、`glyphOn: false` | **零文字 + 无底无框** ✅ |
+| P7b/P7d 关闭态卡片 | desc = 「当前每次生成都会先问你（即「每次先问」）。…」 | 「每次先问」括注在卡片 ✅ |
+| 走查卫生 | 自建会话 `delete-status-200`；账号偏好收尾归零 `manual` | 无残留 ✅ |
+
+#### 12.6.2 窄屏实测（四档宽度全不换行）
+
+移动端**同一枚文字胶囊**（含 `[auto]`，开启态最宽形态）在生产页面逐档实测：
+
+| 视口宽 | 裸条高 | 裸条宽 | 胶囊宽 | 胶囊文字 | 横向溢出 |
+|---|---|---|---|---|---|
+| 430px | 48px | 406px | 73px | `[auto]` | `false` |
+| 390px | 84→48px | 366px | 73px | `[auto]` | `false` |
+| 360px | 48px | 336px | 73px | `[auto]` | `false` |
+| **320px** | **48px** | 296px | 73px | `[auto]` | `false` |
+
+⇒ **比 §12.1 的预测更好**：§12.1 用「中文文字胶囊占位」测出 320px 会换行（80→112px），但 `[auto]` 方案把胶囊压到 **73px**（比 83px 的占位还窄）⇒ **320px 也不换行**，模型 chip 无需截断即让位。
+⚠️ 采样纪律：430px 首次采样得到 `barH: null`（页面未就绪），**重采**后才拿到 48px —— 这是采样时机问题，**不是换行**；判读必须区分二者。
+
+#### 12.6.3 `AutoApproveGlyph` 关闭态配色的裁定（量化依据）
+
+本刀未改 `AutoApproveGlyph`（图形恒琥珀）。该决策**曾被质疑**：胶囊关闭态零文字后，孤立的琥珀线框盾牌会不会被读成「已授权」？用**真实令牌本地渲染**（headless Chrome + PIL 像素扫描）量化：
+
+| 状态 | 琥珀像素占比 | 读到的色值 |
+|---|---|---|
+| 暗色·开启态 | 盾牌 13.08% + `[auto]` 13.22% | `#fbbf24` |
+| 暗色·关闭态 | 盾牌 11.50% | `#fbbf24` |
+| 亮色·开启态 | 盾牌 13.17% + `[auto]` 12.88% | `#8a5200` |
+| 亮色·关闭态 | 盾牌 11.93% | `#8a5200` |
+
+⇒ **单看盾牌，两态的琥珀量几乎相同（0.98x / 0.95x）且颜色完全一致** ⇒ 图形本身**不承载任何状态色差异**，状态全靠「线框 vs 实心 + 柔底 + `[auto]`」；**两态合计视觉重量差 3.4~3.6 倍**（开启态有柔底 + 文字）。
+
+**裁定：保持 `AutoApproveGlyph` 零改动。** 理由：
+1. **状态可辨性不依赖颜色** —— 关闭态 = 线框 + 无底 + 无文字，开启态 = 实心 + 柔底 + `[auto]`，三重信号已足；琥珀是「这个能力需要留意」的**能力语义色**，不是状态色。
+2. **共享组件一致性优先** —— 同一枚图形同时用于提议卡的「授权入口」；若 composer 关闭态改中性色，同一图形在两处含义分叉，违反 §3.4「一套图形贯穿两处」。
+3. **提议卡入口依赖琥珀可发现性** —— 提议卡那枚是**入口按钮**（点了即授权），琥珀描边是它的可发现性来源（§10 已定）；改中性色会让入口被中性灰淹没。
+4. **零新令牌 / 零新分支** —— 不引入 `tone` 变体，避免为「配色焦虑」造新机制。
+
+⚠️ **诚实代价**：关闭态那枚琥珀线框盾牌单独看确实**可能被读成警示**。缓解手段是三重状态信号 + 箭头 + 卡片说明；若日后真机走查反馈「关闭态被误读为已开启」，再按本节数据定向改**只在 composer 关闭态**的中性色变体（不动提议卡），而非现在无据改动共享组件。
