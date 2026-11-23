@@ -1,6 +1,7 @@
 # 一轮 Turn 内「单一当前态 + 流内折叠任务清单 + 小结归位」设计规格（B 形态 / 推翻重做）
 
-> 状态：🟢 living（2026-11-22 用户拍板：当前态放 A＝对话流内轮首；任务清单收纳选 B＝Codex 式流内折叠清单）
+> 状态：🟢 living（2026-11-22 用户拍板：当前态放 A＝对话流内；任务清单收纳选 B＝Codex 式流内折叠清单；
+> 2026-11-23 二次拍板：当前态落点由轮首改为**流尾＝最后一个 part 之后**，零 parts 时自然仍在消息气泡下方原位；其余裁决不变）
 > 基线：`origin/master @ 004ffa2d`（旧三阶段方案 `#969/#970` 已上线，本规格在同一基线上**替换**，不做生产回滚）
 > 前序规格：`2026-11-22-turn-phase-progress-design.md` 已退役，保留仅供决策轨迹追溯
 > 实施计划：[`../plans/2026-11-22-turn-inline-status-checklist.md`](../plans/2026-11-22-turn-inline-status-checklist.md)
@@ -16,7 +17,7 @@
 
 | 需求 | 已存在的等价物（file:line，基线 004ffa2d） | 结论 |
 |---|---|---|
-| 唯一当前态文本 | `activityLine.ts:41-65` `turnLiveStatus(parts)`：生成回复中 / 深度思考中 / 正在〈工具人话〉/ 正在生成产物 / 等待你确认 / 等待模型响应 | **直接接线**，零新增状态词表；轮首行是它在对话流内的唯一渲染落点 |
+| 唯一当前态文本 | `activityLine.ts:41-65` `turnLiveStatus(parts)`：生成回复中 / 深度思考中 / 正在〈工具人话〉/ 正在生成产物 / 等待你确认 / 等待模型响应 | **直接接线**，零新增状态词表；流尾行（零 parts 时即轮首原位）是它在对话流内的唯一渲染落点 |
 | 工具人话 | `toolPresentation.ts` `presentToolStep()`（注册表 + 未知自曝兜底） | 复用，`turnLiveStatus` 内部已调用 |
 | 等待态 | `turnStatusBar.ts` `resolveWaitingFromTimeline()` | 复用（含在 `turnLiveStatus` 中），不复活 `turnStatusLine` UI |
 | 任务清单数据 | `agentTaskProgress.ts` `AgentTaskProgressState.items`（status/title/activeForm/nodeId/errorHint）、`formatTaskProgressLine()` | **直接接线**：`AgentSideRail` 已有 `taskProgress` ref（`:534`），经既有 `:task-progress` prop 路线上行 |
@@ -40,10 +41,10 @@
 
 | # | 用户原文要点 | 旧方案问题 | 本规格裁决 | DoD 判据 |
 |---|---|---|---|---|
-| 1 | 「探索中/创作中/收尾中」三个状态不应同时出现，且不应出现在 SSE 对话开始处；阶段性状态只显示阶段的叙事 | `AgentTurnTimeline.vue:462-480` 三阶段并列渲染在 parts 之前 | **唯一当前态**，取 `turnLiveStatus(parts)` 的一句叙事（如「深度思考中」「正在感知画布」），轮首单行 | 活跃轮最多 1 条 `[data-testid="turn-current-state"]`，文本 ∈ `turnLiveStatus` 全谱；三阶段词「探索中/创作中/收尾中」在轮首区 0 次 |
+| 1 | 「探索中/创作中/收尾中」三个状态不应同时出现，且不应出现在 SSE 对话开始处；阶段性状态只显示阶段的叙事 | `AgentTurnTimeline.vue:462-480` 三阶段并列渲染在 parts 之前 | **唯一当前态**，取 `turnLiveStatus(parts)` 的一句叙事（如「深度思考中」「正在感知画布」），**流尾单行**（零 parts 时仍在消息气泡下方原位） | 活跃轮最多 1 条 `[data-testid="turn-current-state"]`，文本 ∈ `turnLiveStatus` 全谱；DOM 序：有 parts 时该行在最后一个 part 之后；三阶段词「探索中/创作中/收尾中」在对话流内 0 次 |
 | 2 | ①②③ 序号多余 | `PHASE_INDEX_LABELS = ['①','②','③']`（`:384`） | 删除全部序号与编号常量 | `PHASE_INDEX_LABELS` / `①②③` 在 web src 0 次（棘轮扫描） |
-| 3 | composer 上面的白色光标矩形为何出现？这里应是 agent 状态出现点 | 白块是 thinking/text 的流式 `▊`（`:502/511`），不是状态位；用户误读为占位 | **澄清 + 归位**：`▊` 是正文/thinking 正在输出的行业惯例指示，保留但明确它≠agent 状态；agent 状态按拍板 A 落在**轮首唯一行**，不在正文尾部空位渲染状态 | 走查确认：`▊` 仅出现在活跃 thinking/text 尾部，收口即消失；轮首状态行存在且非 `▊` |
-| 4 | 阶段性小结位置不对；应总结推理之后 / 工具调用之后（做完什么、下一步、出错怎么办） | `turnPhaseView.summarizeStage()` 从工具人话/计数 UI 拼装「小结：…」，挂在轮首 | **归位不新建**：推理摘要看 thinking 折叠块内 `text`；工具结果看 tool `<details>` 内 `resultSummary`；下一步看模型正文；出错看 error notice 重试入口。删 UI 拼装小结 | 轮首区无「小结：」字样；含 summary 的 thinking/含 resultSummary 的 tool 仍在原位展示；error notice 重试入口仍在 |
+| 3 | composer 上面的白色光标矩形为何出现？这里应是 agent 状态出现点 | 白块是 thinking/text 的流式 `▊`（`:502/511`），不是状态位；用户误读为占位 | **澄清 + 归位**：`▊` 是正文/thinking 正在输出的行业惯例指示，保留但明确它≠agent 状态；agent 状态按 11-23 二次拍板落在**流尾唯一行**（零 parts 时即轮首原位），不在正文尾部空位渲染状态 | 走查确认：`▊` 仅出现在活跃 thinking/text 尾部，收口即消失；流尾状态行存在（零 parts 时轮首原位）且非 `▊` |
+| 4 | 阶段性小结位置不对；应总结推理之后 / 工具调用之后（做完什么、下一步、出错怎么办） | `turnPhaseView.summarizeStage()` 从工具人话/计数 UI 拼装「小结：…」，挂在轮首 | **归位不新建**：推理摘要看 thinking 折叠块内 `text`；工具结果看 tool `<details>` 内 `resultSummary`；下一步看模型正文；出错看 error notice 重试入口。删 UI 拼装小结 | 对话流内无「小结：」字样；含 summary 的 thinking/含 resultSummary 的 tool 仍在原位展示；error notice 重试入口仍在 |
 | 5 | 任务卡片与阶段性小结的边界职责是什么 | 旧版两者都在轮首抢叙事位 | **职责分离**：清单＝结构化进度「做到哪一步」；叙事＝各 part 原位「发生了什么/下一步/出错」。两者不互相生成、不重复文案 | 清单项文案来自 `title/activeForm`；小结文案来自 `thinking.text`/`resultSummary`；两处不出现同一句 |
 | 6 | 任务卡片为什么固定在最底部 | `AgentSideRail.vue:3837-3842` `AgentTaskProgressCard` 挂在 composer 上方 | **取消钉底**：删该卡片渲染，清单改为对话流内折叠 checklist（Codex 式）；不再有 composer 上方任务卡 | `showTaskCardAtComposer` / composer 区 `AgentTaskProgressCard` 0 次；流内 `[data-testid="turn-task-checklist"]` 存在 |
 
@@ -70,7 +71,7 @@
   而 `isStreamingCursor`（`:358-363`）要求 `props.streaming === true && part.kind === 'text' && part.status === 'streaming'`。
 
 两处都随对应 part 的 `running/streaming → done` 状态生灭，**不是独立的 agent 状态位**；
-composer 区、轮首状态行均无 `▊`。同款 `animate-pulse` 小圆点也用于 thinking/tool 的 running 指示（`summary`/工具行），
+composer 区、当前态行均无 `▊`。同款 `animate-pulse` 小圆点也用于 thinking/tool 的 running 指示（`summary`/工具行），
 语义一致＝"这块正在产出"。
 
 **生产重放实证**（2026-11-22，账号 17279698608，生产会话 `cmwrnm9ch0b2fo901p15oscif`，
@@ -86,7 +87,7 @@ composer 区、轮首状态行均无 `▊`。同款 `animate-pulse` 小圆点也
   流式期结论由上一条历史真实发送的 SSE 采样 + 代码绑定共同支撑，不谎称本轮抓到。
 
 **结论**：`▊` 保留，定位为 thinking/text 的**流式打字指示**（行业惯例），≠ agent 状态位；
-agent 唯一当前态按拍板落在轮首叙事行。
+agent 唯一当前态按拍板落在流尾叙事行（零 parts 时即轮首原位）。
 
 ## 3. 代码现状事实（基线 004ffa2d，逐行核对）
 
@@ -95,16 +96,16 @@ agent 唯一当前态按拍板落在轮首叙事行。
 | 文件 | 旧实现 | 处置 |
 |---|---|---|
 | `turnPhaseView.ts` + `.test.ts` | `deriveTurnPhaseView()` 产出三阶段 + UI 拼装小结 + `isTurnFinalized()` | **删除文件**；把 `isTurnFinalized()` 迁入新 `turnChecklistView.ts`（纯函数，语义不变） |
-| `AgentTurnTimeline.vue:63-67,375-388,462-480,1553-1579` | `taskProgress` prop、`phaseView`/`stripVisible`、`turn-phase-strip` 三行模板与样式、`PHASE_INDEX_LABELS` | **删除** prop / computed / 模板 / 样式 / 序号常量；新增轮首当前态行 + 流内折叠 checklist |
+| `AgentTurnTimeline.vue:63-67,375-388,462-480,1553-1579` | `taskProgress` prop、`phaseView`/`stripVisible`、`turn-phase-strip` 三行模板与样式、`PHASE_INDEX_LABELS` | **删除** prop / computed / 模板 / 样式 / 序号常量；新增流尾当前态行 + 流内折叠 checklist |
 | `AgentSideRail.vue:3837-3842` | composer 上方 `AgentTaskProgressCard`（`showTaskCardAtComposer` 门） | **删除渲染**；`showTaskCardAtComposer` 一并有死则删，无死保留但不得挂 composer |
 | `AgentSideRail.vue:3569` 附近 | `:task-progress="isLiveTurnMessage(msg) ? taskProgress : undefined"` 一行接线 | **保留**（checklist 仍从这条线上行），仅把消费方从三阶段 strip 改为 checklist |
-| `AgentSideRail.vue:3976-3982` | composer 上沿灰字 `turn-live-status` | **删除渲染**（用户拍板当前态＝A"仅在对话流内"，composer 不是当前态落点）；`activityLine.turnLiveStatus` 函数保留给轮首行调用。守卫 `AgentSideRail.turnLiveStatus.test.ts` 改测"灰字不渲染、轮首行渲染" |
+| `AgentSideRail.vue:3976-3982` | composer 上沿灰字 `turn-live-status` | **删除渲染**（用户拍板当前态＝A"仅在对话流内"，composer 不是当前态落点）；`activityLine.turnLiveStatus` 函数保留给流尾行调用。守卫 `AgentSideRail.turnLiveStatus.test.ts` 改测"灰字不渲染、当前态行渲染" |
 
 ### 3.2 可复用（本规格要接线，勿重建）
 
 | 能力 | 位置 | 说明 |
 |---|---|---|
-| 唯一当前态文本 | `activityLine.ts:41-65` | 6 态全谱、尾扫 parts、纯函数；轮首行直接调用 |
+| 唯一当前态文本 | `activityLine.ts:41-65` | 6 态全谱、尾扫 parts、纯函数；流尾行直接调用 |
 | 任务进度 | `agentTaskProgress.ts` + `AgentSideRail.vue:534` `taskProgress` ref | SSE `task_list/task_update` 已驱动；checklist 直接读 `items` |
 | 折叠契约 | `useDisclosure.ts:45-75` | 防 patch 弹回；checklist 默认值 `() => false`（折叠），用户点过由意图主导 |
 | 推理摘要 | `turnTimeline.ts:559/565` → `ThinkingPart.text`；`AgentTurnTimeline.vue:486-502` | 已展示，不新增 |
@@ -127,7 +128,7 @@ agent 唯一当前态按拍板落在轮首叙事行。
 
 ### 目标
 
-- **G1**：活跃轮 SSE 对话**开始处**（用户气泡之后、parts 之前）有且仅有 1 条当前态叙事行，
+- **G1**：活跃轮 SSE 对话**流尾**（最后一个 part 之后；零 parts 时即用户气泡之后）有且仅有 1 条当前态叙事行，
   文本取自 `turnLiveStatus(parts)`；无三阶段并列、无序号、无 UI 拼小结。
 - **G2**：任务清单以 Codex 式**流内折叠 checklist** 呈现（摘要行「任务 a/b · 展开」，展开见逐项状态），
   不再钉 composer 底部；数据源＝既有 `taskProgress.items`。形态对齐 Codex TUI 一手源码：
@@ -135,7 +136,7 @@ agent 唯一当前态按拍板落在轮首叙事行。
   InProgress→Pending→Completed 排序（进行中置顶）；完成态＝**打钩 ✓ + 删除线 + 置灰**、
   进行中＝强调色、等待＝暗色；不新增删除线以外的语义（不打「×」、不做动画）。
 - **G3**：推理小结归 thinking 块、工具结果归 tool 展开、下一步归正文、出错归 error notice 重试入口；
-  轮首区不再拼装任何小结。
+  对话流不再拼装任何小结。
 - **G4**：回合收口后**当前态叙事行消失**（临时进度完成即消失），**checklist 折叠保留为任务凭据**
   （Codex plan checklist 范式，与 UI 对比图 B 一致）；轮末 `notice:turn-summary` 承载结果总览。
 - **G5**：移动端 / PC 同组件同形态（AGENTS.md:38-65，不在 PC 组件加移动分支）。
@@ -143,7 +144,7 @@ agent 唯一当前态按拍板落在轮首叙事行。
 
 ### 非目标
 
-- 不改 composer 上沿积分条（用户未授权改它）。灰字 `turn-live-status` 的渲染按拍板 A 删除，但其派生函数 `turnLiveStatus()` 保留（轮首行单源）。
+- 不改 composer 上沿积分条（用户未授权改它）。灰字 `turn-live-status` 的渲染按拍板 A 删除，但其派生函数 `turnLiveStatus()` 保留（当前态行单源）。
 - 不改 `task_*` 事件语义、`AgentTaskProgressState` 类型、`turnTimeline.ts` 的 part 派生逻辑。
 - 不复活 `turnStatusLine` / `statusTicker` / 钉底镜像 / 秒表 ticker。
 - 不新增「执行过程」总折叠块；中间步骤仍按 part 级折叠，thinking/tool 不进 checklist。
@@ -152,8 +153,8 @@ agent 唯一当前态按拍板落在轮首叙事行。
 
 ## 5. 架构决策
 
-- **AD1 单一当前态**：轮首行是 `turnLiveStatus(parts)` 在对话流内的渲染落点（composer 灰字渲染已删）。
-  它不是第三套状态词表，而是既有单源的投影；因此天然只有一条、天然叙事式。
+- **AD1 单一当前态**：**流尾行**（`v-for="part in parts"` 之后）是 `turnLiveStatus(parts)` 在对话流内的唯一渲染落点（composer 灰字渲染已删）。
+  它不是第三套状态词表，而是既有单源的投影；因此天然只有一条、天然叙事式。首 token 前零 parts 时循环不产节点，该行自然位于消息气泡下方原位——「等待模型响应」的首 token 态因此保留，无需特殊分支。
 - **AD2 清单与叙事正交**：checklist 只投影 `taskProgress.items`（结构化），叙事只由各 part 原位承担。
   两者互不读取对方文案 → 结构上杜绝用户第 4/5 点的"重复叙事 / 职责混淆"。
 - **AD3 checklist 收口折叠留凭据**：按 UI 对比图 B 的形态，checklist **不随 streaming 收口消失**——
@@ -170,7 +171,7 @@ agent 唯一当前态按拍板落在轮首叙事行。
   `notice:turn-summary` 稳定 id；`streaming === false` 亦不渲染**当前态行**。
   checklist 不受此门禁（见 AD3），收口后折叠留存。
 - **AD6 不碰正文光标**：`▊` 保留为 thinking/text 的流式指示（行业惯例），只在活跃流尾部出现；
-  规格与代码注释明确它≠agent 状态位，轮首状态行才是状态位。
+  规格与代码注释明确它≠agent 状态位，流尾状态行才是状态位。
 
 ## 6. 数据契约（纯函数，渲染期）
 
@@ -217,20 +218,20 @@ export function deriveTurnChecklistView(
 | R3 | `done = status === 'done' || status === 'skipped'`；`doneCount` 为 done 项数，`total` 为 items.length；`0/0` 时整行不渲染（返回 null） |
 | R4 | `isTurnFinalized(parts)` 与旧实现逐字一致：`parts.some(p => p.kind === 'notice' && p.id === 'notice:turn-summary')` |
 | R5 | 模块不得 import `Date.now` / `setInterval` / `turnStatusLine` / `phaseForToolName`（清单不依赖阶段分类） |
-| R6 | 轮首当前态不新增派生函数：直接 `turnLiveStatus(props.parts)`；空 parts 时返回「等待模型响应」，仍渲染 1 行 |
+| R6 | 当前态不新增派生函数：直接 `turnLiveStatus(props.parts)`；空 parts 时返回「等待模型响应」，仍渲染 1 行（位置＝parts 之后，零 parts 时即轮首原位） |
 
 ### 6.3 行为示例
 
 ```
 parts = [thinking(running)]，taskProgress.items = [编写脚本 running, 生成分镜 done, 导出 pending]
 
-轮首当前态：● 深度思考中
+流尾当前态（跟随最后 part）：● 深度思考中
 流内清单（折叠）：任务 1/3 · 展开 ▾
   展开：进行中 · 正在编写脚本；完成 · 生成分镜；等待中 · 导出
 thinking 折叠块：思考完成，正在按 skill 指引……（来自 data.summary，原位）
 composer 上沿灰字：不渲染（拍板 A，已删）
 
-收口后：轮首当前态行消失；清单折叠保留「任务 2/3 · 展开 ▾」作凭据；
+收口后：当前态行消失；清单折叠保留「任务 2/3 · 展开 ▾」作凭据；
 历史另留 plan part 步骤 + 「已生成 3 张 · 用时 47s · 已结算…」notice
 ```
 
@@ -239,9 +240,10 @@ composer 上沿灰字：不渲染（拍板 A，已删）
 ### 7.1 落点与结构
 
 - `AgentTurnTimeline.vue` 根节点内：
-  1. `<div v-if="currentStateVisible" data-testid="turn-current-state">`（轮首当前态）
-  2. `<details v-if="checklistVisible" data-testid="turn-task-checklist">`（流内折叠清单）
-  3. `<template v-for="part in parts">`（既有 part 渲染，顺序与内容不变）
+  1. `<details v-if="checklistVisible" data-testid="turn-task-checklist">`（流内折叠清单，留轮首当大纲）
+  2. `<template v-for="part in parts">`（既有 part 渲染，顺序与内容不变）
+  3. `<div v-if="turnStateVisible" data-testid="turn-current-state">`（**流尾当前态**：紧随最后一个 part；
+     零 parts 时自然落在清单之后/消息气泡下方原位）
 - 不 Teleport、不进 composer 系统层、不钉底、不进 `agent-turn-head`。随 Turn 滚动。
 - checklist 的 `<summary>`＝`任务 {{doneCount}}/{{total}} · 展开/收起`（对齐 Codex
   `Updated Plan · {n}/{total} complete`）；展开区逐项按 InProgress→Pending→Completed 排序，
@@ -267,7 +269,7 @@ composer 上沿灰字：不渲染（拍板 A，已删）
 
 ## 8. 生命周期时序
 
-| 时点 | streaming | notice:turn-summary | 轮首当前态 | 流内 checklist | composer 灰字 |
+| 时点 | streaming | notice:turn-summary | 当前态（流尾，零 parts 时轮首） | 流内 checklist | composer 灰字 |
 |---|---|---|---|---|---|
 | 发消息、零 parts | true | 无 | ● 等待模型响应 | 无任务⇒不渲染 | 不渲染（已删） |
 | 首个 thinking | true | 无 | ● 深度思考中 | 有任务⇒任务 0/n（折叠） | 不渲染（已删） |
@@ -275,7 +277,7 @@ composer 上沿灰字：不渲染（拍板 A，已删）
 | 等待确认 | true | 无 | ● 等待你确认 | 清单停在当前计数 | 不渲染（已删） |
 | 收口 | false | 有 | **消失** | **折叠保留为凭据**（可展开回看） | 不渲染（已删） |
 | 刷新历史 | false | 有 | 不渲染 | 按 replay 派生结果恢复/消失 | 不渲染（已删） |
-| 上滑回看上一轮 | false | 有 | 历史轮不渲染；活跃轮仍在自己 Turn 内 | 最近一轮的折叠凭据可见 | 不渲染（已删） |
+| 上滑回看上一轮 | false | 有 | 历史轮不渲染；活跃轮仍在自己 Turn 流尾 | 最近一轮的折叠凭据可见 | 不渲染（已删） |
 
 ## 9. 变更影响面矩阵
 
@@ -284,7 +286,7 @@ composer 上沿灰字：不渲染（拍板 A，已删）
 | `apps/web/src/components/agent/turnPhaseView.ts`（删） + `.test.ts`（删） | 文件删除；`isTurnFinalized` 迁入新模块 | 中；须确认仅 `AgentTurnTimeline` 消费（旧接线全部移除） |
 | `apps/web/src/components/agent/turnChecklistView.ts`（新） + `.test.ts`（新） | 纯派生 + 收口判定 | 低；纯函数 TDD |
 | `apps/web/src/components/agent/phaseAggregator.ts` | **零改动**（`phaseForToolName` 保留） | 无 |
-| `apps/web/src/components/agent/AgentTurnTimeline.vue` | 删三阶段 strip；加轮首当前态行 + checklist；`taskProgress` prop 保留 | 中；不得碰 part 渲染顺序/折叠契约 |
+| `apps/web/src/components/agent/AgentTurnTimeline.vue` | 删三阶段 strip；checklist 留轮首、当前态行移到流尾（parts 循环后）；`taskProgress` prop 保留 | 中；不得碰 part 渲染顺序/折叠契约 |
 | `apps/web/src/components/agent/AgentSideRail.vue` | 删 composer 卡片渲染（`:3837-3842`）与灰字渲染（`:3976-3982`）；保留 `:task-progress` 接线与 `turnLiveStatus()` 函数 | 低 |
 | `apps/web/src/components/agent/turnTimeline.ts` | **零改动** | 不新增 part / notice |
 | 服务端 / pi-runtime / prompt-registry / DB | **零改动** | 仅 web-only 部署触发面 |
@@ -297,7 +299,7 @@ composer 上沿灰字：不渲染（拍板 A，已删）
    done 计数（done+skipped 计入，running/failed/needs_user 不计）；`errorHint`/`nodeId` 原样保留；
    `isTurnFinalized` 仅认稳定 id；模块不含 `Date.now`/`setInterval`/`phaseForToolName` import（fs-scan）。
 2. `AgentTurnTimeline.turnState.test.ts`（mount，仿 `AgentTurnTimeline.plan.test.ts`）：
-   活跃轮恰好 1 条 `turn-current-state` 且文本＝`turnLiveStatus(parts)`；`streaming=false` 或
+   活跃轮恰好 1 条 `turn-current-state` 且文本＝`turnLiveStatus(parts)`；**DOM 序断言：状态行在最后一个 part 之后（零 parts 时仍在根首）**；`streaming=false` 或
    `notice:turn-summary` 后 0 条；三阶段词 / ①②③ / 「小结：」在根内 0 次；含 summary 的 thinking 与
    含 resultSummary 的 tool 仍在原位；`turn-task-checklist` 默认折叠、展开后出现逐项状态；空任务 0 块。
 3. `AgentSideRail.turnChecklistWiring.test.ts`：最新活跃轮拿到 `taskProgress`、历史轮拿不到；
@@ -309,8 +311,8 @@ composer 上沿灰字：不渲染（拍板 A，已删）
 ### 10.2 生产 CDP 走查（部署后）
 
 - 用测试账号 `17279698608` 输入「请帮我生成一个关于小犀牛的皮克斯动画漫剧」。
-- **250ms 密采样**（上游超时可低至 ~1.75s，1s 间隔会全漏）：抓轮首当前态文本变化序列。
-- 判据：轮首最多 1 条状态、无三阶段词/序号/UI 拼小结；清单在流内且可展开；
+- **250ms 密采样**（上游超时可低至 ~1.75s，1s 间隔会全漏）：抓流尾当前态文本变化序列（零 parts 阶段在原轮首位）。
+- 判据：流尾最多 1 条状态（零 parts 时在原轮首位）、无三阶段词/序号/UI 拼小结；清单在流内且可展开；
   composer 上方无任务卡；收口后当前态与清单均消失、轮末 summary notice 仍在。
 - 截图存 `.workbuddy/e2e-cdp/`，探针脚本同目录（不入库）。
 
@@ -334,3 +336,5 @@ composer 上沿灰字：不渲染（拍板 A，已删）
    进行中排序置顶。✅ 用户认可此调研方向。
 4. **历史刷新**：checklist 按 replay 派生的 `taskProgress` 自然恢复/消失，不做额外持久化。✅ 用户同意。
 5. **执行模式**：Native（强顺序耦合单文件簇，SDD 并行收益低）。✅ 用户同意。
+6. **当前态落点二次拍板（2026-11-23）**：用户看生产截图后指出轮首状态行与下方已完成的正文/工具/清单构成时序倒错，且回看态看不见；拍板状态行移到**流尾**。
+   边界：① 首 token 前零 parts 时仍在原轮首位置，「等待模型响应」保留（由 `turnLiveStatus([])` + 循环不产节点共同保证，非新增分支）；② 收口双门禁不变（历史轮 0 条）；③ **checklist 不跟随**，继续留轮首当大纲（凭据与临时态生命周期相反）；④ 仍单点、仍在流内，不做钉底/镜像；⑤ 零新增字段/事件/令牌。

@@ -11,7 +11,7 @@ import AgentSideRail from './AgentSideRail.vue'
  * 2026-11-03 WorkBuddy 同款回合实时状态灰字（移动端复测追加需求）：
  * - 纯函数 `turnLiveStatus`：时间线 parts 尾扫派生全谱状态（等待模型响应 / 深度思考中 /
  *   生成回复中 / 正在<工具人话> / 正在生成产物 / 等待你确认）。
- * - 纯函数保留为轮首状态行单源（B 形态）；composer 上沿灰字渲染已删除，反向守卫见本文件接线 describe。
+ * - 纯函数保留为流尾状态行单源（B 形态，零 parts 时原位在轮首）；composer 上沿灰字渲染已删除，反向守卫见本文件接线 describe。
  */
 
 vi.mock('@/services/sessions-api', () => ({
@@ -124,11 +124,11 @@ async function mountRail() {
   return w
 }
 
-describe('AgentSideRail 接线：B 形态当前态不在 composer 上沿（灰字退役，轮首单源）', () => {
+describe('AgentSideRail 接线：B 形态当前态不在 composer 上沿（灰字退役，流尾单源）', () => {
   beforeEach(() => setActivePinia(createPinia()))
   afterEach(() => vi.unstubAllGlobals())
 
-  it('turn 活跃期：composer 上沿不再有灰字（当前态已移入对话流轮首）', async () => {
+  it('turn 活跃期：composer 上沿不再有灰字（当前态已移入对话流流尾）', async () => {
     const w = await mountRail()
     const agent = useAgentStore()
     agent.messages.push({

@@ -11,11 +11,28 @@ const thinking = (id = 't1'): TimelinePart => ({
   kind: 'thinking', id, text: '思考摘要原文', status: 'running', startedAt: 1,
 })
 
-describe('轮首当前态（B 形态）', () => {
-  it('零 parts（message_start 后首个 part 前）仍渲染 1 条「等待模型响应」', () => {
-    const rows = mountTurn([]).findAll('[data-testid="turn-current-state"]')
+describe('流尾当前态（B 形态，2026-11-23 二次拍板）', () => {
+  it('零 parts（message_start 后首个 part 前）仍渲染 1 条「等待模型响应」且在根首原位', () => {
+    const w = mountTurn([])
+    const rows = w.findAll('[data-testid="turn-current-state"]')
     expect(rows).toHaveLength(1)
     expect(rows[0]!.text()).toContain('等待模型响应')
+    expect(w.element.firstElementChild?.getAttribute('data-testid')).toBe('turn-current-state')
+  })
+
+  it('DOM 序：状态行在最后一个 part 之后，清单仍留轮首', () => {
+    const marker = 'DOM 序锚点文本'
+    const w = mountTurn(
+      [thinking(), { kind: 'text', id: 'txt-marker', text: marker, status: 'done' } as TimelinePart],
+      true,
+      { items: [{ id: '1', title: '写脚本', status: 'running' }], finished: false } as AgentTaskProgressState,
+    )
+    const state = w.find('[data-testid="turn-current-state"]').element
+    const lastPart = w.findAll('p').find((p) => p.text().includes(marker))!.element
+    const checklist = w.find('[data-testid="turn-task-checklist"]').element
+    // DOCUMENT_POSITION_FOLLOWING：前者在后者之前
+    expect(lastPart.compareDocumentPosition(state) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(checklist.compareDocumentPosition(state) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('活跃轮恰好 1 条，文本取 turnLiveStatus', () => {

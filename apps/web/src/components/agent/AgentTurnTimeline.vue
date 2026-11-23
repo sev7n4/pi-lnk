@@ -400,10 +400,10 @@ const toneClass = (tone: 'info' | 'warn' | 'error') =>
 
 const hasContent = computed(() => props.parts.length > 0)
 
-// ===== B 形态：轮首唯一当前态 + 流内折叠清单（spec 2026-11-22-turn-inline-status-checklist）=====
-// 当前态取 turnLiveStatus 单源、仅渲染 1 条；收口双门禁：streaming 且未出现稳定 id
-// notice:turn-summary。清单是 taskProgress 投影，收口后折叠留凭据（Codex 范式），
-// 两者都不写 parts、不落库（结构保证：纯渲染期派生）。
+// ===== B 形态：流尾唯一当前态 + 轮首流内折叠清单（spec 2026-11-22-turn-inline-status-checklist）=====
+// 当前态取 turnLiveStatus 单源、仅渲染 1 条，DOM 落点在 parts 循环之后（零 parts 时自然在轮首原位）；
+// 收口双门禁：streaming 且未出现稳定 id notice:turn-summary。清单是 taskProgress 投影，留在轮首，
+// 收口后折叠留凭据（Codex 范式），两者都不写 parts、不落库（结构保证：纯渲染期派生）。
 const currentStateText = computed(() => turnLiveStatus(props.parts))
 const checklist = computed(() => deriveTurnChecklistView(props.taskProgress))
 const turnFinalized = computed(() => isTurnFinalized(props.parts))
@@ -484,15 +484,6 @@ const rootClass = computed(() =>
 
 <template>
   <div v-if="hasContent || turnStateVisible || checklistVisible" :class="rootClass">
-    <div
-      v-if="turnStateVisible"
-      class="turn-current-state"
-      data-testid="turn-current-state"
-      aria-live="polite"
-    >
-      <span class="turn-current-state__dot animate-pulse" aria-hidden="true" />
-      <span class="turn-current-state__text">{{ currentStateText }}</span>
-    </div>
     <details
       v-if="checklistVisible"
       class="turn-task-checklist"
@@ -960,6 +951,19 @@ const rootClass = computed(() =>
         </span>
       </div>
     </template>
+
+    <!-- B 形态当前态（2026-11-23 二次拍板）：**流尾**唯一一行，紧随最后一个 part。
+         零 parts 时循环不产节点 ⇒ 自然落在消息气泡下方原位（首 token 前「等待模型响应」保留）。
+         清单留轮首当大纲，不跟随本行；收口双门禁（streaming && !finalized）由 turnStateVisible 守。 -->
+    <div
+      v-if="turnStateVisible"
+      class="turn-current-state"
+      data-testid="turn-current-state"
+      aria-live="polite"
+    >
+      <span class="turn-current-state__dot animate-pulse" aria-hidden="true" />
+      <span class="turn-current-state__text">{{ currentStateText }}</span>
+    </div>
 
     <!-- E2-a 回合产物幽灵摘要（规格 2026-11-04-e2a-ghost-delivery-summary §3）：
          收起 = tint 文本行 + chevron；展开 = 横向 96px 媒体卡条（v2 2026-11-22：媒体区 64px + 名称行；
@@ -1674,7 +1678,7 @@ const rootClass = computed(() =>
 .subagent-task-card:hover { background: var(--lnk-surface-canvas); }
 .subagent-avatar { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; flex-shrink: 0; border-radius: 50%; background: var(--lnk-hi-bg); color: var(--lnk-hi-text); font-size: 10px; font-weight: 600; }
 
-/* B 形态：轮首唯一当前态 + 流内折叠清单（spec 2026-11-22-turn-inline-status-checklist）。
+/* B 形态：流尾唯一当前态 + 轮首流内折叠清单（spec 2026-11-22-turn-inline-status-checklist）。
    令牌只用 lnk-*；禁 hi 系令牌（深主题黑底白字）与 neo 前缀；移动端/PC 同构无媒体查询。 */
 .turn-current-state {
   display: flex;
