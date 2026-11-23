@@ -13,6 +13,8 @@ import { fileURLToPath } from 'node:url'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SRC = readFileSync(join(HERE, '..', 'canvas', 'ProviderConfigDialog.vue'), 'utf8')
+/** 开关样式的**唯一来源**（2026-11-23 UI 迭代 §11）：本能力三个落点共用同一段全局样式。 */
+const MAIN_CSS = readFileSync(join(HERE, '..', '..', 'styles', 'main.css'), 'utf8')
 
 describe('ProviderConfigDialog — 授权自动生成开关（2026-11-22 规格 §4）', () => {
   it('偏好字段三处同步：draft / hydrate / payload（漏一处即静默丢字段）', () => {
@@ -34,12 +36,23 @@ describe('ProviderConfigDialog — 授权自动生成开关（2026-11-22 规格 
   })
 
   it('令牌纪律：开关样式只用 --lnk-* 令牌（无裸 hex / rgba）', () => {
-    const block = /\.auto-approve-switch[^{]*\{([^}]*)\}/.exec(SRC)?.[1] ?? ''
-    expect(block).toContain('var(--lnk-border-subtle)')
-    expect(block).not.toMatch(/#[0-9a-fA-F]{3,8}/)
-    expect(block).not.toMatch(/rgba?\(/)
+    // 2026-11-23 UI 迭代 §11：开关样式已迁到 `styles/main.css` 的**共享段**
+    // （本能力三个落点必须同一实现）⇒ 断言对象改为共享段，弹层内不得自带定义。
+    const shared = /\.auto-approve-switch[^{]*\{([^}]*)\}/.exec(MAIN_CSS)?.[1] ?? ''
+    expect(shared).toContain('var(--lnk-border-subtle)')
+    expect(shared).not.toMatch(/#[0-9a-fA-F]{3,8}/)
+    expect(shared).not.toMatch(/rgba?\(/)
     // 禁用随主题翻转的 --lnk-hi-*（选中态用它会出事）——只查开关自己的规则块
-    expect(block).not.toContain('--lnk-hi-bg')
-    expect(block).not.toContain('--lnk-hi-text')
+    expect(shared).not.toContain('--lnk-hi-bg')
+    expect(shared).not.toContain('--lnk-hi-text')
+    // 单一来源：弹层内不得再复制一份开关样式
+    expect(SRC).not.toContain('.auto-approve-switch {')
+    expect(SRC).not.toContain('.auto-approve-knob {')
+  })
+
+  it('ON 色 = 琥珀 --lnk-warning（本能力 = 「agent 正在替你行动」的注意态，不是主行动色）', () => {
+    const onRule = /\.auto-approve-switch\[aria-checked='true'\]\s*\{([^}]*)\}/.exec(MAIN_CSS)?.[1] ?? ''
+    expect(onRule).toContain('var(--lnk-warning)')
+    expect(onRule).not.toContain('--lnk-accent')
   })
 })

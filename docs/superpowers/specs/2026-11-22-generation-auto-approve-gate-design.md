@@ -424,3 +424,93 @@ manual: → pending_confirm → SSE waiting_user → 确认卡 → /answers → 
 **双主题**：浅色 `rgb(138,82,0)`（深琥珀）/ 深色 `rgb(251,191,36)`（亮琥珀）⇒ `--lnk-warning` 双主题自适应，**零新令牌**。
 
 **诚实边界（剩余）**：① audio 介质未活体（沿用 §9.3）；② 本刀**未重跑活体对照 7/7**（P6 拆在独立脚本，逻辑未受本次前端改动影响，但未复跑）；③ `defaultTextModel` 停用缺陷属**既存产品问题**，本刀不修。
+
+---
+
+## 11. UI 迭代二（2026-11-23）：composer 入口改版「状态胶囊 + 锚定浮层」
+
+> 触发：用户给出 WorkBuddy 权限胶囊的实现截图并问「可以考虑参考这个实现？或是你有更加好的方案」。
+> 拍板：**采用参考实现的交互骨架**（工具行状态胶囊 + 锚定浮层承载说明与开关），但**不抄它的两处细节**（见 §11.2）。
+
+### 11.1 与 §10 的关系
+
+§10 把「文字块」降级成「单枚图标」，解决了「卡片撑脏 / 通栏污染」；但**图标态没有可点的说明入口**，收回授权只能靠盲点一个 15px 图形（可发现性差），且入口本身只在**已授权**时存在 ⇒ 「从哪儿开启」只能靠提议卡或设置页。
+
+§11 在不推翻 §10 落点纪律（状态属于 composer 工具行 / 同一枚图形 / 琥珀语义）的前提下，把入口升级为**状态胶囊 + 锚定浮层**：
+
+| 维度 | §10（已上线） | §11（本刀） |
+|---|---|---|
+| 入口 | 24×24 图标按钮（**仅已授权时渲染**） | PC：图标 +「自动生成」+ 箭头**胶囊**（**常驻**）；移动：icon-only 触发器 |
+| 状态可读 | 图形实心/线框 | 图形（实心/线框）+ 配色（琥珀高亮/弱化）+ 浮层文案，三通道 |
+| 说明文案 | 无（只有 title） | 浮层内**常驻说明**（作用域 + 后果），点开才占屏幕 |
+| 收回路径 | 盲点图形即收回 | 浮层内开关（**双向同处**，开关本身就是状态真身） |
+| 关闭态入口 | **不存在** | 胶囊常驻 ⇒ 从 composer 就能开启 |
+
+### 11.2 参考实现：抄两处、不抄两处
+
+**抄（值得借鉴）**
+
+1. **状态归位到工具行的胶囊**：不占输入区上方、不做通栏卡片；图标 + 文字 + 状态一眼可读。
+2. **说明与开关收进锚定浮层**：文案不常驻屏幕，点开才解释「开了会怎样」；开关就地提供**双向操作**（开 / 收回），不必再单找一个「撤回」入口。
+
+**不抄（明确否决）**
+
+3. **不抄暗红开关**：红色在 iOS/macOS 语义里 = 错误 / 破坏性，而「授权自动生成」是用户主动放权。沿用 §10 已定的琥珀 `--lnk-warning`（注意：agent 正在替你行动）。
+4. **不抄「允许完全访问」式全局口径文案**：本能力只覆盖 **image + audio**，video 始终逐次确认 ⇒ 浮层文案必须写清作用域，否则构成越权承诺。
+
+### 11.3 等价物检索结论表（第一原则）
+
+> 判据：①等价物检索 ②接线优先于新建，锚已有结构化数据面 ③禁造数 / 禁自报。
+
+| 需求 | 既有等价物（检索结果） | 结论 |
+|---|---|---|
+| 锚定浮层 | `.neo-popover`（`styles/main.css`）+ `useClickOutside`（思考档位菜单同款） | **接线**：复用既有表面语言与收起机制，禁新建浮层基座 |
+| 移动端底部层 | `MobileSheet`（模型选择卡同款：PC 锚定 popover / 移动 Sheet） | **接线**：不新建底部层 |
+| 触感开关 | `ProviderConfigDialog` / `ProfilePane` 两处**各一份**的 44×26 `role=switch` | **接线 + 收敛**：规格与 a11y 语义沿用；样式提升为 `styles/main.css` **共享段**（三处落点同一实现），并统一 ON 色 |
+| 授权态读写 | `useAutoApproveGeneration`（服务端 SSOT） | **接线**：组件不持状态、不缓存 localStorage、不做本地判定 |
+| 状态图形 | `AutoApproveGlyph`（§10） | **接线**：提议卡与胶囊同一枚图形，禁另画一套 |
+| 文案单源 | 无 | **新建 1 个组件**（`AutoApprovePanel`）——同一段说明要出现在两个容器里，不新建就会复制文案 |
+| 令牌 | `--lnk-warning` / `--lnk-warning-bg` / `--lnk-warning-border` / `--lnk-surface-canvas` / `--lnk-border-subtle` / `--lnk-border-focus` 双主题已存在 | **零新令牌**；禁 `--neo-*` 前缀、禁裸 hex/rgba |
+
+### 11.4 形态与状态规格
+
+| 项 | 规格 |
+|---|---|
+| PC 触发器 | 胶囊：14px 图形 + 12px 文字「自动生成」+ 10px 箭头（箭头随展开方向翻转）；高 28px |
+| 关闭态 | 图形**线框**、文字 `--lnk-text-muted`、**无底色无边框**（hover 才出 `--lnk-surface-raised`） |
+| 开启态 | 图形**实心**、文字/图形 `--lnk-warning`、柔底 `--lnk-warning-bg` + 边框 `--lnk-warning-border` |
+| PC 容器 | 锚定浮层（`.neo-popover`），右对齐胶囊上沿，宽 272px |
+| 移动触发器 | 24×24 icon-only（裸条纪律：＋ / 模型 / 发送 三件套，不加文字胶囊） |
+| 移动容器 | 底部 Sheet（`MobileSheet`），标题「自动生成」+ 副标题「授权 agent 自动执行图片与音频生成」 |
+| 面板内容 | 说明（作用域 + 后果）→ 分隔线 → `role=switch` 开关行 → 脚注「仅在可信任务中保持开启」 |
+| 开关 | 44×26 轨道 / 20px 旋钮 / `role=switch` + `aria-checked`；ON = `--lnk-warning`；旋钮 `--lnk-surface-canvas`（深色主题下亮琥珀轨道 + 白旋钮对比仅 ≈1.7:1 ⇒ 必须随主题） |
+| 提议卡 | 保留 §10 的 icon-only 盾牌入口（**当下这次**的上下文授权），与胶囊状态联动（同一枚图形 + 同一数据源） |
+
+### 11.5 改动清单（逐文件）
+
+| 文件 | 改动 |
+|---|---|
+| `apps/web/src/components/agent/AutoApproveControl.vue`（新） | 胶囊 / icon-only 触发器 + 锚定浮层（PC）/ 底部 Sheet（移动）；展开态、`aria-expanded`、click-outside（Sheet 内容纳入「内部」判定，否则点开关会顺手关掉 Sheet） |
+| `apps/web/src/components/agent/AutoApprovePanel.vue`（新） | 面板单源：作用域说明 + 开关行 + 脚注（PC 浮层与移动 Sheet 各渲染一次，禁复制文案） |
+| `apps/web/src/components/agent/AgentSideRail.vue` | 旧 icon-only 直收回按钮删除（含 CSS）；改挂 `<AutoApproveControl :desktop="isDesktopDock" :read-only="props.readOnly" />`；位置：模型 chip 之后、发送键之前；移动裸条 `order: 2` 规则改指组件根 |
+| `apps/web/src/styles/main.css` | **共享段**：`.auto-approve-switch` / `.auto-approve-knob`（44×26 / ON=琥珀 / 旋钮随主题）——三处落点唯一来源 |
+| `apps/web/src/components/canvas/ProviderConfigDialog.vue` | 删除自带开关样式（改走共享段）；ON 色由 `--lnk-accent` → `--lnk-warning` |
+| `apps/web/src/components/mobile/ProfilePane.vue` | 同上（删除自带样式，ON 色统一） |
+| `apps/web/src/components/agent/AutoApproveControl.test.ts`（新） | 行为契约：胶囊常驻 / 浮层说明与作用域 / 开关双向写回 / 移动 icon-only + Sheet / 只读禁用 |
+| `apps/web/src/components/agent/AgentSideRail.autoApproveEntry.test.ts`（新，替代 `…autoApproveToggle.test.ts`） | 落点守卫 8 条：通栏徽标不得复活 / 旧直收回按钮不得复活 / 入口位置 / 胶囊两态外观 / 零新令牌 / 移动端纪律 / 同构图形 / 开关单一来源 |
+| `apps/web/src/components/canvas/ProviderConfigDialog.authorizeAuto.test.ts` | 令牌断言对象改为共享段；新增「ON=琥珀、非 accent」与「弹层内不得自带定义」 |
+
+### 11.6 守卫与变异验证
+
+- 变异 M1：开启态胶囊不再琥珀（状态不可读）⇒ 守卫转红 ✅
+- 变异 M2：浮层开关退化为普通按钮（收回/开启不再双向同处）⇒ 行为测试转红 ✅
+- 变异 M3：面板说明丢掉「视频仍会逐次确认」（作用域丢失 ⇒ 越权承诺）⇒ 守卫转红 ✅（首跑只替换了 1/2 处 ⇒ 假绿，**全量替换后转红**，记此坑）
+- 变异 M4：开关 ON 色改回 `--lnk-accent`（与胶囊琥珀分裂）⇒ 守卫转红 ✅
+- `vue-tsc -b` 0 错误；`pnpm verify-agent-rail-gates` **11/11 PASS**（G4 会解析 `AgentSideRail.*.test.ts` 里的 `join(here, …)` 目标 ⇒ 跨目录引用必须写成单个字符串 `'../../styles/main.css'`，多段 `'..', '..'` 会被判 missing）。
+
+### 11.7 诚实边界
+
+- 本刀**只改前端呈现与入口形态**：服务端判定、`resolveAutoApproveTier`、DB 列、偏好 API **零改动** ⇒ §9.2 的活体对照结论（未授权 ⇒ 待确认卡；已授权 ⇒ 零待确认卡）继续适用。
+- 移动端 Sheet 与 PC 浮层的**实机视觉**需生产走查实证（本刀未在生产验证）。
+- 开关 ON 色由 accent 改琥珀是**全站可见变更**（PC 设置弹窗 / 移动「我的→设置」两处）⇒ 需走查确认不违和。
+- 提议卡仍是 icon-only 入口（§10 形态），本刀未再动它 ⇒ 「当下这次顺手授权」与「全局状态」两个入口并存是有意保留。

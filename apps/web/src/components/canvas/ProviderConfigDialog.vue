@@ -1114,42 +1114,11 @@ function apiKeyPlaceholder(draft: ChannelDraft) {
 </template>
 
 <style>
-/* 授权自动生成开关（2026-11-22 规格 §4.1）：复刻 ProfilePane 触感开关的轨道规格
-   （44×26），只用 L2/L3 令牌——禁用随主题翻转的 --lnk-hi-bg/--lnk-hi-text。 */
-.provider-config-dialog .auto-approve-switch {
-  position: relative;
-  flex: none;
-  width: 44px;
-  height: 26px;
-  padding: 0;
-  border: none;
-  border-radius: 999px;
-  background: var(--lnk-border-subtle);
-  cursor: pointer;
-  transition: background-color var(--lnk-duration-fast) var(--lnk-ease-standard);
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-.provider-config-dialog .auto-approve-switch[aria-checked='true'] {
-  background: var(--lnk-accent);
-}
-.provider-config-dialog .auto-approve-knob {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--lnk-text-on-accent);
-  transition: transform var(--lnk-duration-fast) var(--lnk-ease-standard);
-}
-.provider-config-dialog .auto-approve-switch[aria-checked='true'] .auto-approve-knob {
-  transform: translateX(18px);
-}
-.provider-config-dialog .auto-approve-switch:focus-visible {
-  outline: 2px solid var(--lnk-border-focus);
-  outline-offset: 2px;
-}
+/* ⚠️ 授权自动生成开关的样式已迁到 `styles/main.css` 的**共享段**（2026-11-23 UI 迭代 §11）：
+   本能力有三个开关落点（此处 / 移动「我的→设置」/ composer 工具行胶囊的锚定浮层），
+   必须同一实现（同一轨道尺寸、同一 ON 颜色、同一 a11y 语义）⇒ 单一来源，禁在此处复制。
+   ON 色由 --lnk-accent 改为 --lnk-warning（琥珀）：本能力是「agent 正在替你行动」的注意态，
+   与主行动色区分；旋钮色随主题（--lnk-surface-canvas）保证深色主题下的对比度。 */
 
 .provider-config-dialog .el-dialog {
   background: var(--lnk-surface-raised);

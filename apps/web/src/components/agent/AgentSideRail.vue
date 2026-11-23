@@ -24,7 +24,7 @@ import AgentAssetPicker from '@/components/agent/AgentAssetPicker.vue'
 import AgentCanvasOutputs from '@/components/agent/AgentCanvasOutputs.vue'
 import AgentExecutionTrace from '@/components/agent/AgentExecutionTrace.vue'
 import AgentTurnTimeline from '@/components/agent/AgentTurnTimeline.vue'
-import AutoApproveGlyph from '@/components/agent/AutoApproveGlyph.vue'
+import AutoApproveControl from '@/components/agent/AutoApproveControl.vue'
 import SubagentTaskSheet from '@/components/agent/SubagentTaskSheet.vue'
 import type { TimelinePart } from '@/components/agent/turnTimeline'
 
@@ -126,7 +126,6 @@ import { useModelConfigView } from '@/composables/useModelConfigView'
 import { isConversationAckResponse, parseConversationAck } from './main-turn-ack'
 import { useClickOutside } from '@/composables/useClickOutside'
 import { useProviderBootstrap } from '@/composables/useProviderBootstrap'
-import { useAutoApproveGeneration } from '@/composables/useAutoApproveGeneration'
 import { catalogModelKeyFromValue, supportsThinkingLevel } from '@/constants/studioModels'
 import {
   agentInputPlaceholder,
@@ -865,22 +864,6 @@ const { panelTeleported, asidePanelWidth, toggleFloating, startDrag, startResize
 })
 
 const { preferences, load: loadProviderBootstrap } = useProviderBootstrap()
-/**
- * 授权自动生成（规格 2026-11-22-generation-auto-approve-gate-design §3.4/§4.2）：
- * composer 工具行内的状态 + 刹车图标（2026-11-23 UI 迭代：原系统层通栏徽标已迁出）。
- * 账号级偏好（服务端 SSOT），判定在服务端。
- */
-const { authorized: autoApproveAuthorized, setAuthorized: setAutoApproveAuthorized } =
-  useAutoApproveGeneration()
-
-async function onRevokeAutoApprove() {
-  // 极简口径：单击即收回 + toast 带「撤销」（误点可一秒反悔），不弹模态确认框。
-  await setAutoApproveAuthorized(false, {
-    successMessage: '已收回授权 · 恢复每次确认',
-    undoable: true,
-  })
-}
-
 const planningModel = ref(preferences.value?.defaultTextModel ?? '')
 /** PI 链路深度思考：默认关，Dock 可开（与文本节点对齐）。
  * 可见条件必须与 pi-runtime 的能力判定同源（shared `supportsThinkingLevel`）——
@@ -4712,25 +4695,15 @@ defineExpose({
                   </template>
                 </MobileSheet>
 
-                <!-- 已授权自动生成：composer 工具行内的**状态 + 刹车**（2026-11-23 UI 迭代）。
+                <!-- 授权自动生成 · composer 入口（2026-11-23 UI 迭代 §11：状态胶囊 + 锚定浮层）。
                      ⭐ 落点纪律「状态属于对象」：它描述的是 agent 的行为模式（我把控制权交出去了），
                      故挂在 composer 自身的工具行，紧邻发送键 = 「按下去会发生什么」的语义邻位。
-                     · 未授权时**不渲染** ⇒ composer 与改造前逐像素一致（零污染）。
-                     · 不占输入区、不新增背景块、只有 15px 图形本身（面积换注意）。
-                     · PC / 移动同一 DOM（移动端裸条 display:contents 摊平）⇒ 一处改动两端生效。
-                     · 移动端空闲态连发送键都消失，故图标独立成子元素而非挂在发送键上，
-                       保证「空闲时也能看到自己开了自动模式并随时踩刹车」。 -->
-                <button
-                  v-if="autoApproveAuthorized"
-                  type="button"
-                  class="auto-approve-toggle"
-                  data-testid="agent-auto-approve-toggle"
-                  aria-label="已授权自动生成，点击收回授权"
-                  title="已授权自动生成 · 点击收回，恢复每次确认"
-                  @click="onRevokeAutoApprove"
-                >
-                  <AutoApproveGlyph :on="true" :size="15" />
-                </button>
+                     · PC = 状态胶囊（图标 +「自动生成」+ 箭头）：关闭态弱化、开启态琥珀高亮；
+                       说明与开关收进锚定浮层 ⇒ 文案不常驻屏幕。
+                     · 移动 = icon-only 触发器 + 底部 Sheet（裸条三件套纪律：＋/模型/发送）。
+                     · 不占输入区、不做通栏卡片（那是被投诉的旧形态）。
+                     · 授权态读写全在 `AutoApproveControl` 内（服务端 SSOT，判定在服务端）。 -->
+                <AutoApproveControl :desktop="isDesktopDock" :read-only="props.readOnly" />
 
                 <div class="agent-dock-primary">
                   <!-- P2-2.1：麦克风改 press-and-hold——press 开始、release 转写填入（不自动提交）、上滑取消 -->
@@ -5027,38 +5000,14 @@ defineExpose({
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- 授权自动生成 · composer 工具行图标（2026-11-23 UI 迭代）----
- * 取代原系统层通栏徽标（已删）。
- * 令牌纪律：--lnk-*、零新令牌（--lnk-warning 双主题已存在）、不加白名单类。
- * 形状：24×24 无背景按钮，内含 15px 盾牌+闪电；hover 才出琥珀柔底（默认零色块）。 */
-.auto-approve-toggle {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 0.5px solid transparent;
-  border-radius: var(--lnk-radius-sm);
-  background: transparent;
-  color: var(--lnk-warning);
-  cursor: pointer;
-  touch-action: manipulation;
-  transition: background-color 120ms ease, border-color 120ms ease;
-}
-.auto-approve-toggle:hover {
-  background: var(--lnk-warning-bg);
-  border-color: var(--lnk-warning-border);
-}
-.auto-approve-toggle:focus-visible {
-  outline: 2px solid var(--lnk-border-focus);
-  outline-offset: 2px;
-}
-/* 移动端裸条摊平（display:contents）⇒ 需显式 order 排到模型 chip 之后、发送键之前。
-   同 order 按 DOM 顺序：params(2) → toggle(2) → primary(3)；空闲态 params/primary 隐藏时
-   toggle 仍在（hint order:2 且 DOM 更早 ⇒ toggle 落在最右）。 */
-.agent-panel-mobile-dock .composer-bare-bar .auto-approve-toggle {
+/* ---- 授权自动生成 · composer 入口的**位置**（2026-11-23 UI 迭代 §11）----
+ * 外观全在 `AutoApproveControl.vue` 内（胶囊 / 浮层 / 移动触发器），
+ * 此处只保留「排在哪」——composer 工具行内、模型 chip 之后、发送键之前。
+ * 移动端裸条摊平（display:contents）⇒ 需显式 order 排到模型 chip 之后、发送键之前。
+ * 同 order 按 DOM 顺序：params(2) → control(2) → primary(3)；空闲态 params/primary 隐藏时
+ * control 仍在（hint order:2 且 DOM 更早 ⇒ control 落在最右）。
+ * ⚠️ 选择器命中的是子组件的**根元素**（Vue scoped 规则对子组件根节点生效）。 */
+.agent-panel-mobile-dock .composer-bare-bar .auto-approve-control {
   order: 2;
 }
 

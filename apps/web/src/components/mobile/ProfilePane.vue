@@ -393,40 +393,10 @@ function onLogout() {
   font-size: var(--lnk-text-2xs);
   line-height: var(--lnk-lh-2xs);
 }
-.auto-approve-switch {
-  position: relative;
-  flex: none;
-  width: 44px;
-  height: 26px;
-  padding: 0;
-  border: none;
-  border-radius: 999px;
-  background: var(--lnk-border-subtle);
-  cursor: pointer;
-  transition: background-color var(--lnk-duration-fast) var(--lnk-ease-standard);
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-}
-.auto-approve-switch[aria-checked='true'] {
-  background: var(--lnk-accent);
-}
-.auto-approve-knob {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: var(--lnk-text-on-accent);
-  transition: transform var(--lnk-duration-fast) var(--lnk-ease-standard);
-}
-.auto-approve-switch[aria-checked='true'] .auto-approve-knob {
-  transform: translateX(18px);
-}
-.auto-approve-switch:focus-visible {
-  outline: 2px solid var(--lnk-border-focus);
-  outline-offset: 2px;
-}
+/* ⚠️ 授权自动生成开关的样式已迁到 `styles/main.css` 的**共享段**（2026-11-23 UI 迭代 §11）：
+   本能力有三个开关落点（此处 / PC 设置弹窗 / composer 工具行胶囊的锚定浮层），
+   必须同一实现（同一轨道尺寸、同一 ON 颜色、同一 a11y 语义）⇒ 单一来源，禁在此处复制。
+   ON 色由 --lnk-accent 改为 --lnk-warning（琥珀）：本能力是「agent 正在替你行动」的注意态。 */
 
 /* 退出登录：唯一居中文本（用户裁决），其余行全部左对齐 */
 /* 设置二级卡片：缩进 + 弱化分隔，视觉上从属于「设置」 */
