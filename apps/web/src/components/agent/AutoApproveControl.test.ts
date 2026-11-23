@@ -3,13 +3,13 @@ import { mount } from '@vue/test-utils'
 import AutoApproveControl from './AutoApproveControl.vue'
 
 /**
- * 授权自动生成 · composer 入口（规格 2026-11-22-generation-auto-approve-gate-design §11 / §12）。
+ * 授权自动生成 · composer 入口（规格 2026-11-22-generation-auto-approve-gate-design §11 / §12 / §13）。
  *
  * 契约（用户拍板）：
- * 1. 胶囊 = 图形 + **`[auto]` 短标记** + 箭头（PC）；**胶囊上不出现中文长文案**，
+ * 1. 胶囊 = 图形 + **`Auto` 短标记** + 箭头（PC）；**胶囊上不出现中文长文案**，
  *    「自动生成 / 每次先问」下沉到浮层卡片（`AutoApprovePanel`）说明；
- * 2. 开启态 = 实心图形 + `[auto]` + 琥珀柔底，**无描边**（§12 Q1）；
- * 3. 关闭态 = 线框图形、**零文字**；
+ * 2. 开启态 = 实心图形 + `Auto` 琥珀字，**既无描边也无柔底**（§12 Q1 去描边、§13 Q1 去柔底）；
+ * 3. 关闭态 = 线框图形、**零文字**、无底无框；
  * 4. 点击**开浮层**（不是直接收回）——双向操作都在浮层里的开关上；
  * 5. 浮层承载**作用域说明**（图片与音频免确认 / 视频仍逐次确认）+ 一个 `role=switch` 开关；
  * 6. **移动端与 PC 同一枚胶囊**（§12，取代 §11 的 icon-only 分支）+ 底部 Sheet（同一份面板）；
@@ -61,7 +61,7 @@ describe('AutoApproveControl — composer 入口', () => {
     w.unmount()
   })
 
-  it('PC 已授权：胶囊 is-on + 实心图形 + `[auto]` 短标记（无中文长文案）', () => {
+  it('PC 已授权：胶囊 is-on + 实心图形 + `Auto` 短标记（无中文长文案）', () => {
     h.authorized = true
     const w = mountControl()
     const chip = w.find('[data-testid="auto-approve-chip"]')
@@ -69,7 +69,7 @@ describe('AutoApproveControl — composer 入口', () => {
     expect(w.find('svg.auto-approve-glyph').classes()).toContain('is-on')
     const auto = w.find('[data-testid="auto-approve-chip-auto"]')
     expect(auto.exists()).toBe(true)
-    expect(auto.text()).toBe('[auto]')
+    expect(auto.text()).toBe('Auto')
     // 长文案不得回到胶囊上
     expect(chip.text()).not.toContain('自动生成')
     w.unmount()
@@ -124,11 +124,11 @@ describe('AutoApproveControl — composer 入口', () => {
     w.unmount()
   })
 
-  it('移动端已授权：同一枚胶囊显示 `[auto]`，仍无中文长文案', () => {
+  it('移动端已授权：同一枚胶囊显示 `Auto`，仍无中文长文案', () => {
     h.authorized = true
     const w = mountControl({ desktop: false })
     const chip = w.find('[data-testid="auto-approve-chip"]')
-    expect(chip.find('[data-testid="auto-approve-chip-auto"]').text()).toBe('[auto]')
+    expect(chip.find('[data-testid="auto-approve-chip-auto"]').text()).toBe('Auto')
     expect(chip.text()).not.toContain('自动生成')
     w.unmount()
   })

@@ -4695,13 +4695,15 @@ defineExpose({
                   </template>
                 </MobileSheet>
 
-                <!-- 授权自动生成 · composer 入口（2026-11-23 UI 迭代 §11 / §12：状态胶囊 + 锚定浮层）。
+                <!-- 授权自动生成 · composer 入口（2026-11-23 UI 迭代 §11 / §12 / §13：状态胶囊 + 锚定浮层）。
                      ⭐ 落点纪律「状态属于对象」：它描述的是 agent 的行为模式（我把控制权交出去了），
                      故挂在 composer 自身的工具行，紧邻发送键 = 「按下去会发生什么」的语义邻位。
-                     · PC = 状态胶囊（图形 + `[auto]` 标记 + 箭头）：开启态琥珀高亮、**无描边**；
-                       说明与开关收进锚定浮层 ⇒ 文案不常驻屏幕。
-                     · 移动 = **与 PC 同一枚胶囊**（§12：实测 430/390/360px 放得下；320px 由
-                       模型 chip 截断让位），仅**不带箭头**（移动开底部 Sheet，箭头语义相反）。
+                     · PC = 状态胶囊（图形 + `Auto` 标记 + 箭头）：开启态琥珀字 + 实心盾，
+                       **无描边无柔底**（§12 去描边 / §13 去柔底）；说明与开关收进锚定浮层
+                       ⇒ 文案不常驻屏幕。
+                     · 移动 = **与 PC 同一枚胶囊**（§12：实测 430/390/360/320px 均放得下），
+                       仅**不带箭头**（移动开底部 Sheet，箭头语义相反）；**空闲态隐藏**
+                       （§13：裸条只留 ＋ + 提示时，入口是唯一还杵着的功能项 ⇒ 与裸条纪律不一致）。
                      · 不占输入区、不做通栏卡片（那是被投诉的旧形态）；胶囊上不出现中文长文案
                        （「自动生成」/「每次先问」下沉到浮层卡片说明）。
                      · 授权态读写全在 `AutoApproveControl` 内（服务端 SSOT，判定在服务端）。 -->
@@ -5002,12 +5004,13 @@ defineExpose({
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- 授权自动生成 · composer 入口的**位置**（2026-11-23 UI 迭代 §11 / §12）----
+/* ---- 授权自动生成 · composer 入口的**位置**（2026-11-23 UI 迭代 §11 / §12 / §13）----
  * 外观全在 `AutoApproveControl.vue` 内（胶囊 / 浮层），此处只保留「排在哪」
  * ——composer 工具行内、模型 chip 之后、发送键之前。
  * 移动端裸条摊平（display:contents）⇒ 需显式 order 排到模型 chip 之后、发送键之前。
- * 同 order 按 DOM 顺序：params(2) → control(2) → primary(3)；空闲态 params/primary 隐藏时
- * control 仍在（hint order:2 且 DOM 更早 ⇒ control 落在最右）。
+ * 同 order 按 DOM 顺序：params(2) → control(2) → primary(3)。
+ * §13：空闲态（is-idle）胶囊**也隐藏**（裸条纪律一致，见下方 is-idle 规则），
+ *      故不再有「空闲态 control 仍在、落在最右」的情形。
  * ⚠️ 选择器命中的是子组件的**根元素**（Vue scoped 规则对子组件根节点生效）。 */
 .agent-panel-mobile-dock .composer-bare-bar .auto-approve-control {
   order: 2;
@@ -6173,10 +6176,17 @@ defineExpose({
   display: none;
 }
 
-/* 空闲态：条内只留 ＋ + 提示（P1-5.3：不常驻模型/发送/独立 mic） */
+/* 空闲态：条内只留 ＋ + 提示（P1-5.3：不常驻模型/发送/独立 mic）
+ * §13：auto-approve 胶囊同此纪律 —— 空闲态（未点按展开、无引用芯片、无技能）
+ * 裸条上只有「＋ + 提示语」，入口是**唯一还杵着的功能项**（模型 chip/发送键
+ * 都被隐藏了）⇒ 与裸条三件套纪律不一致、视觉突兀。
+ * 用户裁定（2026-11-23）：「移动端 composer 三态下不需要三态都可见，
+ * 盾牌图标及 auto 入口，仅输入态可见入口即可」⇒ idle 态一并隐藏。
+ * ⭐ 只影响移动端裸条（`.agent-panel-mobile-dock` 作用域），PC 端不受影响。 */
 .agent-panel-mobile-dock .composer-bare-bar.is-idle .agent-composer__input-wrap,
 .agent-panel-mobile-dock .composer-bare-bar.is-idle .agent-dock-params,
-.agent-panel-mobile-dock .composer-bare-bar.is-idle .agent-dock-primary {
+.agent-panel-mobile-dock .composer-bare-bar.is-idle .agent-dock-primary,
+.agent-panel-mobile-dock .composer-bare-bar.is-idle .auto-approve-control {
   display: none;
 }
 

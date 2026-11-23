@@ -7,8 +7,8 @@
 //   ① 通栏文字徽标不得复活；
 //   ② 旧的「单击即收回」icon-only 按钮不得复活（收回必须走浮层开关，双向同处）；
 //   ③ 入口位置 = composer 工具行，模型 chip 之后、发送键之前；
-//   ④ 胶囊外观：关闭态弱化（无底色）、开启态琥珀高亮、零新令牌；
-//   ⑤ 移动端走 icon-only + Sheet（裸条三件套纪律）；
+//   ④ 胶囊外观：关闭态弱化（无底色）、开启态琥珀高亮、**无描边无柔底**、零新令牌；
+//   ⑤ 移动端走**同一枚胶囊** + Sheet（裸条三件套纪律），**空闲态隐藏**；
 //   ⑥ 提议卡与胶囊用**同一枚图形**（跨位置可识别性）；
 //   ⑦ 面板说明必须写清作用域（图片与音频 / 视频仍逐次确认）；
 //   ⑧ 触感开关**单一来源**（全局共享段），三个落点不得各自复制。
@@ -70,17 +70,25 @@ describe('授权自动生成 · 对话页落点（状态胶囊 + 锚定浮层守
     expect(at).toBeLessThan(primaryAt)
   })
 
-  it('④ 胶囊关闭态弱化（无底色无边框），开启态琥珀高亮且**无描边**（§12）', () => {
+  it('④ 胶囊关闭态弱化（无底色无边框），开启态琥珀高亮且**无描边无柔底**（§12 / §13）', () => {
     const base = rule(control, '.auto-approve-chip {')
     expect(base).toContain('background: transparent')
     expect(base).toContain('border: 0.5px solid transparent')
     expect(base).not.toContain('var(--lnk-warning-bg)')
     const on = rule(control, '.auto-approve-chip.is-on')
     expect(on).toContain('color: var(--lnk-warning)')
-    expect(on).toContain('background: var(--lnk-warning-bg)')
-    // §12 Q1：描边是「按钮」语义，柔底才是「状态」语义 ⇒ 开启态不得再描边
+    // §12 Q1：描边是「按钮」语义 ⇒ 开启态不得再描边
     expect(on).not.toContain('border-color')
     expect(on).not.toContain('var(--lnk-warning-border)')
+    // §13 Q1：用户指认「背景边框仍未去掉」——生产实测证实描边已透明，
+    //    剩下的是琥珀柔底圆角块（bg=rgba(138,82,0,0.1)）⇒ 开启态也不铺底。
+    //    ⚠️ 断言要落到**规则体**（真的没有柔底），不能只查 `--lnk-warning-bg`
+    //    是否出现在别的规则里。
+    expect(on).toContain('background: transparent')
+    expect(on).not.toContain('var(--lnk-warning-bg)')
+    // hover 也回到中性面（不得再铺琥珀块）
+    const onHover = rule(control, '.auto-approve-chip.is-on:hover')
+    expect(onHover).not.toContain('var(--lnk-warning-bg-hover)')
   })
 
   it('④ 零新令牌：只用既有 --lnk-* 三件套（禁 --neo-* 前缀与裸色值）', () => {
@@ -125,9 +133,11 @@ describe('授权自动生成 · 对话页落点（状态胶囊 + 锚定浮层守
     const chipInner = control.slice(btnAt, btnEnd)
     expect(chipInner).not.toContain('自动生成')
     expect(chipInner).not.toContain('每次先问')
-    // 开启态只留 `[auto]` 短标记（mono 语义标记）
+    // 开启态只留 `Auto` 短标记（§13：去掉方括号，首字母大写）
     expect(chipInner).toContain('data-testid="auto-approve-chip-auto"')
-    expect(chipInner).toContain('[auto]')
+    expect(chipInner).toContain('>Auto</span>')
+    // 方括号标记已废除（§13 用户裁定：「去掉[]，仅保留 Auto」）
+    expect(chipInner).not.toContain('[auto]')
     // 两个表述必须在浮层卡片里（AutoApprovePanel）说明
     expect(panel).toContain('自动生成')
     // ⚠️ 「每次先问」在面板里出现**两次**（说明段 + 括注）⇒ 变异必须全量替换，
@@ -138,12 +148,38 @@ describe('授权自动生成 · 对话页落点（状态胶囊 + 锚定浮层守
     expect(control).toContain('已开启，agent 生成图片与音频时不再逐次确认')
   })
 
-  it('§12-2 `[auto]` 标记走既有 mono 令牌，零新令牌', () => {
+  it('§12-2 `Auto` 标记走既有 mono 令牌，零新令牌', () => {
     const auto = rule(control, '.auto-approve-chip-auto {')
     expect(auto).toContain('var(--lnk-font-mono)')
     expect(auto).not.toContain('--neo-')
     expect(auto).not.toMatch(/#[0-9a-fA-F]{3,8}/)
     expect(auto).not.toMatch(/rgba?\(/)
+  })
+
+  it('§13-1 移动端**空闲态隐藏**胶囊（裸条纪律一致：只留 ＋ + 提示）', () => {
+    // idle 态（is-idle）时裸条只剩「＋ + 提示语」，模型 chip / 发送键 / 输入行全隐藏
+    // ⇒ 入口是唯一还杵着的功能项（用户裁定：仅输入态可见入口即可）。
+    // ⚠️ `rule()` 只截取 `{...}` 规则体（选择器列表在体之外）⇒
+    //    断言分两步：① 选择器列表里**确实列出了**胶囊（正向，防假绿）；
+    //    ② 规则体里**确实**是 `display: none`。
+    expect(rail).toContain(
+      '.agent-panel-mobile-dock .composer-bare-bar.is-idle .agent-composer__input-wrap,\n' +
+      '.agent-panel-mobile-dock .composer-bare-bar.is-idle .agent-dock-params,\n' +
+      '.agent-panel-mobile-dock .composer-bare-bar.is-idle .agent-dock-primary,\n' +
+      '.agent-panel-mobile-dock .composer-bare-bar.is-idle .auto-approve-control {',
+    )
+    const idleRule = rule(rail, '.agent-panel-mobile-dock .composer-bare-bar.is-idle .agent-composer__input-wrap,')
+    expect(idleRule).toContain('display: none')
+    // 只影响移动端裸条作用域，PC 端不受影响。
+    // ⚠️ 判据只能看**作用域前缀**：移动端规则的选择器列表跨 4 行且每行都带
+    //    `.agent-panel-mobile-dock` 前缀 ⇒ 用「前一行不得是 .auto-approve-control」
+    //    来判 PC 侧未被误挂（正则跨行匹配会把自己也吃掉 ⇒ 上一版误伤）。
+    const idleLines = rail.split('\n')
+    const idx = idleLines.findIndex((l) => l.includes('.is-idle .auto-approve-control'))
+    expect(idx).toBeGreaterThan(-1)
+    // 命中行及其**上一行**都必须带移动端作用域前缀
+    expect(idleLines[idx]).toContain('.agent-panel-mobile-dock')
+    expect(idleLines[idx - 1]).toContain('.agent-panel-mobile-dock')
   })
 
   it('§12-3 移动端胶囊**不带箭头**（移动开底部 Sheet，箭头语义相反）', () => {
