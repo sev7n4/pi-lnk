@@ -329,3 +329,37 @@ PR #985 → CI **3/3 绿**（web 全量 **557 文件 / 4627 用例全绿**，28m
 
 **验证**：定向 **32/32**；`vue-tsc -b` 0 错；门禁 **11/11**；**变异 7 例全转红**（去掉 chip v-if／去掉 is-collapsed 的 display:none／父级不传 collapsed／加回 CSS 隐藏规则／去掉忽略判据／capture 改冒泡／去掉形态复位），还原后 29/29 全绿。
 ⚠️ **M6 值得记**：capture 改冒泡时**行为测试仍绿**（VTU 里事件照样冒泡到 document）⇒ 只有源码契约守卫转红 —— 这正是「源码契约守结构、行为测试守语义」的分工价值。
+
+### 上线与生产复测（2026-11-24，UI 迭代五）
+
+**上线链路（两轮 squash）**：
+
+| 轮次 | PR | 内容 | CI | master | 部署 |
+|---|---|---|---|---|---|
+| 一 | #992 | §14 三道防线 | 3/3 绿 | `c40e78fb`（合并树 == CI 验证 head 树） | success |
+| 二 | #993 | 守卫收窄到移动端 + 意图时间窗（修可访问性回归） | 全绿 | `0aec91b6`（合并树 == CI 验证树） | success |
+
+> **数字补记**：上文「验证」段落的 **定向 32/32、变异 7 例** 是 **PR #992 第一轮**的数字。PR #993 修完可访问性回归后，最终为 **定向 34/34**（`AutoApproveControl` 14 + 落点守卫 17 + `AutoApproveGlyph` 3）、**变异 10 例全部转红**（新增 M8 守卫在 PC 端也生效 / M9 去掉意图时间窗），还原后 31/31 全绿。详见规格 §14.6。
+
+**产物取证（生产 chunk）**：旧 CSS 规则 `.is-idle .auto-approve-control` **0 次** ✅；`.auto-approve-control.is-collapsed{display:none}` **在** ✅；守卫逻辑逐字在 `function c(){const b=d>0&&Date.now()-d<rQ;!n.desktop&&b&&!u||(a.value=!a.value)}` ⇒ **意图时间窗 + PC 限定 + 落点判定**三条齐全 ✅。
+
+**生产探针 37/37 PASS**（§14 前后对照 + §12/§13 既有判据全绿）：
+
+| 判据 | 修复前（生产旧版） | 修复后 |
+|---|---|---|
+| M4a 收缩态入口本体不渲染（DOM 级） | `chipExists: true` ❌ | `chipExists: false` ✅ |
+| M4a0 根容器常驻但不占位 | — | `controlRootExists: true` + `display: none` ✅ |
+| M4c 指针落在别处 ⇒ 落在 chip 上的 click 被忽略 | `sheetExists: true` ❌（**卡片确实弹出来了**） | `sheetExists: false` ✅ |
+| M5 指针落在 chip 内 ⇒ 底部 Sheet 展开 | ✅ | `sheetExists: true` ✅（功能未被误伤） |
+| M4b 移动端输入态入口可见 | — | `text: "Auto"`、`60×26`、`visible: true` ✅ |
+| M4 / M4b2 同一枚胶囊 / 无箭头 | — | `isMobile: true`、`hasCaret: false` ✅ |
+
+PC 段（P2 / P2b / **P2x** / P3 / P3b / P4 系列 / P5 系列 / P7 系列）全绿 ⇒ **PC 侧零回归**。
+
+**本轮探针修掉的 3 个坑（与产品缺陷无关，但决定了判据可信度）**：
+
+1. **K1 · token 失效 401 ⇒ 整轮中断**：`localStorage` 有 token ≠ 服务端认；app 的 `isLoggedIn = token && user`（user 在内存）⇒ 登录表单不出现 ⇒ 旧 `login()` 判「已登录」⇒ 带着过期 token 打 `POST /api/sessions` ⇒ 401。**修法**：鉴权判据改用**服务端**事实（`/api/provider/bootstrap` 的 HTTP 码），401 ⇒ 清 token + reload + 重登；建会话再遇 401 ⇒ 再自愈一次重试。
+2. **K2 · 冷启动固定 sleep ⇒ 8 个假失败**：PC 设置页三跳（设置页 → 模型配置对话框 → 「生成偏好」Tab → 开关）中对话框**异步拉渠道/模型**且 `el-tab-pane` 带 `lazy` ⇒ 切 tab 后才渲染；固定 `sleep(1500)+sleep(900)` 在冷缓存下不够 ⇒ 开关 `null` ⇒ P2/P3 连败并连锁带崩 P4/P4f2/P5b/P5c。**修法**：一律**等元素出现**（`waitFor`）而非等固定时长；偏好写操作同理（`waitPref` 等服务端落到期望值）；新增 **P2x** 把「三跳可达性」本身变成判据。
+3. **K3 · 诊断脚本用错域名**：诊断输出 `h1: "This page doesn't exist"`（Vercel 404 页）⇒ 一度误判「PC 设置页入口不存在」。生产入口是 **`http://119.29.173.89:8888`**（nginx→5100）。聚焦诊断（`diag-pc-settings.mjs`）走真实域名后确认：设置页入口 ✅、对话框 ✅、4 个 Tab ✅、「生成偏好」✅、开关 `checked=false` ✅ ⇒ **产品侧完全正常，那 8 个 FAIL 纯属探针假失败**。
+
+**剩余诚实边界**：真机真实触摸路径仍未直接复现（等价场景已复现并完成前后对照）；防线 B 固有边界（pointerdown 落点与 chip 不一致且在 500ms 窗内时需再点一次）仍在；堆叠态/生成中未逐态实测；真机软键盘动画 / OEM 合成事件变体 / 横竖屏 / 弱网延迟未覆盖；本刀零服务端改动。
