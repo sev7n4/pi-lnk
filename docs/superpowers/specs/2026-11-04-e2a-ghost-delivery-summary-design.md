@@ -23,13 +23,13 @@
 **做**：
 - `AgentTurnTimeline.vue` 回合尾部幽灵摘要行（收起/展开两态）+ 展开横向缩略图条。
 - 纯函数 `turnDeliveryItems(timeline)`：派生清单（无副作用、重放一致）。
-- viewer 直开路由：移动端 inject `MOBILE_NODE_OPEN_VIEWER_KEY`（CanvasPage 已 provide，:2895）；桌面端降级为 focus_node 定位（现状语义）。
+- viewer 直开路由：两端都 inject `MOBILE_NODE_OPEN_VIEWER_KEY`（CanvasPage 无条件 provide）；移动端由 `MobileCanvasShell` 承接，桌面端由 `CanvasPage` 直接挂载共享 `NodeViewerView` 承接（2026-11-23 修订，见 §9.3）；节点已删 / 类型不可查看才降级 focus_node 定位。
 - 四指标埋点（曝光/展开/viewer 打开/定位），服务端小端点（原 E2 Task 5 保留，E2-b 准入判据数据源）。
 
 **不做（本包明确排除）**：
 - 不做逐产物交付卡 / 媒体竖卡 / 卡内联播（原 E2 v1 内容，归 E2-b）。
 - 不做 timeout / fallback_pending 子态表达、roundKey 补拍、常驻订阅（归 E2-b，§9 准入）。
-- 不做桌面端全屏 viewer（桌面现状无 viewer，`MobileCanvasShell` `v-if="isMobileLayout"`——桌面「查看」维持 focus_node 定位；桌面统一 viewer 登记 §9 P2 项）。
+- 不做**桌面专用 viewer 组件 / 第二套渲染实现**（桌面复用设备无关的共享 `NodeViewerView`，只做挂载接线；原「桌面不进 viewer」裁决已于 2026-11-23 作废，见 §9.3）。
 - 不新增 part kind / 不改 `NodeStatusData` / 不碰 `canvasData` PUT。
 - running / failed / proposal 卡现状保留不动（失败即时可见是渐进披露的唯一例外）。
 
@@ -39,7 +39,7 @@
 
 **D-b 计数与显隐判据**：幽灵行 N = items 长度；N=0 整行不渲染（含 failed——failed 不计入，保留既有行内重试卡）；N>9 显示 9+；回合进行中（存在 running artifact）幽灵行**不渲染**（生成中的可见性由既有 running 行内卡承担）。
 
-**D-c viewer 直开路由判据**：tile tap → 按 nodeId 从 canvas store 解析节点本体，经 `inject(MOBILE_NODE_OPEN_VIEWER_KEY)` 传 `{ id, type, data }`（与 `NodeRenderer.vue:72` 同款契约，type 映射 image/video/audio/text；路由见图 1）；节点缺失（已删）→ tile 降级类型图标且 tap 无 viewer（可定位则定位）；**桌面端 tap 走 focus_node 定位**（emit 既有 `focusNode`，与查看按钮同路由）。文本节点 tap 直开阅读器（不复制画布上 MobileNodeTile 的长文 TTS 分流——对话流语义=阅读）。
+**D-c viewer 直开路由判据**：tile tap → 按 nodeId 从 canvas store 解析节点本体，经 `inject(MOBILE_NODE_OPEN_VIEWER_KEY)` 传 `{ id, type, data }`（与 `NodeRenderer.vue:72` 同款契约，type 映射 image/video/audio/text；路由见图 1）；节点缺失（已删）或类型不可查看 → 降级 focus_node 定位（emit 既有 `focusNode`，与定位角标同路由）。**桌面端同样直开 viewer**：`CanvasPage` 以 `v-if="!isMobileLayout && mobileViewerNode"` 挂载共享 `NodeViewerView`，四类节点与移动端同构；定位角标始终走 focus_node（ viewer 与定位两条路由互不吞并）。文本节点 tap 直开阅读器（不复制画布上 MobileNodeTile 的长文 TTS 分流——对话流语义=阅读）。
 
 **D-d 展开清单排列判据（2026-11-22 v2 媒体卡修订）**：横向滑动媒体卡条，96px 卡 = 媒体区 64px 高 + 名称行（11px `--lnk-text-primary`，单行截断 + `title` 悬停全文；圆角 `--lnk-radius-md`——旧版误用 `--lnk-control-sm`=32px 致正圆，见 §9.2）；媒体自明——image=内容铺满 / video=首帧+**恒显 ▶**（22px 圆 `--lnk-hi-bg`，不依赖时长元数据）/ audio=波形 / text=文档 / html=代码 / digest=网格，**左下类型小字退役**，类型移入 `aria-label` + `title`（读屏/悬停可及）；video 右下时长徽标（节点实况，缺省隐藏）；定位 = 20px 圆形角标贴卡右上，透明外扩凑满 44px 命中区（`AgentSideRail` mic 先例）。
 
@@ -56,15 +56,15 @@ flowchart LR
     G -->|"N≥1 且回合收束"| L["幽灵行（收起）"]
     L -->|"tap 展开"| T["横向缩略图条"]
     T -->|"tile tap · 移动端"| V["inject openViewer → MobileNodeViewer"]
-    T -->|"tile tap · 桌面端"| F["emit focusNode → 画布定位"]
-    T -->|"角标 tap"| F
+    T -->|"tile tap · 桌面端"| V2["inject openViewer → 共享 NodeViewerView（CanvasPage 桌面分支）"]
+    T -->|"角标 tap / 节点已删"| F["emit focusNode → 画布定位"]
 ```
 
 *图 1 · 清单与计数均为渲染期派生：artifact part 只提供 nodeId/nodeType/状态，产物本体（url/封面/时长/文本内容）按 nodeId 从 canvas store 解析——与 viewer 版本正确性同源。*
 
 要点：
 - **幽灵行渲染在回合尾部**（AgentTurnTimeline 全部 parts 之后，简报 text part 之下），不新增 part kind、不落 executionEvents、不参与持久化——比原 E2 的 `delivery_group` 虚拟 part 更轻（连虚拟 part 都不需要）。
-- **viewer 打开入口已存在**：`CanvasPage.vue:2895` 无条件 `provide(MOBILE_NODE_OPEN_VIEWER_KEY)`，对话面板（AgentSideRail→AgentTurnTimeline）在其 provide 树内（`CanvasPage.vue:6377`），inject 直达；DevTimelinePreviewPage 无此 provide ⇒ inject 默认值降级为定位，预览页不受阻。
+- **viewer 打开入口已存在**：`CanvasPage.vue` 无条件 `provide(MOBILE_NODE_OPEN_VIEWER_KEY)`，对话面板（AgentSideRail→AgentTurnTimeline）在其 provide 树内，inject 直达；**桌面端 inject 同样命中**（这就是 2026-11-23 静默 no-op 的前提，不再是「桌面 inject 缺省」）；DevTimelinePreviewPage 无此 provide ⇒ inject 默认值降级为定位，预览页不受阻。
 - **回合态判定**：复用本回合 parts 内 running artifact 存在性（既有状态，无需新事件）。
 
 ## 5. 场景验收
@@ -74,7 +74,7 @@ flowchart LR
 3. **混合类型**：图+视频+音频+文本同回合 → tile 分别为缩略图/首帧+时长/波形/文档图标；文本 tap 开阅读器。
 4. **回合外补拍**：backfill 回填晚到 done → N 反应式更新（收起态计数变、展开态清单增长），无需任何新事件。
 5. **失败不进清单**：failed 产物不计 N、不出 tile，行内重试卡照旧。
-6. **桌面**：tile tap 与定位角标都走画布定位（无 viewer，现状语义）。
+6. **桌面**：tile tap 打开共享 `NodeViewerView`（文本/图/音/视频同源阅读面，右上 X 退出）；定位角标仍走画布定位；节点已删时 tile tap 走定位并显示既有提示。
 
 ## 6. 埋点（E2-b 准入判据数据源）
 
@@ -99,7 +99,7 @@ flowchart LR
 原 `2026-11-02-delivery-card-v1-design.md` 拆分：
 - **E2-a（本包，先做）**：零后端增量，即时交付「可发现 + 可直达」。
 - **E2-b（原 v1 剩余：v2 元数据、补拍、常驻订阅、单调守卫、媒体竖卡、组卡、timeout/fallback 子态）**：**准入判据 = E2-a 埋点数据**——expand 率与 viewer_open 率证明「卡内轻消费 / 富卡」有真实需求，且 timeout「裸生成中」投诉出现时，子态表达随包先行。原规格 §5.3 修正（前端无既有单调守卫）与 §5.5 常驻订阅设计**原样有效**，E2-b 实施时仍须先落守卫。
-- **P2 项登记**：桌面端统一 viewer（复用/抽离 MobileNodeViewer 或新轻 lightbox）。
+- **P2 项（桌面端统一 viewer）**：2026-11-23 闭环——复用 `presentation/NodeViewerView`（设备无关、零 isMobileLayout），`CanvasPage` 桌面分支直接挂载，零新查看器组件；原登记项作废。
 
 ## 9.1 真机修复记录（2026-11-05，PR 后第一轮实测三缺陷）
 
@@ -117,6 +117,18 @@ flowchart LR
 4. **rule-of-three 备注**：▶ 为全仓第 3 处内联 glyph（AgentCanvasOutputs / AgentAssetPicker / 本次），暂不抽共享组件；出现第 4 处消费再收敛。
 
 等价物检索结论（第一原则）：名称=`DeliveryItem.title`（零新字段）；类型文案=`deliveryTypeLabel`（转 aria 用途）；时长=`deliveryDurationLabel`；缩略=`deliveryThumbOf`；首帧=`video#t=0.1` 既有形态；▶=`AgentCanvasOutputs` 同款内联 glyph 形态；音频播放器=MobileNodeViewer+MobileNodeWaveform+useNodeWaveform+audioPlayback（不进交付条）。**零新组件、零新字段、零新令牌**。
+
+## 9.3 桌面 tile 静默 no-op 根治（2026-11-23）
+
+**现象**：PC 对话页「查看本轮产物」展开后，点【短剧剧本】等文本 tile 无任何反应；移动端同类节点可开 viewer。
+
+**根因（规范-实现漂移，非偶发）**：本规格原 §2/§5 裁决「桌面降级 focus_node 定位」，前提是「桌面 inject 缺省」；但 §4 同时记录了 `CanvasPage` **无条件** provide `MOBILE_NODE_OPEN_VIEWER_KEY`，且对话面板就在 provide 树内 ⇒ 桌面 inject 必命中，走 `deliveryViewer(node)` 把状态写进 `mobileViewerNode`，而唯一消费者 `MobileCanvasShell` 被 `v-if="isMobileLayout"` 挡住 ⇒ PC 上没有任何组件渲染该状态，`focusNode` 降级分支也永远进不去，形成静默 no-op。测试 `AgentTurnTimeline.deliverySummary.test.ts` 用「不 provide」模拟桌面，因此全绿却覆盖不到真实 PC 路径（伪绿）。
+
+**修复（接线，零新造）**：`CanvasPage` 在桌面分支挂载 `v-if="!isMobileLayout && mobileViewerNode"` 的共享 `NodeViewerView`（`presentation/`，设备无关、已 Teleport 到 body），`@close` 复用 `closeMobileViewer`。四类节点与移动端同一份阅读面；节点已删 / 类型不可查看仍走原 focus_node 定位兜底；定位角标语义不变。
+
+**判据**：`CanvasPage.pcDeliveryViewer.test.ts` 锁死「import 共享 view + `!isMobileLayout` 门控 + `:type`/`:data` 透传 + close 回写 + provider 无条件存在」；变异（门控反转）实测转红。既有 `AgentTurnTimeline.deliverySummary.test.ts`（23）、`NodeViewerView.test.ts`（6）、`MobileNodeViewer.test.ts`（87）全绿，`vue-tsc -b` 0 错误。
+
+**等价物检索结论（第一原则）**：PC 已有 `MediaPreviewOverlay` 只覆盖 image/video（且经 store `previewTarget`，与对话 tile 的 nodeId 数据面不同源），不覆盖文本；`NodeViewerView.vue` 头部明确「供 PC 查看器复用」⇒ 直接接线共享 view，零新组件 / 零新字段 / 零新令牌。
 
 ## 10. 配图规范自检
 

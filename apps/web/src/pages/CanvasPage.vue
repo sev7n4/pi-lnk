@@ -73,6 +73,7 @@ import RefineCanvasBack from '@/components/canvas/RefineCanvasBack.vue'
 import MembershipModal from '@/components/membership/MembershipModal.vue'
 import type { MobileAppTab } from '@/components/mobile/MobileTabBar.vue'
 import MobileCanvasShell from '@/components/mobile/MobileCanvasShell.vue'
+import NodeViewerView from '@/components/agent/presentation/NodeViewerView.vue'
 import MobileUndoToast from '@/components/mobile/MobileUndoToast.vue'
 import type { MobileShellAgentActions, MobileShellBatchActions } from '@/components/mobile/MobileCanvasShell.vue'
 import ConversationShareSheet from '@/components/agent/ConversationShareSheet.vue'
@@ -6679,6 +6680,17 @@ onUnmounted(() => {
       :node-generating-count="mobileNodeTaskSummary.generatingCount"
       :node-pending-nodes="mobileNodeTaskSummary.pendingNodes"
       :node-generating-elapsed="mobileNodeTaskElapsed"
+    />
+
+    <!-- PC 产物查看器（2026-11-23）：对话页 tile 经 MOBILE_NODE_OPEN_VIEWER_KEY 注入
+         命中后只写 mobileViewerNode；原唯一消费者 MobileCanvasShell 被 isMobileLayout
+         挡住 ⇒ PC 点击静默 no-op。这里补桌面消费者，复用设备无关的共享 NodeViewerView
+         （移动端薄壳同源），四类节点得到同一份文本/图/音/视频阅读面，零新造查看器。 -->
+    <NodeViewerView
+      v-if="!isMobileLayout && mobileViewerNode"
+      :type="mobileViewerNode.type"
+      :data="mobileViewerNode.data"
+      @close="closeMobileViewer"
     />
 
     <MembershipModal v-model="showMembership" />
