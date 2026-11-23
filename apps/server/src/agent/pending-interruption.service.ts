@@ -264,23 +264,4 @@ export class PendingInterruptionService implements OnModuleInit {
     if (!gate) return true
     return gate.status === 'pending' && gate.expiresAt > nowMs
   }
-
-  /** 历史重放批量门控：返回「终态或已过期」的 callId 集合。 */
-  async getTerminalCallIds(callIds: string[], nowMs = Date.now()): Promise<Set<string>> {
-    const terminal = new Set<string>()
-    if (!callIds.length) return terminal
-    try {
-      const rows = (await this.prisma.pendingInterruption.findMany({
-        where: { callId: { in: [...new Set(callIds)] } },
-      })) as GateRow[]
-      for (const row of rows) {
-        if (row.status !== 'pending' || new Date(row.expiresAt).getTime() <= nowMs) {
-          terminal.add(row.callId)
-        }
-      }
-    } catch (err) {
-      this.logger.warn(`pending_interruption_batch_gate_failed: ${errMessage(err)}`)
-    }
-    return terminal
-  }
 }

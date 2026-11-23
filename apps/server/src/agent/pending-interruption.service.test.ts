@@ -225,7 +225,6 @@ describe('P2 待确认门 durable · service 层', () => {
     expect(await svc.isGateLive('c', NOW + 6_000)).toBe(false)
     await svc.settleGate({ threadId: 't', callId: 'c', status: 'answered' })
     expect(await svc.isGateLive('c', NOW)).toBe(false)
-    expect(await svc.getTerminalCallIds(['c', 'unknown'], NOW)).toEqual(new Set(['c']))
   })
 
   it('handler 注册到统一调度器（不新起 timer）', () => {

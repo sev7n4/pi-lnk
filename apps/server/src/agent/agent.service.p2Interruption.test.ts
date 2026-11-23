@@ -3,14 +3,16 @@
  * spec: docs/superpowers/plans/2026-11-11-sse-p2-durable-interruption.md §4
  *
  * T4 late answer 不复活门（终态 ⇒ 不注入 runtime、不改表）
- * T6 一致性：终态门 SSE 不下发活卡片 + 历史重放剔除终态卡
+ * T6 一致性：终态门 SSE 不下发活卡片 + 历史重放**保留**终态卡事件（重放自洽）
  * T7 阴性/回归：未装配 P2 service ⇒ 旧行为逐字节不变；老会话零门记录直通
  * T8 state API：pending 摘要 / 无门 null
  *
  * 变异自检：
  *  M4 去掉 canvas_command 分支 `if (!live) continue` → T6 SSE RED
  *  M5 去掉 adjudicateLateAnswer 前置表判定 → T4 RED
- *  M6 去掉 suppressTerminalGateCards 的过滤 → T6 历史 RED
+ *  M6 重新引入终态卡剔除（suppressTerminalGateCards 旧路径）→ T6 历史 RED
+ *     （2026-11-23 ask-card-cross-message 规格 §4-B：剔除曾制造「answered 后
+ *     重放无卡 → W1c 安全网补建 → 双消息并存活卡无人翻牌」的双卡温床，已删）
  */
 import 'reflect-metadata'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -277,7 +279,7 @@ describe('P2 待确认门 durable · AgentService 接线层', () => {
     expect(state.pendingInterruption).toBeNull()
   })
 
-  it('T6: 历史重放剔除终态门卡片；老行（无门记录）直通不改', async () => {
+  it('T6: 历史重放保留终态门卡片（重放自洽：resolved 翻牌 + W1c 兜底）；老行（无门记录）直通不改', async () => {
     await p2.openGate({ threadId: 'thread-A', callId: 'call-1', expiresAt: NOW + 60_000, startedAt: NOW })
     await p2.settleGate({ threadId: 'thread-A', callId: 'call-1', status: 'answered' })
     const card = (callId: string) => ({
@@ -309,7 +311,13 @@ describe('P2 待确认门 durable · AgentService 接线层', () => {
     const newRow = page.find((r) => r.id === 'm2')!
     const oldRow = page.find((r) => r.id === 'm1')!
     const newEvents = JSON.parse(newRow.metadata).executionEvents as Array<{ type: string }>
-    expect(newEvents.some((e) => e.type === 'canvas_command')).toBe(false) // M6 变异点
+    // 终态卡事件保留：历史重放可重建确认卡，由 waiting_user{resolved}（事件序在后）
+    // 翻终态；resolved 缺失的老行由前端 W1c（state 权威）+ 跨消息单门兜底。
+    // 不再剔除——剔除曾制造「重放无卡 → 安全网补建 → 双消息活卡」温床。
+    const keptCard = newEvents.find(
+      (e) => e.type === 'canvas_command' && (e as { data?: { callId?: string } }).data?.callId === 'call-1',
+    )
+    expect(keptCard).toBeDefined() // M6 变异点：重新引入剔除 ⇒ 此处 RED
     expect(newEvents.map((e) => e.type)).toContain('turn_settled') // 其余事件不受影响
     expect(oldRow.metadata).toBe(oldMetadata) // 阴性：老行零改动
   })
