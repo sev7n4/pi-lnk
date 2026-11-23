@@ -1504,6 +1504,33 @@ export function reconcileTimelineInterruption(
   return true
 }
 
+/**
+ * 跨消息单门（W1c-R2，规格 2026-11-23-ask-card-cross-message-dedup-design.md）：
+ * 断流/恢复后同一轮可能并存两条 assistant 消息（loadHistory 对 finalized 本地气泡
+ * 不让位 + 本地 id 与服务端行 id 不互通）。`reconcileTimelineInterruption` 只作用于
+ * 最后一条消息（权威卡落点），其余消息里的残留活卡无人翻牌 ⇒ 生产实证双卡同屏、
+ * 各可点击（cmwta4mxl09b2ld014nml823m 用户连点两次）。
+ *
+ * 本函数用于**非权威**消息：把其中所有 `pending_answer` 的 question part 一律终态化
+ * （answered 权威门 ⇒ answered，其余 ⇒ expired）。与 `reconcileTimelineInterruption`
+ * 的分工：后者负责权威卡的翻/建/保位，本函数只做「非权威消息零活卡」清扫——
+ * 不补建、不认 callId（权威消息之外不允许存在任何可点击确认卡）。
+ *
+ * @returns 是否发生变更。
+ */
+export function retireStaleQuestionParts(
+  timeline: TurnTimeline,
+  summary: InterruptionSummary | null,
+): boolean {
+  let changed = false
+  for (const p of timeline.parts) {
+    if (p.kind !== 'question' || p.status !== 'pending_answer') continue
+    p.status = summary?.status === 'answered' ? 'answered' : 'expired'
+    changed = true
+  }
+  return changed
+}
+
 export function replayTimelineEvents(
   events: Array<{ type: string; data: unknown; seq?: number; gSeq?: number }>,
   bodyText?: string,

@@ -41,6 +41,7 @@ import {
   reconcileTimelineInterruption,
   refreshTimelineSummary,
   replayTimelineEvents,
+  retireStaleQuestionParts,
   type InterruptionSummary,
   type TimelineEvent,
   type TimelinePart,
@@ -478,6 +479,15 @@ export const useAgentStore = defineStore('agent', () => {
       const wait = pendingProposal.value
       if (wait && wait.status === 'pending_confirm' && wait.callId) {
         resolvedProposal = { callId: wait.callId, startedAt: wait.startedAt }
+      }
+      // 跨消息单门（W1c-R2）：resolved 是终态裁决，对更早 assistant 消息的 timeline
+      // 幂等重放同一事件——旧消息里同 callId 的残留活卡（断流/恢复双消息并存）
+      // 一并翻终态，铲除「旧消息活卡 + 恢复补建卡」双卡同屏温床
+      // （生产 cmwta4mxl09b2ld014nml823m 用户连点两次实证）。reducer 按 callId
+      // 精确匹配 + 全量幂等，非目标 callId 与已终态 part 零改动。
+      for (const m of messages.value) {
+        if (m === last || m.role !== 'assistant' || !m.timeline) continue
+        applyTimelineEvent(m.timeline, event)
       }
     }
     applyTimelineEvent(last.timeline, event)
@@ -1191,13 +1201,25 @@ export const useAgentStore = defineStore('agent', () => {
    * @returns 是否发生变更。
    */
   function applyInterruptionState(summary: InterruptionSummary | null, now = Date.now()): boolean {
+    // 权威卡落点 = 最后一条有 timeline 的 assistant（W1c 现行为）。
+    let target: AgentStreamMessage | null = null
     for (let i = messages.value.length - 1; i >= 0; i -= 1) {
       const m = messages.value[i]
       if (m.role === 'assistant' && m.timeline) {
-        return reconcileTimelineInterruption(m.timeline, summary, now)
+        target = m
+        break
       }
     }
-    return false
+    if (!target || !target.timeline) return false
+    let changed = reconcileTimelineInterruption(target.timeline, summary, now)
+    // 跨消息单门（W1c-R2）：断流/恢复后同一轮可能并存两条 assistant 消息
+    // （loadHistory 对 finalized 本地气泡不让位），旧消息里的活卡此前无人翻牌
+    // ⇒ 生产实证双卡同屏、各可点击。权威卡只认 target，其余消息零活卡。
+    for (const m of messages.value) {
+      if (m === target || m.role !== 'assistant' || !m.timeline) continue
+      if (retireStaleQuestionParts(m.timeline, summary)) changed = true
+    }
+    return changed
   }
 
   return {

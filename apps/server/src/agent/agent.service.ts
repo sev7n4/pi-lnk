@@ -838,66 +838,17 @@ export class AgentService implements OnModuleInit {
       threadId,
       paginateVisibleRows(derived, take, rows.length),
     )
-    // P2：终态门的历史重放不得复活活卡片（母计划 P1c-6）
-    return this.suppressTerminalGateCards(enriched)
-  }
-
-  /**
-   * P2 一致性（母计划 §3.2 第 5 条 / 判据 P1c-6）：门 answered/expired/aborted 后，
-   * 历史重放里同 callId 的 `canvas_command{ask_user}` 会被前端 `turnTimeline.ts:829`
-   * 无条件翻回 pending_answer ⇒ 死卡片复活。这里在**响应副本**上剔除终态门卡片。
-   *
-   * 阴性保证：无 P2 门记录（老会话）⇒ 零改动；无卡片 ⇒ 零查询；表读失败 ⇒ 保守放行。
-   */
-  private async suppressTerminalGateCards<
-    T extends { role: string; runId: string | null; metadata: string | null },
-  >(
-    result: { page: T[]; hasMore: boolean; nextCursor: string | null },
-  ): Promise<{ page: T[]; hasMore: boolean; nextCursor: string | null }> {
-    if (!this.pendingInterruptions) return result
-    const callIds: string[] = []
-    for (const r of result.page) {
-      if (r.role !== 'assistant' || !r.metadata) continue
-      try {
-        const meta = JSON.parse(r.metadata) as { executionEvents?: unknown }
-        if (!Array.isArray(meta.executionEvents)) continue
-        for (const ev of meta.executionEvents as Array<{ type?: string; data?: unknown }>) {
-          if (ev?.type !== 'canvas_command') continue
-          const d = ev.data as { type?: string; callId?: string } | undefined
-          if (d?.type === 'ask_user' && typeof d.callId === 'string') callIds.push(d.callId)
-        }
-      } catch {
-        // 坏行不动
-      }
-    }
-    if (!callIds.length) return result
-    const terminal = await this.pendingInterruptions.getTerminalCallIds(callIds)
-    if (!terminal.size) return result
-    let touched = false
-    const page = result.page.map((r) => {
-      if (r.role !== 'assistant' || !r.metadata) return r
-      let meta: Record<string, unknown>
-      try {
-        meta = JSON.parse(r.metadata) as Record<string, unknown>
-      } catch {
-        return r
-      }
-      const list = meta.executionEvents
-      if (!Array.isArray(list)) return r
-      const kept = list.filter((ev) => {
-        const e = ev as { type?: string; data?: { type?: string; callId?: string } } | null
-        return !(
-          e?.type === 'canvas_command' &&
-          e.data?.type === 'ask_user' &&
-          typeof e.data.callId === 'string' &&
-          terminal.has(e.data.callId)
-        )
-      })
-      if (kept.length === list.length) return r
-      touched = true
-      return { ...r, metadata: JSON.stringify({ ...meta, executionEvents: kept }) } as T
-    })
-    return touched ? { ...result, page } : result
+    // 终态门卡片的历史重放自洽（2026-11-23 ask-card-cross-message 规格 §4-B）：
+    // 旧 P2 `suppressTerminalGateCards` 在响应副本上剔除已终态门的
+    // `canvas_command{ask_user}`——其前提（前端 reducer 无条件翻 pending）已被
+    // replay 事件序取代：canvas_command(建 pending) → waiting_user{resolved}
+    // (按 callId 翻终态) 自洽收口，终态卡不会复活；缺失 resolved 的老行由前端
+    // W1c `reconcileTimelineInterruption`（state 权威）+ 跨消息单门
+    // （retireStaleQuestionParts）双保险兜住。剔除反而制造「answered 后历史重放
+    // 无卡 → W1c 安全网补建 → 断流恢复双 assistant 消息并存时旧消息活卡无人
+    // 翻牌」的双卡温床（生产 cmwta4mxl09b2ld014nml823m 实证：整卡 ×2、用户连点
+    // 两次「开始执行」）。故整段删除，事件保留 = 历史回看保真 + 重放自洽。
+    return enriched
   }
 
   /**
