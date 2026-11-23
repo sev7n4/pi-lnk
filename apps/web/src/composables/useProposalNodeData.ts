@@ -134,7 +134,14 @@ const quoteMap = reactive(new Map<string, number>())
 const inflight = new Set<string>()
 
 /**
- * 由节点数据推导报价 query（image / video / audio 三类生成节点；未知类型不报价）。
+ * 由节点数据推导报价 query（image / video / audio 三类生成节点；其余类型不报价）。
+ *
+ * ⚠️ 白名单不变式（2026-11-23 生产回归）：只有 image / video / audio 三类节点才有
+ * 卡片级生成积分徽标。text / prompt / group / shot 等节点走 agent token 结算
+ * （侧栏「已消耗 ◇N 积分（对话 X）」），不参与生成报价。此前「非 video/audio 一律
+ * 回落 image」的兜底使 text 节点被按 image:1K:1 报价 33 积分，卡片误显
+ * 「消耗 33 积分」（会话 cmwta4mxl09b2ld014nml823m 实证）。非白名单类型返回 null，
+ * proposalCreditCost 据此不渲染 pill——不造数、不复用文本 token 口径冒充生成价。
  *
  * ⚠️ P1.5 不变式（spec 2026-11-15-pricing-subject-billing-takeover）：展示参数必须
  * ⊇ 计费参数——studio 扣费侧传 modelKey（+video 的 resolution），这里缺任一项都会
@@ -155,12 +162,16 @@ export function quoteQueryOf(d: ProposalNodeData): PriceQuoteQuery | null {
     if (!d.audioKind) return null
     return { capability: 'audio', audioKind: d.audioKind, modelKey: d.modelId || undefined }
   }
-  return {
-    capability: 'image',
-    modelKey: d.modelId || undefined,
-    count: Math.max(1, d.imageCount || 1),
-    resolution: d.imageResolution || '1K',
+  if (d.nodeType === 'image') {
+    return {
+      capability: 'image',
+      modelKey: d.modelId || undefined,
+      count: Math.max(1, d.imageCount || 1),
+      resolution: d.imageResolution || '1K',
+    }
   }
+  // text / prompt / group / shot / sceneComposer / 未知：不参与生成报价
+  return null
 }
 
 function requestQuote(q: PriceQuoteQuery): void {

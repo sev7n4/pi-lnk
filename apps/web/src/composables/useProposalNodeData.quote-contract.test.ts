@@ -75,11 +75,13 @@ describe('P1.5 展示侧 quote 参数契约（quoteQueryOf）', () => {
     expect(quoteQueryOf(base({ nodeType: 'audio', audioKind: undefined }))).toBeNull()
   })
 
-  it('未知类型 ⇒ 维持既有兜底（回落 image query，不抛错）', () => {
-    // 既有行为：非 video/audio 一律按 image 报价（resolveProposalNodeData 只对三类
-    // 生成节点起 quote 拉取，text 等类型实际不会走到这里）。
-    expect(quoteQueryOf(base({ nodeType: 'text' as ProposalNodeData['nodeType'] }))).toMatchObject({
-      capability: 'image',
-    })
+  it('text / prompt 等非生成节点 ⇒ 不报价（null，卡片不显示积分徽标）', () => {
+    // 回归：生产会话 cmwta4mxl09b2ld014nml823m 的 text 节点（短剧剧本/故事Logline）
+    // 曾因「非 video/audio 一律回落 image」被按 image:1K:1 报价 33 积分，卡片误显
+    // 「消耗 33 积分」。文本走 agent token 结算（侧栏「已消耗 ◇N 积分」），卡片不该有
+    // 生成积分徽标。白名单钉死：只有 image/video/audio 三类才报价。
+    expect(quoteQueryOf(base({ nodeType: 'text' as ProposalNodeData['nodeType'] }))).toBeNull()
+    expect(quoteQueryOf(base({ nodeType: 'prompt' as ProposalNodeData['nodeType'] }))).toBeNull()
+    expect(quoteQueryOf(base({ nodeType: 'group' as ProposalNodeData['nodeType'] }))).toBeNull()
   })
 })

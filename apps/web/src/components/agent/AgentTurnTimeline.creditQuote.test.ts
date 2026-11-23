@@ -87,3 +87,56 @@ describe('AgentTurnTimeline 卡片积分 = 价目表权威值（展示==计费�
     expect(w.text()).not.toContain('预计')
   })
 })
+
+/**
+ * 回归（2026-11-23）：生产会话 cmwta4mxl09b2ld014nml823m 的 text 节点
+ * （「短剧剧本」/「故事Logline」）在 artifact 卡上误显「消耗 33 积分」。
+ * 文本按 agent token 结算（侧栏「已消耗 ◇N 积分」），卡片上不应有生成积分徽标——
+ * 只有 image / video / audio 三类生成节点才有。
+ */
+const textNode: ProposalCanvasNode = {
+  id: 't1',
+  type: 'text',
+  data: {
+    label: '短剧剧本',
+    prompt: '写一个喜剧短剧剧本',
+    textModel: 'platform::step-3.5-flash',
+  },
+}
+
+describe('AgentTurnTimeline 非生成节点不显示积分徽标（文本走 token 结算）', () => {
+  it('text artifact done 卡不渲染「消耗 N 积分」（regression：曾误显 33）', async () => {
+    const w = mount(AgentTurnTimeline, {
+      props: {
+        parts: [artifactPart({ nodeId: 't1', nodeType: 'text', title: '短剧剧本' })],
+        canvasNodes: [textNode],
+      },
+    })
+    await flush()
+    await w.vm.$nextTick()
+    expect(w.text()).not.toMatch(/消耗\s*\d+\s*积分/)
+    expect(w.text()).not.toMatch(/预扣\s*\d+\s*积分/)
+  })
+
+  it('text proposal pending 卡不渲染「消耗 N 积分」chip', async () => {
+    const w = mount(AgentTurnTimeline, {
+      props: {
+        parts: [proposalPart({ nodeId: 't1' })],
+        canvasNodes: [textNode],
+      },
+    })
+    await flush()
+    await w.vm.$nextTick()
+    expect(w.text()).not.toMatch(/消耗\s*\d+\s*积分/)
+    expect(w.text()).not.toMatch(/已结算\s*·\s*实耗/)
+  })
+
+  it('image artifact 卡仍显示 33（防止白名单误伤媒体卡）', async () => {
+    const w = mount(AgentTurnTimeline, {
+      props: { parts: [artifactPart()], canvasNodes: [node] },
+    })
+    await flush()
+    await w.vm.$nextTick()
+    expect(w.text()).toContain('消耗 33 积分')
+  })
+})
