@@ -1,16 +1,18 @@
 <script setup lang="ts">
 /**
- * 授权自动生成 · composer 入口（规格 §11「状态胶囊 + 锚定浮层」）。
+ * 授权自动生成 · composer 入口（规格 §12「胶囊去描边 · 文案收敛为 [auto] · 移动端统一」）。
  *
- * ⭐ 形态决策（2026-11-23 用户拍板，参考 WorkBuddy 权限胶囊的交互骨架）：
- * 1. **状态胶囊**（PC）：图标 + 文字「自动生成」+ 箭头，排在 composer 工具行模型 chip 之后、发送键之前。
- *    不占输入区上方、不做通栏卡片（那是被投诉的旧形态）；关闭态弱化（无底色无边框），
- *    开启态琥珀高亮 ⇒ 一眼可读出「agent 正在替你行动」。
- * 2. **说明与开关收进锚定浮层**：文案不常驻屏幕，点开才解释「开了会怎样」，
- *    里面直接给开关 ⇒ 双向操作（开 / 收回）都在同一处，不必再找「撤回」入口。
- * 3. **移动端不抄文字胶囊**：裸条只有 ＋ / 模型 / 发送 三件套，加文字胶囊会挤成四件套
- *    （历史上踩过散架）⇒ 移动端 icon-only 触发器 + 底部 Sheet（沿用模型选择卡
- *    「PC 锚定 popover / 移动 Sheet」既有规范）。
+ * ⭐ 形态决策（2026-11-23 用户拍板，规格 §12）：
+ * 1. **胶囊上彻底不出现「自动生成」中文长文案** —— 关闭态那四个字是低对比度的**功能名**，
+ *    扫过去读不出「现在是关的」，反而会被读成「已开启自动生成」⇒ 误导。
+ *    改为：开启态只留 **`[auto]`** 短标记（mono 方括号 = 开关已置 auto 的语义标记），
+ *    关闭态不显示任何文字（图形线框 + 无字）。
+ * 2. **「自动生成」与「每次先问」下沉到浮层卡片**（`AutoApprovePanel`）：那里才是解释行为的地方。
+ * 3. **开启态去掉 0.5px 琥珀描边**：柔底（状态语义）保留，描边（按钮语义）去掉 —— 更干净。
+ * 4. **PC 与移动端共用同一枚胶囊**（同一组件 / 同一文案 / 同一图形 / 同一 `[auto]`）：
+ *    §11 的「移动端 icon-only」是当年凭感觉怕挤成四件套，本刀实测证伪
+ *    （430/390/360px 放得下；320px 由模型 chip 让位截断兜底）。
+ *    唯一差异：移动端**不带箭头**（移动端开底部 Sheet，箭头语义与 PC 锚定浮层相反）。
  *
  * ⭐ 单一数据源：授权态读写全部走 `useAutoApproveGeneration`（服务端 SSOT），
  * 本组件不缓存 localStorage、不做本地判定。开关文案与开关本体在 `AutoApprovePanel`（单源）。
@@ -50,12 +52,14 @@ async function onToggle() {
 
 <template>
   <div ref="rootRef" class="auto-approve-control" data-testid="auto-approve-control">
-    <!-- PC：状态胶囊（图标 + 文字 + 箭头） -->
+    <!-- 胶囊（PC + 移动**同一枚**，规格 §12.2）：
+         · 图形 = 盾牌+闪电（线框=关 / 实心=开），零文字「自动生成」；
+         · 开启态追加 `[auto]` 短标记（mono 语义标记，非中文长文案）；
+         · 箭头仅 PC（PC 开锚定浮层↑ / 移动开底部 Sheet↓，箭头语义相反 ⇒ 移动端不带箭头）。 -->
     <button
-      v-if="props.desktop"
       type="button"
       class="auto-approve-chip"
-      :class="{ 'is-on': authorized, 'is-open': open }"
+      :class="{ 'is-on': authorized, 'is-open': open, 'is-mobile': !props.desktop }"
       :disabled="props.readOnly"
       :title="triggerLabel"
       :aria-label="triggerLabel"
@@ -65,8 +69,9 @@ async function onToggle() {
       @click="open = !open"
     >
       <AutoApproveGlyph :on="authorized" :size="14" />
-      <span class="auto-approve-chip-label">自动生成</span>
+      <span v-if="authorized" class="auto-approve-chip-auto" data-testid="auto-approve-chip-auto">[auto]</span>
       <svg
+        v-if="props.desktop"
         class="auto-approve-chip-caret"
         viewBox="0 0 24 24"
         fill="none"
@@ -78,20 +83,6 @@ async function onToggle() {
       >
         <path :d="open ? 'M19 15l-7-7-7 7' : 'M5 9l7 7 7-7'" />
       </svg>
-    </button>
-
-    <!-- 移动：icon-only 触发器（裸条三件套纪律） -->
-    <button
-      v-else
-      type="button"
-      class="auto-approve-trigger"
-      :disabled="props.readOnly"
-      :title="triggerLabel"
-      :aria-label="triggerLabel"
-      data-testid="auto-approve-trigger"
-      @click="open = true"
-    >
-      <AutoApproveGlyph :on="authorized" :size="15" />
     </button>
 
     <!-- PC：锚定浮层（复用既有 `.neo-popover` 表面语言；click-outside 收起） -->
@@ -126,7 +117,7 @@ async function onToggle() {
   flex: none;
 }
 
-/* ---- PC 状态胶囊 ---- */
+/* ---- PC + 移动共用的状态胶囊（规格 §12） ---- */
 .auto-approve-chip {
   display: inline-flex;
   align-items: center;
@@ -154,19 +145,25 @@ async function onToggle() {
   outline-offset: 2px;
 }
 
-/* 已开启：琥珀高亮（柔底 + 琥珀边 + 琥珀字）——与实心图形一起把状态说清楚 */
+/* 已开启：琥珀高亮（柔底 + 琥珀字 + 实心图形）——状态一眼可读。
+   ⚠️ **不描边**：0.5px 琥珀边框是「按钮」语义，柔底才是「状态」语义（规格 §12.1 Q1）。
+      描边去掉后胶囊仍可辨识为浮层触发器（箭头 + 图形 + 柔底）。 */
 .auto-approve-chip.is-on {
   color: var(--lnk-warning);
   background: var(--lnk-warning-bg);
-  border-color: var(--lnk-warning-border);
 }
 
 .auto-approve-chip.is-on:hover {
   background: var(--lnk-warning-bg-hover);
-  border-color: var(--lnk-warning-border-hover);
 }
 
-.auto-approve-chip-label {
+/* `[auto]` 标记：mono 方括号 = 「开关已置 auto」的语义标记，非中文长文案。
+   令牌纪律：--lnk-font-mono（既有）+ --lnk-warning；零新令牌。 */
+.auto-approve-chip-auto {
+  font-family: var(--lnk-font-mono);
+  font-size: 11px;
+  line-height: var(--lnk-lh-2xs);
+  letter-spacing: 0.01em;
   white-space: nowrap;
 }
 
@@ -174,6 +171,13 @@ async function onToggle() {
   width: 10px;
   height: 10px;
   opacity: 0.6;
+}
+
+/* 移动端：同一枚胶囊，但**不带箭头**（移动端开底部 Sheet，箭头语义与 PC 锚定浮层相反）；
+   高度略降一档给裸条留呼吸。 */
+.auto-approve-chip.is-mobile {
+  height: 26px;
+  padding: 0 6px;
 }
 
 /* ---- PC 锚定浮层 ---- */
@@ -186,32 +190,5 @@ async function onToggle() {
   width: 272px;
   padding: 12px 14px;
   border-radius: var(--lnk-radius-md);
-}
-
-/* ---- 移动触发器（icon-only） ---- */
-.auto-approve-trigger {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 0.5px solid transparent;
-  border-radius: var(--lnk-radius-sm);
-  background: transparent;
-  color: var(--lnk-warning);
-  cursor: pointer;
-  touch-action: manipulation;
-  transition: background-color 120ms ease, border-color 120ms ease;
-}
-
-.auto-approve-trigger:hover {
-  background: var(--lnk-warning-bg);
-  border-color: var(--lnk-warning-border);
-}
-
-.auto-approve-trigger:focus-visible {
-  outline: 2px solid var(--lnk-border-focus);
-  outline-offset: 2px;
 }
 </style>

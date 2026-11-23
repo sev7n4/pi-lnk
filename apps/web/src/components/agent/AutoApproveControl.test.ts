@@ -3,14 +3,17 @@ import { mount } from '@vue/test-utils'
 import AutoApproveControl from './AutoApproveControl.vue'
 
 /**
- * 授权自动生成 · composer 入口（规格 2026-11-22-generation-auto-approve-gate-design §11）。
+ * 授权自动生成 · composer 入口（规格 2026-11-22-generation-auto-approve-gate-design §11 / §12）。
  *
- * 契约（用户拍板：状态胶囊 + 锚定浮层）：
- * 1. PC = 状态胶囊（图标 +「自动生成」+ 箭头）：关闭态弱化、开启态琥珀高亮；
- *    点击**开浮层**（不是直接收回）——双向操作都在浮层里的开关上；
- * 2. 浮层承载**作用域说明**（图片与音频免确认 / 视频仍逐次确认）+ 一个 `role=switch` 开关；
- * 3. 移动 = icon-only 触发器（裸条三件套纪律）+ 底部 Sheet（同一份面板 ⇒ 同一组件）；
- * 4. 开关动作写回服务端（`setAuthorized`），组件自身不做本地判定、不缓存。
+ * 契约（用户拍板）：
+ * 1. 胶囊 = 图形 + **`[auto]` 短标记** + 箭头（PC）；**胶囊上不出现中文长文案**，
+ *    「自动生成 / 每次先问」下沉到浮层卡片（`AutoApprovePanel`）说明；
+ * 2. 开启态 = 实心图形 + `[auto]` + 琥珀柔底，**无描边**（§12 Q1）；
+ * 3. 关闭态 = 线框图形、**零文字**；
+ * 4. 点击**开浮层**（不是直接收回）——双向操作都在浮层里的开关上；
+ * 5. 浮层承载**作用域说明**（图片与音频免确认 / 视频仍逐次确认）+ 一个 `role=switch` 开关；
+ * 6. **移动端与 PC 同一枚胶囊**（§12，取代 §11 的 icon-only 分支）+ 底部 Sheet（同一份面板）；
+ * 7. 开关动作写回服务端（`setAuthorized`），组件自身不做本地判定、不缓存。
  */
 
 const h = vi.hoisted(() => ({ authorized: false, calls: [] as boolean[] }))
@@ -44,14 +47,31 @@ beforeEach(() => {
 })
 
 describe('AutoApproveControl — composer 入口', () => {
-  it('PC 未授权：胶囊常驻（图标 +「自动生成」），图形线框，浮层默认关闭', () => {
+  it('PC 未授权：胶囊常驻（图形，**零文字**），图形线框，浮层默认关闭', () => {
     const w = mountControl()
     const chip = w.find('[data-testid="auto-approve-chip"]')
     expect(chip.exists()).toBe(true)
-    expect(chip.text()).toContain('自动生成')
+    // §12：关闭态不得出现任何文字（尤其不得出现「自动生成」——那是低对比度的功能名，读不出状态）
+    expect(chip.text()).toBe('')
+    expect(chip.text()).not.toContain('自动生成')
     expect(chip.classes()).not.toContain('is-on')
     expect(w.find('svg.auto-approve-glyph').classes()).not.toContain('is-on')
+    expect(w.find('[data-testid="auto-approve-chip-auto"]').exists()).toBe(false)
     expect(w.find('[data-testid="auto-approve-popover"]').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('PC 已授权：胶囊 is-on + 实心图形 + `[auto]` 短标记（无中文长文案）', () => {
+    h.authorized = true
+    const w = mountControl()
+    const chip = w.find('[data-testid="auto-approve-chip"]')
+    expect(chip.classes()).toContain('is-on')
+    expect(w.find('svg.auto-approve-glyph').classes()).toContain('is-on')
+    const auto = w.find('[data-testid="auto-approve-chip-auto"]')
+    expect(auto.exists()).toBe(true)
+    expect(auto.text()).toBe('[auto]')
+    // 长文案不得回到胶囊上
+    expect(chip.text()).not.toContain('自动生成')
     w.unmount()
   })
 
@@ -87,24 +107,29 @@ describe('AutoApproveControl — composer 入口', () => {
     w2.unmount()
   })
 
-  it('PC 已授权：胶囊 is-on + 图形实心（状态一眼可读）', () => {
-    h.authorized = true
-    const w = mountControl()
+  it('移动端：**与 PC 同一枚胶囊**（非 icon-only）+ 点击开底部 Sheet（同一份面板）', async () => {
+    const w = mountControl({ desktop: false })
+    // 同一枚胶囊（不再是独立 icon-only 分支）
     const chip = w.find('[data-testid="auto-approve-chip"]')
-    expect(chip.classes()).toContain('is-on')
-    expect(w.find('svg.auto-approve-glyph').classes()).toContain('is-on')
+    expect(chip.exists()).toBe(true)
+    expect(chip.classes()).toContain('is-mobile')
+    expect(w.find('[data-testid="auto-approve-trigger"]').exists()).toBe(false)
+    // 移动端关闭态同样零文字
+    expect(chip.text()).toBe('')
+    // 移动端**不带箭头**（箭头语义与底部 Sheet 相反）
+    expect(w.find('.auto-approve-chip-caret').exists()).toBe(false)
+    await chip.trigger('click')
+    expect(w.find('.stub-sheet').exists()).toBe(true)
+    expect(w.find('[data-testid="auto-approve-panel-switch"]').exists()).toBe(true)
     w.unmount()
   })
 
-  it('移动端：icon-only 触发器（零文字标签）+ 点击开底部 Sheet（同一份面板）', async () => {
+  it('移动端已授权：同一枚胶囊显示 `[auto]`，仍无中文长文案', () => {
+    h.authorized = true
     const w = mountControl({ desktop: false })
-    expect(w.find('[data-testid="auto-approve-chip"]').exists()).toBe(false)
-    const trigger = w.find('[data-testid="auto-approve-trigger"]')
-    expect(trigger.exists()).toBe(true)
-    expect(trigger.text()).toBe('')
-    await trigger.trigger('click')
-    expect(w.find('.stub-sheet').exists()).toBe(true)
-    expect(w.find('[data-testid="auto-approve-panel-switch"]').exists()).toBe(true)
+    const chip = w.find('[data-testid="auto-approve-chip"]')
+    expect(chip.find('[data-testid="auto-approve-chip-auto"]').text()).toBe('[auto]')
+    expect(chip.text()).not.toContain('自动生成')
     w.unmount()
   })
 
