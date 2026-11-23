@@ -6459,7 +6459,7 @@ onUnmounted(() => {
 
           <!-- 规格 §6.3（2026-10-27 三页顶栏统一重构）：移动端视口控件 = 顶栏右侧单枚 ⤢
                适应画布（自浮动胶囊上提）；双指捏合已覆盖缩放、小地图低频
-               （PC CanvasBottomLeftControls 保留全量）。 -->
+               （PC CanvasBottomLeftControls 亦已 9→4 减法：仅留小地图/缩放档位/适应/设置）。 -->
         </VueFlow>
 
         <!-- PR2 空态引导（V-3）：空画布首进画布页签的指引文案；pointer-events-none
