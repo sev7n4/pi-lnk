@@ -251,3 +251,28 @@ PR #983 → CI **3/3 绿**（`Build monorepo` + `Verify spec figures` + `Verify 
 **本轮新增的两个环境坑**：
 1. **`git fetch` 不可用**（`RPC failed; curl 52 Empty reply from server`）⇒ 按纪律改走 REST：用 `gh api git/blobs → git/trees(base_tree=master 最新 tree) → git/commits(parents=[master 最新 commit]) → git/refs → pulls` **基于最新 master 重建单 commit**（本刀 master 已前进到 #982，触碰面与我的 7 个文件**零交集**）。
 2. **headless Chrome 跨 Bash 调用被清理** ⇒ `ECONNREFUSED 127.0.0.1:9222`；必须**同一次调用内**起 Chrome + 跑探针。另：`Runtime.evaluate` 的表达式须包成 `(async () => { ... })()`（否则多语句 `return` 失效，`ev` 返回 undefined）；`fetch` 须带 `AbortController` 超时（否则页面未就绪时挂死）。
+
+### UI 迭代四（2026-11-23 傍晚）：开启态去柔底 · `Auto` 文案 · 移动端仅输入态可见
+
+**触发**：用户对 §12 上线的胶囊提两条新反馈 —— ①「`[auto]`，去掉 `[]`，仅保留 "Auto"（首字母大写），**Auto 背景边框仍未去掉**——需去除背景边框」；②「移动端 composer 三态下，我理解不需要三态都可见，盾牌图标及 auto 入口，**仅输入态可见入口即可**」。
+**本轮拍板（三项确认）**：① 开启态**完全去掉柔底**，只留琥珀字 + 实心盾；② `Auto` **保持 mono 等宽**；③ 移动端**仅非 idle 态可见**（有输入行时）。
+
+**取证（先量后改 —— §12 已去描边，用户仍说"没去掉"，必须先定位）**：
+- **生产 CDP 盒模型实测**：chip `border=1px solid rgba(0,0,0,0)` ⇒ **描边已透明**；但 `background=rgba(138,82,0,0.1)` ⇒ **柔底仍在**。`[auto]` span 本身 `bg=transparent` / `border=0px` ⇒ **span 无背景无边框**。
+- **用户截图像素扫描**（998×340）：`[auto]` 文字区底色 `(41,38,23)` 与胶囊外**完全相同**，x=720..730 才是更亮的 `(64,58,29)` 柔底块 ⇒ **柔底范围 = 整个胶囊内区**（放大图确认）。⚠️ 判读纪律：初看易误判成"文字自带背景框"，实为胶囊柔底 ⇒ 修在 chip 层，不动 span。
+- **⇒ §12「柔底=状态语义，保留」的判断被用户明确推翻**：开启态改为既无描边也**无柔底**，差异全靠「实心盾 vs 线框盾」+「`Auto` vs 无字」。
+- **移动端三态（读 `composer/mobileBarLayout.ts` 的 `barShape()` = idle/stacked/queued）**：`is-idle` 时裸条**只剩 `＋` + 提示语**（输入行 / 模型 chip / 发送键全 `display:none`），而 auto-approve 入口**无 `v-if`、CSS 也无 idle 隐藏** ⇒ **唯一还杵着的功能项** = 违和感根源。⇒ idle 隐藏规则追加 `.auto-approve-control`（限 `.agent-panel-mobile-dock` 作用域 ⇒ PC 不受影响）。
+
+**改动**：
+| 文件 | 改动 |
+|---|---|
+| `AutoApproveControl.vue` | 开启态 `background: var(--lnk-warning-bg)` → `transparent`（hover 回中性面）；`[auto]` → `Auto`（保持 mono）；注释更新至 §13 |
+| `AgentSideRail.vue` | `.is-idle` 隐藏选择器列表追加 `.auto-approve-control`；order 注释订正；模板注释更新至 §13 |
+| `AutoApproveControl.test.ts` | 开启态断言 `[auto]` → `Auto`（2 处） |
+| `AgentSideRail.autoApproveEntry.test.ts` | ④ 改为「开启态既无描边也**无柔底**」（规则体 + hover 双断言）；§12-1 断言 `>Auto</span>` 且不得再出现 `[auto]`；新增 §13-1 移动端 idle 隐藏守卫 |
+
+**验证**：定向 **24/24 PASS**；`vue-tsc -b` **0 错误**；`verify-agent-rail-gates` **11/11 PASS**；**变异 5 例全转红**（M1 恢复柔底 / M2 `Auto` 改回 `[auto]` / M3 删掉 idle 隐藏项 / M4 去掉移动端作用域前缀（PC 误挂）/ M5 关闭态也显示 `Auto`），还原后 21/21 全绿。
+
+**本轮踩到的两个坑（新增）**：
+1. **`rule()` 助手只截 `{...}` 规则体，选择器列表不在体内** ⇒ 断言「idle 规则里含 `.auto-approve-control`」在规则体上**永远失败**（首跑 1 failed）。正解：拆成两步 —— ① 断言**完整选择器列表字符串**（正向，防假绿）；② 断言规则体含 `display: none`。
+2. **跨行正则会把自己也吃掉**：想验证「PC 侧未被误挂」的 `not.toMatch(/…[^{]*…/)` 把**移动端那条规则本身**也匹配上了 ⇒ 误报 failed。正解：改为**按行判定作用域前缀**（命中行 + 上一行都必须含 `.agent-panel-mobile-dock`）。
