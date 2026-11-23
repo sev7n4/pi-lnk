@@ -514,3 +514,32 @@ manual: → pending_confirm → SSE waiting_user → 确认卡 → /answers → 
 - 移动端 Sheet 与 PC 浮层的**实机视觉**需生产走查实证（本刀未在生产验证）。
 - 开关 ON 色由 accent 改琥珀是**全站可见变更**（PC 设置弹窗 / 移动「我的→设置」两处）⇒ 需走查确认不违和。
 - 提议卡仍是 icon-only 入口（§10 形态），本刀未再动它 ⇒ 「当下这次顺手授权」与「全局状态」两个入口并存是有意保留。
+
+### 11.8 生产复测结论（2026-11-23，master `b3e6ea66`）
+
+**链路**：PR #980 → CI **4/4 绿**（`Build monorepo` 含 web 全量 **557 文件 / 4622 用例** + `vue-tsc`）→ squash 合并 `b3e6ea66`（**合并树 `dcf60934` == CI 验证 head 树**）→ 部署 run `45118473476`：`Deploy web to CVM` success、`Build API on CVM` **skipped**（web-only 分流正确——本刀纯前端，服务端零改动）。
+
+**产物取证**：递归抓线上 119 个 chunk，`auto-approve-chip` / `auto-approve-popover` / `auto-approve-panel-switch` / `auto-approve-control` 各命中 1 处（`CanvasPage-C6MTGxv3.js`），文案「自动生成」命中 4 处。
+
+**主探针 `.workbuddy/e2e-cdp/generation-auto-approve-probe.mjs` → 21/21 PASS**（P4–P5c 为本刀新增/改写）：
+
+| 判据 | 实测 |
+|---|---|
+| P4 状态胶囊 | 在 `.agent-dock-actions` 内、文字「自动生成」、`w=100 h=28`、图形 14px 且**实心**（已授权态）、`aria-expanded=false`、`aria="自动生成 · 已开启，agent 生成图片与音频时不再逐次确认"` |
+| P4b/P4d 旧形态未复活 | 旧通栏徽标 `false`、旧「单击即收回」icon-only 按钮 `false` |
+| P4c 体量克制 | 胶囊 `100×28 ≤ 160×32`（不占大位） |
+| P5 浮层 | 点胶囊 ⇒ 浮层展开（`aria-expanded=true`），说明含「图片与音频」与「视频仍会逐次确认」，开关 `role=switch` `44×26` |
+| P5b/P5c 双向同处 | 浮层开关点一下 ⇒ 服务端回读 `manual`（胶囊同步退回弱化态 `chipOn=false`）；再点 ⇒ 回读 `auto` ⇒ **往返闭环** |
+| P7 关闭态 | 胶囊 `is-on=false`、图形线框、`background=rgba(0,0,0,0)`、`border=rgba(0,0,0,0)`、字色 `rgb(90,100,120)`（弱化） |
+| P7b 关闭态浮层 | 开关 `aria-checked=false`、说明「当前每次生成都会先问你…」 |
+| M1–M3 移动设置 | 开关 `44×26`；点一下**翻转**服务端偏好（与起始态无关）、再点翻回 ⇒ 往返闭环 |
+| M4/M5 移动 composer | 裸条是 **icon-only 触发器**（`text=''`、`24×24`、有图形、**PC 胶囊不出现**）；点开 ⇒ 底部 Sheet（同一份面板 + 开关 + 作用域说明） |
+| P6 收尾归零 | 走查账号偏好复位 `manual`（不把「已授权」留在账号上）；走查会话已删（`delete-status-200`） |
+
+**取证截图**：`gen-auto-approve-pc-popover.png`（PC 开启态浮层）、`gen-auto-approve-pc-chip-off.png`（PC 关闭态）、`gen-auto-approve-mobile-sheet.png`（移动底部 Sheet）。
+
+**探针本轮两处改造（踩坑记录）**：
+1. **移动段必须相对判定**：`M2/M3` 原按绝对值（期望 `auto`/`manual`）断言 ⇒ 与「前序 PC 段遗留状态」耦合；本刀 PC 段收尾改回 `auto` 后必然假失败。改为「点一下必须翻转、再点必须翻回」，与起始态无关。
+2. 走查收尾新增**归零**（`PUT /api/provider/preferences` ⇒ `manual`）+ 走查会话删除，避免账号残留授权态。
+
+**诚实边界（剩余）**：① 开关 ON 色改琥珀的**全站违和感**只在本能力三处落点看过（PC 设置弹窗 / 移动「我的→设置」/ composer 浮层），未做全站开关一致性评审；② audio 介质仍**未活体**（沿用 §9.3）；③ **活体对照 7/7 本轮未复跑**（服务端逻辑零改动，§9.2 结论继续适用）；④ 走查账号 `defaultTextModel` 停用属**既存产品缺陷**，本刀不修。
