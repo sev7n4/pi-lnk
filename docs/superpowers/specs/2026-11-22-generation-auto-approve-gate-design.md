@@ -882,3 +882,51 @@ manual: → pending_confirm → SSE waiting_user → 确认卡 → /answers → 
 - **防线 B 的固有边界**：若用户**确实**想点 chip 而 pointerdown 落在了别处、且仍在 500ms 意图窗内，本次 click 会被忽略 ⇒ 需要再点一次。概率极低（pointerdown 与 click 同源），但**不为零**。
 - **堆叠态 / 生成中**未逐态实测（沿用 §13.7 的同一条边界：两者非 idle ⇒ 入口可见）。
 - 本刀**零服务端改动**：授权判定 / DB / 偏好 API 全部不动 ⇒ §9.2 活体对照结论继续适用。
+
+### 14.8 生产复测结论（2026-11-24，master `c40e78fb` → `0aec91b6`）
+
+**上线链路（两轮，均 squash 合并）**：
+
+| 轮次 | PR | 内容 | CI | master | 部署 |
+|---|---|---|---|---|---|
+| 一 | #992 | §14 三道防线 | **3/3 绿** | `c40e78fb`（**合并树 == CI 验证 head 树**） | success |
+| 二 | #993 | 守卫收窄到移动端 + 意图时间窗（修可访问性回归，§14.6 的 M8/M9） | **全绿** | `0aec91b6`（**合并树 == CI 验证树**） | success |
+
+**产物取证（生产 chunk）**：
+
+- 旧 CSS 规则 `.is-idle .auto-approve-control` **0 次** ⇒ CSS 级隐藏已彻底移除（防线 A 落到 DOM）
+- `.auto-approve-control.is-collapsed{display:none}` **在** ⇒ 根容器只消除占位、常驻在场（防线 B 的前提成立）
+- 守卫逻辑逐字在：`function c(){const b=d>0&&Date.now()-d<rQ;!n.desktop&&b&&!u||(a.value=!a.value)}` ⇒ **意图时间窗 + PC 限定 + 落点判定**三条齐全
+
+**生产探针：37/37 PASS**（探针判据含 §14 前后对照）
+
+| 判据 | 修复前（生产旧版） | 修复后（生产新版） | 判定 |
+|---|---|---|---|
+| **M4a** 收缩态入口本体不渲染（DOM 级，非 CSS 隐藏） | `chipExists: **true**` ❌ | `chipExists: **false**` ✅ | **防线 A 生效** |
+| **M4a0** 根容器常驻但不占位 | — | `controlRootExists: true` + `controlRootDisplay: "none"` ✅ | 防线 B 的前提成立 |
+| **M4c** 指针落在别处 ⇒ 落在 chip 上的 click 被忽略 | `sheetExists: **true**` ❌（**【自动生成】卡片确实弹出来了**） | `sheetExists: **false**` ✅ | **误弹路径已封** |
+| **M5** 指针落在 chip 内 ⇒ 底部 Sheet 展开 | ✅ | `sheetExists: true` + 开关 + 作用域说明 ✅ | **功能未被误伤** |
+| **M4b** 移动端输入态入口可见 | — | `text:"Auto"`、`60×26`、`visible: true` ✅ | 展开态**保留**盾牌入口 |
+| **M4 / M4b2** 同一枚胶囊 / 移动端无箭头 | — | `isMobile: true`、`hasCaret: false`、`legacyTrigger: false` ✅ | 两端统一未变 |
+
+⇒ **前后对照成立**：旧版在同一等价场景下**确实弹出**了卡片（`M4c: sheetExists=true`），新版**不再弹出**（`sheetExists=false`），而**正常点击入口照常弹出**（`M5: sheetExists=true`）⇒ 修的是误弹，不是入口。
+
+**PC 段（§12/§13 既有判据）全绿**：P2 / P2b / **P2x（新增：设置页三跳可达性）** / P3 / P3b / P4 / P4b~P4g / P5 / P5d / P5b / P5c / P7 / P7b / P7c / P7d ⇒ **PC 侧行为零变化**（用户要求「PC 不用动」，实测一致）。
+
+#### 14.8.1 探针侧本轮修掉的 3 个坑（可复用，与产品缺陷无关）
+
+| 坑 | 现象 | 根因 | 修法 |
+|---|---|---|---|
+| **K1 · token 失效 401** | `POST /api/sessions` 返回 **401 Unauthorized**，整轮走查在第一条业务判据前就中断 | `localStorage` 里**有** token ≠ 服务端**认**这个 token；app 的 `isLoggedIn = token && user`（`user` 在内存）⇒ 页面**不出现登录表单** ⇒ 旧 `login()` 判「已登录」而不重登 ⇒ 带着过期 token 打 API ⇒ 401 | 鉴权判据改成**服务端**事实：`/api/provider/bootstrap` 的 HTTP 码；`ensureAuth()` 在 401 时清 token + reload + 重登；建会话再遇 401 则再自愈一次重试 |
+| **K2 · 冷启动固定 sleep ⇒ 8 个假失败** | P2/P2b/P3/P3b/P4/P4f2/P5b/P5c 连败（首跑 13 FAIL 中的一部分） | PC 设置页三跳（设置页 → 模型配置对话框 → 「生成偏好」Tab → 开关）里，对话框**异步拉渠道/模型**，`el-tab-pane` 带 `lazy` ⇒ 切 tab 后才渲染；固定 `sleep(1500)+sleep(900)` 在**冷缓存**下不够 ⇒ 开关 `null` ⇒ 后续判据（胶囊开启态无 `Auto` 文字、开关往返）**连锁假失败** | 一律**等元素出现**（`waitFor`）而非等固定时长；偏好写操作同理（`waitPref` 等服务端落到期望值）；新增 **P2x** 把「三跳可达性」本身变成判据，失败可归因到具体跳 |
+| **K3 · 诊断脚本用错域名** | 诊断输出 `h1: "This page doesn't exist"`（Vercel 404 页）⇒ 一度误判「PC 设置页入口根本不存在」 | 生产入口是 **`http://119.29.173.89:8888`**（nginx→5100），不是 `pi-lnk.vercel.app` | 诊断脚本先打印 `location.href` + `h1` 再断言；确认入口存在后才继续下钻 |
+
+⇒ **K1/K2 属探针缺陷，不是产品缺陷**：K2 的 8 个假失败已用聚焦诊断（`diag-pc-settings.mjs`，走真实生产域名）证明产品侧完全正常 —— 设置页入口 ✅、对话框 ✅、4 个 Tab ✅、「生成偏好」✅、开关 `checked=false` ✅。
+
+#### 14.8.2 收窄后的诚实边界（§14.7 的补充）
+
+- **真机的真实触摸路径仍未直接复现**（§14.7 已述）：headless 无软键盘、无 iOS 的 touchend 落点判定 ⇒ 本刀是**结构性防御**；已用**等价场景**在生产旧版复现出误弹并完成前后对照（`M4c`）。
+- **防线 B 的固有边界仍在**：若用户确实想点 chip 而 pointerdown 落在别处、且仍在 500ms 意图窗内，本次 click 会被忽略 ⇒ 需要再点一次。概率极低，但**不为零**。
+- **堆叠态 / 生成中**未逐态实测（沿用 §13.7 同一条边界：两者非 idle ⇒ 入口可见）。
+- **探针未覆盖**：真机软键盘弹起/收起动画、iOS 与 Android 的 OEM 合成事件变体、横竖屏切换、弱网下的接口延迟。⇒ 这些只能在真机复测补齐。
+- 本刀**零服务端改动**：授权判定 / DB / 偏好 API 全部不动 ⇒ §9.2 活体对照结论继续适用。
