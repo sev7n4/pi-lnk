@@ -38,6 +38,9 @@ function mountControl(props: Record<string, unknown> = {}) {
   return mount(AutoApproveControl, {
     props: { desktop: true, ...props },
     global: { stubs: { MobileSheet: sheetStub } },
+    // ⚠️ 必须 attachTo：VTU 默认挂在 detached 容器里 ⇒ 事件传播路径不含 document
+    //    ⇒ §14 防线 B 的 document 级捕获监听收不到 pointerdown（守卫会假绿）。
+    attachTo: document.body,
   })
 }
 
@@ -136,6 +139,57 @@ describe('AutoApproveControl — composer 入口', () => {
   it('只读画布：触发器禁用（不得改账号级偏好）', () => {
     const w = mountControl({ readOnly: true })
     expect(w.find('[data-testid="auto-approve-chip"]').attributes('disabled')).toBeDefined()
+    w.unmount()
+  })
+
+  /* ---- §14 防误弹三道防线（真机走查：收缩态点输入框 ⇒ 凭空弹出设置卡片）---- */
+
+  it('§14-A 收缩态（collapsed）**入口本体不渲染**（DOM 级，不是 CSS 隐藏）', () => {
+    const w = mountControl({ collapsed: true })
+    // 防线 A：收缩态 DOM 里**不存在** chip ⇒ 没有任何可命中目标
+    expect(w.find('[data-testid="auto-approve-chip"]').exists()).toBe(false)
+    expect(w.find('[data-testid="auto-approve-chip-auto"]').exists()).toBe(false)
+    expect(w.find('.auto-approve-glyph').exists()).toBe(false)
+    // 根容器保留（防线 B 要它常驻记录 pointerdown），但带 is-collapsed 消除占位
+    const root = w.find('[data-testid="auto-approve-control"]')
+    expect(root.exists()).toBe(true)
+    expect(root.classes()).toContain('is-collapsed')
+    w.unmount()
+  })
+
+  it('§14-B 意图守卫：pointerdown 落在别处 ⇒ 落在 chip 上的 click **被忽略**（不弹卡片）', async () => {
+    const w = mountControl()
+    // 模拟「点输入框/提示语」：pointerdown 落在组件之外（target 不在 chip 内）
+    await w.find('[data-testid="auto-approve-control"]').trigger('pointerdown')
+    // 随后 click 却落在 chip 上（真机 touchend 落点判定 → 形态切换后 chip 滑到落点下）
+    await w.find('[data-testid="auto-approve-chip"]').trigger('click')
+    expect(w.find('[data-testid="auto-approve-popover"]').exists()).toBe(false)
+    expect(w.find('.stub-sheet').exists()).toBe(false)
+    w.unmount()
+  })
+
+  it('§14-B 正常点击仍可用：pointerdown 落在 chip 内 ⇒ click 打开卡片', async () => {
+    const w = mountControl()
+    await w.find('[data-testid="auto-approve-chip"]').trigger('pointerdown')
+    await w.find('[data-testid="auto-approve-chip"]').trigger('click')
+    expect(w.find('[data-testid="auto-approve-popover"]').exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('§14-B 键盘激活（无 pointerdown）仍可打开卡片（无障碍不可被守卫误伤）', async () => {
+    const w = mountControl()
+    // 直接 click、不带任何 pointerdown ⇒ 视为键盘/程序化激活 ⇒ 放行
+    await w.find('[data-testid="auto-approve-chip"]').trigger('click')
+    expect(w.find('[data-testid="auto-approve-popover"]').exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('§14-C 转为收缩态 ⇒ 复位 open（Sheet 不跨形态残留）', async () => {
+    const w = mountControl({ desktop: false })
+    await w.find('[data-testid="auto-approve-chip"]').trigger('click')
+    expect(w.find('.stub-sheet').exists()).toBe(true)
+    await w.setProps({ collapsed: true })
+    expect(w.find('.stub-sheet').exists()).toBe(false)
     w.unmount()
   })
 })

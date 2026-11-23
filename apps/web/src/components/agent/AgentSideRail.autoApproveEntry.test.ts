@@ -8,7 +8,8 @@
 //   ② 旧的「单击即收回」icon-only 按钮不得复活（收回必须走浮层开关，双向同处）；
 //   ③ 入口位置 = composer 工具行，模型 chip 之后、发送键之前；
 //   ④ 胶囊外观：关闭态弱化（无底色）、开启态琥珀高亮、**无描边无柔底**、零新令牌；
-//   ⑤ 移动端走**同一枚胶囊** + Sheet（裸条三件套纪律），**空闲态隐藏**；
+//   ⑤ 移动端走**同一枚胶囊** + Sheet（裸条三件套纪律），**收缩态入口本体不渲染**
+//      （§14：DOM 级 v-if —— CSS 隐藏会让元素在场，形态切换瞬间被同一次触摸误触）；
 //   ⑥ 提议卡与胶囊用**同一枚图形**（跨位置可识别性）；
 //   ⑦ 面板说明必须写清作用域（图片与音频 / 视频仍逐次确认）；
 //   ⑧ 触感开关**单一来源**（全局共享段），三个落点不得各自复制。
@@ -60,7 +61,9 @@ describe('授权自动生成 · 对话页落点（状态胶囊 + 锚定浮层守
   })
 
   it('③ 入口 = AutoApproveControl，位置在模型 chip 之后、发送键之前', () => {
-    expect(rail).toContain('<AutoApproveControl :desktop="isDesktopDock" :read-only="props.readOnly" />')
+    expect(rail).toContain(':desktop="isDesktopDock"')
+    expect(rail).toContain(':read-only="props.readOnly"')
+    expect(rail).toContain(':collapsed="mobileBarIdle"')
     const at = rail.indexOf('<AutoApproveControl')
     const paramsAt = rail.indexOf('class="agent-dock-params"')
     const primaryAt = rail.indexOf('class="agent-dock-primary"')
@@ -156,30 +159,59 @@ describe('授权自动生成 · 对话页落点（状态胶囊 + 锚定浮层守
     expect(auto).not.toMatch(/rgba?\(/)
   })
 
-  it('§13-1 移动端**空闲态隐藏**胶囊（裸条纪律一致：只留 ＋ + 提示）', () => {
+  it('§13-1 移动端裸条空闲态纪律：输入行 / 模型 chip / 发送键隐藏（入口由 §14 组件级接管）', () => {
     // idle 态（is-idle）时裸条只剩「＋ + 提示语」，模型 chip / 发送键 / 输入行全隐藏
-    // ⇒ 入口是唯一还杵着的功能项（用户裁定：仅输入态可见入口即可）。
     // ⚠️ `rule()` 只截取 `{...}` 规则体（选择器列表在体之外）⇒
-    //    断言分两步：① 选择器列表里**确实列出了**胶囊（正向，防假绿）；
+    //    断言分两步：① 选择器列表里**确实列出了**这三项（正向，防假绿）；
     //    ② 规则体里**确实**是 `display: none`。
     expect(rail).toContain(
       '.agent-panel-mobile-dock .composer-bare-bar.is-idle .agent-composer__input-wrap,\n' +
       '.agent-panel-mobile-dock .composer-bare-bar.is-idle .agent-dock-params,\n' +
-      '.agent-panel-mobile-dock .composer-bare-bar.is-idle .agent-dock-primary,\n' +
-      '.agent-panel-mobile-dock .composer-bare-bar.is-idle .auto-approve-control {',
+      '.agent-panel-mobile-dock .composer-bare-bar.is-idle .agent-dock-primary {',
     )
     const idleRule = rule(rail, '.agent-panel-mobile-dock .composer-bare-bar.is-idle .agent-composer__input-wrap,')
     expect(idleRule).toContain('display: none')
     // 只影响移动端裸条作用域，PC 端不受影响。
-    // ⚠️ 判据只能看**作用域前缀**：移动端规则的选择器列表跨 4 行且每行都带
-    //    `.agent-panel-mobile-dock` 前缀 ⇒ 用「前一行不得是 .auto-approve-control」
-    //    来判 PC 侧未被误挂（正则跨行匹配会把自己也吃掉 ⇒ 上一版误伤）。
+    // ⚠️ 判据只能看**作用域前缀**：移动端规则的选择器列表跨行且每行都带
+    //    `.agent-panel-mobile-dock` 前缀 ⇒ 用「命中行 + 上一行都带前缀」判定。
     const idleLines = rail.split('\n')
-    const idx = idleLines.findIndex((l) => l.includes('.is-idle .auto-approve-control'))
+    const idx = idleLines.findIndex((l) => l.includes('.is-idle .agent-dock-primary'))
     expect(idx).toBeGreaterThan(-1)
-    // 命中行及其**上一行**都必须带移动端作用域前缀
     expect(idleLines[idx]).toContain('.agent-panel-mobile-dock')
     expect(idleLines[idx - 1]).toContain('.agent-panel-mobile-dock')
+  })
+
+  /* ---- §14 防误弹三道防线（真机走查：收缩态点输入框 ⇒ 凭空弹出自动生成设置卡片）---- */
+
+  it('§14-1 收缩态**入口本体不渲染**（DOM 级 v-if），不得再用 CSS 隐藏', () => {
+    // ① CSS 级隐藏（元素仍在场）⇒ 形态切换瞬间会被同一次触摸的 click 命中
+    //    （真机 touchend 落点判定）⇒ 必须从 CSS 隐藏规则里移除
+    expect(rail).not.toContain('.is-idle .auto-approve-control')
+    // ② 父级必须把收缩态传下去（mobileBarIdle = 移动端 && idle 形态 && 未展开 && 无技能）
+    expect(rail).toContain(':collapsed="mobileBarIdle"')
+    // ③ 组件里 chip 用 v-if 不渲染（不是 display:none）
+    expect(control).toContain('v-if="!props.collapsed"')
+    // ④ 根容器**保留**（防线 B 要它常驻记录 pointerdown）+ is-collapsed 只消除占位
+    expect(control).toContain("'is-collapsed': props.collapsed")
+    const collapsedRule = rule(control, '.auto-approve-control.is-collapsed')
+    expect(collapsedRule).toContain('display: none')
+  })
+
+  it('§14-2 click 意图守卫：pointerdown 落点不在 chip 内 ⇒ 忽略该 click', () => {
+    // ⚠️ 必须 capture + document：裸条/画布会 stopPropagation，冒泡阶段收不到 ⇒ 守卫形同虚设
+    expect(control).toContain("document.addEventListener('pointerdown', onDocPointerDown, true)")
+    expect(control).toContain('chipRef.value.contains(node)')
+    // 忽略判据：有过 pointerdown 记录、且落点不在 chip 内
+    expect(control).toContain('if (pointerDownSeen && !pointerDownOnChip) return')
+    // 芯片的 click 必须走守卫（不得直接写 open = !open）
+    expect(control).toContain('@click="onChipClick"')
+    expect(control).not.toContain('@click="open = !open"')
+  })
+
+  it('§14-3 形态复位：转为收缩态时关掉 open（Sheet 跨形态不残留）', () => {
+    // Sheet 经 Teleport 挂 body ⇒ 父级 display:none 杀不掉它 ⇒ 必须显式复位
+    expect(control).toMatch(/watch\(\s*\(\) => props\.collapsed/)
+    expect(control).toContain('if (v) open.value = false')
   })
 
   it('§12-3 移动端胶囊**不带箭头**（移动开底部 Sheet，箭头语义相反）', () => {

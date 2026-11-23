@@ -769,3 +769,110 @@ manual: → pending_confirm → SSE waiting_user → 确认卡 → /answers → 
 - 移动端**空闲态隐藏**已在生产实证（M4a）；但**堆叠态**（stacked，有引用芯片）与**生成中**（queued）未单独取证 —— 两者都非 idle ⇒ 入口可见（由 CSS 规则推得，未逐态实测）。
 - 移动端用户在**不点按输入框**的情况下看不到该入口 ⇒ 移动端发现路径只剩「点按输入框」与「设置页开关」两处（用户裁定的直接后果，非缺陷）。
 - 去柔底后开启态在工具行里**不再有色块视觉重量**（实测琥珀像素仅「实心盾 + Auto 字」）⇒ 已用实心填充 + 文字双重信号补偿，但**未做真人可发现性测试**。
+
+---
+
+## 14. UI 迭代五（2026-11-23）：收缩态误弹【自动生成】卡片的三道防线
+
+### 14.1 现象、用户澄清与取证
+
+**真机走查现象**：移动端 composer **收缩态**点输入框 ⇒ 凭空弹出【自动生成】设置卡片（含开关按钮）。
+
+**用户澄清（重要，纠正了本刀的初判）**：展开输入态**本身就应该**渲染盾牌图标，点击盾牌弹出【自动生成】设置卡片并在其中切换「自动生成 / 每次询问」—— 这是 WorkBuddy 产品的既有最佳实践，**要保留**。真正要解决的只有一条：**收缩态点输入框时不该弹出这张卡片**。
+
+⇒ 因此本刀**不是**「把入口删掉」，而是**「让误弹在结构上不可能发生」**。
+
+**CDP 复现尝试（6 条路径，逐条排除；全部为生产实测，非推理）**：
+
+| 假设 | 实测 | 判定 |
+|---|---|---|
+| 点输入框的 click 直接命中胶囊 | 落在胶囊上的 click = **0**；实际命中 `textarea.mention-input-field` | ❌ 排除 |
+| 键盘弹起导致裸条重排 ⇒ 重叠误触 | 弹起态 chip `(309,404,28×26)` vs 输入框 `(21,363,348×34)`，**重叠面积 = 0** | ❌ 排除 |
+| touchend 前视口突变（真机键盘动画） | click 仍不落胶囊，Sheet 未弹 | ❌ 排除 |
+| 移动端弹出的是 PC 锚定浮层（`.neo-popover`，内含 switch 按钮 ⇒ 形态更像「卡片」） | `isDesktopDock = !isMobileLayout` ⇒ 移动端**恒**走底部 Sheet | ❌ 排除 |
+| Sheet 收起后残留（Teleport body 不受父级 `display:none` 约束） | `.m-sheet-scrim` 是 `inset:0` 全屏遮罩 ⇒ Sheet 开着时**碰不到** composer | ❌ 排除 |
+| 形态切换后 chip 与输入框位置重叠 | 同第 2 行 | ❌ 排除 |
+
+**取证结论**：**真实触摸路径**（用 CDP 派发真实 touch 点提示语/输入框）在 headless Chrome 里**复现不出误弹** —— Chrome 按 `pointerdown`/`pointerup` 的共同祖先派发 click，而 **iOS Safari 按 touchend 落点判定**；headless 天然测不出那条路径。
+
+**⇒ 换等价场景复现（决定性证据）**：iOS「touchend 落点派发 click」的行为等价物是 —— **pointerdown 落在别处、随后 click 落在 chip 上**。在**生产旧版**上构造该场景：
+
+| 探针判据 | 生产旧版实测 | 判定 |
+|---|---|---|
+| `M4a` 收缩态入口本体是否不渲染 | `chipExists: **true**`（`display:inline-flex` 但父级 `display:none` ⇒ **元素仍在 DOM 里**） | ❌ 旧版不满足 |
+| `M4c` 指针落在别处 ⇒ chip 上的 click 被忽略 | `sheetExists: **true**` ⇒ **【自动生成】卡片确实被弹出来了** | ❌ **误弹路径复现成功** |
+
+⇒ **根因假设得到证实**：旧版里 chip 只是「CSS 级不可见」而**在场**，且 click 的意图来源完全不被校验 ⇒ 任何一次「落点与 pointerdown 不一致」的 click 都能把它点开。
+⇒ 防线 B **精确命中**该场景（不是泛泛的防御），且可被生产探针前后对照验证（基线 FAIL → 修复后 PASS）。
+
+**决策**：**不再追查具体路径**（真机环境不可得），改为**架构级消除**——让「形态切换瞬间新出现的可点控件」在结构上不可能被同一次触摸命中。这对**所有**同类路径（重排误触 / ghost click / OEM 合成事件变体）同时生效。
+
+### 14.2 根因链（四层，逐层都可单独复发 ⇒ 四层齐修）
+
+1. **`mobileBarIdle` 的语义是「未展开」而不是「空闲」**（`AgentSideRail.vue:1450`）：
+   `isMobileLayout && shape==='idle' && !composerExpanded && !selectedSkillIds.length`
+   ⇒ 点输入框必然摘掉 `is-idle` ⇒ §13 的「空闲态隐藏」规则**只在没点开之前成立**。
+2. **展开动作发生在 pointerup 处理器内**（`AgentSideRail.vue:1529` 同步置 `composerExpanded = true`）
+   ⇒ chip 在**同一次触摸尚未结束**时就变成可点。
+3. **iOS Safari 的 click 按 touchend 落点判定** ⇒ 这次「点输入框」的 click 落在刚出现的 chip 上。
+4. **`open = true` ⇒ Sheet 弹出**；Sheet 经 `Teleport` 挂 body ⇒ 父级 `display:none` 杀不掉它（一旦误开，跨形态残留）。
+
+### 14.3 修订规格（三道防线，缺一层都还会复发）
+
+| 防线 | 做法 | 消除哪一层 |
+|---|---|---|
+| **A · 存在性下沉到 DOM** | `collapsed` 为真时 **chip 按钮用 `v-if` 不渲染**（不是 CSS `display:none`）；根容器保留（防线 B 要它常驻），加 `is-collapsed` 只负责消除占位 | 第 1、2 层 |
+| **B · click 意图守卫** | document **capture** 阶段记 `pointerdown` 落点是否在 chip 内；`click` 时「有 pointerdown 记录 **且** 落点不在 chip 内」⇒ 忽略本次 click | 第 2、3 层 |
+| **C · 形态复位** | `collapsed` 转真时 `open = false` | 第 4 层 |
+
+**防线 B 的三条硬约束（缺任一即失效）**：
+
+- **必须常驻**：监听器注册在组件 `onMounted`；若组件在收缩态整体卸载，展开前那次 pointerdown **录不到** ⇒ 守卫形同虚设。故组件**不卸载**，只让 chip 自身 `v-if` 不渲染。
+- **必须 capture**：裸条/画布会 `stopPropagation`（`onBarGestureOnChild` 拦子控件命中）⇒ 冒泡阶段收不到 ⇒ 一律 `addEventListener('pointerdown', h, true)`（与仓内 `useClickOutside` / `NodeDiagnosticPopover` / `RefineToolRail` 等 5+ 处既有范式一致）。
+- **键盘不得被误伤**：无任何 pointerdown 记录 ⇒ 视为键盘 Enter/Space 激活 ⇒ **放行**（读屏/键盘用户仍能打开卡片）。
+
+**PC 端不变**（无收缩态，不存在此问题；用户确认「不用动」）。
+
+### 14.4 等价物检索结论表（第一原则）
+
+| 需求 | 既有等价物（检索结果） | 结论 |
+|---|---|---|
+| 「外部点击关闭」 | `useClickOutside`（`composables/useClickOutside.ts`） | **语义不同**：只判 target 是否在内部并触发关闭，不判 click 的**意图来源** |
+| 「移动端点按意图」 | `AgentSideRail.barTapIntentAt`（`:1483`） | **同域但语义不同**：判「刚 tap 过输入框 ⇒ 丢焦可能是 OEM 合成事件变体」的时间窗兜底；不判 click 落点一致性 ⇒ 不可复用（但它证明仓内**早已认知**移动端 composer 存在 OEM 合成事件导致的误判，与本刀同源） |
+| 手势分类 | `composer/holdGesture.ts` 的 `classifyGesture` | 只判 tap/hold/cancel，不涉及 click 落点 |
+| pointerdown 捕获监听范式 | `useClickOutside` / `NodeDiagnosticPopover` / `RefineToolRail` / `ReplaceImagePicker` / `GridSliceDropdown`（5+ 处） | **接线**：沿用既有范式，零新基建 |
+| 令牌 | 无新增（`display:none` / `v-if` / 事件判定，均非样式令牌） | **零新令牌** |
+
+⇒ **判定：意图守卫无等价物可复用** ⇒ 新建最小实现（15 行，纯判定逻辑，无状态机、无新依赖）。
+
+### 14.5 变更清单（逐文件）
+
+| 文件 | 改动 |
+|---|---|
+| `AutoApproveControl.vue` | ① 新增 `collapsed` prop；② chip 按钮 `v-if="!props.collapsed"`（防线 A）；③ 根容器 `is-collapsed` 只消除占位；④ document capture `pointerdown` 记录落点 + `onChipClick` 意图守卫（防线 B）；⑤ `watch(collapsed)` 复位 `open`（防线 C）；⑥ 注释写入 §14 根因链 |
+| `AgentSideRail.vue` | ① 传 `:collapsed="mobileBarIdle"`；② **删除** CSS 级 `.is-idle .auto-approve-control { display:none }`（该规则是「元素在场但不可见」的根源）；③ order 注释与模板注释更新至 §14 |
+| `AutoApproveControl.test.ts` | 新增 §14 五例（收缩态零 DOM / 意图守卫拦截 / 正常点击放行 / 键盘激活放行 / 形态复位）；`mountControl` 加 `attachTo: document.body`（VTU 默认 detached ⇒ document 捕获监听收不到事件） |
+| `AgentSideRail.autoApproveEntry.test.ts` | ③ 断言改为三 prop；§13-1 改写为「三件套隐藏（入口由 §14 组件级接管）」；新增 §14-1 / §14-2 / §14-3 三条守卫 |
+
+### 14.6 守卫与变异验证
+
+- 定向测试 **32/32 PASS**（`AutoApproveControl` 12 + 落点守卫 17 + `AutoApproveGlyph` 3）
+- `vue-tsc -b` **0 错误**；`verify-agent-rail-gates.py` **11/11 PASS**
+- **变异 7 例全部转红**，还原后 29/29 全绿：
+
+| 变异 | 转红的判据 |
+|---|---|
+| M1 chip 去掉 `v-if` | §14-1 + §14-A |
+| M2 `is-collapsed` 规则体去 `display:none` | §14-1 |
+| M3 父级不再传 `:collapsed` | ③ + §14-1 |
+| M4 把 CSS 级 idle 隐藏规则加回来 | §13-1 + §14-1 |
+| M5 去掉意图守卫的忽略判据 | §14-2 + §14-B |
+| M6 pointerdown 监听 capture → 冒泡 | §14-2（**行为测试仍绿** —— 真机裸条 `stopPropagation` 会吞掉冒泡，源码契约守住了这条） |
+| M7 去掉形态复位 | §14-3 + §14-C |
+
+### 14.7 诚实边界
+
+- **真机的真实触摸路径未被直接复现**：headless Chrome 无软键盘、无 iOS 的 touchend 落点判定 ⇒ 本刀的防线是**结构性防御**（对所有同类路径生效），**不是**对已复现 bug 的定点修复。但已用**等价场景**（pointerdown 在别处 + click 在 chip）在生产旧版上**复现出误弹**（`M4c: sheetExists=true`）⇒ 防线 B 与该场景**精确对位**，可做前后对照验证。
+- **防线 B 的固有边界**：若用户**确实**想点 chip 而 pointerdown 落在了别处（例如 pointerdown 被别处吞掉、事件序列异常），本次 click 会被忽略 ⇒ 需要再点一次。概率极低（pointerdown 与 click 同源），但**不为零**。
+- **堆叠态 / 生成中**未逐态实测（沿用 §13.7 的同一条边界：两者非 idle ⇒ 入口可见）。
+- 本刀**零服务端改动**：授权判定 / DB / 偏好 API 全部不动 ⇒ §9.2 活体对照结论继续适用。

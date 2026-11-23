@@ -297,3 +297,35 @@ PR #985 → CI **3/3 绿**（web 全量 **557 文件 / 4627 用例全绿**，28m
 1. **对隐藏元素 `.click()` 会假 PASS**：M5 直接 `el.click()` 断言 Sheet 展开 —— 但 `display:none` 的胶囊调 `.click()` **仍派发 click** ⇒ 必然假绿。⇒ 加前置判据 M5a「点之前 `visible === true`」。
 2. **移动端展开不是 click 触发**：绑的是 **pointerdown → pointerup 手势对**（`AgentSideRail.vue:1509/1521`）+ `classifyGesture()` 判 `tap`（dy ≤10px）。`el.click()` 只派发 click ⇒ 展开永不发生（M4b 首跑假失败）。⇒ 用 CDP `Input.dispatchTouchEvent` 派发真实 `touchStart`/`touchEnd`，命中**提示语 span**（非 button/input ⇒ 不被 `onBarGestureOnChild` 拦掉）。
 3. **两态采样**：idle 与展开后各采一次，单次绝对断言会与前序段遗留状态耦合。
+
+### UI 迭代五（2026-11-23 深夜）：收缩态误弹【自动生成】卡片的三道防线
+
+**触发**：真机走查 —— 移动端 composer 收缩态点输入框 ⇒ 凭空弹出【自动生成】设置卡片。
+**用户澄清（纠偏了本刀初判）**：展开输入态**本就该**渲染盾牌图标、点击弹卡片（WorkBuddy 最佳实践，保留）；要解决的只有**收缩态误弹**。PC 端无收缩态，不存在此问题，**不用动**。
+
+**取证（6 条路径逐条排除，全部生产实测）**：click 直接命中胶囊（落在胶囊上 = 0，实际命中 textarea）／键盘弹起重叠（chip (309,404,28×26) vs 输入框 (21,363,348×34)，重叠面积 0）／touchend 前视口突变（不落胶囊）／移动端弹 PC 浮层（`isDesktopDock = !isMobileLayout` ⇒ 恒走 Sheet）／Sheet 跨形态残留（`.m-sheet-scrim` = `inset:0` 全屏，Sheet 开着时碰不到 composer）／chip 与输入框重叠（0）。
+⇒ **真实触摸路径在 headless 里复现不出** —— 真机差异在 **click 的 target 判定规则**：Chrome 按 pointerdown/pointerup 共同祖先，**iOS Safari 按 touchend 落点**。
+
+**⭐ 等价场景复现（决定性证据，生产旧版实测）**：iOS「touchend 落点派发 click」的行为等价物 = **pointerdown 落在别处、随后 click 落在 chip 上**。在生产旧版上跑探针：
+| 判据 | 旧版实测 | 判定 |
+|---|---|---|
+| M4a 收缩态入口本体不渲染 | `chipExists: true`（父级 display:none ⇒ **元素仍在 DOM 里**） | ❌ 旧版不满足 |
+| M4c 指针落在别处 ⇒ chip 上的 click 被忽略 | `sheetExists: **true**` ⇒ **【自动生成】卡片确实弹出来了** | ❌ **误弹路径复现成功** |
+⇒ 根因假设证实：旧版 chip 只是「CSS 级不可见」而**在场**，且 click 的意图来源完全不被校验 ⇒ 防线 B **精确命中**该场景，可做生产前后对照（基线 FAIL → 修复后 PASS）。
+⇒ **决策：不追查具体路径**（真机环境不可得），改**架构级消除**：让「形态切换瞬间新出现的可点控件」在结构上不可能被同一次触摸命中。
+
+**根因链（四层）**：① `mobileBarIdle` 语义是「未展开」不是「空闲」⇒ 点输入框必然摘 `is-idle`；② 展开在 pointerup 处理器内同步发生 ⇒ chip 在同一次触摸未结束时就可点；③ iOS 的 click 按 touchend 落点 ⇒ 落在刚出现的 chip 上；④ `open=true` ⇒ Sheet 弹出，且 Teleport body ⇒ 父级 `display:none` 杀不掉。
+
+**改动（三道防线）**：
+| 防线 | 做法 |
+|---|---|
+| A 存在性下沉到 DOM | `collapsed` ⇒ chip **`v-if` 不渲染**（不是 CSS 隐藏）；根容器保留 + `is-collapsed` 只消除占位 |
+| B click 意图守卫 | document **capture** `pointerdown` 记落点是否在 chip 内；click 时「有 pointerdown 记录**且**落点不在 chip 内」⇒ 忽略 |
+| C 形态复位 | `collapsed` 转真 ⇒ `open = false` |
+**B 的三条硬约束**：必须常驻（组件不整体卸载，否则展开前那次 pointerdown 录不到）／必须 capture（裸条 `stopPropagation` 会吞掉冒泡）／键盘激活（无 pointerdown）必须放行（无障碍）。
+**PC 端不变。**
+
+**等价物检索**：无「点击意图守卫」等价物（`useClickOutside` 语义不同、`barTapIntentAt` 是时间窗兜底、`classifyGesture` 不涉落点）⇒ 新建最小实现 15 行；但 **capture 监听范式沿用仓内 5+ 处既有做法** ⇒ 零新基建、零新令牌。
+
+**验证**：定向 **32/32**；`vue-tsc -b` 0 错；门禁 **11/11**；**变异 7 例全转红**（去掉 chip v-if／去掉 is-collapsed 的 display:none／父级不传 collapsed／加回 CSS 隐藏规则／去掉忽略判据／capture 改冒泡／去掉形态复位），还原后 29/29 全绿。
+⚠️ **M6 值得记**：capture 改冒泡时**行为测试仍绿**（VTU 里事件照样冒泡到 document）⇒ 只有源码契约守卫转红 —— 这正是「源码契约守结构、行为测试守语义」的分工价值。
