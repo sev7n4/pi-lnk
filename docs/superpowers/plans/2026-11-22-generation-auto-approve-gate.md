@@ -218,3 +218,36 @@ PR #980 → CI **4/4 绿**（web 全量 **557 文件 / 4622 用例** + `vue-tsc`
 3. **守卫只查选择器字符串会假绿**：M7 把选择器改名后原字符串仍是子串 ⇒ 断言改为落到**规则体**（`min-width: 0` 真的存在）。
 
 **诚实边界**：① 纯前端改动（服务端判定/DB/偏好 API 零改动）⇒ §9.2 活体对照结论继续适用；② 移动端胶囊的**实机视觉**与 320px 截断效果需生产走查实证；③ 关闭态胶囊**零文字**后的可发现性依赖图形与箭头，未做真人可发现性测试；④ audio 介质仍未活体（沿用 §9.3）。
+
+### 上线与生产复测（2026-11-23，UI 迭代三）
+
+PR #983 → CI **3/3 绿**（`Build monorepo` + `Verify spec figures` + `Verify deploy auto-rollback guard`；web 全量 **557 文件 / 4626 用例全绿**，22min12s）→ squash 合并 master `aba000c2`。
+**合并证据**：合并后 master 的 tree `69c3b6c6` == CI 验证 head 的 tree `69c3b6c6` ⇒ 合并树与 CI 验证树一致。
+**部署**：push 命中 `apps/web/**` 触发条件 ⇒ deploy 自动触发，**success**。
+
+**产物取证**（生产 chunk `CanvasPage-Cd21xSiS.js`）：`auto-approve-chip-auto` / `auto-approve-chip-caret` / `is-mobile` 均在；**`auto-approve-trigger` 出现 0 次**（旧 icon-only 触发器随本次发布消失）。
+
+**主探针 28/28 PASS**（判据已按 §12 新形态改写，新增 P4e/P4f/P4g/P5d/M4b/P7c/P7d 七条）：
+
+| 判据 | 实测值 |
+|---|---|
+| 开启态胶囊 | `text: "[auto]"`、`92×28`、`inDockActions: true` |
+| **开启态描边** | `borderTopColor: rgba(0, 0, 0, 0)` ⇒ **无描边** |
+| **胶囊中文文案** | `text: "[auto]"` ⇒ 长文案已清除 |
+| **关闭态胶囊** | `text: ""`、`autoExists: false`、`bg: rgba(0,0,0,0)` ⇒ **零文字** |
+| **移动端胶囊** | `isMobile: true`、`hasCaret: false`、`legacyTrigger: false`、`73×26` ⇒ **两端同一枚** |
+| 浮层卡片 | 开启态「当前为自动生成：…」/ 关闭态「当前每次生成都会先问你（即「每次先问」）。…」 |
+| 往返闭环 | `auto` → `manual` → `auto`，服务端回读一致 |
+| 走查卫生 | 会话 `delete-status-200`；账号偏好收尾归零 `manual` |
+
+**窄屏实测（四档全不换行）**：430/390/360/**320**px 裸条高**恒 48px**、胶囊**恒 73px**、`overflow: false`。
+⇒ **比 §12.1 预测更好**：§12.1 用中文占位测出 320px 会换行，但 `[auto]` 把胶囊压到 73px（比 83px 占位更窄）⇒ **320px 也不换行**，模型 chip 无需截断即让位。
+⚠️ 采样纪律：430px 首次采样 `barH: null` 是**页面未就绪**，重采后为 48px ⇒ 判读必须区分「采样时机」与「换行」。
+
+**`AutoApproveGlyph` 关闭态配色的裁定（量化，规格 §12.6.3）**：用真实令牌本地渲染（headless Chrome + PIL 像素扫描）测得**单看盾牌，两态琥珀量几乎相同（0.98x / 0.95x）且色值完全一致**（`#fbbf24` / `#8a5200`）⇒ 图形**不承载状态色差异**，状态全靠「线框 vs 实心 + 柔底 + `[auto]`」；两态合计视觉重量差 **3.4~3.6 倍**。
+⇒ **裁定：图形零改动**。理由：① 状态可辨性不依赖颜色（三重信号已足，琥珀是**能力语义色**不是状态色）；② 同一枚图形也用于提议卡**授权入口**，改色会让同一图形两处含义分叉（违 §3.4）；③ 提议卡入口依赖琥珀描边保可发现性（§10 已定）；④ 零新令牌 / 零新分支。
+⚠️ 诚实代价：关闭态孤立琥珀线框盾牌**可能被读成警示**；若日后真机反馈误读，再定向改**只在 composer 关闭态**的中性色变体（不动提议卡），而非现在无据改共享组件。
+
+**本轮新增的两个环境坑**：
+1. **`git fetch` 不可用**（`RPC failed; curl 52 Empty reply from server`）⇒ 按纪律改走 REST：用 `gh api git/blobs → git/trees(base_tree=master 最新 tree) → git/commits(parents=[master 最新 commit]) → git/refs → pulls` **基于最新 master 重建单 commit**（本刀 master 已前进到 #982，触碰面与我的 7 个文件**零交集**）。
+2. **headless Chrome 跨 Bash 调用被清理** ⇒ `ECONNREFUSED 127.0.0.1:9222`；必须**同一次调用内**起 Chrome + 跑探针。另：`Runtime.evaluate` 的表达式须包成 `(async () => { ... })()`（否则多语句 `return` 失效，`ev` 返回 undefined）；`fetch` 须带 `AbortController` 超时（否则页面未就绪时挂死）。
