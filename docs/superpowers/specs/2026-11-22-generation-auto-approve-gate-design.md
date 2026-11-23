@@ -825,10 +825,12 @@ manual: → pending_confirm → SSE waiting_user → 确认卡 → /answers → 
 | **B · click 意图守卫** | document **capture** 阶段记 `pointerdown` 落点是否在 chip 内；`click` 时「有 pointerdown 记录 **且** 落点不在 chip 内」⇒ 忽略本次 click | 第 2、3 层 |
 | **C · 形态复位** | `collapsed` 转真时 `open = false` | 第 4 层 |
 
-**防线 B 的三条硬约束（缺任一即失效）**：
+**防线 B 的五条硬约束（缺任一即失效或引入回归）**：
 
 - **必须常驻**：监听器注册在组件 `onMounted`；若组件在收缩态整体卸载，展开前那次 pointerdown **录不到** ⇒ 守卫形同虚设。故组件**不卸载**，只让 chip 自身 `v-if` 不渲染。
 - **必须 capture**：裸条/画布会 `stopPropagation`（`onBarGestureOnChild` 拦子控件命中）⇒ 冒泡阶段收不到 ⇒ 一律 `addEventListener('pointerdown', h, true)`（与仓内 `useClickOutside` / `NodeDiagnosticPopover` / `RefineToolRail` 等 5+ 处既有范式一致）。
+- **只对移动端生效**（`!props.desktop`）：PC 端没有收缩态、chip 不会在触摸中途突然出现 ⇒ **无误弹风险**；反过来 PC 有键盘用户，守卫若在 PC 生效，用户「鼠标点过别处 → Tab 到 chip → Enter」会被误伤而**打不开卡片**（可访问性回归，本刀自测时发现并当场修正）。
+- **必须带意图时间窗**（`POINTER_INTENT_WINDOW_MS = 500`）：判据若只看「最近一次 pointerdown 的落点」，则「很久之前在别处点过鼠标」会把后续**键盘激活**一并误伤 ⇒ 必须要求 pointerdown 落在**同一触摸序列的时间窗内**。500ms 覆盖同一次触摸（含 Android ghost click 的 ~300ms 延迟），又能让独立的键盘/鼠标操作放行。
 - **键盘不得被误伤**：无任何 pointerdown 记录 ⇒ 视为键盘 Enter/Space 激活 ⇒ **放行**（读屏/键盘用户仍能打开卡片）。
 
 **PC 端不变**（无收缩态，不存在此问题；用户确认「不用动」）。
@@ -856,9 +858,9 @@ manual: → pending_confirm → SSE waiting_user → 确认卡 → /answers → 
 
 ### 14.6 守卫与变异验证
 
-- 定向测试 **32/32 PASS**（`AutoApproveControl` 12 + 落点守卫 17 + `AutoApproveGlyph` 3）
+- 定向测试 **34/34 PASS**（`AutoApproveControl` 14 + 落点守卫 17 + `AutoApproveGlyph` 3）
 - `vue-tsc -b` **0 错误**；`verify-agent-rail-gates.py` **11/11 PASS**
-- **变异 7 例全部转红**，还原后 29/29 全绿：
+- **变异 10 例全部转红**（两轮），还原后 31/31 全绿：
 
 | 变异 | 转红的判据 |
 |---|---|
@@ -869,10 +871,14 @@ manual: → pending_confirm → SSE waiting_user → 确认卡 → /answers → 
 | M5 去掉意图守卫的忽略判据 | §14-2 + §14-B |
 | M6 pointerdown 监听 capture → 冒泡 | §14-2（**行为测试仍绿** —— 真机裸条 `stopPropagation` 会吞掉冒泡，源码契约守住了这条） |
 | M7 去掉形态复位 | §14-3 + §14-C |
+| **M8 守卫在 PC 端也生效**（去掉 `!props.desktop`） | §14-2 + 「PC 端不启用守卫」 |
+| **M9 去掉意图时间窗**（`withinWindow` 恒真） | 「时间窗之外 ⇒ 放行」 |
+
+⚠️ **M8/M9 是自测发现的回归**：第一版守卫写成「有 pointerdown 记录且落点不在 chip 内 ⇒ 忽略」，会误伤 PC 端键盘用户（鼠标点过别处 → Tab 到 chip → Enter 打不开卡片）。**上线前自查发现并当场修正**，两处都补了变异守护。
 
 ### 14.7 诚实边界
 
 - **真机的真实触摸路径未被直接复现**：headless Chrome 无软键盘、无 iOS 的 touchend 落点判定 ⇒ 本刀的防线是**结构性防御**（对所有同类路径生效），**不是**对已复现 bug 的定点修复。但已用**等价场景**（pointerdown 在别处 + click 在 chip）在生产旧版上**复现出误弹**（`M4c: sheetExists=true`）⇒ 防线 B 与该场景**精确对位**，可做前后对照验证。
-- **防线 B 的固有边界**：若用户**确实**想点 chip 而 pointerdown 落在了别处（例如 pointerdown 被别处吞掉、事件序列异常），本次 click 会被忽略 ⇒ 需要再点一次。概率极低（pointerdown 与 click 同源），但**不为零**。
+- **防线 B 的固有边界**：若用户**确实**想点 chip 而 pointerdown 落在了别处、且仍在 500ms 意图窗内，本次 click 会被忽略 ⇒ 需要再点一次。概率极低（pointerdown 与 click 同源），但**不为零**。
 - **堆叠态 / 生成中**未逐态实测（沿用 §13.7 的同一条边界：两者非 idle ⇒ 入口可见）。
 - 本刀**零服务端改动**：授权判定 / DB / 偏好 API 全部不动 ⇒ §9.2 活体对照结论继续适用。

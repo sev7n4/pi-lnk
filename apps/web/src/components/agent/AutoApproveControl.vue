@@ -59,17 +59,26 @@ const sheetRef = ref<HTMLElement | null>(null)
 useClickOutside(rootRef, () => { open.value = false }, [sheetRef])
 
 /* ---- §14 防线 B：click 的意图来源守卫 ----
- * 判据只看 **pointerdown 的落点**，不看时间窗：
+ * 判据 = **pointerdown 的落点** + **同一触摸序列的时间窗**：
  *  · pointerdown 落在 chip 内 ⇒ 用户确实想点它 ⇒ 放行；
  *  · pointerdown 落在别处（收缩态提示语 / 输入框 / 任意控件）⇒ 形态切换后 chip
  *    恰好滑到落点下方 ⇒ 这次 click 属于「上一次触摸的延续」⇒ 忽略；
  *  · 完全没有 pointerdown 记录 ⇒ 键盘 Enter/Space 激活 ⇒ 放行（无障碍不可断）。
- * ⚠️ 必须用 **capture 阶段 + document**：画布/裸条会 stopPropagation，
- *    冒泡阶段收不到 ⇒ 防线形同虚设。 */
+ *
+ * ⚠️ **必须用 capture 阶段 + document**：画布/裸条会 stopPropagation，
+ *    冒泡阶段收不到 ⇒ 防线形同虚设。
+ * ⚠️ **只对移动端生效**：PC 端没有收缩态、chip 不会在触摸中途突然出现 ⇒
+ *    无误弹风险；反过来 PC 有键盘用户，若守卫在 PC 生效，用户「鼠标点过别处
+ *    → Tab 到 chip → Enter」会被误伤而打不开卡片（可访问性回归）。
+ * ⚠️ **必须带时间窗**：判据只看「最近一次 pointerdown 的落点」，若不加窗，
+ *    则「很久之前在别处点过鼠标」会把后续**键盘激活**也一并误伤。
+ *    500ms 覆盖同一次触摸（含 Android ghost click 的 ~300ms 延迟），
+ *    又能让独立的键盘/鼠标操作放行。 */
+const POINTER_INTENT_WINDOW_MS = 500
 let pointerDownOnChip = false
-let pointerDownSeen = false
+let pointerDownAt = 0
 function onDocPointerDown(e: PointerEvent) {
-  pointerDownSeen = true
+  pointerDownAt = Date.now()
   const node = e.target as Node | null
   pointerDownOnChip = !!(node && chipRef.value && chipRef.value.contains(node))
 }
@@ -77,7 +86,8 @@ onMounted(() => document.addEventListener('pointerdown', onDocPointerDown, true)
 onBeforeUnmount(() => document.removeEventListener('pointerdown', onDocPointerDown, true))
 
 function onChipClick() {
-  if (pointerDownSeen && !pointerDownOnChip) return
+  const withinWindow = pointerDownAt > 0 && Date.now() - pointerDownAt < POINTER_INTENT_WINDOW_MS
+  if (!props.desktop && withinWindow && !pointerDownOnChip) return
   open.value = !open.value
 }
 

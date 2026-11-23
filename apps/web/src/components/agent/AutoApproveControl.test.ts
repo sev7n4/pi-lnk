@@ -158,27 +158,46 @@ describe('AutoApproveControl — composer 入口', () => {
   })
 
   it('§14-B 意图守卫：pointerdown 落在别处 ⇒ 落在 chip 上的 click **被忽略**（不弹卡片）', async () => {
-    const w = mountControl()
+    const w = mountControl({ desktop: false })
     // 模拟「点输入框/提示语」：pointerdown 落在组件之外（target 不在 chip 内）
     await w.find('[data-testid="auto-approve-control"]').trigger('pointerdown')
     // 随后 click 却落在 chip 上（真机 touchend 落点判定 → 形态切换后 chip 滑到落点下）
     await w.find('[data-testid="auto-approve-chip"]').trigger('click')
-    expect(w.find('[data-testid="auto-approve-popover"]').exists()).toBe(false)
     expect(w.find('.stub-sheet').exists()).toBe(false)
+    expect(w.find('[data-testid="auto-approve-popover"]').exists()).toBe(false)
     w.unmount()
   })
 
   it('§14-B 正常点击仍可用：pointerdown 落在 chip 内 ⇒ click 打开卡片', async () => {
-    const w = mountControl()
+    const w = mountControl({ desktop: false })
     await w.find('[data-testid="auto-approve-chip"]').trigger('pointerdown')
     await w.find('[data-testid="auto-approve-chip"]').trigger('click')
-    expect(w.find('[data-testid="auto-approve-popover"]').exists()).toBe(true)
+    expect(w.find('.stub-sheet').exists()).toBe(true)
     w.unmount()
   })
 
   it('§14-B 键盘激活（无 pointerdown）仍可打开卡片（无障碍不可被守卫误伤）', async () => {
-    const w = mountControl()
+    const w = mountControl({ desktop: false })
     // 直接 click、不带任何 pointerdown ⇒ 视为键盘/程序化激活 ⇒ 放行
+    await w.find('[data-testid="auto-approve-chip"]').trigger('click')
+    expect(w.find('.stub-sheet').exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('§14-B 时间窗之外 ⇒ 放行（很久前在别处点过鼠标，不该误伤后续键盘激活）', async () => {
+    const w = mountControl({ desktop: false })
+    await w.find('[data-testid="auto-approve-control"]').trigger('pointerdown')
+    // 真实等待越过意图窗（500ms）⇒ 这次 click 与那次 pointerdown 无关
+    await new Promise((r) => setTimeout(r, 600))
+    await w.find('[data-testid="auto-approve-chip"]').trigger('click')
+    expect(w.find('.stub-sheet').exists()).toBe(true)
+    w.unmount()
+  })
+
+  it('§14-B **PC 端不启用守卫**（PC 无收缩态 ⇒ 无误弹风险，且不得误伤键盘用户）', async () => {
+    const w = mountControl({ desktop: true })
+    // 鼠标点过别处（落点不在 chip 内）⇒ PC 端仍应正常打开
+    await w.find('[data-testid="auto-approve-control"]').trigger('pointerdown')
     await w.find('[data-testid="auto-approve-chip"]').trigger('click')
     expect(w.find('[data-testid="auto-approve-popover"]').exists()).toBe(true)
     w.unmount()

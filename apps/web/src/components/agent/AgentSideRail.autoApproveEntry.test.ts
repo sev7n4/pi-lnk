@@ -201,8 +201,12 @@ describe('授权自动生成 · 对话页落点（状态胶囊 + 锚定浮层守
     // ⚠️ 必须 capture + document：裸条/画布会 stopPropagation，冒泡阶段收不到 ⇒ 守卫形同虚设
     expect(control).toContain("document.addEventListener('pointerdown', onDocPointerDown, true)")
     expect(control).toContain('chipRef.value.contains(node)')
-    // 忽略判据：有过 pointerdown 记录、且落点不在 chip 内
-    expect(control).toContain('if (pointerDownSeen && !pointerDownOnChip) return')
+    // 忽略判据 = 移动端 + 同一触摸序列时间窗内 + 落点不在 chip 内
+    expect(control).toContain('POINTER_INTENT_WINDOW_MS')
+    expect(control).toContain('if (!props.desktop && withinWindow && !pointerDownOnChip) return')
+    // ⚠️ **PC 端不得启用守卫**：PC 无收缩态 ⇒ 无误弹风险；反之会误伤「鼠标点过别处
+    //    → Tab 到 chip → Enter」的键盘用户（可访问性回归）。
+    expect(control).toContain('!props.desktop &&')
     // 芯片的 click 必须走守卫（不得直接写 open = !open）
     expect(control).toContain('@click="onChipClick"')
     expect(control).not.toContain('@click="open = !open"')
