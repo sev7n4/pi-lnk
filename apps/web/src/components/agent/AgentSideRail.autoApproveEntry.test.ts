@@ -70,7 +70,7 @@ describe('授权自动生成 · 对话页落点（状态胶囊 + 锚定浮层守
     expect(at).toBeLessThan(primaryAt)
   })
 
-  it('④ 胶囊关闭态弱化（无底色无边框），开启态琥珀高亮', () => {
+  it('④ 胶囊关闭态弱化（无底色无边框），开启态琥珀高亮且**无描边**（§12）', () => {
     const base = rule(control, '.auto-approve-chip {')
     expect(base).toContain('background: transparent')
     expect(base).toContain('border: 0.5px solid transparent')
@@ -78,7 +78,9 @@ describe('授权自动生成 · 对话页落点（状态胶囊 + 锚定浮层守
     const on = rule(control, '.auto-approve-chip.is-on')
     expect(on).toContain('color: var(--lnk-warning)')
     expect(on).toContain('background: var(--lnk-warning-bg)')
-    expect(on).toContain('border-color: var(--lnk-warning-border)')
+    // §12 Q1：描边是「按钮」语义，柔底才是「状态」语义 ⇒ 开启态不得再描边
+    expect(on).not.toContain('border-color')
+    expect(on).not.toContain('var(--lnk-warning-border)')
   })
 
   it('④ 零新令牌：只用既有 --lnk-* 三件套（禁 --neo-* 前缀与裸色值）', () => {
@@ -91,14 +93,63 @@ describe('授权自动生成 · 对话页落点（状态胶囊 + 锚定浮层守
     expect(base).not.toContain('var(--lnk-caution')
   })
 
-  it('⑤ 移动端：icon-only 触发器 + 底部 Sheet，裸条顺序规则指向组件根', () => {
-    expect(control).toContain('data-testid="auto-approve-trigger"')
+  it('⑤ 移动端与 PC **同一枚胶囊** + 底部 Sheet，裸条顺序规则指向组件根（§12）', () => {
     expect(control).toContain('<MobileSheet')
-    // 裸条纪律：移动端不得出现文字胶囊
-    expect(control).toContain("v-if=\"props.desktop\"")
+    // §12：移动端不再有独立的 icon-only 触发器分支（统一为同一枚胶囊）
+    expect(control).not.toContain('data-testid="auto-approve-trigger"')
+    expect(control).not.toContain('.auto-approve-trigger {')
+    // ⭐ 正向断言：胶囊按钮**只有一个**（两端共用），不得再分叉出第二枚触发器
+    //    （只查「trigger 消失」不够：分叉成别的 testid 也算回退 ⇒ 本轮变异实测踩到）。
+    expect(control.split('class="auto-approve-chip"').length - 1).toBe(1)
+    expect(control.split('data-testid="auto-approve-chip"').length - 1).toBe(1)
+    expect(control).toContain('data-testid="auto-approve-chip"')
     expect(rail).toContain('.agent-panel-mobile-dock .composer-bare-bar .auto-approve-control')
     const r = rule(rail, '.agent-panel-mobile-dock .composer-bare-bar .auto-approve-control')
     expect(r).toContain('order: 2')
+    // 窄屏让位：模型 chip 链式放开 min-width:0（§12 实测 320px 靠截断让位）
+    // ⚠️ 断言要落到**规则体**（min-width:0 真的存在），不能只断言选择器字符串
+    //    （改名后选择器仍是子串 ⇒ 假绿，本轮变异实测踩到）。
+    const yieldRule = rule(rail, '.agent-panel-mobile-dock .composer-bare-bar .agent-dock-params > .dock-ghost-ctl {')
+    expect(yieldRule).toContain('min-width: 0')
+    const spanRule = rule(rail, '.agent-panel-mobile-dock .composer-bare-bar .agent-dock-params > .dock-ghost-ctl > span {')
+    expect(spanRule).toContain('min-width: 0')
+  })
+
+  it('§12-1 胶囊上不得出现中文长文案「自动生成」/「每次先问」（长文案下沉到浮层卡片）', () => {
+    // 只取**胶囊按钮的内部内容**（可见文本）——胶囊的 aria-label/title 与浮层 dialog
+    // 的 aria-label、Sheet 标题属于「说明性文案」，本就该出现功能名，不在此禁。
+    const btnAt = control.indexOf('class="auto-approve-chip"')
+    const btnEnd = control.indexOf('</button>', btnAt)
+    expect(btnAt).toBeGreaterThan(-1)
+    expect(btnEnd).toBeGreaterThan(btnAt)
+    const chipInner = control.slice(btnAt, btnEnd)
+    expect(chipInner).not.toContain('自动生成')
+    expect(chipInner).not.toContain('每次先问')
+    // 开启态只留 `[auto]` 短标记（mono 语义标记）
+    expect(chipInner).toContain('data-testid="auto-approve-chip-auto"')
+    expect(chipInner).toContain('[auto]')
+    // 两个表述必须在浮层卡片里（AutoApprovePanel）说明
+    expect(panel).toContain('自动生成')
+    // ⚠️ 「每次先问」在面板里出现**两次**（说明段 + 括注）⇒ 变异必须全量替换，
+    //    只改一处会假绿（本轮变异实测踩到）。
+    expect(panel.split('每次先问').length - 1).toBe(2)
+    // 胶囊的无障碍描述必须**带状态词**（否则读屏用户只听到功能名、听不出状态）
+    expect(control).toContain('当前每次生成都先问你')
+    expect(control).toContain('已开启，agent 生成图片与音频时不再逐次确认')
+  })
+
+  it('§12-2 `[auto]` 标记走既有 mono 令牌，零新令牌', () => {
+    const auto = rule(control, '.auto-approve-chip-auto {')
+    expect(auto).toContain('var(--lnk-font-mono)')
+    expect(auto).not.toContain('--neo-')
+    expect(auto).not.toMatch(/#[0-9a-fA-F]{3,8}/)
+    expect(auto).not.toMatch(/rgba?\(/)
+  })
+
+  it('§12-3 移动端胶囊**不带箭头**（移动开底部 Sheet，箭头语义相反）', () => {
+    // 箭头只对 PC 渲染
+    expect(control).toContain('v-if="props.desktop"\n        class="auto-approve-chip-caret"')
+    expect(control).toContain("'is-mobile': !props.desktop")
   })
 
   it('⑥ 提议卡与 composer 胶囊用同一枚图形', () => {

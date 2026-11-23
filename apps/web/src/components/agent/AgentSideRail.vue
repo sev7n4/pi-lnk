@@ -4695,13 +4695,15 @@ defineExpose({
                   </template>
                 </MobileSheet>
 
-                <!-- 授权自动生成 · composer 入口（2026-11-23 UI 迭代 §11：状态胶囊 + 锚定浮层）。
+                <!-- 授权自动生成 · composer 入口（2026-11-23 UI 迭代 §11 / §12：状态胶囊 + 锚定浮层）。
                      ⭐ 落点纪律「状态属于对象」：它描述的是 agent 的行为模式（我把控制权交出去了），
                      故挂在 composer 自身的工具行，紧邻发送键 = 「按下去会发生什么」的语义邻位。
-                     · PC = 状态胶囊（图标 +「自动生成」+ 箭头）：关闭态弱化、开启态琥珀高亮；
+                     · PC = 状态胶囊（图形 + `[auto]` 标记 + 箭头）：开启态琥珀高亮、**无描边**；
                        说明与开关收进锚定浮层 ⇒ 文案不常驻屏幕。
-                     · 移动 = icon-only 触发器 + 底部 Sheet（裸条三件套纪律：＋/模型/发送）。
-                     · 不占输入区、不做通栏卡片（那是被投诉的旧形态）。
+                     · 移动 = **与 PC 同一枚胶囊**（§12：实测 430/390/360px 放得下；320px 由
+                       模型 chip 截断让位），仅**不带箭头**（移动开底部 Sheet，箭头语义相反）。
+                     · 不占输入区、不做通栏卡片（那是被投诉的旧形态）；胶囊上不出现中文长文案
+                       （「自动生成」/「每次先问」下沉到浮层卡片说明）。
                      · 授权态读写全在 `AutoApproveControl` 内（服务端 SSOT，判定在服务端）。 -->
                 <AutoApproveControl :desktop="isDesktopDock" :read-only="props.readOnly" />
 
@@ -5000,15 +5002,33 @@ defineExpose({
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- 授权自动生成 · composer 入口的**位置**（2026-11-23 UI 迭代 §11）----
- * 外观全在 `AutoApproveControl.vue` 内（胶囊 / 浮层 / 移动触发器），
- * 此处只保留「排在哪」——composer 工具行内、模型 chip 之后、发送键之前。
+/* ---- 授权自动生成 · composer 入口的**位置**（2026-11-23 UI 迭代 §11 / §12）----
+ * 外观全在 `AutoApproveControl.vue` 内（胶囊 / 浮层），此处只保留「排在哪」
+ * ——composer 工具行内、模型 chip 之后、发送键之前。
  * 移动端裸条摊平（display:contents）⇒ 需显式 order 排到模型 chip 之后、发送键之前。
  * 同 order 按 DOM 顺序：params(2) → control(2) → primary(3)；空闲态 params/primary 隐藏时
  * control 仍在（hint order:2 且 DOM 更早 ⇒ control 落在最右）。
  * ⚠️ 选择器命中的是子组件的**根元素**（Vue scoped 规则对子组件根节点生效）。 */
 .agent-panel-mobile-dock .composer-bare-bar .auto-approve-control {
   order: 2;
+}
+
+/* §12：移动端与 PC 共用同一枚**文字胶囊**（含 `[auto]` 标记）⇒ 窄屏空间被吃掉。
+ * 生产实测（CDP 真实替换，430/390/360px 均不换行；仅 320px 换行 80→112px）：
+ * 让**模型 chip 截断让位**即可吸收差额（320px 下模型名 82→69px，裸条保持 80px）。
+ * ⇒ 模型 chip 链式放开 min-width:0 + 可收缩；既有 `truncate` 类负责省略号。
+ * 令牌纪律：纯布局属性，零新令牌。 */
+.agent-panel-mobile-dock .composer-bare-bar .agent-dock-params {
+  min-width: 0;
+}
+
+.agent-panel-mobile-dock .composer-bare-bar .agent-dock-params > .dock-ghost-ctl {
+  min-width: 0;
+  flex: 0 1 auto;
+}
+
+.agent-panel-mobile-dock .composer-bare-bar .agent-dock-params > .dock-ghost-ctl > span {
+  min-width: 0;
 }
 
 /* ---- 2026-11-03 回合实时状态灰字（WorkBuddy 同款，积分条上沿） ----
