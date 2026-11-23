@@ -22,7 +22,7 @@ function mountCard(plan: PlanShape) {
       questions: [
         {
           id: 'plan_confirm',
-          question: '三步配图',
+          question: '是否按此方案执行？',
           options: [
             { label: '开始执行', value: 'execute' },
             { label: '调整计划', value: 'refine' },

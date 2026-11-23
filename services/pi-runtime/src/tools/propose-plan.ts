@@ -43,7 +43,7 @@ export function createProposePlanTool(registry: PendingToolRegistry, metrics: Me
 			"方案由宿主渲染（任务卡 + 确认卡展示步骤），不要让用户手打回复；调用前可先用一两句话在对话里说明方案思路（explanation 参数）。" +
 			"确认（confirmed=true）返回前禁止写画布节点或调用任何生成类工具；confirmed=true 后立即开始执行第 1 步，并用 todo_write 逐项更新状态。",
 		parameters: Type.Object({
-			summary: Type.String({ description: "方案一句话概括（确认卡片题面，如「三步生成小红书配图并排版」）" }),
+			summary: Type.String({ description: "方案标题（如「三步生成小红书配图并排版」），在确认卡内联方案区展示；确认卡题面由宿主固定为征询语，与方案标题分离" }),
 			steps: Type.Array(
 				Type.Object({
 					content: Type.String({ description: "步骤内容（祈使句，字面精确匹配用于状态追踪）" }),
@@ -95,9 +95,11 @@ export function createProposePlanTool(registry: PendingToolRegistry, metrics: Me
 				})),
 			);
 			// ② 确认卡（ask_user 通道同构）
+			// R2 + 2026-11-23 契约分层：question 是宿主的征询题面，plan.summary 是模型方案标题。
+			// 两者不得同值——否则 AskUserCard 的外层题干与内层方案标题渲染出同一句话（#___ 生产取证）。
 			const question = {
 				id: "plan_confirm",
-				question: p.summary,
+				question: "是否按此方案执行？",
 				plan: {
 					summary: p.summary,
 					...(p.explanation ? { explanation: p.explanation } : {}),

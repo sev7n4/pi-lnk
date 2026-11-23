@@ -229,7 +229,7 @@ describe('AskUserCard（spec 2026-10-28 分页单题推进 / T0-T2 + 视觉重�
 	it('P0-2：question.plan 存在时渲染方案摘要 + 有序步骤清单（先看方案再决策）', () => {
 		const q = {
 			id: 'plan_confirm',
-			question: '三步制作 Codex 教学视频',
+			question: '是否按此方案执行？',
 			plan: {
 				summary: '三步制作 Codex 知识教学视频（脚本→封面→成片）',
 				explanation: '先脚本确保内容准确，再封面吸引点击，最后成片交付',
@@ -247,6 +247,9 @@ describe('AskUserCard（spec 2026-10-28 分页单题推进 / T0-T2 + 视觉重�
 			allowOther: true,
 		}
 		const w = mount(AskUserCard, { props: { questions: [q] } })
+		// R2 契约分层（2026-11-23）：外层题干是征询语，内层是方案标题，两层不得同文案
+		expect(w.find('.ask-question-text').text()).toBe('是否按此方案执行？')
+		expect(w.find('.ask-question-text').text()).not.toBe(q.plan.summary)
 		const plan = w.find('.ask-plan')
 		expect(plan.exists()).toBe(true)
 		expect(plan.find('.ask-plan-title').text()).toContain('三步制作 Codex')

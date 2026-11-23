@@ -108,6 +108,18 @@ describe("propose_plan 工具", () => {
 		assert.equal(cmd.questions[0].allowOther, true);
 	});
 
+	it("R2 + 2026-11-23 契约分层：征询题面独立于方案标题，二者不得同值（防确认卡双标题回归）", async () => {
+		let update: { content: { text: string }[] } | undefined;
+		const t = createProposePlanTool(stubRegistry({ status: "answered", answers: { plan_confirm: ["execute"] } }), metrics);
+		const call = toolCall("c-r2", { summary: "完成QA质检 + 继续推进EP03剧本", steps: [{ content: "做 QA" }] });
+		await t.execute!(call.id, call.p, (u: unknown) => { update = u as { content: { text: string }[] }; }, { sessionId: "canvas-1" } as never, invocation as never, ctx as never);
+		const cmd = JSON.parse(update!.content[0].text).canvasCommands[0];
+		const q = cmd.questions[0];
+		assert.equal(q.question, "是否按此方案执行？", "题面必须是宿主固定征询语，不得复用方案标题");
+		assert.equal(q.plan.summary, "完成QA质检 + 继续推进EP03剧本", "方案标题仍由模型参数提供");
+		assert.notEqual(q.question, q.plan.summary, "R2：外层题干不得等于内层方案标题");
+	});
+
 	it("P0-1/P0-2/P1-1：details 同时含 todo（供 task_list 投影）与 plan（steps+explanation），确认卡 questions[0].plan.steps 透传", async () => {
 		const t = createProposePlanTool(stubRegistry({ status: "answered", answers: { plan_confirm: ["execute"] } }), metrics);
 		const call = toolCall("c6", {
