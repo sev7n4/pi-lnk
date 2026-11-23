@@ -42,7 +42,7 @@ describe('移动端 live 钉显 + 状态行退役（2026-10-31）', () => {
     expect(rail, 'describeActivityFromTimeline import 不得复生').not.toMatch(
       /describeActivityFromTimeline/,
     )
-    // B 形态：composer 灰字已删，turnLiveStatus 派生函数迁到 timeline 侧做轮首单源。
+    // B 形态：composer 灰字已删，turnLiveStatus 派生函数迁到 timeline 侧做当前态单源。
     expect(rail, 'composer 灰字 testid 不得复生').not.toMatch(/data-testid="turn-live-status"/)
   })
 
@@ -94,7 +94,7 @@ describe('移动端 live 钉显 + 状态行退役（2026-10-31）', () => {
     expect(t, '旧三阶段视图模块不得复生').not.toMatch(/turnPhaseView|deriveTurnPhaseView/)
     expect(t, '阶段条 testid 不得复生').not.toMatch(/turn-phase-strip/)
     expect(t, '①②③ 序号不得复生').not.toMatch(/PHASE_INDEX_LABELS|「①」/)
-    expect(t, '轮首拼装小结不得复生').not.toMatch(/小结：/)
+    expect(t, '拼装小结不得复生').not.toMatch(/小结：/)
     expect(t, '秒表时钟不得出现').not.toMatch(/Date\.now|setInterval/)
     const view = stripComments(readFileSync(resolve(__dirname, 'turnChecklistView.ts'), 'utf8'))
     expect(view, '秒表时钟不得出现').not.toMatch(/Date\.now|setInterval/)

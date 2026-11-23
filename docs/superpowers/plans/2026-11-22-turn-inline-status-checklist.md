@@ -2,10 +2,12 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: `executing-plans`（推荐）或 `subagent-driven-development` 逐 task 实施。步骤用 `- [ ]` 跟踪。
 >
-> **Goal:** 用一次替换刀移除旧三阶段条，改为轮首唯一当前态 + 流内折叠 checklist + 小结归位；用户 6 点反馈逐条闭环。
+> **Goal:** 用一次替换刀移除旧三阶段条，改为**流尾**唯一当前态（零 parts 时仍在原轮首位）+ **轮首**流内折叠 checklist + 小结归位；用户 6 点反馈逐条闭环。
+>
+> **2026-11-23 二次拍板修订**：当前态落点从「轮首」改为「parts 循环之后」；清单留在轮首不跟随；其余设计不变。
 >
 > **Architecture:** 新增 1 个纯派生模块 `turnChecklistView.ts`（清单投影 + 收口判定迁入），
-> `AgentTurnTimeline` 删三阶段 strip 后渲染轮首当前态行（`turnLiveStatus` 单源）与
+> `AgentTurnTimeline` 删三阶段 strip 后在 parts 循环之后渲染流尾当前态行（`turnLiveStatus` 单源；零 parts 时仍在消息气泡下方），轮首渲染
 > `<details>` checklist（`taskProgress.items` 单源，收口折叠留凭据）；composer 灰字渲染与钉底任务卡删除。
 >
 > **Tech Stack:** Vue 3 `<script setup>` + TypeScript + vitest；仅 `apps/web` 改动，web-only 部署。
@@ -20,7 +22,7 @@
 
 ## 1. Global Constraints（逐字取自规格）
 
-- 轮首当前态恰好 1 条，文本＝`turnLiveStatus(parts)`；三阶段词与 ①②③ 全仓 0 次。
+- 流尾当前态恰好 1 条（零 parts 时仍在消息气泡下方原位），文本＝`turnLiveStatus(parts)`；三阶段词与 ①②③ 全仓 0 次。
 - item 状态词与 `AgentTaskProgressCard.vue:15-23` 逐字一致；done 计数只算 done/skipped；空任务整块不渲染。
 - 当前态行收口双门禁：`props.streaming === true` **且** `!isTurnFinalized(parts)`（稳定 id `notice:turn-summary`）。
 - checklist **不受 streaming 门禁**：收口后折叠留凭据（Codex 范式 / UI 对比图 B）；默认折叠
@@ -28,9 +30,9 @@
   展开逐项按 InProgress→Pending→Completed 排序，完成态＝**打钩 ✓ + 删除线(line-through) + muted**、
   进行中＝accent `□`、等待＝暗 `□`（Codex TUI `plans.rs:290-292/329-331` 一手，字形/排序单源在
   `turnChecklistView.ts`）；不 Teleport、不钉底、不进 composer 系统层。
-- composer 灰字渲染删除，但 `turnLiveStatus()` 函数保留（轮首行单源）。
+- composer 灰字渲染删除，但 `turnLiveStatus()` 函数保留（当前态行单源）。
 - 推理摘要＝`thinking.text`（原位折叠块）；工具结果＝`tool.resultSummary`（原位 details）；
-  下一步＝模型正文；出错＝error notice 重试入口。**轮首不拼任何小结**。
+  下一步＝模型正文；出错＝error notice 重试入口。**对话流不拼任何小结**。
 - 不复活 `turnStatusLine` / `statusTicker` / `settledDismissed` / 钉底镜像 / `describeActivityFromTimeline`。
 - 令牌只用 `--lnk-*`，禁 `--lnk-hi-bg/hi-text` 表状态、禁新增 hex / `rgba(` / `--neo-*`。
 - 移动端 / PC 同组件同形态；服务端 / pi-runtime / prompt-registry / DB 零改动。
@@ -40,7 +42,7 @@
 1. **空任务与收口瞬间** —— 空 `taskProgress.items` 时 checklist 不渲染（无 0/0 空壳）；
    `streaming=false` 或 summary notice 到达后**当前态 0 条、checklist 折叠仍在**，summary notice 仍在。
 2. **用户意图 vs 默认值** —— checklist 点开后任务继续更新，patch 不得把它弹回收起（照 thinking disclosure 契约）。
-3. **清单与叙事不重复** —— 同一句工具人话不得同时出现在 checklist 与轮首状态行；
+3. **清单与叙事不重复** —— 同一句工具人话不得同时出现在 checklist 与流尾状态行；
    thinking summary / tool resultSummary 仍在各自原位，不因删除旧 strip 而丢失。
 4. **守卫退化** —— 删 `turnPhaseView` 后 `AgentSideRail.mobileLivePin.test.ts` 的 `turnLiveStatus`
    函数级要求仍成立；composer 灰字**渲染 0 次**；内联通道 `useTimeline(msg)` 仍在。
@@ -53,7 +55,7 @@
 | `apps/web/src/components/agent/turnChecklistView.ts`（新） | 清单纯投影 + `isTurnFinalized` 迁入 |
 | `apps/web/src/components/agent/turnChecklistView.test.ts`（新） | 纯函数判据 + 禁造数 |
 | `apps/web/src/components/agent/turnPhaseView.ts` / `.test.ts` | **删除**（三阶段视图退役） |
-| `apps/web/src/components/agent/AgentTurnTimeline.vue` | 删 strip；加轮首当前态 + checklist 模板/样式；`taskProgress` prop 保留 |
+| `apps/web/src/components/agent/AgentTurnTimeline.vue` | 删 strip；加流尾当前态 + 轮首 checklist 模板/样式；`taskProgress` prop 保留 |
 | `apps/web/src/components/agent/AgentTurnTimeline.turnState.test.ts`（新） | mount 生命周期与文案判据 |
 | `apps/web/src/components/agent/AgentSideRail.vue` | 删 composer 任务卡与灰字渲染；保留 `:task-progress` 接线与 `turnLiveStatus()` 函数 |
 | `apps/web/src/components/agent/AgentSideRail.turnChecklistWiring.test.ts`（新） | 活跃轮/历史轮接线、composer 无卡无灰字 |
@@ -249,7 +251,7 @@ git commit -m "feat(web): 清单纯派生与收口判定模块（B 形态）"
 
 **Files:** Modify `AgentTurnTimeline.vue`；Create `AgentTurnTimeline.turnState.test.ts`
 **Interfaces:** Consumes `turnLiveStatus()`（Task 2a）、`deriveTurnChecklistView()` / `isTurnFinalized()`（Task 1）、
-`useDisclosure()`（既有）；Produces 轮首当前态行 + 折叠 checklist。
+`useDisclosure()`（既有）；Produces 流尾当前态行 + 轮首折叠 checklist。
 
 - [ ] **Step 1：写失败测试**（完整文件，仿 `AgentTurnTimeline.plan.test.ts` mount 模式）
 
@@ -267,7 +269,7 @@ const thinking = (id = 't1'): TimelinePart => ({
   kind: 'thinking', id, text: '思考摘要原文', status: 'running', startedAt: 1,
 })
 
-describe('轮首当前态（B 形态）', () => {
+describe('流尾当前态（B 形态）', () => {
   it('活跃轮恰好 1 条，文本取 turnLiveStatus', () => {
     const w = mountTurn([thinking()])
     const rows = w.findAll('[data-testid="turn-current-state"]')
@@ -446,7 +448,7 @@ git rm apps/web/src/components/agent/turnPhaseView.ts apps/web/src/components/ag
 
 ```bash
 git add apps/web/src/components/agent/
-git commit -m "feat(web): 轮首唯一当前态与流内折叠清单替换三阶段条"
+git commit -m "feat(web): 流尾唯一当前态与流内折叠清单替换三阶段条"
 ```
 
 ---
@@ -472,7 +474,7 @@ it('composer 区不再有任务卡与灰字；活跃轮接线仍在', () => {
 - [ ] **Step 3：删除 `AgentSideRail.vue:3837-3842` 的 `AgentTaskProgressCard` 渲染块**；
   `showTaskCardAtComposer` 若无其他消费则一并删除（grep 确认）。
   另删 `AgentSideRail.vue:3976-3982` 的 `turn-live-status` 灰字渲染块；`activityLine.turnLiveStatus()`
-  函数与 `:task-progress` 接线**不动**（轮首行 / checklist 单源）。
+  函数与 `:task-progress` 接线**不动**（当前态行 / checklist 单源）。
 - [ ] **Step 4：追加反向守卫到 `AgentSideRail.mobileLivePin.test.ts`**：
 
 ```ts
@@ -481,7 +483,7 @@ it('旧三阶段方案不得复活', () => {
   const timeline = readFileSync(new URL('./AgentTurnTimeline.vue', import.meta.url), 'utf8')
   expect(rail + timeline).not.toMatch(/turnPhaseView|turn-phase-strip|PHASE_INDEX_LABELS/)
   expect(rail).not.toMatch(/AgentTaskProgressCard/)  // composer 卡退役
-  expect(rail + timeline).toMatch(/turnLiveStatus/)  // 派生函数保留（轮首单源）
+  expect(rail + timeline).toMatch(/turnLiveStatus/)  // 派生函数保留（当前态单源）
   expect(rail).not.toContain('data-testid="turn-live-status"') // 灰字渲染已删
 })
 ```
@@ -527,7 +529,7 @@ cd apps/web && env -u NODE_OPTIONS ./node_modules/.bin/vitest run \
 - [ ] **Step 2：生产走查** —— 测试账号 `17279698608`，输入「请帮我生成一个关于小犀牛的皮克斯动画漫剧」。
       CDP 要点见长期备忘：先点 `.agent-fab` 展开、composer＝`.agent-composer textarea`、
       `Input.insertText` + `Input.dispatchKeyEvent` 发送、**250ms 密采样**。
-- [ ] **Step 3：判据** —— 轮首 ≤1 条当前态、无三阶段词/序号/UI 拼小结；清单在流内可展开；
+- [ ] **Step 3：判据** —— 流尾 ≤1 条当前态（零 parts 时原位）、无三阶段词/序号/UI 拼小结；清单在流内可展开；
       composer 上方无任务卡；收口后当前态与清单消失、summary notice 仍在。截图存 `.workbuddy/e2e-cdp/`（不入库）。
 - [ ] **Step 4：诚实边界** —— 未自然触发的项（如 agnes 429）如实标注，不写 ALL_PASS。
 

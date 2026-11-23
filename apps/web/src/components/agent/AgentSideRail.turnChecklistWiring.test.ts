@@ -11,7 +11,7 @@ describe('AgentSideRail —— B 形态接线守卫（清单流内化、composer
     expect(src).not.toMatch(/AgentTaskProgressCard/)
     expect(src).not.toMatch(/data-testid="turn-live-status"/)
     expect(src).not.toMatch(/showTaskCardAtComposer/)
-    // 活跃轮接线保留；turnLiveStatus 派生函数在 timeline 侧保留（轮首单源）
+    // 活跃轮接线保留；turnLiveStatus 派生函数在 timeline 侧保留（当前态单源）
     expect(src).toMatch(/:task-progress="/)
     expect(stripComments(timeline())).toMatch(/turnLiveStatus/)
   })
