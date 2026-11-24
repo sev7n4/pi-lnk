@@ -306,6 +306,9 @@ importers:
       '@earendil-works/pi-ai':
         specifier: 0.99.2
         version: 0.99.2(patch_hash=as34dhfqajjtscd35aekpw4equ)(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(undici@7.28.0)(ws@8.21.3)(zod@3.25.76)
+      '@earendil-works/pi-mcp':
+        specifier: 0.99.2
+        version: 0.99.2
       '@mozilla/readability':
         specifier: ^0.6.0
         version: 0.6.0
@@ -606,6 +609,10 @@ packages:
     resolution: {integrity: sha512-9RFOEdY+ZTJ1AI+UuAFs4RM0tF2Tje/R/CEv9gWTJHt0iTu8XHZs64U/EIZxNSllFmec/4HfwsOxYj1qQek9bg==}
     engines: {node: '>=22.19.0'}
     hasBin: true
+
+  '@earendil-works/pi-mcp@0.99.2':
+    resolution: {integrity: sha512-ISk6OIsiUzmULF+sUilLnENGKo9/gVDxZG2CTEq8f4dbp70AXOr/hMiwOjtcrlX6xBd4UMUsIz4EPTOlU6U+HA==}
+    engines: {node: '>=22.19.0'}
 
   '@earendil-works/pi-telemetry@0.85.1':
     resolution: {integrity: sha512-Bg/YN6kA7Swja/NQxka8xFdecb4E/auIEGF2G5A25EaQXhRnPj300/7/KpgsDDMYUzHTDAv4RyUxaQPJKW81Rw==}
@@ -5293,6 +5300,10 @@ snapshots:
       - utf-8-validate
       - ws
       - zod
+
+  '@earendil-works/pi-mcp@0.99.2':
+    dependencies:
+      cross-spawn: 7.0.6
 
   '@earendil-works/pi-telemetry@0.85.1': {}
 

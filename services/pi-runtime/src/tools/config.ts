@@ -6,6 +6,7 @@ import { buildTodoTools, isTodoToolEnabled } from "./todo.js";
 import { createNestAssetContractOracle, createNestCanvasOracle, createNestGenerationOracle } from "./acceptance.js";
 import { createProposePlanTool } from "./propose-plan.js";
 import { createSpawnSubagentTool, createCollectSubagentTool } from "./spawn-subagent.js";
+import { createVoiceStudioMcpTools } from "./voicestudio-mcp.js";
 import { planGateEnabled } from "../runtime-config.js";
 import type { Metrics } from "../metrics.js";
 import type { PendingToolRegistry } from "../pending-registry.js";
@@ -116,6 +117,10 @@ export function resolveToolsWithClient(
 		// ⛔ 不能改走 Nest 端点——saveCanvas 整份覆盖会把 Agent 建的组静默抹掉。
 		...buildCanvasGroupTools(client),
 		...buildGenerationTools(client),
+		// VoiceStudio P2（spec 2026-11-24-voicestudio-p1p2 §5）：MCP 桥四工具。
+		// env 门在工厂内（OMNIVOICE_MCP_URL/OMNIVOICE_API_KEY 缺任一 ⇒ []，零注册零感知）；
+		// 进延迟集（不动 ALWAYS_ON——A2 幽灵项禁令），skill 指引走 tool_search 通道。
+		...createVoiceStudioMcpTools(client),
 		...(hasTavily ? buildWebTools() : []),
 		...buildDeleteNodesTools(client),
 		...buildReadDocumentTools(),

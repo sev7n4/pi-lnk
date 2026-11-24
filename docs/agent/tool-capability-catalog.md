@@ -19,9 +19,9 @@
 
 | 口径 | 数值 | 说明 |
 |---|---|---|
-| 工具总数 | **54** | 源码中构造的全部 `LnkpiTool` 对象（含 `tool_search` 元工具）；口径＝`scripts/verify-tool-tiering.ts` 的扫描方式（`name:` 字面量 + `runTool()` 工厂 + `tool_search`），2026-10-21 实测 |
-| 实际注册 | **53** | `introduce_nodes_to_agent` 属老链路，`includeDeferred` 未显式开启 ⇒ **默认不注册**（`canvas-write.ts:654`） |
-| 常驻 / 延迟 | **34 / 20**（2026-10-21 起） | `ALWAYS_ON_TOOL_NAMES` 34 个；其余 20 个延迟（含默认不注册的那 1 个）<br>2026-10-21：SP-A 批量创建 `create_nodes_batch` 新增常驻（43→44）；分组工具组 3 个（`group_nodes` / `ungroup_group` / `set_group_color`）新增常驻——分组是**侧车**不是节点，Agent 无法用 `add_node` 变通，进延迟集就只剩「答做不到」一条路（`tool_search` 触发率实测 0 ⇒ 延迟即不可达）。**三者 prompt-registry/skills 零点名**，属「官方模式：description 承担发现能力」（同 `get_canvas_summary` / `view_canvas_media`）——不占 L6 预算（全仓最紧组合余量仅 75 字符）。此前：2026-10-14 `view_canvas_media` 新增常驻（P0 感知闭环）；2026-10-06 分级下发实验确认 28/19，详见 §7 |
+| 工具总数 | **61** | 源码中构造的全部 `LnkpiTool` 对象（含 `tool_search` 元工具）；口径＝`scripts/verify-tool-tiering.ts` 的扫描方式（`name:` 字面量 + `runTool()` 工厂 + `tool_search`）。2026-11-24 实测刷新（10-21 后 11 月新增 todo_write / propose_plan / collect_subagent_result 共 3 项 + VoiceStudio P2 MCP 桥四工具） |
+| 实际注册 | **60** | `introduce_nodes_to_agent` 属老链路，`includeDeferred` 未显式开启 ⇒ **默认不注册**（`canvas-write.ts:654`）；VoiceStudio 四工具按 env 门条件注册（`OMNIVOICE_MCP_URL`/`OMNIVOICE_API_KEY` 缺任一 ⇒ 不注册，spec 2026-11-24-voicestudio-p1p2 §5） |
+| 常驻 / 延迟 | **39 / 22**（2026-11-24 起） | `ALWAYS_ON_TOOL_NAMES` 39 个；其余 22 个延迟（含默认不注册的那 1 个）。2026-11-24：VoiceStudio P2 四工具（克隆音色/设计音色/音频转写/音色列表）进**延迟集**——env 门强制（静态常驻名单在 env 缺失时会吃 A2 幽灵项），skill 指引走 `tool_search` 搜索话术（无字面点名，A1 红线）。此前：2026-11-11 `spawn_subagent` 提回常驻、`collect_subagent_result` 随之常驻（刀A）；2026-10-21 SP-A 批量创建与分组三件套常驻；2026-10-14 `view_canvas_media` 新增常驻；2026-10-06 分级下发实验确认 28/19，详见 §7 |
 
 ⚠️ 计数的两个坑（已踩过）：① 5 个 `run_*_generation` 由 `generation.ts:99-128` 的 `runTool(...)` 工厂以**位置参数**构造（`runTool(name, label, description, path)`），`grep 'name: "'` 扫不到 ⇒ 早期漏计成 41；② `focus_node`（单数）与 `focus_nodes`（复数）是两个工具，只差一个字母。
 
@@ -234,24 +234,28 @@ if (addedNames.length !== 0) {
 | 18 | `list_model_options` | 模型选项 | ~~SK:drama-audio-design~~（已撤） | 要选生成模型 / 问「有哪些模型」——搜「模型」 |
 | 19 | `delete_memory` | 记忆清理 | 按 id **永久删除**一条记忆（id 从 `recall_memory` 结果取）；不可逆，**仅在用户明确要求忘记时用**；事实变了应改用 `save_memory` 覆盖 |
 | 20 | `spawn_subagent` | 派发子代理 | 把一项**只读调研**交给子代理独立执行（带本对话完整上下文），结束后返回报告；本回合阻塞等待；用于大范围查资料/联网调研 |
+| 21 | `clone_voice` | 克隆音色 | SK:drama-audio-design v0.3（**能力指引搜索，无字面点名**——A1 红线） | 用户要**用自己的参考音频克隆音色**（角色声线资产化）——搜「音色/克隆」 |
+| 22 | `design_voice` | 设计音色 | SK:drama-audio-design v0.3（同上） | 用户要**按文字描述设计一个新音色**（性别/年龄/音高/方言）——搜「音色/设计」 |
+| 23 | `transcribe` | 音频转写 | SK:drama-audio-design v0.3（同上） | 配音 QC 回读（台词逐字核对）、字幕、听写——搜「转写」 |
+| 24 | `list_voices` | 音色列表 | SK:drama-audio-design v0.3（同上） | 问「本地引擎有哪些音色」/克隆前查重——搜「音色」 |
 
 ## 6. 复现命令
 
-在仓库根目录执行（54 个工具名按 §1 口径穷举＝工具总数，含默认不注册的 `introduce_nodes_to_agent` 与 4 个工厂构造的 `run_*`；实际注册数 53。2026-10-21 新增：`create_nodes_batch`（SP-A 批量创建）+ 分组工具组 3 个 `group_nodes` / `ungroup_group` / `set_group_color`）：
+在仓库根目录执行（61 个工具名按 §1 口径穷举＝工具总数，含默认不注册的 `introduce_nodes_to_agent`、4 个工厂构造的 `run_*` 与 env 门条件注册的 VoiceStudio 四件（`clone_voice` / `design_voice` / `transcribe` / `list_voices`）；实际注册数 60。2026-11-24 实测刷新）：
 
 ```bash
 TOOLS="apply_asset_to_node apply_sidebar_attachments arrange_nodes ask_user \
-attach_refs cancel_generation connect_nodes create_nodes_batch \
-delete_memory delete_nodes duplicate_node focus_node \
+attach_refs cancel_generation clone_voice connect_nodes create_nodes_batch \
+delete_memory delete_nodes design_voice duplicate_node focus_node \
 focus_nodes get_canvas_layout get_canvas_summary get_generation_diagnostic \
 get_generation_status get_node grid_slice_image group_nodes \
 introduce_nodes_to_agent list_generation_scenes list_generation_tasks list_model_options \
-list_user_assets load_skill open_image_editor propose_generation \
+list_user_assets list_voices load_skill open_image_editor propose_generation \
 propose_plan read_document recall_memory redo \
 remove_edges render_canvas_view run_audio_generation run_image_generation \
 run_text_generation run_video_generation save_memory save_node_to_asset_library \
 set_group_color set_node_generation_params set_node_text spawn_subagent \
-todo_write tool_search undo ungroup_group \
+todo_write tool_search transcribe undo ungroup_group \
 update_node upload_media_to_canvas upsert_media_node view_canvas_media \
 web_fetch web_search"
 for t in $TOOLS; do

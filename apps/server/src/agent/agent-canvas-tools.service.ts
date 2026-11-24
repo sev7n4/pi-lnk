@@ -67,6 +67,7 @@ import {
 import { PiRuntimeClient } from './pi-runtime/pi-runtime.client'
 import { GenerationRecoveryService } from './generation-recovery/generation-recovery.service'
 import { loadReadMediaImage } from './read-media'
+import { loadReadAudio } from './read-audio'
 // 授权自动生成（2026-11-22 规格 §3.2）：审批分级纯函数——判定权在服务端 SSOT。
 import { resolveAutoApproveTier, type AutoApproveReason } from './generation-approval'
 import { PLATFORM_CHANNEL_ID, ProviderService } from '../provider/provider.service'
@@ -959,6 +960,29 @@ export class AgentCanvasToolsService {
   /** VISP S-7：read_media 取图（无状态：不查库，只读 uploads 本地盘，唯一取图点）。 */
   async readMedia(input: { url?: string }) {
     return loadReadMediaImage({ url: input?.url })
+  }
+
+  /**
+   * VoiceStudio P2：read_audio 取音频（spec 2026-11-24-voicestudio-p1p2 §5.2）。
+   * url（uploads 引用）直达；nodeId 须配 sessionId，经画布 SSOT 解析节点音频
+   * url（与 startAudioGeneration 同款 node.data.url 口径）后走同一读盘加载器。
+   * 合规 #1（限自有参考音频）由加载器的 uploads 形态匹配 enforcement。
+   */
+  async readAudio(input: { url?: string; sessionId?: string; nodeId?: string }) {
+    let url = (input?.url ?? '').trim()
+    if (!url && input?.nodeId) {
+      if (!input.sessionId) {
+        return { ok: false as const, error: 'nodeId 需同时提供 sessionId（画布 SSOT 解析入口）' }
+      }
+      const node = await this.getNode({ sessionId: input.sessionId, nodeId: input.nodeId })
+      const dataUrl = typeof node.data?.url === 'string' ? node.data.url.trim() : ''
+      if (!dataUrl) {
+        return { ok: false as const, error: `节点 ${input.nodeId} 上没有音频 url（audio 节点才有产物 url）` }
+      }
+      url = dataUrl
+    }
+    if (!url) return { ok: false as const, error: '缺少 url 或 nodeId（二选一）' }
+    return loadReadAudio({ url })
   }
 
   /** 焦点过滤阈值（审计 P0-①）：≤ 此数全量返回，避免小画布反而丢信息。 */

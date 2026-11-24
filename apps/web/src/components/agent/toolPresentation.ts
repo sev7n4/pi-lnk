@@ -81,6 +81,11 @@ export const TOOL_PRESENTATION: Record<string, ToolPresentation> = {
   read_media: { icon: '📎', verb: '查看上传附件' },
   // VISP Phase 2 Path C（2026-11-06）：确定性布局校验（R-V11：新工具必须登记，漏登=时间线零显示）
   validate_canvas_layout: { icon: '📏', verb: '校验布局' },
+  // VoiceStudio P2（2026-11-24 spec §5）：本地声纹引擎 MCP 桥四工具（延迟集，tool_search 激活）
+  clone_voice: { icon: '🎙️', verb: '克隆音色' },
+  design_voice: { icon: '🎨', verb: '设计音色' },
+  transcribe: { icon: '🎧', verb: '音频转写' },
+  list_voices: { icon: '🗣️', verb: '查询音色库' },
 }
 
 const RUN_PREFIX_ICON = '🎨'
