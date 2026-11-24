@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { AudioGenerateOptions, OpenAITTSProvider } from './audio-provider'
 import {
   createVoiceStudioAudioProvider,
+  fetchVoiceStudioVoices,
+  parseVoiceStudioVoicesResponse,
   probeVoiceStudioHealth,
   VOICESTUDIO_UNAVAILABLE_MESSAGE,
   VoiceStudioTTSProvider,
@@ -127,6 +129,15 @@ describe('VoiceStudio 探活门（生成前置，显式报错禁静默）', () =
     expect(healthCalls).toHaveLength(1)
   })
 
+  it('baseUrl 含 /v1（OMNIVOICE_BASE_URL 契约）：speech 走 {base}/audio/speech，health 剥 /v1 走根路径', async () => {
+    const provider = new VoiceStudioTTSProvider('k', 'http://vs.example.com:3900/v1', 'omnivoice', fetchMock as unknown as typeof fetch)
+    await provider.generate('你好')
+    const urls = fetchMock.mock.calls.map(([url]) => String(url))
+    // VS 固定拓扑：/health 挂根（spike 实测），/v1/* 才是 OpenAI 兼容面
+    expect(urls[0]).toBe('http://vs.example.com:3900/health')
+    expect(urls).toContain('http://vs.example.com:3900/v1/audio/speech')
+  })
+
   it('探活失败同样缓存（60s 快速失败）：第二次 generate 不重打 /health、文案一致', async () => {
     fetchMock.mockImplementation(async (url: string) => {
       if (url.endsWith('/health')) return failRes(502, 'down')
@@ -197,6 +208,52 @@ describe('probeVoiceStudioHealth 独立判定', () => {
     await expect(
       probeVoiceStudioHealth('http://vs:3900', 'k', (async () => failRes(401, 'unauthorized')) as unknown as typeof fetch),
     ).rejects.toThrow(new RegExp(`${VOICESTUDIO_UNAVAILABLE_MESSAGE}（HTTP 401）`))
+  })
+
+  it('缓存按实例键控：A 实例（健康）不掩盖 B 实例（死）——BYOK 多实例并存判据独立', async () => {
+    // A 实例健康（写缓存）
+    await probeVoiceStudioHealth('http://a.vs:3900/v1', 'k', (async () => okRes({ status: 'ok' })) as unknown as typeof fetch)
+    // B 实例死端口：必须真实探活并显式报错，绝不能因 A 的缓存跳过
+    await expect(
+      probeVoiceStudioHealth('http://b.vs:3900/v1', 'k', (async () => { throw new Error('fetch failed') }) as unknown as typeof fetch),
+    ).rejects.toThrow(new RegExp(`${VOICESTUDIO_UNAVAILABLE_MESSAGE}（fetch failed）`))
+  })
+})
+
+describe('fetchVoiceStudioVoices + parseVoiceStudioVoicesResponse（音色数据面）', () => {
+  it('解析：id/voice_id 双字段、name 缺省回落 id、缺 id 跳过、空清单/畸形 = null', () => {
+    expect(parseVoiceStudioVoicesResponse({
+      voices: [
+        { voice_id: 'default', name: 'Default', id: 'default' },
+        { voice_id: 'lnk-abc', name: '主角' },
+        { id: 'noname' },
+        { name: 'noid' },
+        'junk',
+      ],
+    })).toEqual([
+      { id: 'default', label: 'Default' },
+      { id: 'lnk-abc', label: '主角' },
+      { id: 'noname', label: 'noname' },
+    ])
+    expect(parseVoiceStudioVoicesResponse(null)).toBeNull()
+    expect(parseVoiceStudioVoicesResponse({})).toBeNull()
+    expect(parseVoiceStudioVoicesResponse({ voices: [] })).toBeNull()
+  })
+
+  it('拉取：base 含 /v1 走 {base}/audio/voices + Bearer；非 2xx / 网络异常 / 畸形 = null（调用方保旧值）', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ voices: [{ voice_id: 'default', name: 'Default', id: 'default' }] }),
+    })
+    const out = await fetchVoiceStudioVoices('http://vs:3900/v1/', 'k', fetchMock as unknown as typeof fetch)
+    expect(out).toEqual([{ id: 'default', label: 'Default' }])
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('http://vs:3900/v1/audio/voices')
+    expect(init.headers).toMatchObject({ Authorization: 'Bearer k' })
+
+    expect(await fetchVoiceStudioVoices('http://vs:3900/v1', 'k', (async () => failRes(502, 'down')) as unknown as typeof fetch)).toBeNull()
+    expect(await fetchVoiceStudioVoices('http://vs:3900/v1', 'k', (async () => { throw new Error('timeout') }) as unknown as typeof fetch)).toBeNull()
+    expect(await fetchVoiceStudioVoices('http://vs:3900/v1', 'k', (async () => ({ ok: true, json: async () => ({ voices: [] }) })) as unknown as typeof fetch)).toBeNull()
   })
 })
 

@@ -16,7 +16,7 @@ import {
   boundedFetch,
 } from './upstream-fetch'
 import { OpenAITTSProvider, type AudioGenerateOptions, type AudioProvider } from './audio-provider'
-import { VOICESTUDIO_MODEL_ENTRY } from '@lnkpi/shared'
+import { VOICESTUDIO_MODEL_ENTRY, type StudioVoiceOption } from '@lnkpi/shared'
 
 /** VS speech 单次调用的客户端预算。与部署 runbook 的 `OMNIVOICE_CPU_GENERATE_TIMEOUT_S=600`
  *  对齐：服务端 CPU 生成超时先到 ⇒ 用户拿到 VS 自带的可判读错误；客户端仅在
@@ -34,15 +34,29 @@ export const VOICESTUDIO_HEALTH_TTL_MS = 60_000
 export const VOICESTUDIO_UNAVAILABLE_MESSAGE =
   'VoiceStudio 本地引擎不可用：可切换云端模型（Seed / MiniMax / StepFun）后重试'
 
-let voiceStudioHealthCache: { ok: boolean; at: number } | null = null
+/** 探活结果缓存（**按实例根地址键控**）：平台实例与 BYOK 用户自有实例并存，
+ *  全局单槽缓存会让「A 实例健康 ⇒ B 实例（死）跳过探活」裸抛网络错误——
+ *  显式报错纪律要求每个实例独立判定。 */
+const voiceStudioHealthCache = new Map<string, { ok: boolean; at: number }>()
 
 /** 测试专用：重置探活缓存（模块级状态，vitest isolate per file）。 */
 export function __resetVoiceStudioHealthCacheForTests(): void {
-  voiceStudioHealthCache = null
+  voiceStudioHealthCache.clear()
 }
 
 function trimTrailingSlash(url: string): string {
   return url.replace(/\/+$/, '')
+}
+
+/**
+ * VS 实例的**根地址**（探活用）。`OMNIVOICE_BASE_URL` 契约 = **含 `/v1`**
+ * （OpenAI 兼容惯例，与 OpenAITTSProvider 家族一致；speech/voices 走
+ * `{base}/audio/*`）——但 VS 的 `/health` 挂在**根路径**（spike 实测
+ * `GET {root}/health`），故探活前剥掉尾部 `/v1`。这是 VS 的固定拓扑事实，
+ * 在此单点收口，禁在调用方各写一份剥离。
+ */
+function vsRootBase(baseUrl: string): string {
+  return trimTrailingSlash(baseUrl).replace(/\/v1$/i, '')
 }
 
 /**
@@ -57,7 +71,8 @@ export async function probeVoiceStudioHealth(
   apiKey: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<void> {
-  const cached = voiceStudioHealthCache
+  const key = vsRootBase(baseUrl).toLowerCase()
+  const cached = voiceStudioHealthCache.get(key)
   if (cached && Date.now() - cached.at < VOICESTUDIO_HEALTH_TTL_MS) {
     if (cached.ok) return
     throw new Error(VOICESTUDIO_UNAVAILABLE_MESSAGE)
@@ -65,7 +80,7 @@ export async function probeVoiceStudioHealth(
   let ok = false
   let detail = ''
   try {
-    const res = await boundedFetch(fetchImpl, `${trimTrailingSlash(baseUrl)}/health`, {
+    const res = await boundedFetch(fetchImpl, `${vsRootBase(baseUrl)}/health`, {
       headers: { Authorization: `Bearer ${apiKey}` },
       timeoutMs: VOICESTUDIO_HEALTH_TIMEOUT_MS,
     })
@@ -75,7 +90,12 @@ export async function probeVoiceStudioHealth(
     ok = false
     detail = err instanceof Error ? err.message : String(err)
   }
-  voiceStudioHealthCache = { ok, at: Date.now() }
+  // 写入前清理过期项（实例数有限，防长期驻留进程无界增长）
+  const now = Date.now()
+  for (const [k, v] of voiceStudioHealthCache) {
+    if (now - v.at >= VOICESTUDIO_HEALTH_TTL_MS) voiceStudioHealthCache.delete(k)
+  }
+  voiceStudioHealthCache.set(key, { ok, at: now })
   if (!ok) {
     throw new Error(`${VOICESTUDIO_UNAVAILABLE_MESSAGE}${detail ? `（${detail}）` : ''}`)
   }
@@ -94,6 +114,10 @@ export interface VoiceStudioProviderOpts {
  * 构造 VoiceStudio provider。**契约（2026-10-04 家族契约延续）**：缺凭据抛错、
  * 上游失败时 `generate()` reject —— 失败冒泡到 studio.service catch 退款 + failed，
  * 禁占位音频、禁回退云端。
+ *
+ * ⚠️ `baseUrl` 契约 = **含 `/v1`**（OpenAI 兼容惯例；speech 走 `{base}/audio/speech`），
+ * 如 `http://172.17.0.1:3900/v1`。VS 的 `/health` 挂根路径，探活内部剥 `/v1`
+ * （见 vsRootBase 单点收口）。配置成裸根地址会让 speech 405 显式暴露。
  */
 export function createVoiceStudioAudioProvider(opts: VoiceStudioProviderOpts): AudioProvider {
   if (!opts.apiKey) {
@@ -105,8 +129,7 @@ export function createVoiceStudioAudioProvider(opts: VoiceStudioProviderOpts): A
   return new VoiceStudioTTSProvider(opts.apiKey, opts.baseUrl, opts.model ?? VOICESTUDIO_MODEL_ENTRY.gatewayModelId, opts.fetchImpl)
 }
 
-export class VoiceStudioTTSProvider extends OpenAITTSProvider implements AudioProvider {
-  private readonly fetchImpl: typeof fetch
+export class VoiceStudioTTSProvider extends OpenAITTSProvider implements AudioProvider {  private readonly fetchImpl: typeof fetch
 
   constructor(
     apiKey: string,
@@ -152,5 +175,64 @@ export class VoiceStudioTTSProvider extends OpenAITTSProvider implements AudioPr
     })
     if (!res.ok) throw new Error(`TTS API ${res.status}: ${await res.text()}`)
     return Buffer.from(await res.arrayBuffer())
+  }
+}
+
+// ── 音色枚举（GET {base}/audio/voices，P1 §4.1 音色同步的数据面） ──
+
+/** 音色拉取超时（与探活同款 5s：本地实例内网往返，慢即视作不可用）。 */
+export const VOICESTUDIO_VOICES_TIMEOUT_MS = 5_000
+
+/** VS /v1/audio/voices 响应的最小形状（防御式解析，缺字段不炸）。 */
+interface VsVoicesResponse {
+  voices?: Array<{ id?: unknown; voice_id?: unknown; name?: unknown }>
+}
+
+/**
+ * 归一 VS voices 响应为 `{id, label}`。
+ * 响应形状（VS v0.5.8 `openai_compat.py list_voices` 实证）：`{"voices": [{"id"/"voice_id",
+ * "name", "type": "openai_alias"|"profile", ...}], "engines": [...]}`。
+ * 畸形响应一律 null（空清单视作畸形——VS 恒返回 OpenAI 标准别名 + default，
+ * 防半残响应清空 dock 下拉）。
+ */
+export function parseVoiceStudioVoicesResponse(raw: unknown): StudioVoiceOption[] | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const list = (raw as VsVoicesResponse).voices
+  if (!Array.isArray(list)) return null
+  const out: StudioVoiceOption[] = []
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue
+    const id =
+      typeof item.id === 'string' && item.id
+        ? item.id
+        : typeof item.voice_id === 'string'
+          ? item.voice_id
+          : ''
+    if (!id) continue
+    const label = typeof item.name === 'string' && item.name ? item.name : id
+    out.push({ id, label })
+  }
+  return out.length > 0 ? out : null
+}
+
+/**
+ * 拉取 VS 音色清单（base 含 `/v1`，走 `{base}/audio/voices`）。
+ * 失败/非 2xx/畸形一律 null（由调用方保旧值/回退保底表——音色缺失只影响下拉
+ * 丰富度，不当故障）。server 侧 voice-studio-runtime 在此之上做 TTL 缓存与合并。
+ */
+export async function fetchVoiceStudioVoices(
+  baseUrl: string,
+  apiKey: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<StudioVoiceOption[] | null> {
+  try {
+    const res = await boundedFetch(fetchImpl, `${trimTrailingSlash(baseUrl)}/audio/voices`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      timeoutMs: VOICESTUDIO_VOICES_TIMEOUT_MS,
+    })
+    if (!res.ok) return null
+    return parseVoiceStudioVoicesResponse(await res.json())
+  } catch {
+    return null
   }
 }

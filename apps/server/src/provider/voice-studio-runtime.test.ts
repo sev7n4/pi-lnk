@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { VOICESTUDIO_MODEL_ENTRY, type StudioModelEntry, type StudioVoiceOption } from '@lnkpi/shared'
+import { parseVoiceStudioVoicesResponse } from '@lnkpi/agent'
 import {
-  parseVoiceStudioVoicesResponse,
   mergeVoiceStudioVoices,
   refreshVoiceStudioVoices,
   voiceStudioRuntimeVoices,
@@ -10,7 +10,8 @@ import {
 
 /**
  * VoiceStudio 运行时音色同步单测（P1 §4.1，纯单测无 DB）：
- * - VS voices 响应防御式解析（id/voice_id 双字段、畸形返回 null 保旧值）；
+ * - VS voices 响应防御式解析（在 agent 层 voice-studio-tts.ts 实现，此处消费；
+ *   id/voice_id 双字段、畸形返回 null 保旧值）；
  * - merge 只动 voicestudio-http 条目（dock 下拉与生成侧 voice 校验同源）；
  * - 拉取失败/停机保旧值不阻塞（下拉回退条目静态保底表）。
  */
@@ -91,7 +92,7 @@ describe('refreshVoiceStudioVoices + voiceStudioRuntimeVoices（TTL 惰性 + 失
   })
 
   it('拉取成功：缓存运行时清单（VS profile 音色进下拉）', async () => {
-    setEnv('vs-key', 'http://172.17.0.1:3900/')
+    setEnv('vs-key', 'http://172.17.0.1:3900/v1')
     fetchMock.mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -113,7 +114,7 @@ describe('refreshVoiceStudioVoices + voiceStudioRuntimeVoices（TTL 惰性 + 失
   })
 
   it('非 2xx / 网络异常：保旧值不炸（失败不当故障，下拉回退保底表）', async () => {
-    setEnv('vs-key', 'http://172.17.0.1:3900')
+    setEnv('vs-key', 'http://172.17.0.1:3900/v1')
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ voices: [{ id: 'a', name: 'A' }] }) })
     await refreshVoiceStudioVoices()
     expect(voiceStudioRuntimeVoices()).toEqual([{ id: 'a', label: 'A' }])
@@ -128,7 +129,7 @@ describe('refreshVoiceStudioVoices + voiceStudioRuntimeVoices（TTL 惰性 + 失
   })
 
   it('畸形成功响应（空 voices）：不覆盖旧缓存', async () => {
-    setEnv('vs-key', 'http://172.17.0.1:3900')
+    setEnv('vs-key', 'http://172.17.0.1:3900/v1')
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ voices: [{ id: 'a', name: 'A' }] }) })
     await refreshVoiceStudioVoices()
     fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ voices: [] }) })
@@ -144,7 +145,7 @@ describe('mergeVoiceStudioVoices（只动 voicestudio-http 条目，其余引用
     __resetVoiceStudioRuntimeForTests()
     process.env = { ...savedEnv }
     process.env.OMNIVOICE_API_KEY = 'vs-key'
-    process.env.OMNIVOICE_BASE_URL = 'http://172.17.0.1:3900'
+    process.env.OMNIVOICE_BASE_URL = 'http://172.17.0.1:3900/v1'
   })
 
   afterEach(() => {
