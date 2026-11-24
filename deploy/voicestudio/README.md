@@ -134,9 +134,19 @@ kubectl -n pi-lnk-runtime exec <pi-runtime-pod> -- curl -s -m 5 http://172.17.0.
 #   不通 ⇒ 改绑宿主内网 IP 或 docker network connect（把 pi-runtime 所在宿主网段放开）
 ```
 
-pi-runtime 镜像更新（P2 MCP 桥四工具；生产 pod 仍是旧镜像 e41b18d7）：
-见仓库 CI 构建的 pi-runtime 镜像流程（K3s 独立单元，ns=pi-lnk-runtime），
-换镜像 + 上表两项 env 一起进 pod spec。
+pi-runtime 镜像更新（P2 MCP 桥四工具）：**镜像已预构建**——`127.0.0.1:5000/pi-runtime:c3ec8bff`
+（digest `sha256:4670368a`，含 pi-mcp@0.99.2，2026-11-25 本机构建→load→push 入 CVM registry）。
+扩容后只需（env 与换镜像一步到位）：
+
+```bash
+ssh deploy-cvm "kubectl -n pi-lnk-runtime set image deploy/pi-lnk-runtime pi-runtime=127.0.0.1:5000/pi-runtime:c3ec8bff"
+ssh deploy-cvm "kubectl -n pi-lnk-runtime set env deploy/pi-lnk-runtime OMNIVOICE_MCP_URL=http://172.17.0.1:3900/mcp/ OMNIVOICE_API_KEY=<同key>"
+# 判据：pod Running + GET /v1/models 列四工具可达；生产 pod 由旧镜像 e41b18d7 换新
+```
+
+> 构建流水线备用路径（README 既有）：CVM `~/pi-lnk-build` 构建（deploy.yml 已同步 c3ec8bff）；
+> 本轮走「本机构建→save/load→push」，避开 CVM 4G 内存构建 OOM 风险与本机 docker hub 直连被墙
+> （node:22-slim 走 docker.m.daocloud.io 源拉取）。
 
 ## 6. 冒烟清单（判据全过 = 上线完成）
 
