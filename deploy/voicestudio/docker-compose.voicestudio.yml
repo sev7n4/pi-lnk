@@ -1,0 +1,56 @@
+# VoiceStudio 本地语音引擎（CPU）——独立 compose，独立生命周期
+#
+# 锚：docs/superpowers/specs/2026-11-24-voicestudio-p1p2-implementation-spec.md §3
+# 引擎拍板（§3.3）：主引擎 audiocpp-dots（dots.tts SOAR Q8_0，Apache-2.0，商用明确）
+#   —— 不安装 OmniVoice 权重（CC-BY-NC，权重不落盘 = 最强合规形态）
+#
+# ⛔ 部署前置（缺一禁启动，runbook 详述）：
+#   - 宿主 available 内存 ≥ 6G（free -h 判据；8G 扩容最低线）
+#   - 磁盘可用 ≥ 18G（df -h / 判据；VS 权重 + audio.cpp runtime + ASR ≈ 8G）
+#   - docker image prune -a --filter "until=168h" + builder prune 已跑（可回收 ~13G）
+#
+# 端口绑定 172.17.0.1（docker0 网关）：仅本机 docker 网络可达，不暴露公网。
+#   Nest 容器（lnkpi-api）→ http://172.17.0.1:3900/v1
+#   K3s pod（pi-runtime）→ http://172.17.0.1:3900/mcp/   （可达性为部署验证项②）
+#
+# API key 生成：openssl rand -hex 32 → 写入同目录 .env（OMNIVOICE_API_KEY=...）
+#   Nest 与 pi-runtime 必须用同一个 key（三方同钥）。
+
+services:
+  voicestudio:
+    # 镜像按 digest 锁定（spec §8#3 防漂移；升级走审计并更新此行）
+    image: ghcr.io/debpalash/voicestudio@sha256:9cfc492a350ea34ad65ac991cf3b9e0030e3318d684c26435a6a44b074871f0d
+    container_name: voicestudio
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      OMNIVOICE_DATA_DIR: /app/omnivoice_data
+      OMNIVOICE_SERVER_MODE: "1"
+      OMNIVOICE_DEVICE: cpu
+      OMNIVOICE_BIND_HOST: 0.0.0.0
+      OMNIVOICE_CPU_GENERATE_TIMEOUT_S: "600"
+      # 主引擎拍板：audiocpp-dots（§3.3）——model='omnivoice' 请求经
+      # active-engine 透传到此引擎，pi-lnk 零代码改动
+      OMNIVOICE_TTS_BACKEND: audiocpp-dots
+      # HF 直连必失败（spike 实测 Errno 99/110），必走镜像站
+      HF_ENDPOINT: https://hf-mirror.com
+      HF_HOME: /app/omnivoice_data/huggingface
+    ports:
+      - "172.17.0.1:3900:3900"
+    volumes:
+      - omnivoice_data:/app/omnivoice_data
+    # 内存上限：防 VS 吃爆宿主（超限 OOM 杀容器而非拖垮 CVM 全家 14 容器）。
+    # 8G 扩容下限 4G；16G 时可放宽到 8G（多引擎共存口径）。
+    mem_limit: ${VS_MEM_LIMIT:-4g}
+    healthcheck:
+      # /health 挂根路径（vsRootBase 契约，spec §4.1）；用 python3 探测（镜像必有）
+      test: ["CMD", "python3", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:3900/health', timeout=5)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+
+volumes:
+  omnivoice_data:
+    name: omnivoice_data
