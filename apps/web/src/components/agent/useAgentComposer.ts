@@ -3,6 +3,7 @@ import type { Ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { SIDEBAR_ATTACHMENT_MAX, type SidebarAttachment } from '@lnkpi/shared'
 import { shouldPromotePasteToTextChip, type PasteTextProbe } from '@/composables/pasteTextChip'
+import { confirmVoiceRightsIfNeeded } from '@/composables/voiceRightsConsent'
 import { randomId } from '@/utils/randomId'
 import type MentionInput from '@/components/canvas/MentionInput.vue'
 import type { MentionOption } from '@/components/canvas/MentionInput.vue'
@@ -152,6 +153,9 @@ export function useAgentComposer(deps: AgentComposerDeps) {
     isUploading.value = true
     try {
       for (const file of Array.from(files)) {
+        // VoiceStudio P3 合规 #1：侧栏音频素材（A{n}）是克隆参考音频的主来源，
+        // 上传前权利确认；取消 ⇒ 静默跳过该文件（不是错误，不弹提示）继续处理后续。
+        if (!(await confirmVoiceRightsIfNeeded(file))) continue
         await sidebar.addFromFile(file)
       }
     } catch (error) {

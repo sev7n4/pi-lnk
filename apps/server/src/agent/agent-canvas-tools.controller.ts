@@ -201,6 +201,29 @@ class ReadAudioDto {
   nodeId?: string
 }
 
+/** VoiceStudio P3：克隆/设计音色合规台账登记（spec §6#3）。幂等 upsert（userId+profileId）。 */
+class RegisterVoiceProfileDto {
+  @IsString()
+  userId!: string
+
+  @IsString()
+  profileId!: string
+
+  @IsString()
+  profileName!: string
+
+  @IsOptional()
+  @IsString()
+  displayName?: string
+
+  @IsString()
+  source!: string
+
+  @IsOptional()
+  @IsString()
+  refUrl?: string
+}
+
 class GetAgentMessagesDto {
   @IsString()
   sessionId!: string
@@ -1328,6 +1351,14 @@ export class AgentCanvasToolsController {
   @Post('read-audio')
   async readAudio(@Body() dto: ReadAudioDto) {
     const data = await this.tools.readAudio(dto)
+    return { code: 0, message: 'ok', data }
+  }
+
+  // VoiceStudio P3：克隆/设计音色合规台账（spec §6#3 来源标记）。pi-runtime 在
+  // clone_voice / design_voice 成功后调用；校验与 upsert 幂等在 voice-profile-registry。
+  @Post('voice-profiles')
+  async registerVoiceProfile(@Body() dto: RegisterVoiceProfileDto) {
+    const data = await this.tools.registerVoiceProfile(dto)
     return { code: 0, message: 'ok', data }
   }
 

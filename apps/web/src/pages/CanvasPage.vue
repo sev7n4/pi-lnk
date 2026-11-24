@@ -150,6 +150,7 @@ import {
 } from '@/composables/useWorkflowExchange'
 import { fitImportedViewport } from '@/composables/fitImportedViewport'
 import { fileToPersistedPayload, persistMediaUrl } from '@/composables/useMediaUpload'
+import { confirmVoiceRightsIfNeeded } from '@/composables/voiceRightsConsent'
 import { useDebouncedNodePatch } from '@/composables/useDebouncedNodePatch'
 import {
   CANVAS_MULTI_SELECT_ACTIVE_KEY,
@@ -3360,6 +3361,8 @@ async function ingestMediaFile(file: File, clientPos: { x: number; y: number }) 
     ElMessage.warning('不支持的文件类型')
     return
   }
+  // VoiceStudio P3 合规 #1：拖拽导入音频节点前权利确认（取消即中止导入）
+  if (kind === 'audio' && !(await confirmVoiceRightsIfNeeded(file))) return
 
   const selectedNode = editorNode.value
   const wouldApplyToSelected =
@@ -3455,6 +3458,9 @@ async function ingestMediaFile(file: File, clientPos: { x: number; y: number }) 
 }
 
 async function handleDockFileDrop(file: File) {
+  // VoiceStudio P3 合规 #1：dock 拖放音频引用前权利确认（取消即中止；须在
+  // fileToPersistedPayload 之前——那一步已经是上传动作）
+  if (detectFileKind(file) === 'audio' && !(await confirmVoiceRightsIfNeeded(file))) return
   let closeToast: () => void = () => {}
   const showProgress = (pct: number) => {
     closeToast()

@@ -68,6 +68,7 @@ import { PiRuntimeClient } from './pi-runtime/pi-runtime.client'
 import { GenerationRecoveryService } from './generation-recovery/generation-recovery.service'
 import { loadReadMediaImage } from './read-media'
 import { loadReadAudio } from './read-audio'
+import { registerVoiceProfile } from './voice-profile-registry'
 // 授权自动生成（2026-11-22 规格 §3.2）：审批分级纯函数——判定权在服务端 SSOT。
 import { resolveAutoApproveTier, type AutoApproveReason } from './generation-approval'
 import { PLATFORM_CHANNEL_ID, ProviderService } from '../provider/provider.service'
@@ -983,6 +984,22 @@ export class AgentCanvasToolsService {
     }
     if (!url) return { ok: false as const, error: '缺少 url 或 nodeId（二选一）' }
     return loadReadAudio({ url })
+  }
+
+  /**
+   * VoiceStudio P3：克隆/设计音色合规台账登记（spec §6#3 来源标记）。
+   * pi-runtime clone_voice / design_voice 成功后调用；幂等 upsert（userId+profileId），
+   * refUrl uploads 形态校验在 registry（防御纵深：链路绕行也进不了台账）。
+   */
+  async registerVoiceProfile(input: {
+    userId?: string
+    profileId?: string
+    profileName?: string
+    displayName?: string
+    source?: string
+    refUrl?: string
+  }) {
+    return registerVoiceProfile(this.prisma, input ?? {})
   }
 
   /** 焦点过滤阈值（审计 P0-①）：≤ 此数全量返回，避免小画布反而丢信息。 */

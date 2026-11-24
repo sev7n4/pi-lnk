@@ -1,6 +1,7 @@
 import { inject, ref } from 'vue'
 import { CANVAS_NODE_PATCH_KEY } from '@/composables/canvasNodeActions'
 import { fileToPersistedPayload } from '@/composables/useMediaUpload'
+import { confirmVoiceRightsIfNeeded } from '@/composables/voiceRightsConsent'
 
 export type NodeMediaKind = 'image' | 'video' | 'audio'
 
@@ -35,6 +36,8 @@ export function useNodeMediaUpload(nodeId: string, kind: NodeMediaKind) {
       flashReject()
       return
     }
+    // VoiceStudio P3 合规 #1：音频上传前权利确认（用户取消即中止，§6 上传入口声明）
+    if (kind === 'audio' && !(await confirmVoiceRightsIfNeeded(file))) return
     patchNode(nodeId, {
       status: 'uploading',
       uploadProgress: 0,

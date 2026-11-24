@@ -37,6 +37,7 @@ model User {
   webdavConfig     UserWebdavConfig?
   assets           UserAsset[]
   workflowRecipes  UserWorkflowRecipe[]
+  voiceProfiles    VoiceProfileRecord[]
   // 2026-10-21 P2：创作者关注关系 + 置顶作品（加法式变更，不动既有字段）
   //
   // ⚠️ pinnedWorkIds 用 **JSON 字符串** 而非 `String[]`：SQLite 连接器不支持
@@ -1131,4 +1132,31 @@ model UserInstalledSkill {
   @@unique([userId, packageHash])
   @@index([userId, uninstalledAt])
   @@index([packageHash])
+}
+
+/// VoiceStudio 克隆/设计音色合规台账（spec 2026-11-24-voicestudio-p1p2 §6#3：
+/// profile 来源标记）。pi-runtime clone_voice / design_voice 成功后经
+/// `/agent/internal/voice-profiles` upsert 登记；审计 = 按 profileId / userId 查表。
+/// 合规三件套：#1 限自有参考音频（read-audio enforcement）→ 本表 refUrl 留痕；
+/// #3 来源标记（本表 source + VS 侧 `lnk-<userId8>-<name>` 命名规范）。
+/// @@unique([userId, profileId])：同名重克隆 upsert 幂等（刷新 refUrl/时间，不堆行）。
+model VoiceProfileRecord {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// VS 侧 profile id（OpenAI 兼容层 /v1/audio/speech 的 voice 参数精确解析键）
+  profileId   String
+  /// `lnk-<userId8>-<name>`（可审计前缀，与 pi-runtime buildVoiceProfileName 同规范）
+  profileName String
+  /// 用户起的展示名（清洗前）
+  displayName String   @default("")
+  /// cloned（有参考音频）| designed（纯文字描述设计）
+  source      String
+  /// 参考音频 uploads 引用 URL（source=cloned 必填；designed 为空）
+  refUrl      String?
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, profileId])
+  @@index([userId, createdAt])
+  @@index([profileId])
 }

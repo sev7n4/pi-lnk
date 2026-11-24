@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { assetsApi } from '@/services/assets-api'
 import { assetLibraryVersion, bumpAssetLibrary, saveAssetToLibrary } from '@/composables/useAssetLibrary'
 import { fileToPersistedPayload } from '@/composables/useMediaUpload'
+import { confirmVoiceRightsIfNeeded } from '@/composables/voiceRightsConsent'
 import { resolveMediaUrl } from '@/services/api-base'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
 import CanvasRefTargetIcon from '@/components/shared/CanvasRefTargetIcon.vue'
@@ -289,6 +290,9 @@ async function onUploadChange(event: Event) {
   const file = input.files?.[0]
   input.value = ''
   if (!file) return
+  // VoiceStudio P3 合规 #1：音频上传前权利确认（须在 fileToPersistedPayload 前——
+  // 那一步就已经是上传动作，声明必须先于它；用户取消即中止）
+  if (!(await confirmVoiceRightsIfNeeded(file))) return
   uploading.value = true
   uploadProgress.value = 0
   try {
