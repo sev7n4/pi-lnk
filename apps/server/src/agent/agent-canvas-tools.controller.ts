@@ -186,6 +186,21 @@ class ReadMediaDto {
   url!: string
 }
 
+/** VoiceStudio P2：read_audio（spec 2026-11-24-voicestudio-p1p2 §5.2）。url 直达或 nodeId+sessionId 经画布 SSOT 解析。 */
+class ReadAudioDto {
+  @IsOptional()
+  @IsString()
+  url?: string
+
+  @IsOptional()
+  @IsString()
+  sessionId?: string
+
+  @IsOptional()
+  @IsString()
+  nodeId?: string
+}
+
 class GetAgentMessagesDto {
   @IsString()
   sessionId!: string
@@ -1305,6 +1320,14 @@ export class AgentCanvasToolsController {
   @Post('read-media')
   async readMedia(@Body() dto: ReadMediaDto) {
     const data = await this.tools.readMedia(dto)
+    return { code: 0, message: 'ok', data }
+  }
+
+  // VoiceStudio P2：read_audio 取音频（clone_voice 参考音频 / transcribe 输入；
+  // uploads 唯一取音频点，合规「限自有参考音频」在加载器 enforcement）
+  @Post('read-audio')
+  async readAudio(@Body() dto: ReadAudioDto) {
+    const data = await this.tools.readAudio(dto)
     return { code: 0, message: 'ok', data }
   }
 
