@@ -27,6 +27,12 @@
 > 落地规格：`docs/superpowers/specs/2026-11-24-voicestudio-p1p2-implementation-spec.md`
 > **⏰ 时序补充（2026-11-24 01:37）**：内存扩容（前置 A）**推迟至 P1/P2/P3 全部完成后**执行，PR-deploy 顺延；P1 补「env 未配置 ⇒ 模型不注册」决策（prod 阶段零用户可见影响）。
 
+### 0. 配图索引
+
+| 图号 | 说明 | 所在章节 |
+|---|---|---|
+| 图 1 | pi-lnk × VoiceStudio 双通道集成架构（REST 直连 + MCP 桥 + 三部署位） | §4.2 |
+
 ---
 
 ## 1. VoiceStudio v0.5.8 源码研究结论
@@ -130,6 +136,8 @@ agent（pi-runtime 工具 run_audio_generation，kind=voice|design|music）
 
 ### 4.2 集成架构图
 
+集成拓扑与双通道接缝见图 1。
+
 ```mermaid
 flowchart LR
   subgraph VS["VoiceStudio（黑盒，AGPL 边界外）"]
@@ -160,6 +168,8 @@ flowchart LR
   IF1 -- P1 协议直连 --> PROV
   IF2 -- P2 MCP 桥 --> MCP
 ```
+
+**图 1 · pi-lnk 与 VoiceStudio 的双通道集成架构：REST 协议直连（P1）承载 TTS 生成，MCP 工具桥（P2）承载克隆/转写，部署位三选项按算力择一。**
 
 ### 4.3 三档接法与部署位
 
