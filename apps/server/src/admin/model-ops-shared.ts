@@ -169,6 +169,8 @@ const REGISTRY_BASE_URL: Record<UpstreamId, string | undefined> = {
   minimax: 'https://api.minimax.io',
   fal: 'https://fal.run',
   zhipu: 'https://open.bigmodel.cn/api/paas/v4',
+  // VoiceStudio 本地引擎（P1）：自托管，无云端静态缺省（运行时 OMNIVOICE_BASE_URL）。
+  voicestudio: undefined,
 }
 
 const BASE_URL_ENV: Record<UpstreamId, string | undefined> = {
@@ -178,6 +180,7 @@ const BASE_URL_ENV: Record<UpstreamId, string | undefined> = {
   minimax: 'MINIMAX_BASE_URL',
   fal: 'FAL_BASE_URL',
   zhipu: 'ZHIPU_BASE_URL',
+  voicestudio: 'OMNIVOICE_BASE_URL',
 }
 
 const KEY_ENV: Record<UpstreamId, string | undefined> = {
@@ -187,4 +190,5 @@ const KEY_ENV: Record<UpstreamId, string | undefined> = {
   minimax: 'MINIMAX_API_KEY',
   fal: 'FAL_KEY',
   zhipu: 'ZHIPU_API_KEY',
+  voicestudio: 'OMNIVOICE_API_KEY',
 }

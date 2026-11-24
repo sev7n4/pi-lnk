@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { STUDIO_MODEL_CATALOG, resolveModelKey as resolveModelKeyConstant } from '@lnkpi/shared'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { STUDIO_MODEL_CATALOG, resolveModelKey as resolveModelKeyConstant, VOICESTUDIO_MODEL_ENTRY } from '@lnkpi/shared'
 import {
   MODEL_CATALOG_CACHE_TTL_MS,
+  currentCatalogEntries,
   loadModelCatalogRows,
   modelCatalogRowToEntry,
   refreshModelCatalogCache,
@@ -232,5 +233,76 @@ describe('resolveModelKey（server 包装器：TTL 惰性刷新 + 同签名对�
     await __modelCatalogRefreshInFlightForTests()
     // 旧缓存仍可用（常量层条目照常命中）
     expect(resolveModelKey('image', 'image2').fallback).toBe(false)
+  })
+})
+
+// ── VoiceStudio env 条件注册（P1 §4.1 ⭐，2026-11-24） ──
+//
+// 判据：OMNIVOICE_BASE_URL + OMNIVOICE_API_KEY 双 env 齐备 ⇒ voicestudio-local
+// 并入冷启动缓存与播种集合；任一缺失（半配置也不行）⇒ 不注册 —— prod 未部署
+// VS 阶段合入后零用户可见影响，配 env 即自动启用。
+describe('VoiceStudio env 条件注册（coldStartCatalogRows 注入判据）', () => {
+  const savedEnv = { ...process.env }
+
+  function restoreEnv(): void {
+    process.env = { ...savedEnv }
+  }
+
+  beforeEach(() => {
+    restoreEnv()
+    delete process.env.OMNIVOICE_BASE_URL
+    delete process.env.OMNIVOICE_API_KEY
+    __resetModelCatalogStoreForTests()
+  })
+
+  afterEach(restoreEnv)
+
+  it('env 未配置：冷启动缓存与 resolve 都看不到 voicestudio-local（不注册）', () => {
+    const entries = currentCatalogEntries()
+    expect(entries.find((e) => e.modelKey === 'voicestudio-local')).toBeUndefined()
+    // 目录外模型按 fallback 链回落（显式 fallback 标记，不炸）
+    const resolved = resolveModelKey('audio', 'voicestudio-local')
+    expect(resolved.fallback).toBe(true)
+    expect(resolved.modelKey).not.toBe('voicestudio-local')
+    // 常量目录不被污染（web/agent 冷路径零影响）
+    expect(STUDIO_MODEL_CATALOG.find((e) => e.modelKey === 'voicestudio-local')).toBeUndefined()
+  })
+
+  it('半配置（只有 key 或只有地址）视作未配置（判据单一来源 isVoiceStudioEnvConfigured）', () => {
+    process.env.OMNIVOICE_API_KEY = 'k-only'
+    __resetModelCatalogStoreForTests()
+    expect(currentCatalogEntries().find((e) => e.modelKey === 'voicestudio-local')).toBeUndefined()
+
+    delete process.env.OMNIVOICE_API_KEY
+    process.env.OMNIVOICE_BASE_URL = 'http://172.17.0.1:3900'
+    __resetModelCatalogStoreForTests()
+    expect(currentCatalogEntries().find((e) => e.modelKey === 'voicestudio-local')).toBeUndefined()
+  })
+
+  it('双 env 齐备：条目注册（binding/gatewayModelId/保底音色表齐备），resolve 直命中', () => {
+    process.env.OMNIVOICE_API_KEY = 'vs-key'
+    process.env.OMNIVOICE_BASE_URL = 'http://172.17.0.1:3900'
+    __resetModelCatalogStoreForTests()
+    const entry = currentCatalogEntries().find((e) => e.modelKey === 'voicestudio-local')
+    expect(entry).toBeDefined()
+    expect(entry?.providerBinding).toBe('voicestudio-http')
+    expect(entry?.gatewayModelId).toBe('omnivoice')
+    expect(entry?.voices?.length).toBeGreaterThan(0)
+    const resolved = resolveModelKey('audio', 'voicestudio-local')
+    expect(resolved.fallback).toBe(false)
+    expect(resolved.modelKey).toBe('voicestudio-local')
+    // 与 shared 条目 SSOT 一致（禁第二份定义）
+    expect(entry).toMatchObject({ modelKey: VOICESTUDIO_MODEL_ENTRY.modelKey, displayName: VOICESTUDIO_MODEL_ENTRY.displayName })
+  })
+
+  it('双 env 齐备时播种 27 条（26 + voicestudio-local）；env 未配回 26 条', async () => {
+    process.env.OMNIVOICE_API_KEY = 'vs-key'
+    process.env.OMNIVOICE_BASE_URL = 'http://172.17.0.1:3900'
+    __resetModelCatalogStoreForTests()
+    const { prisma, state } = makeFakePrisma()
+    expect(await seedModelCatalogEntries(prisma)).toBe(27)
+    expect(state.created.find((d) => d.modelKey === 'voicestudio-local')).toBeDefined()
+    const created = state.created as Array<{ modelKey: string; providerBinding: string }>
+    expect(created.find((d) => d.modelKey === 'voicestudio-local')?.providerBinding).toBe('voicestudio-http')
   })
 })

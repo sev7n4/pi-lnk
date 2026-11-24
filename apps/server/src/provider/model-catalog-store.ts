@@ -27,13 +27,16 @@ import { Injectable, Inject, OnModuleInit } from '@nestjs/common'
 import type { Prisma, PrismaClient } from '@prisma/client'
 import {
   STUDIO_MODEL_CATALOG,
+  VOICESTUDIO_MODEL_ENTRY,
   defaultModelKey,
+  isVoiceStudioEnvConfigured,
   resolveModelKeyFromRows,
   resolveDefaultModelKeyFromRows,
   type StudioModelEntry,
   type StudioModality,
 } from '@lnkpi/shared'
 import { PrismaService } from '../prisma/prisma.service'
+import { mergeVoiceStudioVoices } from './voice-studio-runtime'
 
 /** 进程内缓存 TTL（毫秒）。5s：spec 判据「后台保存 ≤5 分钟生效」的上限远大于此，留足余量。 */
 export const MODEL_CATALOG_CACHE_TTL_MS = 5_000
@@ -45,7 +48,8 @@ const VALID_MODALITIES: readonly StudioModality[] = ['text', 'image', 'video', '
 // 2026-10-11：加 zhipu-http（#348 漏接——admin controller 放行但本装载器跳过，
 // 见 shared StudioModelEntry.providerBinding 处同注）。必须与
 // admin/model-catalog.controller.ts 的 VALID_PROVIDER_BINDINGS 保持一致。
-const VALID_PROVIDER_BINDINGS = ['gateway-openai-compat', 'fal-http', 'minimax-http', 'zhipu-http'] as const
+// 2026-11-24：加 voicestudio-http（VoiceStudio 本地引擎，P1）。
+const VALID_PROVIDER_BINDINGS = ['gateway-openai-compat', 'fal-http', 'minimax-http', 'zhipu-http', 'voicestudio-http'] as const
 
 /** DB 行的最小形状（列名与 Prisma 逐字一致，见 model-catalog-sync 的注释教训）。 */
 export interface ModelCatalogEntryRow {
@@ -64,8 +68,23 @@ export interface ModelCatalogEntryRow {
   isDefault?: boolean
 }
 
-/** 缓存初值 = 种子常量：bootstrap 完成前的冷启动窗口行为与常量模式逐字节一致。 */
-let cachedRows: StudioModelEntry[] = STUDIO_MODEL_CATALOG
+/**
+ * 种子常量 + env 条件条目（spec §4.1 ⭐「env 未配置 ⇒ 模型不注册」，2026-11-24）：
+ *
+ * `VOICESTUDIO_MODEL_ENTRY` 刻意不在 shared 的 `STUDIO_MODEL_CATALOG` 常量里
+ * （该常量被 web/agent 冷路径直读），改为**本模块按 env 注入**：
+ * `OMNIVOICE_BASE_URL` + `OMNIVOICE_API_KEY` 双 env 齐备（`isVoiceStudioEnvConfigured`
+ * —— 判据单一来源，半配置不给）才并入。prod 未部署 VS 阶段合入后零用户可见影响；
+ * 配 env 即自动注册（播种 insert-if-absent 落库 + 冷启动缓存可见）。
+ *
+ * 冷启动窗口（bootstrap 前缓存回落本值）与播种集合用**同一函数**，保证两视图逐条一致。
+ */
+function coldStartCatalogRows(): StudioModelEntry[] {
+  return isVoiceStudioEnvConfigured() ? [...STUDIO_MODEL_CATALOG, VOICESTUDIO_MODEL_ENTRY] : STUDIO_MODEL_CATALOG
+}
+
+/** 缓存初值 = 种子常量（+env 条件条目）：bootstrap 完成前的冷启动窗口行为与常量模式逐字节一致。 */
+let cachedRows: StudioModelEntry[] = coldStartCatalogRows()
 let cachedAt = 0
 let registeredPrisma: PrismaClient | null = null
 let refreshInFlight: Promise<void> | null = null
@@ -126,7 +145,9 @@ export async function seedModelCatalogEntries(prisma: PrismaClient): Promise<num
   const existing = await prisma.modelCatalogEntry.findMany({ select: { modelKey: true } })
   const knownKeys = new Set(existing.map((r) => r.modelKey))
   let inserted = 0
-  for (const entry of STUDIO_MODEL_CATALOG) {
+  // ⚠️ 播种集合与冷启动缓存同源（coldStartCatalogRows）：env 条件条目（voicestudio-local）
+  // 只在双 env 齐备时播种——env 缺失的 prod 不落库，Dock/镜像/快照天然看不到。
+  for (const entry of coldStartCatalogRows()) {
     if (knownKeys.has(entry.modelKey)) continue
     await prisma.modelCatalogEntry.create({
       data: {
@@ -185,7 +206,11 @@ export async function refreshModelCatalogCache(prisma: PrismaClient): Promise<vo
  */
 export function currentCatalogEntries(): StudioModelEntry[] {
   maybeRefresh()
-  return cachedRows
+  // VoiceStudio 条目运行时音色合并（P1 §4.1 音色同步）：dock 下拉与生成侧 voice
+  // 校验（generation-adapter 吃本函数返回值）看到同一份运行时清单——只在下发层
+  // 合并会让校验用静态保底表，用户选运行时音色被静默换默认（禁静默换道）。
+  // 无 VS 条目/无缓存时零开销（map 前置短路，见 mergeVoiceStudioVoices）。
+  return mergeVoiceStudioVoices(cachedRows)
 }
 
 /**
@@ -269,7 +294,8 @@ export function resolveModelKey(
 
 /** 测试专用：重置模块级缓存/句柄（vitest isolate per file，无需跨文件协调）。 */
 export function __resetModelCatalogStoreForTests(): void {
-  cachedRows = STUDIO_MODEL_CATALOG
+  // 冷启动行随 env 重算（voicestudio-local 的 env 条件注册回归锁依赖）。
+  cachedRows = coldStartCatalogRows()
   cachedAt = 0
   registeredPrisma = null
   refreshInFlight = null

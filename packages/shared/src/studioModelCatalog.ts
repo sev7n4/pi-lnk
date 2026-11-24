@@ -31,7 +31,9 @@ export interface StudioModelEntry {
   // zhipu-http 条目落库成功但被装载器当脏行静默跳过（目录缓存/镜像/用户快照
   // 永远看不到该模型）。binding 的运行时分发按模型名（cogvideox* → ZhipuVideoProvider），
   // 此值只作装载校验与能力清单投影。
-  providerBinding: 'gateway-openai-compat' | 'fal-http' | 'minimax-http' | 'zhipu-http'
+  // 2026-11-24：加 voicestudio-http（VoiceStudio 本地引擎，P1）——装载白名单
+  // （apps/server model-catalog-store + admin controller）必须同步加，防重蹈 #348。
+  providerBinding: 'gateway-openai-compat' | 'fal-http' | 'minimax-http' | 'zhipu-http' | 'voicestudio-http'
   /** 仅 `modality === 'audio'` 时存在；缺省视作 `voice` */
   audioKind?: AudioKind
   voices?: StudioVoiceOption[]
@@ -137,6 +139,75 @@ const STEPFUN_MUSIC_PARAMS: Record<string, ParamDisposition> = {
   temperature: 'native',
   top_k: 'native',
   response_format: 'native',
+}
+
+/**
+ * VoiceStudio（本地引擎）TTS 参数处置。**依据 VoiceStudio v0.5.8 源码
+ * `backend/api/routers/openai_compat.py` SpeechRequest 逐字段核对 + P0 spike 实测**
+ * （2026-11-24，spec: specs/2026-11-24-voicestudio-p1p2-implementation-spec.md §4）：
+ *
+ * - `model` / `input` / `voice` / `speed`：原生。
+ * - `instructions`（**复数**）：VS 的自然语言演绎指导字段。pi-lnk 侧统一叫
+ *   `instruction`（单数，与 StepFun 同名），由 `VoiceStudioTTSProvider` 做
+ *   单→复数改名映射 —— 两上游同概念不同字段名，映射收口在 provider 一处。
+ * - `emotion` / `volume` / `pitch`：VS **静默忽略**（spike 实测 pi-lnk 形态不报错
+ *   但三字段无效果）⇒ 不发送。`emotion` 走 `instruction` 通道（复用 adapter 既有
+ *   `EMOTION_INSTRUCTIONS` 措辞，禁造第二份情绪表）；volume/pitch `metadataOnly`
+ *   （进 droppedFields 可见，不静默吞）。
+ */
+const VOICESTUDIO_AUDIO_PARAMS: Record<string, ParamDisposition> = {
+  model: 'native',
+  voice: 'native',
+  speed: 'native',
+  volume: 'metadataOnly',
+  pitch: 'metadataOnly',
+  emotion: 'instruction',
+  language: 'metadataOnly',
+}
+
+/** VoiceStudio 本地引擎目录条目的 modelKey（路由种子行 / server 注入判据共用）。 */
+export const VOICESTUDIO_MODEL_KEY = 'voicestudio-local'
+
+/**
+ * VoiceStudio 本地引擎目录条目（P1，2026-11-24）。
+ *
+ * ⚠️ **刻意不在 `STUDIO_MODEL_CATALOG` 常量数组里**：该常量被 web/agent 冷路径直读，
+ * 而「env 未配置 ⇒ 模型不注册」（spec §4.1）是 server 运行时关切 —— 注入点在
+ * apps/server `model-catalog-store`（`OMNIVOICE_BASE_URL` + `OMNIVOICE_API_KEY`
+ * 双 env 齐备才把本条目并入种子播种与冷启动缓存）。常量目录保持纯净 ⇒
+ * prod 未部署 VS 阶段合入后零用户可见影响，配 env 即自动启用。
+ *
+ * - `voices`：**保底静态表**（VS `GET /v1/audio/voices` 恒返回 OpenAI 标准别名 +
+ *   `default`；spike 实测 `default` 可直用）。运行时音色同步由 server 拉取覆盖
+ *   此表（「禁手抄表」的边界：VS 引擎私有音色/profile 不抄，标准别名只作拉取
+ *   失败时的保底，保 dock 下拉非空）。
+ * - `gatewayModelId: 'omnivoice'`：P0 spike 实测默认引擎（speech `model` 字段直通）。
+ */
+export const VOICESTUDIO_MODEL_ENTRY: StudioModelEntry = {
+  modelKey: 'voicestudio-local',
+  displayName: 'VoiceStudio 本地引擎',
+  gatewayModelId: 'omnivoice',
+  modality: 'audio',
+  audioKind: 'voice',
+  providerBinding: 'voicestudio-http',
+  params: VOICESTUDIO_AUDIO_PARAMS,
+  voices: [
+    { id: 'default', label: '默认音色' },
+    { id: 'alloy', label: 'Alloy' },
+    { id: 'ash', label: 'Ash' },
+    { id: 'ballad', label: 'Ballad' },
+    { id: 'cedar', label: 'Cedar' },
+    { id: 'coral', label: 'Coral' },
+    { id: 'echo', label: 'Echo' },
+    { id: 'fable', label: 'Fable' },
+    { id: 'marin', label: 'Marin' },
+    { id: 'nova', label: 'Nova' },
+    { id: 'onyx', label: 'Onyx' },
+    { id: 'sage', label: 'Sage' },
+    { id: 'shimmer', label: 'Shimmer' },
+    { id: 'verse', label: 'Verse' },
+  ],
+  defaults: { voice: 'default', speed: 1.0 },
 }
 
 export const STUDIO_MODEL_CATALOG: StudioModelEntry[] = [

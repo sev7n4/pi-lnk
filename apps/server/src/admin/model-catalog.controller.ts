@@ -56,7 +56,10 @@ import { AdminTokenGuard } from './admin-token.guard'
  */
 
 const VALID_MODALITIES = ['text', 'image', 'video', 'audio'] as const
-const VALID_PROVIDER_BINDINGS = ['gateway-openai-compat', 'fal-http', 'minimax-http', 'zhipu-http'] as const
+// 2026-11-24：加 voicestudio-http（VoiceStudio 本地引擎，P1）。⚠️ 必须与
+// provider/model-catalog-store.ts 的 VALID_PROVIDER_BINDINGS 保持一致（#348 教训：
+// 两处白名单漂移 ⇒ admin POST 落库成功但装载器当脏行静默跳过）。
+const VALID_PROVIDER_BINDINGS = ['gateway-openai-compat', 'fal-http', 'minimax-http', 'zhipu-http', 'voicestudio-http'] as const
 const VALID_AUDIO_KINDS = ['voice', 'design', 'music'] as const
 
 /**

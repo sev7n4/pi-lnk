@@ -38,12 +38,13 @@ export interface SubjectRow {
   source: string
 }
 
-/** providerBinding → 默认 provider（缺省 agnes_hub）。 */
+/** providerBinding → 默认 provider（缺省 agnes_hub）。2026-11-24 加 voicestudio 本地引擎。 */
 const PROVIDER_BY_BINDING: Record<string, string> = {
   'gateway-openai-compat': 'agnes_hub',
   'fal-http': 'fal',
   'minimax-http': 'minimax',
   'zhipu-http': 'zhipu',
+  'voicestudio-http': 'voicestudio',
 }
 
 /**

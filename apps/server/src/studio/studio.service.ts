@@ -25,6 +25,7 @@ import {
   createSegmentProvider,
   createTextProvider,
   createVideoProvider,
+  createVoiceStudioAudioProvider,
   generatePromptFromUserInput,
   generateTextForRefs,
   generateVisionQaJson,
@@ -2588,10 +2589,22 @@ export class StudioService {
         ).catch(console.error)
         return { ...musicRecord, generationStartedAt: new Date().toISOString() }
       }
-      const { url } = await createAudioProvider(providerOpts(resolved)).generate(
-        built.text,
-        audioOpts,
-      )
+      // VoiceStudio 本地引擎（P1 §4.1，2026-11-24）：按**目录 binding** 分支构造 provider。
+      // - VS 分支：OMNIVOICE_* 凭证（route 层已按 apiKeyEnvName 注入 credentials）+
+      //   生成前 /health 探活（provider.generate 内置）+ instructions 字段映射；
+      //   失败显式报错（含指路云端模型文案），禁静默换道。
+      // - 其余模型：既有 createAudioProvider 链路逐字节不变。
+      // binding 判据吃 currentCatalogEntries()（与 buildAudioRequest 的 voice 校验同源），
+      // env 未配置 ⇒ 条目不注册 ⇒ 分支不命中，走既有链路（显式缺 key 报错）。
+      const vsEntry = getModelEntryFromRows(currentCatalogEntries(), resolved.modelName)
+      const audioProvider =
+        vsEntry?.providerBinding === 'voicestudio-http'
+          ? createVoiceStudioAudioProvider({
+              apiKey: resolved.credentials.apiKey,
+              baseUrl: resolved.credentials.baseUrl,
+            })
+          : createAudioProvider(providerOpts(resolved))
+      const { url } = await audioProvider.generate(built.text, audioOpts)
       const hasTtsData = url.startsWith('data:')
       const storeUrl = hasTtsData
         ? (

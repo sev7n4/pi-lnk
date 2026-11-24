@@ -43,7 +43,8 @@ import { AdminTokenGuard } from './admin-token.guard'
  */
 
 const VALID_MATCH_TYPES: readonly UpstreamRouteMatchType[] = ['prefix', 'exact', 'regex', 'default']
-const VALID_UPSTREAMS = ['agnes_hub', 'apimart', 'stepfun', 'minimax', 'fal', 'zhipu'] as const
+// 2026-11-24：加 voicestudio（与 provider/upstream-route-store.ts 白名单保持一致，#348 同型防漏接）。
+const VALID_UPSTREAMS = ['agnes_hub', 'apimart', 'stepfun', 'minimax', 'fal', 'zhipu', 'voicestudio'] as const
 const VALID_CAPABILITIES: readonly UpstreamRouteCapability[] = ['*', 'text', 'image', 'video', 'audio']
 
 const ACTOR = 'admin'

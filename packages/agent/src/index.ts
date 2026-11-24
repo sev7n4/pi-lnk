@@ -25,6 +25,15 @@ export {
   normalizeMiniMaxBaseUrl,
 } from './tools/minimax-h3-video-provider'
 export { createAudioProvider, OpenAITTSProvider } from './tools/audio-provider'
+export { createVoiceStudioAudioProvider, VoiceStudioTTSProvider, probeVoiceStudioHealth, fetchVoiceStudioVoices, parseVoiceStudioVoicesResponse } from './tools/voice-studio-tts'
+export type { VoiceStudioProviderOpts } from './tools/voice-studio-tts'
+export {
+  VOICESTUDIO_SPEAK_TIMEOUT_MS,
+  VOICESTUDIO_HEALTH_TIMEOUT_MS,
+  VOICESTUDIO_HEALTH_TTL_MS,
+  VOICESTUDIO_VOICES_TIMEOUT_MS,
+  VOICESTUDIO_UNAVAILABLE_MESSAGE,
+} from './tools/voice-studio-tts'
 export { StepFunDesignProvider } from './tools/stepfun-audio'
 export type { StepFunDesignInput } from './tools/stepfun-audio'
 export { StepFunMusicProvider } from './tools/stepfun-audio'

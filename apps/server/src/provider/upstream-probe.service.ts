@@ -119,6 +119,11 @@ export function toReconciliationUpstreamId(upstream: UpstreamId): Reconciliation
       return 'stepfun'
     case 'zhipu':
       return 'zhipu'
+    // 2026-11-24：VoiceStudio 本地引擎（P1）。映射保持穷举（B1 裁定）；但该上游
+    // **不进 PROBE_UPSTREAMS**——自托管实例可用性由生成期 /health 探活负责，
+    // /v1/models 对账与 ghost 判定不适用（probeMode='none' 同款语义）。
+    case 'voicestudio':
+      return 'voicestudio'
   }
 }
 
@@ -178,6 +183,7 @@ const RECONCILIATION_TO_ROUTING_UPSTREAM: Record<ReconciliationUpstreamId, Upstr
   minimax: 'minimax',
   stepfun: 'stepfun',
   zhipu: 'zhipu',
+  voicestudio: 'voicestudio',
 }
 
 const PROBE_UPSTREAMS: readonly ProbeUpstream[] = (
