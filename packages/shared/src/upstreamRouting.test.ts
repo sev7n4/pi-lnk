@@ -48,14 +48,15 @@ const ALIAS_KEYS = [
   'doubao-seedream-5-0-pro', // seedream 的 gateway id 直连形态
   'gpt-image-2-official', // image2 的 gateway id 直连形态
   'gemini-3.2-flash', // APIMart 的 gpt-image-2 别名形态
+  'voicestudio-local', // VoiceStudio 本地引擎（2026-11-24 P1；不在种子常量目录——env 条件注册，server store 注入）
 ]
 
 describe('A1 对拍有效性断言（先证明 fixture 非空集、覆盖 5 上游）', () => {
-  it('fixture 规模：目录 26 条 + 幽灵 3 条 = 29；别名补充 5 条', () => {
+  it('fixture 规模：目录 26 条 + 幽灵 3 条 = 29；别名补充 6 条', () => {
     expect(CATALOG_KEYS).toHaveLength(26)
     expect(GHOST_KEYS).toHaveLength(3)
     expect(FIXTURE_KEYS).toHaveLength(29)
-    expect(ALIAS_KEYS).toHaveLength(5)
+    expect(ALIAS_KEYS).toHaveLength(6)
   })
 
   it('fixture 含 backed 名单模型（imageModelProfiles.isApimartBackedImageModel 目录耦合键）', () => {
@@ -67,19 +68,19 @@ describe('A1 对拍有效性断言（先证明 fixture 非空集、覆盖 5 上�
     }
   })
 
-  it('对拍前先证明 legacy 副本在 fixture 上命中全部 5 个上游（非空集/非全默认假绿）', () => {
+  it('对拍前先证明 legacy 副本在 fixture 上命中全部 6 个上游（非空集/非全默认假绿）', () => {
     const legacyHits = new Set<string>()
     for (const key of [...FIXTURE_KEYS, ...ALIAS_KEYS]) {
       for (const cap of CAPABILITIES) {
         legacyHits.add(legacyResolveUpstream(key, cap))
       }
     }
-    expect([...legacyHits].sort()).toEqual(['agnes_hub', 'apimart', 'fal', 'minimax', 'stepfun'])
+    expect([...legacyHits].sort()).toEqual(['agnes_hub', 'apimart', 'fal', 'minimax', 'stepfun', 'voicestudio'])
   })
 })
 
 describe('A1 硬门禁：28 条 × 4 capability × legacy/新表逐条一致', () => {
-  it('全量对比无分歧（136 组对比，逐条真实值比对）', () => {
+  it('全量对比无分歧（140 组对比，逐条真实值比对）', () => {
     const keys = [...FIXTURE_KEYS, ...ALIAS_KEYS]
     const mismatches: string[] = []
     let comparisons = 0
@@ -93,8 +94,8 @@ describe('A1 硬门禁：28 条 × 4 capability × legacy/新表逐条一致', (
         }
       }
     }
-    // 有效性：136 = (29 + 5) × 4，逐条真实值比对非抽样
-    expect(comparisons).toBe(136)
+    // 有效性：140 = (29 + 6) × 4，逐条真实值比对非抽样
+    expect(comparisons).toBe(140)
     expect(mismatches, mismatches.join('\n')).toEqual([])
   })
 
@@ -118,6 +119,10 @@ describe('A1 硬门禁：28 条 × 4 capability × legacy/新表逐条一致', (
     expectUpstream('agnes-image-2.1-flash', 'image', 'agnes_hub')
     expectUpstream('agnes-2.0-flash', 'text', 'agnes_hub')
     expectUpstream('deepseek-v4', 'text', 'agnes_hub')
+    // VoiceStudio 本地引擎族（prefix 行，2026-11-24 P1）：capability 通配
+    expectUpstream('voicestudio-local', 'audio', 'voicestudio')
+    expectUpstream('voicestudio-local', 'text', 'voicestudio')
+    expectUpstream('Voicestudio-Local', 'audio', 'voicestudio')
     // apimart 行是 image 专属：legacy 仅在 modality==='image' 分支检查
     expectUpstream('image2', 'text', 'agnes_hub')
     expectUpstream('seedream-5.0-pro', 'video', 'agnes_hub')
@@ -355,6 +360,7 @@ describe('注册表 env 名与 readPlatformCredentialEnv 跨模块对齐（防�
       { envName: UPSTREAM_REGISTRY.stepfun.apiKeyEnvName, field: 'stepfunApiKey' },
       { envName: UPSTREAM_REGISTRY.minimax.apiKeyEnvName, field: 'minimaxApiKey' },
       { envName: UPSTREAM_REGISTRY.fal.apiKeyEnvName, field: 'falApiKey' },
+      { envName: UPSTREAM_REGISTRY.voicestudio.apiKeyEnvName, field: 'omnivoiceApiKey' },
     ]
     for (const { envName, field } of cases) {
       const saved = process.env[envName]
@@ -381,14 +387,15 @@ describe('注册表 env 名与 readPlatformCredentialEnv 跨模块对齐（防�
 })
 
 describe('model-ops Task3 探活盲区声明（probeMode）', () => {
-  it('zhipu 显式 probeMode=none；其余上游缺省按 models（有效性断言：注册表非空 + 上游 id 全打印）', () => {
+  it('zhipu / voicestudio 显式 probeMode=none；其余上游缺省按 models（有效性断言：注册表非空 + 上游 id 全打印）', () => {
     const ids = Object.keys(UPSTREAM_REGISTRY)
-    // 有效性断言：注册表非空集且覆盖已知 6 上游（防空对象假绿）
-    expect(ids.length).toBe(6)
+    // 有效性断言：注册表非空集且覆盖已知 7 上游（防空对象假绿）
+    expect(ids.length).toBe(7)
     console.log('[probeMode] registry ids =', ids.join(', '))
     expect(UPSTREAM_REGISTRY.zhipu?.probeMode).toBe('none')
+    expect(UPSTREAM_REGISTRY.voicestudio?.probeMode).toBe('none')
     for (const id of ids) {
-      if (id === 'zhipu') continue
+      if (id === 'zhipu' || id === 'voicestudio') continue
       const entry = UPSTREAM_REGISTRY[id as keyof typeof UPSTREAM_REGISTRY]
       expect(entry.probeMode ?? 'models', id).toBe('models')
     }

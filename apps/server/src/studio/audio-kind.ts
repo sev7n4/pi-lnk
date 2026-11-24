@@ -3,6 +3,7 @@ import {
   audioKindOf,
   getModelEntryFromRows,
   isStepFunPlatformModel,
+  isVoiceStudioPlatformModel,
   readPlatformCredentialEnv,
   resolveStepFunPlatformCredentials,
   type AudioKind,
@@ -92,6 +93,15 @@ export function resolvePlatformAudioFallback(
   modelName: string,
   env?: PlatformCredentialEnv,
 ): { ok: true; credentials: { apiKey: string; baseUrl?: string } } | { ok: false; reason: string } {
+  // VoiceStudio 本地引擎（P1 §4.1）：本地模型**不走平台回退**——回退重放会把
+  // voicestudio-local 发到 OpenAI 兼容网关（错路由，模型在那边不存在）。显式拒绝
+  // 并指路检查本地实例（与「禁静默错路由」家族纪律同源）。
+  if (isVoiceStudioPlatformModel(modelName)) {
+    return {
+      ok: false,
+      reason: 'VoiceStudio 本地引擎不走平台回退：请检查本地实例状态（OMNIVOICE_* env）或改用云端模型重试',
+    }
+  }
   const sf = resolveStepFunPlatformCredentials(modelName, env)
   if (sf) {
     if (!sf.apiKey) {

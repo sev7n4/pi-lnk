@@ -20,6 +20,11 @@ export type PlatformCredentialEnv = {
   stepfunBaseUrl?: string
   zhipuApiKey?: string
   zhipuBaseUrl?: string
+  // VoiceStudio 本地引擎（P1，2026-11-24）：自托管实例，**无云端静态缺省** ——
+  // baseUrl 缺省空串：双 env（OMNIVOICE_BASE_URL + OMNIVOICE_API_KEY）任一缺失
+  // ⇒ 模型不注册（VOICESTUDIO_MODEL_ENTRY 不并入目录），配 env 即自动启用。
+  omnivoiceApiKey?: string
+  omnivoiceBaseUrl?: string
 }
 
 function readEnv(name: string): string | undefined {
@@ -51,6 +56,10 @@ export function readPlatformCredentialEnv(
       env.stepfunBaseUrl ?? readEnv('STEPFUN_BASE_URL') ?? DEFAULT_STEPFUN_BASE_URL,
     zhipuApiKey: env.zhipuApiKey ?? readEnv('ZHIPU_API_KEY') ?? '',
     zhipuBaseUrl: env.zhipuBaseUrl ?? readEnv('ZHIPU_BASE_URL') ?? DEFAULT_ZHIPU_BASE_URL,
+    omnivoiceApiKey: env.omnivoiceApiKey ?? readEnv('OMNIVOICE_API_KEY') ?? '',
+    // ⚠️ 缺省空串（非 DEFAULT_*）：VoiceStudio 是自托管实例，地址只来自 env；
+    // 空串即「未配置」信号（目录注册判据消费，见 voiceStudioEnvConfigured）。
+    omnivoiceBaseUrl: env.omnivoiceBaseUrl ?? readEnv('OMNIVOICE_BASE_URL') ?? '',
   }
 }
 
@@ -64,6 +73,28 @@ export function usesApimartImageGateway(modelKey: string): boolean {
 
 export function isFalH3MaxPlatformModel(modelName: string): boolean {
   return /h3-max/i.test(modelName)
+}
+
+/**
+ * VoiceStudio 本地引擎的平台模型判定（P1，2026-11-24）。
+ *
+ * 与路由种子行（prefix `voicestudio`，大小写不敏感）同义 —— A1 对拍副本
+ * （legacyResolveUpstream）与消费方统一走本判定，禁在调用方重写第二份 regex。
+ * 前缀（非 exact）匹配：为 P2/P3 的 voicestudio-* 派生模型行（如克隆 profile
+ * 模型行）预留，目录当前仅 `voicestudio-local`（VOICESTUDIO_MODEL_KEY）。
+ */
+export function isVoiceStudioPlatformModel(modelName: string): boolean {
+  return /^voicestudio/i.test(modelName.trim())
+}
+
+/**
+ * VoiceStudio 本地引擎是否已配置（「env 未配置 ⇒ 模型不注册」的唯一判据处，
+ * spec §4.1 ⭐）。双 env **齐备**才算配置 —— 半配置（只有 key 或只有地址）按
+ * 未配置处理，不给用户半可用的模型。
+ */
+export function isVoiceStudioEnvConfigured(env?: Pick<PlatformCredentialEnv, 'omnivoiceApiKey' | 'omnivoiceBaseUrl'>): boolean {
+  const vars = readPlatformCredentialEnv(env)
+  return vars.omnivoiceApiKey !== '' && vars.omnivoiceBaseUrl !== ''
 }
 
 export function resolveFalH3MaxPlatformCredentials(

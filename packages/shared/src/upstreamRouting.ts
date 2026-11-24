@@ -31,12 +31,13 @@ import {
   isFalH3MaxPlatformModel,
   isMiniMaxH3PlatformModel,
   isStepFunPlatformModel,
+  isVoiceStudioPlatformModel,
   usesApimartImageGateway,
 } from './platformCredentials'
 import type { ModelCapability } from './providerChannels'
 
-/** 路由可指向的上游集合（S2-2 spec §3.1）。 */
-export type UpstreamId = 'agnes_hub' | 'apimart' | 'stepfun' | 'minimax' | 'fal' | 'zhipu'
+/** 路由可指向的上游集合（S2-2 spec §3.1；2026-11-24 加 voicestudio 本地引擎）。 */
+export type UpstreamId = 'agnes_hub' | 'apimart' | 'stepfun' | 'minimax' | 'fal' | 'zhipu' | 'voicestudio'
 
 /** 行匹配类型；`default` = 兜底行（pattern 为空，仅在未命中任何普通行时生效）。 */
 export type UpstreamRouteMatchType = 'prefix' | 'exact' | 'regex' | 'default'
@@ -114,6 +115,12 @@ export const UPSTREAM_REGISTRY: Record<UpstreamId, UpstreamRegistryEntry> = {
   // 盲区声明防探活把 cogvideox 误判 ghost（model-ops Task 3；server 探活与 S0-3
   // 冒烟探针都消费本字段，禁止在消费方重写第二份声明）。
   zhipu: { baseUrl: DEFAULT_ZHIPU_BASE_URL, apiKeyEnvName: 'ZHIPU_API_KEY', probeMode: 'none' },
+  // VoiceStudio 本地引擎（P1，2026-11-24）：自托管实例，baseUrl 运行时由
+  // OMNIVOICE_BASE_URL 决定（无云端静态缺省——双 env 缺 ⇒ 模型不注册，见
+  // VOICESTUDIO_MODEL_ENTRY 注）。probeMode='none'：本地实例可用性由
+  // VoiceStudioTTSProvider 的 /health 探活负责（5s 超时 + 显式报错），
+  // /v1/models 对账（ghost 判定）对单实例自托管引擎不适用。
+  voicestudio: { baseUrl: undefined, apiKeyEnvName: 'OMNIVOICE_API_KEY', probeMode: 'none' },
 }
 
 /** 读上游探活模式（缺省 'models'——单一读取点，消费方不得自行 `?? 'models'` 漂移）。 */
@@ -280,6 +287,9 @@ export function legacyResolveUpstream(modelKey: string, capability: ModelCapabil
   if (capability === 'image' && usesApimartImageGateway(modelKey)) return 'apimart'
   // 2026-10-10：智谱 cogvideox 视频族（免费档），与种子 prefix 行 'cogvideox-' 对拍同步。
   if (/^cogvideox/i.test(modelKey)) return 'zhipu'
+  // 2026-11-24：VoiceStudio 本地引擎族，与种子 prefix 行 'voicestudio' 对拍同步
+  //（判定 helper 单源：platformCredentials.isVoiceStudioPlatformModel）。
+  if (isVoiceStudioPlatformModel(modelKey)) return 'voicestudio'
   return 'agnes_hub'
 }
 
@@ -333,6 +343,10 @@ export const UPSTREAM_ROUTE_SEEDS: UpstreamRouteSeed[] = [
   { matchType: 'regex', pattern: 'gemini-.*-flash-image', capability: 'image', upstream: 'apimart', priority: 10, enabled: true, fallbackApiKeyEnvName: 'OPENAI_API_KEY' },
   // 智谱 cogvideox 免费视频（2026-10-10 接入实测通过；cogvideox-flash 官方免费档）
   { matchType: 'prefix', pattern: 'cogvideox-', capability: 'video', upstream: 'zhipu', priority: 10, enabled: true },
+  // VoiceStudio 本地引擎（2026-11-24 P1）：自托管 TTS。prefix 行（≡
+  // isVoiceStudioPlatformModel 的 /^voicestudio/i）通配 capability——与
+  // fal/minimax/stepfun 行同风格（判定器不分模态）；目录当前仅 voicestudio-local。
+  { matchType: 'prefix', pattern: 'voicestudio', capability: '*', upstream: 'voicestudio', priority: 10, enabled: true },
   // 链尾兜底：agnes hub（OpenAI 链）
   { matchType: 'default', pattern: null, capability: '*', upstream: 'agnes_hub', priority: 0, enabled: true },
 ]

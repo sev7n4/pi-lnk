@@ -70,10 +70,13 @@ export function splitTextForTts(text: string, limit: number): string[] {
 }
 
 export class OpenAITTSProvider implements AudioProvider {
+  // 2026-11-24：private → protected —— VoiceStudioTTSProvider（voice-studio-tts.ts）
+  // 继承本类复用切分/拼接骨架，需读写 baseUrl/apiKey 与覆写 speak（字段映射收口）。
+  // protected 不改变对外 import 面（外部仍不可访问）。
   constructor(
-    private apiKey: string,
-    private baseUrl = 'https://api.openai.com/v1',
-    private model = 'tts-1',
+    protected apiKey: string,
+    protected baseUrl = 'https://api.openai.com/v1',
+    protected model = 'tts-1',
   ) {}
 
   async generate(text: string, voiceOrOpts?: string | AudioGenerateOptions): Promise<{ url: string }> {
@@ -90,8 +93,9 @@ export class OpenAITTSProvider implements AudioProvider {
     return { url: `data:audio/mpeg;base64,${base64}` }
   }
 
-  /** 单次上游调用。失败一律抛出（不吞、不兜底占位音频）。 */
-  private async speak(
+  /** 单次上游调用。失败一律抛出（不吞、不兜底占位音频）。
+   *  2026-11-24：private → protected（VoiceStudioTTSProvider 覆写字段映射，见 voice-studio-tts.ts）。 */
+  protected async speak(
     input: string,
     model: string,
     options: AudioGenerateOptions,

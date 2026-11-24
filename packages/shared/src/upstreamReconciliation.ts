@@ -10,8 +10,11 @@
  * B1-1 定时对账器将直接 import 本模块 —— 禁止在任何地方重写第二套 diff 逻辑。
  */
 
-/** 上游 id，与探针脚本的 env 前缀一一对应。 */
-export type UpstreamId = 'agnes' | 'apimart' | 'fal' | 'minimax' | 'stepfun' | 'zhipu'
+/** 上游 id，与探针脚本的 env 前缀一一对应。2026-11-24 加 voicestudio（本地引擎）：
+ *  对账侧仅作类型穷举成员（toReconciliationUpstreamId 显式映射），**不进 PROBE_UPSTREAMS**
+ *  —— 自托管实例可用性由生成期 /health 探活负责（VoiceStudioTTSProvider），/v1/models
+ *  对账与 ghost 判定均不适用（probeMode='none' 同款语义）。 */
+export type UpstreamId = 'agnes' | 'apimart' | 'fal' | 'minimax' | 'stepfun' | 'zhipu' | 'voicestudio'
 
 /**
  * 未命中任何路由规则的目录条目兜底归到这里 —— 与 platformCredentials 的

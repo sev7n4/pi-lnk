@@ -52,6 +52,8 @@ function readCredentialEnvValue(envName: string, vars: Required<PlatformCredenti
       return vars.falApiKey
     case 'ZHIPU_API_KEY':
       return vars.zhipuApiKey
+    case 'OMNIVOICE_API_KEY':
+      return vars.omnivoiceApiKey
     default:
       return ''
   }
@@ -79,6 +81,11 @@ function baseUrlForUpstream(
       return vars.stepfunBaseUrl
     case 'zhipu':
       return vars.zhipuBaseUrl
+    case 'voicestudio':
+      // VoiceStudio 本地引擎（P1）：自托管，地址只来自 env（无 DB 渠道快照、无云端
+      // 缺省）。缺 env ⇒ 空串 ⇒ 下游 createVoiceStudioAudioProvider 显式报错
+      // 「本地引擎地址未配置」（不静默错路由到别的上游）。
+      return process.env.OMNIVOICE_BASE_URL?.trim() || ''
   }
 }
 

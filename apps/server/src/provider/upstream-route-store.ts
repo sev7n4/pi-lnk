@@ -33,7 +33,9 @@ import { PrismaService } from '../prisma/prisma.service'
 export const UPSTREAM_ROUTE_CACHE_TTL_MS = 5_000
 
 const VALID_MATCH_TYPES: readonly UpstreamRouteMatchType[] = ['prefix', 'exact', 'regex', 'default']
-const VALID_UPSTREAMS: readonly UpstreamId[] = ['agnes_hub', 'apimart', 'stepfun', 'minimax', 'fal', 'zhipu']
+// 2026-11-24：加 voicestudio（VoiceStudio 本地引擎，P1 路由种子行 prefix 'voicestudio'）。
+// ⚠️ 必须与 shared UpstreamId 同步——漏接会让种子行在 DB 装载时被当脏行静默跳过（#348 同型）。
+const VALID_UPSTREAMS: readonly UpstreamId[] = ['agnes_hub', 'apimart', 'stepfun', 'minimax', 'fal', 'zhipu', 'voicestudio']
 const VALID_CAPABILITIES: readonly UpstreamRouteCapability[] = ['*', 'text', 'image', 'video', 'audio']
 
 /** DB 行的最小形状（列名与 Prisma 逐字一致，见 model-catalog-sync 的注释教训）。 */
