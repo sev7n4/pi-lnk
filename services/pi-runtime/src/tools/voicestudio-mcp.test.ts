@@ -115,6 +115,7 @@ test("clone_voice：MCP 成功返回 profile_id 且带 lnk- 前缀调用；Nest 
 		},
 	});
 	const clone = buildTools(fakeNestClient((path, body) => {
+		if (path === "/agent/internal/voice-profiles") return { ok: true }; // P3 台账登记成功
 		assert.equal(path, "/agent/internal/read-audio");
 		assert.deepEqual(body, { url: "/api/uploads/u1/ref.mp3" });
 		return AUDIO_OK;
@@ -123,6 +124,7 @@ test("clone_voice：MCP 成功返回 profile_id 且带 lnk- 前缀调用；Nest 
 	const ok = await runTool(clone, { url: "/api/uploads/u1/ref.mp3", name: "老板娘" }, { userId: "abcdef1234567890" });
 	assert.equal(ok.ok, true);
 	assert.equal(ok.profile_id, "vp_1");
+	assert.equal(ok.registered, true, "P3：登记成功不带 warning");
 	assert.match(ok.note as string, /voice 参数/);
 
 	const bad = buildTools(fakeNestClient(() => ({ ok: false, error: "仅支持 uploads 引用" })), {
@@ -141,6 +143,84 @@ test("clone_voice：VS {error} JSON 契约 → ok:false 显式报错（isError �
 	const out = await runTool(clone, { url: "/api/uploads/u1/a.mp3", name: "n" });
 	assert.equal(out.ok, false);
 	assert.equal(out.error, "reference audio too short");
+});
+
+test("P3 合规台账：clone 成功即登记（source/refUrl/userId 留痕），registered:true", async () => {
+	const fake = fakeMcpClient({ onCall: () => mcpOk({ profile_id: "vp_9", name: "lnk-abcdef12-n" }) });
+	const regBodies: Array<Record<string, unknown>> = [];
+	const clone = buildTools(
+		fakeNestClient((path, body) => {
+			if (path === "/agent/internal/read-audio") return AUDIO_OK;
+			if (path === "/agent/internal/voice-profiles") {
+				regBodies.push(body as Record<string, unknown>);
+				return { ok: true };
+			}
+			throw new Error(`unexpected path: ${path}`);
+		}),
+		{ env: envFor('p3-clone-reg'), createClient: () => fake.stub, createTransport: () => ({}) as never },
+	).find((t) => t.name === "clone_voice")!;
+	const out = await runTool(clone, { url: "/api/uploads/u1/ref.mp3", name: "n" }, { userId: "abcdef1234567890" });
+	assert.equal(out.ok, true);
+	assert.equal(out.registered, true);
+	assert.equal(out.warning, undefined);
+	assert.equal(regBodies.length, 1);
+	assert.deepEqual(regBodies[0], {
+		userId: "abcdef1234567890",
+		profileId: "vp_9",
+		profileName: "lnk-abcdef12-n",
+		displayName: "n",
+		source: "cloned",
+		refUrl: "/api/uploads/u1/ref.mp3",
+	});
+});
+
+test("P3 合规台账：登记失败不谎报克隆失败——ok:true + registered:false + warning（profile 已存在是事实）", async () => {
+	const fake = fakeMcpClient({ onCall: () => mcpOk({ profile_id: "vp_10", name: "x" }) });
+	const clone = buildTools(
+		fakeNestClient((path) => {
+			if (path === "/agent/internal/read-audio") return AUDIO_OK;
+			throw new Error("registry down");
+		}),
+		{ env: envFor('p3-clone-regfail'), createClient: () => fake.stub, createTransport: () => ({}) as never },
+	).find((t) => t.name === "clone_voice")!;
+	const out = await runTool(clone, { url: "/api/uploads/u1/ref.mp3", name: "n" }, { userId: "u-12345678" });
+	assert.equal(out.ok, true, "profile 已创建，报 ok:false 会误导 agent");
+	assert.equal(out.registered, false);
+	assert.match(out.warning as string, /合规登记失败.*registry down/);
+	assert.match(out.warning as string, /管理员补登/);
+	assert.equal(out.profile_id, "vp_10");
+});
+
+test("P3 合规台账：design_voice 也走 lnk- 审计命名 + source:designed 登记（无 refUrl）", async () => {
+	const fake = fakeMcpClient({
+		onCall: (_tool, args) => {
+			assert.match(args.name as string, /^lnk-u-876543-毒舌-老板娘$/);
+			return mcpOk({ profile_id: "vp_d", name: args.name, attrs: {}, unmatched: [] });
+		},
+	});
+	const regBodies: Array<Record<string, unknown>> = [];
+	const design = buildTools(
+		fakeNestClient((path, body) => {
+			if (path === "/agent/internal/voice-profiles") {
+				regBodies.push(body as Record<string, unknown>);
+				return { ok: true };
+			}
+			throw new Error(`unexpected path: ${path}`);
+		}),
+		{ env: envFor('p3-design'), createClient: () => fake.stub, createTransport: () => ({}) as never },
+	).find((t) => t.name === "design_voice")!;
+	const out = await runTool(design, { name: "毒舌 老板娘", description: "中年女性，语速快" }, { userId: "u-87654321" });
+	assert.equal(out.ok, true);
+	assert.equal(out.registered, true);
+	assert.equal(regBodies.length, 1);
+	assert.deepEqual(regBodies[0], {
+		userId: "u-87654321",
+		profileId: "vp_d",
+		profileName: "lnk-u-876543-毒舌-老板娘",
+		displayName: "毒舌 老板娘",
+		source: "designed",
+	});
+	assert.ok(!("refUrl" in regBodies[0]), "designed 不带 refUrl");
 });
 
 test("transcribe：双传报错；node_id/url 分别走对应 source；返回 text", async () => {

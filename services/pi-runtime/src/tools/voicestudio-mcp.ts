@@ -233,6 +233,39 @@ async function resolveAudioBase64(
 	return data;
 }
 
+/**
+ * P3 合规台账登记（spec §6#3 来源标记）：克隆/设计成功后 upsert 到
+ * Nest `/agent/internal/voice-profiles`（userId+profileId 幂等）。
+ * 返回 null = 登记失败（网络/校验），调用方以 registered:false + warning 如实呈现——
+ * profile 已在 VS 创建是既成事实，报 ok:false 会误导 agent「克隆失败」，静默又违反
+ * 「显式报错禁静默」纪律；warning 是唯一既不谎报也不哑报的形态。
+ */
+async function registerVoiceProfileToNest(
+	client: NestClient,
+	payload: {
+		userId: string | undefined;
+		profileId: string;
+		profileName: string;
+		displayName: string;
+		source: "cloned" | "designed";
+		refUrl?: string;
+	},
+): Promise<string | null> {
+	try {
+		await client.post("/agent/internal/voice-profiles", {
+			userId: payload.userId,
+			profileId: payload.profileId,
+			profileName: payload.profileName,
+			displayName: payload.displayName,
+			source: payload.source,
+			...(payload.refUrl ? { refUrl: payload.refUrl } : {}),
+		});
+		return null;
+	} catch (err) {
+		return err instanceof Error ? err.message : String(err);
+	}
+}
+
 /* ------------------------------------------------------------------ */
 /* 四工具                                                               */
 /* ------------------------------------------------------------------ */
@@ -316,11 +349,28 @@ export function createVoiceStudioMcpTools(
 						}),
 					);
 					if (!out.ok) return textResult({ ok: false, error: out.error });
+					// P3 合规台账：克隆成功即登记（source/refUrl 留痕，§6#3）；失败不吞——
+					// registered:false + warning 如实呈现（profile 已存在，不可谎报克隆失败）
+					const regErr = await registerVoiceProfileToNest(client, {
+						userId: tc?.userId,
+						profileId: String(out.data.profile_id ?? ""),
+						profileName: profileName,
+						displayName: name,
+						source: "cloned",
+						refUrl: url,
+					});
 					return textResult({
 						ok: true,
 						profile_id: out.data.profile_id,
 						name: out.data.name,
 						display_name: name,
+						registered: !regErr,
+						...(regErr
+							? {
+									warning:
+										`合规登记失败（${regErr}）：该 profile_id 未入台账，请勿对外交付用此音色生成的成品；请联系管理员补登（重克隆同名会被引擎拒绝）。`,
+								}
+							: {}),
 						note: "把该 profile_id 作为 run_audio_generation 的 voice 参数即可用此音色出声；同角色全剧复用同一 id。",
 					});
 				} catch {
@@ -350,27 +400,44 @@ export function createVoiceStudioMcpTools(
 				"描述映射不到任何设计属性（unmatched 非空且报错）时，把 unmatched 词如实转达并请用户改描述，不要编造音色。",
 				"设计成功后把音色 id 登记进角色 bible，同角色全剧复用。",
 			],
-			execute: async (_id, p: { name: string; description: string; language?: string }) => {
+			execute: async (_id, p: { name: string; description: string; language?: string }, _u, tc: LnkpiToolContext) => {
 				const name = (p?.name ?? "").trim();
 				const description = (p?.description ?? "").trim();
 				if (!name || !description) {
 					return textResult({ ok: false, error: "缺少参数：name（音色名）与 description（音色描述）必填" });
 				}
+				// P3 合规收口：designed 与 cloned 统一走 lnk-<userId8>-<name> 审计命名（§6#3
+				// 不区分来源；P2 遗漏，生产 env 未启用零存量，无迁移负担）。
+				const profileName = buildVoiceProfileName(name, tc?.userId);
 				try {
 					const out = extractMcpJson(
 						await callTool("design_voice", {
-							name,
+							name: profileName,
 							description,
 							language: p.language?.trim() || "Auto",
 						}),
 					);
 					if (!out.ok) return textResult({ ok: false, error: out.error });
+					const regErr = await registerVoiceProfileToNest(client, {
+						userId: tc?.userId,
+						profileId: String(out.data.profile_id ?? ""),
+						profileName,
+						displayName: name,
+						source: "designed",
+					});
 					return textResult({
 						ok: true,
 						profile_id: out.data.profile_id,
 						name: out.data.name,
 						attrs: out.data.attrs,
 						unmatched: out.data.unmatched,
+						registered: !regErr,
+						...(regErr
+							? {
+									warning:
+										`合规登记失败（${regErr}）：该 profile_id 未入台账，请勿对外交付用此音色生成的成品；请联系管理员补登。`,
+								}
+							: {}),
 						note: "把该 profile_id 作为 run_audio_generation 的 voice 参数即可用此音色出声。",
 					});
 				} catch {
