@@ -90,7 +90,8 @@ def login() -> str:
 def create_canvas(token: str) -> str:
     status, r = http("POST", "/sessions", {"title": f"VT-取证-{uuid.uuid4().hex[:8]}"}, token)
     sid = (r.get("data") or {}).get("id", "")
-    record("自建画布会话", status == 200 and bool(sid), f"HTTP {status}, sid={sid}")
+    # POST /sessions 返回 201 Created；不要把标准创建语义误判为失败。
+    record("自建画布会话", status in (200, 201) and bool(sid), f"HTTP {status}, sid={sid}")
     if not sid:
         sys.exit(1)
     AUDIT["session_id"] = sid
@@ -105,7 +106,8 @@ def seed_nodes(token: str, sid: str) -> list[str]:
             "type": "add_node",
             "payload": {
                 "id": nid,
-                "type": "video",
+                # 客户端 PATCH 的 add_node 载荷字段是 nodeType（不是 type）。
+                "nodeType": "video",
                 "position": {"x": 100 + i * 220, "y": 100},
                 "data": {
                     "title": f"镜头{i + 1}",
@@ -150,7 +152,10 @@ def main() -> None:
     # 浏览器侧端点（propose-render / render）用 AuthGuard，前端即此路径。
     status, r = http("POST", "/video-timeline/propose-render",
                      {"sessionId": sid, "nodeId": "nonexistent"}, token)
-    record("propose-render 对非法草稿报错", status in (400, 404), f"HTTP {status}: {str(r)[:160]}")
+    # 该 controller 用 2xx + {ok:false,error} 表达业务拒绝，不是 4xx。
+    record("propose-render 对非法草稿报错",
+           status in (200, 201, 400, 404) and r.get("ok") is False
+           and r.get("error") == "timeline_draft_not_found", f"HTTP {status}: {str(r)[:160]}")
 
     # 通过 agent 内部端点建草稿（生产脚本持内部 service token 时走此路；
     # 无内部 token 时改用浏览器端 create 不存在 ⇒ 只能验端点存在性）。
@@ -169,13 +174,14 @@ def main() -> None:
     }
     status, r = http("PATCH", f"/sessions/{sid}/canvas", {"ops": [{
         "type": "add_node",
-        "payload": {"id": draft_id, "type": "video", "position": {"x": 700, "y": 100}, "data": {"title": "时间线草稿", "timeline": timeline}},
+        "payload": {"id": draft_id, "nodeType": "video", "position": {"x": 700, "y": 100}, "data": {"title": "时间线草稿", "timeline": timeline}},
     }]}, token)
     record("种入时间线草稿节点", status == 200, f"HTTP {status}")
 
     status, r = http("POST", "/video-timeline/propose-render",
                      {"sessionId": sid, "nodeId": draft_id}, token)
-    record("propose-render 写确认事实", status == 200, f"HTTP {status}: {str(r)[:180]}")
+    record("propose-render 写确认事实",
+           status in (200, 201) and r.get("ok") is True, f"HTTP {status}: {str(r)[:180]}")
 
     node = get_node(token, sid, draft_id) or {}
     data = node.get("data", {})
