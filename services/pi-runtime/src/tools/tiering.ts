@@ -184,6 +184,10 @@ export const ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
 	"run_text_generation",
 	// 被删历史（2026-10-17 prompt 节点下线）：run_prompt_generation 曾常驻于此（不带引号，理由同上）。
 	"run_audio_generation",
+	// 2026-11-25 视频时间线：skill 正文逐字点名三工具；按 A1 必须在常驻集。
+	"video_timeline_create",
+	"video_timeline_edit",
+	"video_timeline_render",
 	"cancel_generation",
 	// 交互与元
 	"ask_user",

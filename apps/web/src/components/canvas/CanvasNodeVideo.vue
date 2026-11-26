@@ -3,6 +3,9 @@ import NeoBaseNode from '@/components/canvas/NeoBaseNode.vue'
 import NodePendingPrompt from '@/components/canvas/NodePendingPrompt.vue'
 import NodeTaskCornerActions from '@/components/canvas/NodeTaskCornerActions.vue'
 import NodeStatusInfoButton from '@/components/canvas/NodeStatusInfoButton.vue'
+import VideoTimelineCard from '@/components/canvas/VideoTimelineCard.vue'
+import { api } from '@/services/api'
+import type { VideoTimeline } from '@lnkpi/shared'
 import { resolveVideoNodeDisplaySize } from '@/components/canvas/mediaNodeDisplaySize'
 import MediaInfoSummary from '@/components/media/MediaInfoSummary.vue'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
@@ -38,6 +41,8 @@ const props = defineProps<{
     materialId?: string
     mediaInfo?: NodeMediaInfoSummary
     videoSettings?: { aspectRatio?: string }
+    timeline?: unknown
+    proposalKind?: string
   }
 }>()
 
@@ -71,6 +76,23 @@ const showInspectorBtn = computed(() => Boolean(props.data.generationRecordId))
 const isCompleted = computed(() => props.data.status === NODE_GENERATION_STATUS.completed)
 /** ADR-0011：待确认态（dock 已门控）⇒ 节点本体改渲染提示词摘要，不给上传入口 */
 const isPendingConfirm = computed(() => props.data.status === NODE_PENDING_CONFIRM_STATUS)
+
+function isVideoTimeline(value: unknown): value is VideoTimeline {
+  if (!value || typeof value !== 'object') return false
+  const t = value as Partial<VideoTimeline>
+  return t.version === 1 && Array.isArray(t.trackOrder) && Array.isArray(t.tracks) && !!t.export
+}
+const timelineCard = computed(() => (isVideoTimeline(props.data.timeline) ? props.data.timeline : null))
+const renderEnabled = computed(() => import.meta.env.VITE_VIDEO_TIMELINE_RENDER_ENABLED === 'true')
+
+async function requestTimelineRender() {
+  if (!timelineCard.value || !sessionId.value || !renderEnabled.value) return
+  const busy = props.data.status === 'queued' || props.data.status === 'rendering'
+  if (busy) return
+  if (!window.confirm('确认按当前时间线渲染成片？')) return
+  await api.post('/video-timeline/propose-render', { sessionId: sessionId.value, nodeId: props.id })
+  await api.post('/video-timeline/render', { sessionId: sessionId.value, nodeId: props.id })
+}
 /** 节点尺寸跟随素材比例（长边 320 包络，probe 真实比例优先） */
 const displaySize = computed(() => resolveVideoNodeDisplaySize(props.data as Record<string, unknown>))
 useNodeMediaInfoFooter({
@@ -152,7 +174,16 @@ function openMediaInspector(e?: Event) {
     <template v-if="showMediaSummary && data.mediaInfo" #footer>
       <MediaInfoSummary v-bind="data.mediaInfo" />
     </template>
+    <VideoTimelineCard
+      v-if="timelineCard"
+      :node-id="id"
+      :timeline="timelineCard"
+      :status="data.status"
+      :render-enabled="renderEnabled"
+      @request-render="requestTimelineRender"
+    />
     <div
+      v-if="!timelineCard"
       class="neo-gen-card neo-node-upload-target"
       :class="{
         'is-drag-over': dragOver,

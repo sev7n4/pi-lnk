@@ -291,3 +291,32 @@ test("V-γ 逃生口的 SSOT 查询同样必须用画布会话 id", async () => 
 	assert.equal(r.allowed, true);
 	assert.deepEqual(c.bodies[0], { sessionId: "canvas-9", nodeId: "n1" });
 });
+
+const TIMELINE_RENDER = "video_timeline_render";
+
+test("timeline render blocks draft node", async () => {
+	const r = await checkGenerationGate(
+		new GenerationGateStore(),
+		fakeClient({ data: { status: "draft", timeline: {} } }),
+		"s", TIMELINE_RENDER, { node_id: "vt_1" },
+	);
+	assert.equal(r.allowed, false);
+});
+
+test("timeline render blocks pending_confirm without proposalKind", async () => {
+	const r = await checkGenerationGate(
+		new GenerationGateStore(),
+		fakeClient(PENDING_NODE),
+		"s", TIMELINE_RENDER, { node_id: "vt_1" },
+	);
+	assert.equal(r.allowed, false);
+});
+
+test("timeline render passes with timeline proposalKind", async () => {
+	const r = await checkGenerationGate(
+		new GenerationGateStore(),
+		fakeClient({ data: { status: "pending_confirm", proposalKind: "video_timeline_render" } }),
+		"s", TIMELINE_RENDER, { node_id: "vt_1" },
+	);
+	assert.equal(r.allowed, true);
+});

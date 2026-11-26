@@ -9,6 +9,7 @@ import { createAskUserTools } from "./ask-user.js";
 import { createArrangeNodesTools } from "./arrange-nodes.js";
 import { createCanvasGroupTools } from "./canvas-group.js";
 import { createGenerationTools } from "./generation.js";
+import { createVideoTimelineTools } from "./video-timeline.js";
 import { buildWebTools } from "./web.js";
 import { buildDeleteNodesTools } from "./delete-nodes.js";
 import { buildReadDocumentTools } from "./read-document.js";
@@ -105,6 +106,11 @@ export function buildCanvasGroupTools(client?: NestClient): LnkpiTool[] {
 export function buildGenerationTools(client: NestClient): LnkpiTool[] {
 	// P1-B job 化：deps 收缩（等待登记/node_status 广播退役，§4.1）
 	return createGenerationTools(client);
+}
+
+/** 视频时间线三工具（2026-11-25）：create/edit 写草稿，render 受确认门约束。 */
+export function buildVideoTimelineTools(client: NestClient): LnkpiTool[] {
+	return createVideoTimelineTools(client);
 }
 
 /**

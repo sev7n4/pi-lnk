@@ -56,6 +56,39 @@ services:
     # pi-runtime 由 K3s 独立部署（NodePort 30100），经 PI_RUNTIME_URL 指向；
     # 详见 docs/ops/RUNBOOK-pi-runtime-deploy.md
 
+  # 视频时间线渲染 worker（Task 6）：默认不启动。CVM 内存扩容到位、
+  # 且 VIDEO_TIMELINE_RENDER_ENABLED=true 后才 `docker compose --profile video-timeline up -d video-timeline-worker`。
+  # ⚠️ entrypoint.sh 硬编码 `exec node dist/main.js` 且不透传 command，
+  #    故这里必须整条覆盖 entrypoint（xvfb-run 供 editly/canvas 原生依赖用），
+  #    不能只写 command（会静默跑成 api 主进程）。
+  video-timeline-worker:
+    image: ${LNKPI_API_IMAGE:-lnkpi-api:local}
+    profiles: ["video-timeline"]
+    container_name: lnkpi-vt-worker
+    restart: unless-stopped
+    entrypoint:
+      - xvfb-run
+      - -a
+      - node
+      - dist/video-timeline.worker.js
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      DATABASE_URL: file:/app/apps/server/data/lnkpi.db
+      MATTING_SERVICE_URL: ${MATTING_SERVICE_URL:-http://lnkpi-matting:8000}
+      LNKPI_SEGMENT_SERVICE_URL: ${LNKPI_SEGMENT_SERVICE_URL:-http://lnkpi-segment:8000}
+      VIDEO_TIMELINE_POLL_INTERVAL_MS: "3000"
+    volumes:
+      - lnkpi-data:/app/apps/server/data
+      - lnkpi-uploads:/app/apps/server/uploads
+    networks:
+      - lnkpi
+    mem_limit: 2g
+    depends_on:
+      api:
+        condition: service_healthy
+
   # 仅内网；勿映射端口到公网。模型预置在镜像层（isnet-general-use，~170MB）
   matting:
     image: ${LNKPI_MATTING_IMAGE:-lnkpi-matting:local}

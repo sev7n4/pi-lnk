@@ -86,6 +86,10 @@ export const TOOL_PRESENTATION: Record<string, ToolPresentation> = {
   design_voice: { icon: '🎨', verb: '设计音色' },
   transcribe: { icon: '🎧', verb: '音频转写' },
   list_voices: { icon: '🗣️', verb: '查询音色库' },
+  // 视频时间线（2026-11-25）：三工具常驻 + A5 展示登记
+  video_timeline_create: { icon: '🎬', verb: '编排时间线' },
+  video_timeline_edit: { icon: '✂️', verb: '剪辑时间线' },
+  video_timeline_render: { icon: '📤', verb: '渲染成片' },
 }
 
 const RUN_PREFIX_ICON = '🎨'

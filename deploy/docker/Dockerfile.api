@@ -13,9 +13,11 @@ RUN if [ "$USE_TENCENT_APT_MIRROR" = "1" ]; then \
           "$f"; \
       done; \
     fi
-# build 阶段仅需 openssl（Prisma），不必装 ffmpeg
+# build 阶段仅需 openssl（Prisma）；视频时间线 worker 需编译 editly 原生依赖（canvas/gl）
 RUN apt-get update \
   && apt-get install -y --no-install-recommends openssl ca-certificates \
+    build-essential python-is-python3 \
+    libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev libgl1-mesa-dev libxi-dev \
   && rm -rf /var/lib/apt/lists/*
 RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 WORKDIR /app
@@ -52,6 +54,14 @@ RUN pnpm exec prisma generate
 RUN pnpm run build
 WORKDIR /app
 
+# 视频时间线渲染内核：editly 固定 0.14.2，经 npm 隔离安装到 /opt/editly（不进 pnpm workspace 图，
+# 避免 canvas@2 与 jsdom 的 canvas@^3 peer 冲突污染解析面、避免 CI 无 cairo 头文件被 optional 失败拖累）。
+# 运行时经 NODE_PATH 解析 require('editly')；构建期缺失即失败（test -d 硬校验），不留静默坏镜像。
+RUN mkdir -p /opt/editly && cd /opt/editly \
+  && npm init -y >/dev/null \
+  && npm install --no-audit --no-fund --loglevel=error editly@0.14.2 --registry=https://registry.npmmirror.com \
+  && test -d /opt/editly/node_modules/editly
+
 FROM node:22-bookworm-slim AS runner
 ARG USE_TENCENT_APT_MIRROR=0
 WORKDIR /app
@@ -72,8 +82,15 @@ RUN if [ "$USE_TENCENT_APT_MIRROR" = "1" ]; then \
     fi
 RUN apt-get update \
   && apt-get install -y --no-install-recommends openssl ca-certificates ffmpeg \
+    xvfb fontconfig fonts-dejavu-core \
+    libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libjpeg62-turbo libgif7 librsvg2-2 libgl1 libxi6 \
   && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /app/apps/server/data /app/apps/server/uploads
+
+# 视频时间线：editly 从隔离目录解析；渲染开关默认关闭（CVM 扩容前禁用，规格 §6.4）
+ENV NODE_PATH=/opt/editly/node_modules
+ENV VIDEO_TIMELINE_RENDER_ENABLED=false
+COPY --from=build /opt/editly /opt/editly
 
 COPY --from=build /app/node_modules /app/node_modules
 COPY --from=build /app/package.json /app/pnpm-workspace.yaml ./
