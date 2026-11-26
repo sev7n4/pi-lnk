@@ -49,12 +49,27 @@ export type TimelineOp =
   | { op: 'set_export'; file_name?: string; resolution?: TimelineResolution; format?: 'mp4' | 'mov'; volume?: number; muted?: boolean; keep_full_audio_tail?: boolean }
   | { op: 'request_render' }
 
+/**
+ * 单个片段的实际渲染时长（单一真相源）。
+ * video 有裁剪区间时 = sourceOut-sourceIn，与编译器 clip.duration 同源（避免 Editly 自动变速）；
+ * image / 未裁剪 video = durationSec。
+ * ⚠️ 时长展示、音频裁切点、编译输出必须都走这里，否则 trim 显式传 duration_sec（变速）时
+ *    visualDurationSec 与编译器口径分叉，音频尾段会被裁到错误位置。
+ */
+export function clipDurationSec(track: TimelineTrack): number {
+  if (track.type === 'image') return track.durationSec
+  if (track.sourceInSec !== undefined || track.sourceOutSec !== undefined) {
+    return Math.max(0, (track.sourceOutSec ?? track.durationSec) - (track.sourceInSec ?? 0))
+  }
+  return track.durationSec
+}
+
 export function visualDurationSec(t: VideoTimeline): number {
   const order = new Map(t.trackOrder.map((id, i) => [id, i]))
   return t.tracks
     .filter((x) => x.type === 'video' || x.type === 'image')
     .sort((a, b) => (order.get(a.nodeId) ?? 0) - (order.get(b.nodeId) ?? 0))
-    .reduce((sum, x) => sum + x.durationSec, 0)
+    .reduce((sum, x) => sum + clipDurationSec(x), 0)
 }
 
 export function validateTimeline(t: VideoTimeline): string[] {
@@ -125,12 +140,12 @@ export function compileTimelineToEditly(
     const path = localPaths[track.nodeId]
     if (!path) throw new Error(`missing_local_source:${track.nodeId}`)
     if (track.type === 'image') {
-      return { duration: track.durationSec, layers: [{ type: 'image', path }] }
+      return { duration: clipDurationSec(track), layers: [{ type: 'image', path }] }
     }
     const sourceIn = track.sourceInSec ?? 0
     const sourceOut = track.sourceOutSec ?? track.durationSec
     return {
-      duration: sourceOut - sourceIn,
+      duration: clipDurationSec(track),
       layers: [{
         type: 'video', path, cutFrom: sourceIn, cutTo: sourceOut,
         mixVolume: track.muted ? 0 : (track.volume ?? 1),

@@ -37,6 +37,11 @@ on:
         required: false
         default: false
         type: boolean
+      enable_video_timeline_render:
+        description: "Build web with the video-timeline render button enabled (only after CVM VIDEO_TIMELINE_RENDER_ENABLED=true AND worker profile is up; see RUNBOOK-video-timeline-enable.md)"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -470,6 +475,11 @@ jobs:
           cache: pnpm
 
       - name: Build web
+        env:
+          # 视频时间线渲染按钮（Vite 构建期变量）：默认 false，扩容启用后由 workflow_dispatch
+          # 的 enable_video_timeline_render=true 点亮。必须与 CVM .env 的 VIDEO_TIMELINE_RENDER_ENABLED=true
+          # 和 video-timeline worker profile 同步，否则「按钮可点但服务端 503」。
+          VITE_VIDEO_TIMELINE_RENDER_ENABLED: ${{ github.event.inputs.enable_video_timeline_render == 'true' && 'true' || 'false' }}
         run: |
           set -euo pipefail
           pnpm install --frozen-lockfile

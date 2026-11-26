@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  clipDurationSec,
   compileTimelineToEditly,
   sanitizeTimelineFileName,
   validateTimeline,
@@ -71,4 +72,23 @@ describe('compileTimelineToEditly', () => {
 })
 
 it('visualDurationSec 只算视觉轨', () => expect(visualDurationSec(base())).toBe(5))
+
+describe('裁剪时长口径一致性（visualDurationSec ≡ 编译器 clips 总长）', () => {
+  it('video 裁剪后按 sourceOut-sourceIn 计，而非 durationSec 原值', () => {
+    const t = base() // v1: durationSec=2, sourceIn=1, sourceOut=3 → 实际 2s（恰好相等）
+    t.tracks[0]!.durationSec = 99 // 模拟 trim 显式传 duration_sec 变速，durationSec 与裁剪区间脱钩
+    expect(clipDurationSec(t.tracks[0]!)).toBe(2)
+    expect(visualDurationSec(t)).toBe(5) // 2(v1裁剪) + 3(i1)，不是 99 + 3
+  })
+
+  it('visualDurationSec 与编译出的 clips 总长恒等（音频裁切点不会偏移）', () => {
+    const t = base()
+    t.tracks[0]!.durationSec = 99 // durationSec 故意与裁剪不等
+    const spec = compileTimelineToEditly(t, { v1: 'v', i1: 'i', a1: 'a' })
+    const clipsTotal = spec.clips.reduce((sum, c) => sum + c.duration, 0)
+    expect(visualDurationSec(t)).toBe(clipsTotal)
+    // 音频裁切点以画面实际总长为准：start=1，画面 5s → cutTo=4，不受 durationSec=99 污染
+    expect(spec.audioTracks[0]!.cutTo).toBe(4)
+  })
+})
 it('文件名清洗', () => expect(sanitizeTimelineFileName('../a:b/成片.mp4', 'mp4')).toBe('a_b_成片.mp4'))
