@@ -1,6 +1,6 @@
 /** 工具装配与降级守卫：NEST env 齐全才启用工具，否则保持纯文本模式。 */
 import { NestClient, loadNestConfig } from "./nest-client.js";
-import { buildCanvasReadTools, buildCanvasWriteTools, buildUiCommandTools, buildAskUserTools, buildArrangeNodesTools, buildCanvasGroupTools, buildGenerationTools, buildWebTools, buildDeleteNodesTools, buildReadDocumentTools, buildMemoryTools, buildRemoveEdgesTools, buildRenderCanvasViewTools, buildViewCanvasMediaTools, buildReadMediaTools, buildValidateCanvasLayoutTools } from "./registry.js";
+import { buildCanvasReadTools, buildCanvasWriteTools, buildUiCommandTools, buildAskUserTools, buildArrangeNodesTools, buildCanvasGroupTools, buildGenerationTools, buildVideoTimelineTools, buildWebTools, buildDeleteNodesTools, buildReadDocumentTools, buildMemoryTools, buildRemoveEdgesTools, buildRenderCanvasViewTools, buildViewCanvasMediaTools, buildReadMediaTools, buildValidateCanvasLayoutTools } from "./registry.js";
 import type { LnkpiTool } from "./types.js";
 import { buildTodoTools, isTodoToolEnabled } from "./todo.js";
 import { createNestAssetContractOracle, createNestCanvasOracle, createNestGenerationOracle } from "./acceptance.js";
@@ -117,6 +117,7 @@ export function resolveToolsWithClient(
 		// ⛔ 不能改走 Nest 端点——saveCanvas 整份覆盖会把 Agent 建的组静默抹掉。
 		...buildCanvasGroupTools(client),
 		...buildGenerationTools(client),
+		...buildVideoTimelineTools(client),
 		// VoiceStudio P2（spec 2026-11-24-voicestudio-p1p2 §5）：MCP 桥四工具。
 		// env 门在工厂内（OMNIVOICE_MCP_URL/OMNIVOICE_API_KEY 缺任一 ⇒ []，零注册零感知）；
 		// 进延迟集（不动 ALWAYS_ON——A2 幽灵项禁令），skill 指引走 tool_search 通道。

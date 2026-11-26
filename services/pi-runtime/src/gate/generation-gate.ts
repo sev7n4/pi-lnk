@@ -84,6 +84,7 @@ export const GATED_TOOLS: ReadonlySet<string> = new Set([
 	"run_text_generation",
 	// 被删历史（2026-10-17 prompt 节点下线）："run_prompt_generation" 曾在本门禁集合。
 	"run_audio_generation",
+	"video_timeline_render",
 ]);
 
 export interface GateCheckResult {
@@ -104,12 +105,18 @@ export interface GateSsotOptions {
 }
 
 interface GateNode {
-	data?: { status?: unknown } | undefined;
+	data?: { status?: unknown; proposalKind?: unknown } | undefined;
 }
 
 function extractNodeStatus(node: unknown): string | undefined {
 	const d = (node as GateNode | null | undefined)?.data;
 	return d && typeof d === "object" && typeof d.status === "string" ? d.status : undefined;
+}
+
+/** 时间线渲染的确认事实：普通 run_* 只需 pending_confirm；render 必须额外带 proposalKind。 */
+function acceptsTimelineProposal(node: unknown): boolean {
+	const d = (node as GateNode | null | undefined)?.data;
+	return d?.status === "pending_confirm" && d?.proposalKind === "video_timeline_render";
 }
 
 /**
@@ -144,7 +151,7 @@ export async function checkGenerationGate(
 		// SSOT 拉取失败 → fail-closed 拦截，预算零变更。
 		try {
 			const node = await client.post("/agent/internal/get-node", { sessionId: ssotSessionId, nodeId });
-			if (extractNodeStatus(node) !== "pending_confirm") {
+			if (extractNodeStatus(node) !== "pending_confirm" || (toolName === "video_timeline_render" && !acceptsTimelineProposal(node))) {
 				return {
 					allowed: false,
 					reason: `节点 ${nodeId} 的重试预算已尽（已尝试 ${runs} 次）；请用 ask_user 向用户说明自评结论与可选方向，或先 propose_generation 重新征得确认`,
@@ -169,7 +176,7 @@ export async function checkGenerationGate(
 	try {
 		const node = await client.post("/agent/internal/get-node", { sessionId: ssotSessionId, nodeId });
 		const status = extractNodeStatus(node);
-		if (status !== "pending_confirm") {
+		if (status !== "pending_confirm" || (toolName === "video_timeline_render" && !acceptsTimelineProposal(node))) {
 			return {
 				allowed: false,
 				reason: `节点 ${nodeId} 不在待确认状态（当前 ${status ?? "unknown"}）；须先用 propose_generation 提议并等用户确认，禁止未经确认直接生成`,

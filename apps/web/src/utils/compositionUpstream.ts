@@ -1,7 +1,7 @@
 import type { EditableFlowNode } from '@/composables/useSelectedNodeEditor'
 import type { CanvasEdgeLike } from '@/composables/useUpstreamNodeContext'
 
-export type CompositionTrackType = 'video' | 'audio'
+export type CompositionTrackType = 'video' | 'image' | 'audio'
 
 export interface CompositionTrack {
   nodeId: string
@@ -11,6 +11,12 @@ export interface CompositionTrack {
   label: string
   durationSec: number
   startSec: number
+  sourceInSec?: number
+  sourceOutSec?: number
+  volume?: number
+  muted?: boolean
+  audioTrackIndex?: 0 | 1
+  durationEstimated?: boolean
 }
 
 export interface CompositionTrackRecord {
@@ -20,13 +26,19 @@ export interface CompositionTrackRecord {
   url: string
   durationSec?: number
   startSec?: number
+  sourceInSec?: number
+  sourceOutSec?: number
+  volume?: number
+  muted?: boolean
+  audioTrackIndex?: 0 | 1
+  durationEstimated?: boolean
 }
 
 const DEFAULT_VIDEO_DURATION_SEC = 5
 const DEFAULT_AUDIO_DURATION_SEC = 3
 
 function trackLabel(type: CompositionTrackType) {
-  return type === 'video' ? '视频' : '音频'
+  return type === 'video' ? '视频' : type === 'image' ? '图片' : '音频'
 }
 
 function readTrackTitle(node: EditableFlowNode) {
@@ -41,12 +53,13 @@ function readTrackUrl(node: EditableFlowNode) {
 function inferNodeTrackType(node: EditableFlowNode): CompositionTrackType | null {
   const type = String(node.type ?? '')
   if (type === 'video') return 'video'
+  if (type === 'image') return 'image'
   if (type === 'audio') return 'audio'
   return null
 }
 
 function defaultDuration(type: CompositionTrackType) {
-  return type === 'video' ? DEFAULT_VIDEO_DURATION_SEC : DEFAULT_AUDIO_DURATION_SEC
+  return type === 'audio' ? DEFAULT_AUDIO_DURATION_SEC : DEFAULT_VIDEO_DURATION_SEC
 }
 
 function buildTrack(node: EditableFlowNode, saved?: CompositionTrackRecord): CompositionTrack {
@@ -59,6 +72,12 @@ function buildTrack(node: EditableFlowNode, saved?: CompositionTrackRecord): Com
     label: trackLabel(trackType),
     durationSec: saved?.durationSec ?? defaultDuration(trackType),
     startSec: saved?.startSec ?? 0,
+    sourceInSec: saved?.sourceInSec,
+    sourceOutSec: saved?.sourceOutSec,
+    volume: saved?.volume,
+    muted: saved?.muted,
+    audioTrackIndex: saved?.audioTrackIndex,
+    durationEstimated: saved?.durationEstimated ?? !saved?.durationSec,
   }
 }
 
@@ -95,6 +114,12 @@ export function mergeCompositionTracks(
       ...track,
       durationSec: saved.durationSec ?? track.durationSec,
       startSec: saved.startSec ?? track.startSec,
+      sourceInSec: saved.sourceInSec ?? track.sourceInSec,
+      sourceOutSec: saved.sourceOutSec ?? track.sourceOutSec,
+      volume: saved.volume ?? track.volume,
+      muted: saved.muted ?? track.muted,
+      audioTrackIndex: saved.audioTrackIndex ?? track.audioTrackIndex,
+      durationEstimated: saved.durationEstimated ?? track.durationEstimated,
     }
   })
 
@@ -142,6 +167,12 @@ export function compositionTracksToNodePatch(tracks: CompositionTrack[]) {
       url: track.url,
       durationSec: track.durationSec,
       startSec: track.startSec,
+      sourceInSec: track.sourceInSec,
+      sourceOutSec: track.sourceOutSec,
+      volume: track.volume,
+      muted: track.muted,
+      audioTrackIndex: track.audioTrackIndex,
+      durationEstimated: track.durationEstimated,
     })),
   }
 }

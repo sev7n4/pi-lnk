@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common'
 import { AssetsModule } from '../assets/assets.module'
+import { MediaModule } from '../media/media.module'
 import { CanvasModule } from '../canvas/canvas.module'
 import { ProviderModule } from '../provider/provider.module'
 import { SessionsModule } from '../sessions/sessions.module'
@@ -8,6 +9,8 @@ import { PointsModule } from '../points/points.module'
 import { PricingModule } from '../pricing/pricing.module'
 import { AgentCanvasToolsController } from './agent-canvas-tools.controller'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
+import { VideoTimelineBrowserController, VideoTimelineController } from './video-timeline.controller'
+import { VideoTimelineService } from './video-timeline.service'
 import { CanvasDigestService } from './canvas-digest.service'
 import { PrismaService } from '../prisma/prisma.service'
 import { CANVAS_ACTION_APPLIER, defaultCanvasActionApplier } from './canvas-action-applier'
@@ -39,6 +42,7 @@ import { SkillsModule } from '../skills/skills.module'
     SessionsModule,
     StudioModule,
     AssetsModule,
+    MediaModule,
     // P2 T6（token 精确计费）：回合预扣/结算依赖（AgentService 构造 @Optional 注入）
     PointsModule,
     PricingModule,
@@ -47,7 +51,7 @@ import { SkillsModule } from '../skills/skills.module'
     // M1-3：用户技能发起方接线（SkillsModule 仅依赖 @Global PrismaModule，无环）。
     SkillsModule,
   ],
-  controllers: [AgentController, AgentCanvasToolsController, DeliveryMetricsController],
+  controllers: [AgentController, AgentCanvasToolsController, VideoTimelineController, VideoTimelineBrowserController, DeliveryMetricsController],
   providers: [
     AgentService,
     // P2：gate 表权威层 + 1min 过期扫描 handler（onModuleInit 注册到 AutomationScheduler）
@@ -55,6 +59,7 @@ import { SkillsModule } from '../skills/skills.module'
     // D2：子代理一等任务单据 + 1min 租约扫描 handler（onModuleInit 注册到 AutomationScheduler）
     SubagentTaskService,
     AgentCanvasToolsService,
+    VideoTimelineService,
     AgentInternalGuard,
     WorkflowRecipeService,
     CompositionService,
