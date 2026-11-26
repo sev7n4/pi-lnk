@@ -24,9 +24,9 @@ test('three timeline tools are registered with expected tiers', () => {
 test('create forwards node ids and never accepts urls', async () => {
   calls.length = 0
   const tool = byName('video_timeline_create')
-  const res = await tool.execute('id', { title: '雨夜回家', source_node_ids: ['v1', 'i1'] } as never, {} as never, {
+  const res = await tool.execute('id', { title: '雨夜回家', source_node_ids: ['v1', 'i1'] } as never, undefined as never, {
     sessionId: 's1', userId: 'u1',
-  } as never)
+  } as never, undefined as never, undefined as never)
   assert.equal(calls[0]?.path, '/agent/internal/video-timeline/create')
   assert.deepEqual(calls[0]?.body, {
     sessionId: 's1', userId: 'u1', title: '雨夜回家', sourceNodeIds: ['v1', 'i1'],
@@ -37,9 +37,9 @@ test('create forwards node ids and never accepts urls', async () => {
 test('edit forwards ops and save marker', async () => {
   calls.length = 0
   const tool = byName('video_timeline_edit')
-  await tool.execute('id', { node_id: 'vt_1', ops: [{ op: 'request_render' }], save: true } as never, {} as never, {
+  await tool.execute('id', { node_id: 'vt_1', ops: [{ op: 'request_render' }], save: true } as never, undefined as never, {
     sessionId: 's1', userId: 'u1',
-  } as never)
+  } as never, undefined as never, undefined as never)
   assert.deepEqual(calls[0]?.body, {
     sessionId: 's1', userId: 'u1', nodeId: 'vt_1', ops: [{ op: 'request_render' }], save: true,
   })
@@ -48,8 +48,8 @@ test('edit forwards ops and save marker', async () => {
 test('render carries no self-reported confirmation field', async () => {
   calls.length = 0
   const tool = byName('video_timeline_render')
-  await tool.execute('id', { node_id: 'vt_1' } as never, {} as never, {
+  await tool.execute('id', { node_id: 'vt_1' } as never, undefined as never, {
     sessionId: 's1', userId: 'u1',
-  } as never)
+  } as never, undefined as never, undefined as never)
   assert.deepEqual(calls[0]?.body, { sessionId: 's1', userId: 'u1', nodeId: 'vt_1' })
 })
