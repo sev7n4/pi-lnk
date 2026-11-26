@@ -59,18 +59,19 @@ services:
   # 视频时间线渲染 worker（Task 6）：默认不启动。CVM 内存扩容到位、
   # 且 VIDEO_TIMELINE_RENDER_ENABLED=true 后才 `docker compose --profile video-timeline up -d video-timeline-worker`。
   # ⚠️ entrypoint.sh 硬编码 `exec node dist/main.js` 且不透传 command，
-  #    故这里必须整条覆盖 entrypoint（xvfb-run 供 editly/canvas 原生依赖用），
-  #    不能只写 command（会静默跑成 api 主进程）。
+  #    故这里必须整条覆盖 entrypoint，不能只写 command（会静默跑成 api 主进程）。
+  # ⚠️ 不要用 xvfb-run -a 作为 entrypoint：作为容器主进程时它会在 trap/wait 阶段
+  #    sigsuspend 卡住，只残留 Xvfb、不再 exec node（worker 静默不工作，日志空）。
+  #    改显式起 Xvfb :99 + export DISPLAY + exec node（实测 worker 常驻、渲染正常）。
   video-timeline-worker:
     image: ${LNKPI_API_IMAGE:-lnkpi-api:local}
     profiles: ["video-timeline"]
     container_name: lnkpi-vt-worker
     restart: unless-stopped
     entrypoint:
-      - xvfb-run
-      - -a
-      - node
-      - dist/video-timeline.worker.js
+      - sh
+      - -c
+      - "Xvfb :99 -screen 0 1280x720x24 >/dev/null 2>&1 & export DISPLAY=:99; sleep 1; exec node dist/video-timeline.worker.js"
     env_file:
       - path: ../.env
         required: false
@@ -79,6 +80,14 @@ services:
       MATTING_SERVICE_URL: ${MATTING_SERVICE_URL:-http://lnkpi-matting:8000}
       LNKPI_SEGMENT_SERVICE_URL: ${LNKPI_SEGMENT_SERVICE_URL:-http://lnkpi-segment:8000}
       VIDEO_TIMELINE_POLL_INTERVAL_MS: "3000"
+    # 覆盖 api 镜像继承的 healthcheck：那条打 127.0.0.1:3001/api/health，worker
+    # 不监听 HTTP，永远 health: starting。worker 是常驻轮询进程，检查 PID1 命令行即可。
+    healthcheck:
+      test: ["CMD-SHELL", "grep -qa 'video-timeline.worker.js' /proc/1/cmdline"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     volumes:
       - lnkpi-data:/app/apps/server/data
       - lnkpi-uploads:/app/apps/server/uploads
