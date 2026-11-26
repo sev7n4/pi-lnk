@@ -84,8 +84,26 @@ gh run watch <run-id> -R sev7n4/pi-lnk --exit-status --interval 20
 
 ### 4. 启用态生产取证
 
+⚠️ 启用态 worker 会**真实下载素材并做归属校验**（`resolveDownloadSource`：
+`/api/uploads/<userId>/<file>` 中的 userId 必须等于登录用户，文件必须存在）。
+脚本默认的 `/api/uploads/demo/seed.mp4` 是占位路径（404），禁用态不下载所以无所谓，
+启用态必须先上传一个属于取证账号的真实素材，并用 `VT_SEED_URL` 注入：
+
 ```bash
-EXPECT_RENDER=1 python3 deploy/video-timeline/prod-verify.py
+# 4a. 在 CVM 生成一个 2s 小 mp4 并以取证账号上传，拿到返回 data.url
+ssh deploy-cvm 'docker exec lnkpi-api ffmpeg -y -f lavfi -i color=c=blue:s=320x180:d=2:r=25 \
+  -c:v libx264 -pix_fmt yuv420p /tmp/vt-seed.mp4 >/dev/null 2>&1 && \
+  docker cp lnkpi-api:/tmp/vt-seed.mp4 /tmp/vt-seed.mp4'
+TOKEN=$(curl -s -X POST http://119.29.173.89:8888/api/auth/login \
+  -H 'Content-Type: application/json' -d '{"phone":"17279698608","code":"123456"}' \
+  | python3 -c 'import sys,json;print((json.load(sys.stdin).get("data") or {}).get("token",""))')
+SEED_URL=$(curl -s -X POST http://119.29.173.89:8888/api/upload \
+  -H "Authorization: Bearer $TOKEN" -F 'file=@/tmp/vt-seed.mp4;type=video/mp4' \
+  | python3 -c 'import sys,json;print((json.load(sys.stdin).get("data") or {}).get("url",""))')
+echo "SEED_URL=$SEED_URL"
+
+# 4b. 注入素材 URL 跑启用态取证
+EXPECT_RENDER=1 VT_SEED_URL="$SEED_URL" python3 deploy/video-timeline/prod-verify.py
 ```
 
 判据：打印 `ENABLE_ALL_PASS`，覆盖 render 入队 → 轮询 `/studio/generations/:id` 到终态 →

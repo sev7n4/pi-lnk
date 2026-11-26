@@ -33,6 +33,9 @@ PHONE = os.environ.get("PHONE", "17279698608")
 CODE = os.environ.get("CODE", "123456")
 EXPECT_RENDER = os.environ.get("EXPECT_RENDER", "0") == "1"
 POLL_TIMEOUT_S = float(os.environ.get("VT_POLL_TIMEOUT", "300"))
+# 启用态 worker 会真实下载素材并做归属校验（/api/uploads/<userId>/<file> 必须属于登录用户）。
+# 禁用态不下载，可用占位路径；启用态必须通过环境变量注入一个真实上传的素材 URL。
+SEED_URL = os.environ.get("VT_SEED_URL", "/api/uploads/demo/seed.mp4")
 
 PASS = FAIL = 0
 AUDIT: dict[str, Any] = {"mode": "enabled" if EXPECT_RENDER else "disabled", "cases": []}
@@ -111,8 +114,9 @@ def seed_nodes(token: str, sid: str) -> list[str]:
                 "position": {"x": 100 + i * 220, "y": 100},
                 "data": {
                     "title": f"镜头{i + 1}",
-                    # 复用生产已有的公开上传素材；worker 侧会经归属校验，仅禁用态不实际下载。
-                    "url": "/api/uploads/demo/seed.mp4",
+                # 素材 URL：禁用态用占位路径即可（worker 不下载）；启用态用 VT_SEED_URL
+                # 注入的真实上传素材（归属校验要求 /api/uploads/<登录userId>/<file>）。
+                "url": SEED_URL,
                     "durationSec": 2,
                 },
             },
@@ -167,8 +171,8 @@ def main() -> None:
         "clipCount": 2,
         "trackOrder": src_ids,
         "tracks": [
-            {"nodeId": src_ids[0], "type": "video", "title": "镜头1", "url": "/api/uploads/demo/seed.mp4", "durationSec": 2, "startSec": 0},
-            {"nodeId": src_ids[1], "type": "video", "title": "镜头2", "url": "/api/uploads/demo/seed.mp4", "durationSec": 2, "startSec": 0},
+            {"nodeId": src_ids[0], "type": "video", "title": "镜头1", "url": SEED_URL, "durationSec": 2, "startSec": 0},
+            {"nodeId": src_ids[1], "type": "video", "title": "镜头2", "url": SEED_URL, "durationSec": 2, "startSec": 0},
         ],
         "export": {"fileName": "取证成片", "resolution": "720p", "format": "mp4", "volume": 1, "muted": False, "keepFullAudioTail": False},
     }
