@@ -205,9 +205,9 @@ def main() -> None:
         print(json.dumps(AUDIT, ensure_ascii=False, indent=2))
         sys.exit(0 if ok else 1)
 
-    record("启用态 render 入队", status == 200 and bool((r.get("data") or {}).get("generationRecordId")),
+    record("启用态 render 入队", status in (200, 201) and bool((r.get("data") or {}).get("generationRecordId")),
            f"HTTP {status}: {str(r)[:180]}")
-    gid = ((r.get("data") or {}).get("generationRecordId")) if status == 200 else None
+    gid = ((r.get("data") or {}).get("generationRecordId")) if status in (200, 201) else None
 
     if not gid:
         record("取得 generationRecordId", False, "无法轮询")
