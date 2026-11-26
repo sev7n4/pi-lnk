@@ -80,9 +80,11 @@ RUN if [ "$USE_TENCENT_APT_MIRROR" = "1" ]; then \
           "$f"; \
       done; \
     fi
+# 视频时间线 worker 的 entrypoint 用 xvfb-run，xvfb-run 依赖 xauth（缺失会报
+# "xvfb-run: error: xauth command not found" 直接退出）——两个必须同时装。
 RUN apt-get update \
   && apt-get install -y --no-install-recommends openssl ca-certificates ffmpeg \
-    xvfb fontconfig fonts-dejavu-core \
+    xvfb xauth fontconfig fonts-dejavu-core \
     libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libjpeg62-turbo libgif7 librsvg2-2 libgl1 libxi6 \
   && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /app/apps/server/data /app/apps/server/uploads
