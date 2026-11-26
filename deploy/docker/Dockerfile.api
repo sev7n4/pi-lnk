@@ -83,7 +83,7 @@ RUN if [ "$USE_TENCENT_APT_MIRROR" = "1" ]; then \
 RUN apt-get update \
   && apt-get install -y --no-install-recommends openssl ca-certificates ffmpeg \
     xvfb fontconfig fonts-dejavu-core \
-    libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libjpeg62-turbo libgif7 librsvg-2-2 libgl1 libxi6 \
+    libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libjpeg62-turbo libgif7 librsvg2-2 libgl1 libxi6 \
   && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /app/apps/server/data /app/apps/server/uploads
 
