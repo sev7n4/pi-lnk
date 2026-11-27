@@ -69,6 +69,10 @@ describe('跨端视觉与组件哲学守卫（§4.11）', () => {
       'ProfilePane.vue': '全屏**资料面板**（既有能力）—— §4.11.8 豁免类④',
       'DiscoverPane.vue': '全屏**发现面板**（既有能力）—— §4.11.8 豁免类④',
       'MobileCanvasShell.vue': '内含 `.mobile-account-pane` 全屏「我的」面板（既有能力）—— §4.11.8 豁免类④',
+      // ⭐ P2.6 用户拍板「移动端独立全屏编辑器」：时间轴横滑/拖拽/两级工具栏需要整屏，
+      //   MobileSheet 是 62vh 选择型，无法承载时间轴。退出走顶部 ✕ + Esc（P3），
+      //   热区 --lnk-touch-target + 设计令牌 + 手势隔离三件套均齐备。
+      'VideoTimelineStudio.vue': '全屏**视频剪辑台**（P2.6 拍板独立全屏编辑器，时间轴需整屏横滑/拖拽）—— §4.11.8 豁免类④扩展',
     }
     const files = readdirSync(MOBILE_DIR).filter((f) => f.endsWith('.vue'))
     const offenders: string[] = []
