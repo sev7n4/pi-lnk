@@ -45,6 +45,7 @@ export type TimelineOp =
   | { op: 'move_visual'; from: number; to: number }
   | { op: 'trim'; node_id: string; source_in_sec: number; source_out_sec: number; duration_sec?: number }
   | { op: 'split'; node_id: string; at_sec: number }
+  | { op: 'duplicate'; node_id: string }
   | { op: 'set_volume'; node_id: string; volume: number; muted?: boolean }
   | { op: 'remove'; node_id: string }
   | { op: 'set_export'; file_name?: string; resolution?: TimelineResolution; format?: 'mp4' | 'mov'; volume?: number; muted?: boolean; keep_full_audio_tail?: boolean }
@@ -131,11 +132,15 @@ export function applyTimelineOps(
     }
     if (op.op === 'split') {
       const track = timeline.tracks.find((x) => x.nodeId === op.node_id)
-      if (!track || (track.type !== 'video' && track.type !== 'image')) {
+      if (!track) return { ok: false, error: 'unsupported_split_audio', opIndex: i }
+      const isAudio = track.type === 'audio'
+      if (!isAudio && track.type !== 'video' && track.type !== 'image') {
         return { ok: false, error: 'unsupported_split_audio', opIndex: i }
       }
       const inSec = track.sourceInSec ?? 0
-      const outSec = track.sourceOutSec ?? track.durationSec
+      const outSec = track.sourceOutSec ?? (isAudio ? inSec + track.durationSec : track.durationSec)
+      // 音频显式裁剪区间非法时，不能用出点反推出负时长。
+      if (isAudio && !(outSec > inSec)) return { ok: false, error: 'unsupported_split_audio', opIndex: i }
       if (!(op.at_sec > inSec && op.at_sec < outSec)) {
         return { ok: false, error: 'invalid_split_point', opIndex: i }
       }
@@ -149,12 +154,55 @@ export function applyTimelineOps(
         durationSec: outSec - op.at_sec,
         durationEstimated: false,
       }
+      const leftVisibleSec = op.at_sec - inSec
       track.sourceOutSec = op.at_sec
-      track.durationSec = op.at_sec - inSec
+      track.durationSec = leftVisibleSec
       track.durationEstimated = false
-      const pos = timeline.trackOrder.indexOf(op.node_id)
-      timeline.tracks.push(right)
-      timeline.trackOrder.splice(pos + 1, 0, newId)
+      if (isAudio) {
+        // 音频由 startSec 定位、不进 trackOrder：右段起点 = 左段起点 + 左段可视时长，保证相邻不重叠。
+        right.startSec = track.startSec + leftVisibleSec
+        timeline.tracks.push(right)
+      } else {
+        const pos = timeline.trackOrder.indexOf(op.node_id)
+        timeline.tracks.push(right)
+        timeline.trackOrder.splice(pos + 1, 0, newId)
+      }
+      continue
+    }
+    if (op.op === 'duplicate') {
+      const track = timeline.tracks.find((x) => x.nodeId === op.node_id)
+      if (!track) return { ok: false, error: `unknown_track:${op.node_id}`, opIndex: i }
+      const newId = ctx.nextId?.() ?? `vtseg_dup_${op.node_id}`
+      if (track.type === 'audio') {
+        const lane = track.audioTrackIndex ?? 0
+        const occupied = timeline.tracks
+          .filter((x) => x.type === 'audio' && x.audioTrackIndex === lane)
+          .map((x) => ({ start: x.startSec, end: x.startSec + x.durationSec }))
+          .sort((a, b) => a.start - b.start)
+        // 找同轨第一个能容纳 durationSec 的空位（从 0 起扫）。
+        let cursor = 0
+        for (const seg of occupied) {
+          if (seg.start - cursor >= track.durationSec) break // 当前 cursor 有足够空位
+          cursor = Math.max(cursor, seg.end)
+        }
+        const slot = cursor
+        timeline.tracks.push({
+          ...structuredClone(track),
+          nodeId: newId,
+          title: `${track.title}·副本`,
+          startSec: slot,
+          durationEstimated: false,
+        })
+      } else {
+        timeline.tracks.push({
+          ...structuredClone(track),
+          nodeId: newId,
+          title: `${track.title}·副本`,
+          durationEstimated: false,
+        })
+        const pos = timeline.trackOrder.indexOf(op.node_id)
+        timeline.trackOrder.splice(pos + 1, 0, newId)
+      }
       continue
     }
     if (op.op === 'add_visual') {
