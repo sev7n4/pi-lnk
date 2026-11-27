@@ -1,15 +1,21 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import type { VideoTimeline } from '@lnkpi/shared'
+import { clipDurationSec, type TimelineTrack, type VideoTimeline } from '@lnkpi/shared'
 
 const props = defineProps<{
   nodeId: string
   timeline: VideoTimeline
   status: string
   renderEnabled: boolean
+  /** 竖屏（9:16 等）由节点外框比例决定；true 时片段块纵向堆叠，避免横线挤压。 */
+  portrait?: boolean
 }>()
 
-const emit = defineEmits<{ 'request-render': [] }>()
+const emit = defineEmits<{
+  'request-render': []
+  'request-edit': []
+  'request-play': [payload: { url: string; title: string; estimated: boolean }]
+}>()
 
 const visualTracks = computed(() => {
   const order = new Map(props.timeline.trackOrder.map((id, i) => [id, i]))
@@ -20,15 +26,35 @@ const visualTracks = computed(() => {
 
 const audioTracks = computed(() => props.timeline.tracks.filter((t) => t.type === 'audio'))
 
-const totalSec = computed(() => visualTracks.value.reduce((sum, t) => sum + t.durationSec, 0))
+// 与编译器/visualDurationSec 同一时长真相源：裁剪后不读 durationSec 原值。
+const totalSec = computed(() => visualTracks.value.reduce((sum, t) => sum + clipDurationSec(t), 0))
+
+// 播放源取 track.url（create 时从上游分镜节点复制的真实 url），只播 video 类型，禁造占位 url。
+const playableTrack = computed(() => visualTracks.value.find((t) => t.type === 'video' && t.url))
+
+function requestPlay() {
+  const track = playableTrack.value
+  if (!track) return
+  emit('request-play', {
+    url: track.url,
+    title: track.title,
+    estimated: Boolean(track.durationEstimated),
+  })
+}
 
 function mmss(sec: number) {
   const value = Math.max(0, Math.round(sec))
   return `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`
 }
 
-function widthPct(sec: number) {
-  return totalSec.value ? `${(sec / totalSec.value) * 100}%` : '0%'
+function widthPct(track: TimelineTrack) {
+  return totalSec.value ? `${(clipDurationSec(track) / totalSec.value) * 100}%` : '0%'
+}
+
+function playTitle() {
+  const track = playableTrack.value
+  if (!track) return ''
+  return `播放 ${track.title}${track.durationEstimated ? '（时长待实测）' : ''}`
 }
 
 function leftPct(sec: number) {
@@ -48,11 +74,27 @@ function requestRender() {
 </script>
 
 <template>
-  <section class="vt-card nodrag">
+  <section class="vt-card nodrag" :class="{ 'vt-card--portrait': portrait }">
     <header class="vt-card__header">
       <span class="vt-card__title">{{ timeline.export.fileName }}</span>
       <span class="vt-card__time">{{ mmss(totalSec) }}/{{ mmss(totalSec) }}</span>
-      <button type="button" class="vt-card__icon" data-timeline-edit disabled title="用 agent 编辑时间线">✂</button>
+      <button
+        type="button"
+        class="vt-card__icon"
+        data-timeline-edit
+        title="编辑时间线（与 agent 共用同一套操作）"
+        @pointerdown.stop
+        @click.stop="emit('request-edit')"
+      >✂</button>
+      <button
+        v-if="playableTrack"
+        type="button"
+        class="vt-card__play"
+        data-timeline-play
+        :title="playTitle()"
+        @pointerdown.stop
+        @click.stop="requestPlay"
+      >▶</button>
       <button
         type="button"
         class="vt-card__export"
@@ -76,8 +118,8 @@ function requestRender() {
         :key="track.nodeId"
         class="vt-card__clip"
         data-timeline-clip
-        :style="{ width: widthPct(track.durationSec) }"
-        :title="`${track.title} · ${mmss(track.durationSec)}`"
+        :style="{ '--vt-pct': widthPct(track) }"
+        :title="`${track.title} · ${mmss(clipDurationSec(track))}`"
       >
         <img v-if="track.type === 'image'" :src="track.url" :alt="track.title" class="vt-card__thumb" />
         <span v-else class="vt-card__thumb vt-card__thumb--video" />
@@ -93,7 +135,7 @@ function requestRender() {
           v-for="track in audioTracks.filter((t) => t.audioTrackIndex === idx)"
           :key="track.nodeId"
           class="vt-card__audio-clip"
-          :style="{ left: leftPct(track.startSec), width: widthPct(track.durationSec) }"
+          :style="{ left: leftPct(track.startSec), width: widthPct(track) }"
           :title="`${track.title} · ${mmss(track.startSec)}`"
         />
       </div>
@@ -134,7 +176,8 @@ function requestRender() {
   font-variant-numeric: tabular-nums;
 }
 .vt-card__icon,
-.vt-card__export {
+.vt-card__export,
+.vt-card__play {
   border: 1px solid var(--lnk-border-subtle);
   border-radius: 4px;
   background: var(--lnk-surface-base);
@@ -146,8 +189,21 @@ function requestRender() {
   cursor: not-allowed;
   opacity: 0.5;
 }
+/* 播放钮常驻 DOM（移动端可见可点）；hover 只做视觉增强，不做存在性切换，避免形态切换误触。 */
+.vt-card__play {
+  padding: 2px 6px;
+  color: var(--lnk-accent-text);
+}
+.vt-card__play:hover {
+  background: var(--lnk-accent-subtle);
+}
 .vt-card__export {
   padding: 2px 10px;
+  color: var(--lnk-accent-text);
+}
+/* hover 展开入口 affordance：编辑按钮高亮（纯视觉，不改变 DOM 存在性）。 */
+.vt-card:hover .vt-card__icon:not(:disabled) {
+  border-color: var(--lnk-accent-border);
   color: var(--lnk-accent-text);
 }
 .vt-card__ruler {
@@ -166,8 +222,21 @@ function requestRender() {
 .vt-card__clip {
   position: relative;
   flex-shrink: 0;
+  width: var(--vt-pct, 0%);
   border-right: 1px solid var(--lnk-border-subtle);
   overflow: hidden;
+}
+/* 竖屏（9:16 等）：片段块纵向堆叠，同一时长百分比改作高度，杜绝横线挤压。 */
+.vt-card--portrait .vt-card__track {
+  flex-direction: column;
+  height: 120px;
+}
+.vt-card--portrait .vt-card__clip {
+  width: 100%;
+  height: var(--vt-pct, 0%);
+  flex-shrink: 0;
+  border-right: none;
+  border-bottom: 1px solid var(--lnk-border-subtle);
 }
 .vt-card__thumb {
   width: 100%;
