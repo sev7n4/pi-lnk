@@ -49,7 +49,7 @@
         "pages/CanvasReadonlyPage.vue",
         "pages/ReplayPage.vue"
       ],
-      "lines": 363
+      "lines": 393
     },
     {
       "name": "CanvasNodeAudio.vue",
