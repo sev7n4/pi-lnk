@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { clipDurationSec, visualDurationSec, type TimelineOp, type VideoTimeline } from '@lnkpi/shared'
 import { createEditSession, type VideoTimelineEditSession } from '@/composables/useVideoTimelineEditSession'
 import { useTimelineAxis } from '@/components/timeline/useTimelineAxis'
@@ -28,6 +28,8 @@ const emit = defineEmits<{
 }>()
 
 const session: VideoTimelineEditSession = createEditSession(props.timeline, props.sources)
+// P2.5：sources 异步到达后回填 session（openEditor 先拉画布再打开，此处兜底 prop 变化）。
+watch(() => props.sources, (next) => session.setSources(next), { deep: true })
 const previewTimeline = computed(() => session.preview.value.timeline ?? props.timeline)
 /** 播放头：全局视觉轴坐标（0..visualDurationSec），与 ruler/竖线/range 共享。 */
 const playheadSec = ref(0)
@@ -87,9 +89,49 @@ function splitSelected() {
   const track = previewTimeline.value.tracks.find((x) => x.nodeId === id)
   if (!track) return
   const inSec = track.sourceInSec ?? 0
-  const visualStart = visualStarts.value.get(id) ?? 0
-  apply({ op: 'split', node_id: id, at_sec: inSec + (playheadSec.value - visualStart) })
+  // audio 由 startSec 定位（不在 visualStarts 里）：源内点 = sourceIn + (播放头 - startSec)。
+  // visual 由累计视觉时长定位：源内点 = sourceIn + (播放头 - 全局起点)。
+  const globalStart = track.type === 'audio' ? track.startSec : (visualStarts.value.get(id) ?? 0)
+  apply({ op: 'split', node_id: id, at_sec: inSec + (playheadSec.value - globalStart) })
 }
+
+/** P2.5：从画布音频源里挑第一个未入轨的音频加入当前轨。 */
+function audioSourceCandidates() {
+  const inTimeline = new Set(previewTimeline.value.tracks.map((t) => t.nodeId))
+  return (props.sources ?? []).filter((s) => s.type === 'audio' && s.url && !inTimeline.has(s.nodeId))
+}
+function addAudio() {
+  const source = audioSourceCandidates()[0]
+  if (!source) return
+  const idx: 0 | 1 = 0
+  apply({ op: 'add_audio', node_id: source.nodeId, audio_track_index: idx, start_sec: 0 })
+  selectedNodeId.value = source.nodeId
+}
+function setSelectedAudioVolume(delta: number) {
+  const id = selectedNodeId.value
+  if (!id) return
+  const track = previewTimeline.value.tracks.find((x) => x.nodeId === id)
+  if (!track || track.type !== 'audio') return
+  apply({ op: 'set_volume', node_id: id, volume: Math.min(2, Math.max(0, (track.volume ?? 1) + delta)) })
+}
+function toggleSelectedAudioMute() {
+  const id = selectedNodeId.value
+  if (!id) return
+  const track = previewTimeline.value.tracks.find((x) => x.nodeId === id)
+  if (!track || track.type !== 'audio') return
+  apply({ op: 'set_volume', node_id: id, volume: track.volume ?? 1, muted: !track.muted })
+}
+function shiftSelectedAudioStart(delta: number) {
+  const id = selectedNodeId.value
+  if (!id) return
+  const track = previewTimeline.value.tracks.find((x) => x.nodeId === id)
+  if (!track || track.type !== 'audio') return
+  const inSec = track.sourceInSec ?? 0
+  const outSec = track.sourceOutSec ?? (inSec + track.durationSec)
+  apply({ op: 'trim', node_id: id, source_in_sec: inSec, source_out_sec: outSec, duration_sec: Math.max(0.5, track.durationSec + delta) })
+}
+const selectedTrack = computed(() => previewTimeline.value.tracks.find((x) => x.nodeId === selectedNodeId.value))
+const selectedIsAudio = computed(() => selectedTrack.value?.type === 'audio')
 function removeSelected() {
   if (!selectedNodeId.value) return
   apply({ op: 'remove', node_id: selectedNodeId.value })
@@ -202,6 +244,8 @@ const panelStyle = computed(() => {
               :axis="axis"
               :index="idx"
               :tracks="audioTracks"
+              :selected-node-id="selectedNodeId"
+              @select="selectedNodeId = $event; playheadSec = (previewTimeline.tracks.find((t) => t.nodeId === $event)?.startSec ?? 0)"
             />
 
             <!-- 贯穿竖线：覆盖 ruler + 视觉轨 + 音轨；拖动/点击定位 + 6px 吸附 -->
@@ -223,6 +267,12 @@ const panelStyle = computed(() => {
           <button type="button" class="vtm-btn" data-vt-move-right :disabled="!selectedNodeId" @click="moveSelected(Math.min(previewTimeline.trackOrder.length - 1, previewTimeline.trackOrder.indexOf(selectedNodeId!) + 1))">右移</button>
           <button type="button" class="vtm-btn" data-vt-undo :disabled="!session.canUndo.value" @click="session.undo()">撤销</button>
           <button type="button" class="vtm-btn" data-vt-redo :disabled="!session.canRedo.value" @click="session.redo()">重做</button>
+          <span class="vtm-actions-sep" aria-hidden="true" />
+          <button type="button" class="vtm-btn" data-vt-audio-add :disabled="!audioSourceCandidates().length" title="从画布添加音频" @click="addAudio">＋音频</button>
+          <button type="button" class="vtm-btn" data-vt-audio-vol-up :disabled="!selectedIsAudio" title="音量 +0.1" @click="setSelectedAudioVolume(0.1)">音量＋</button>
+          <button type="button" class="vtm-btn" data-vt-audio-vol-down :disabled="!selectedIsAudio" title="音量 -0.1" @click="setSelectedAudioVolume(-0.1)">音量－</button>
+          <button type="button" class="vtm-btn" data-vt-audio-mute :disabled="!selectedIsAudio" title="静音/取消静音" @click="toggleSelectedAudioMute">静音</button>
+          <button type="button" class="vtm-btn" data-vt-audio-trim :disabled="!selectedIsAudio" title="音频裁剪头 0.5s" @click="shiftSelectedAudioStart(0.5)">音频裁剪</button>
         </div>
 
         <div class="vtm-summary" data-vt-summary>{{ opSummary }}</div>
@@ -283,6 +333,7 @@ const panelStyle = computed(() => {
 .vtm-timeline-content { position: relative; }
 .vtm-track { position: relative; height: 52px; overflow: hidden; border-radius: 5px; background: var(--lnk-surface-sunken); }
 .vtm-actions { margin-top: 12px; flex-wrap: wrap; }
+.vtm-actions-sep { width: 1px; height: 18px; background: var(--lnk-border-subtle); margin: 0 2px; }
 .vtm-summary { margin-top: 10px; color: var(--lnk-text-secondary); font-variant-numeric: tabular-nums; }
 .vtm-error { margin-top: 6px; color: var(--lnk-accent-text); }
 .vtm-footer { margin-top: 12px; justify-content: flex-end; }

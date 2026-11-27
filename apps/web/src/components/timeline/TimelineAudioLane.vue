@@ -13,7 +13,9 @@ const props = defineProps<{
   axis: TimelineAxis
   index: 0 | 1
   tracks: TimelineTrack[]
+  selectedNodeId?: string | null
 }>()
+const emit = defineEmits<{ select: [nodeId: string] }>()
 
 const laneTracks = computed(() => props.tracks.filter((x) => x.audioTrackIndex === props.index))
 
@@ -41,7 +43,9 @@ function mmss(sec: number) {
         class="tl-audio-clip"
         data-tl-audio-clip
         :data-node-id="track.nodeId"
+        :class="{ 'is-selected': selectedNodeId === track.nodeId }"
         :title="`${track.title} · ${mmss(track.startSec)}`"
+        @click.stop="emit('select', track.nodeId)"
         :style="{
           left: `${axis.secToPx(track.startSec)}px`,
           width: `${Math.max(8, axis.secToPx(track.durationSec))}px`,
@@ -60,6 +64,7 @@ function mmss(sec: number) {
 .tl-audio-lane { position: relative; height: 28px; border-radius: 4px; background: var(--lnk-surface-sunken); }
 .tl-audio-clip {
   position: absolute;
+  cursor: pointer;
   top: 2px;
   bottom: 2px;
   border-radius: 4px;
@@ -67,6 +72,7 @@ function mmss(sec: number) {
   overflow: hidden;
 }
 .tl-audio-clip :deep(.mobile-node-waveform) { height: 100%; }
+.tl-audio-clip.is-selected { outline: 2px solid var(--lnk-accent-text); outline-offset: -2px; }
 .tl-audio-clip-title {
   position: absolute;
   inset: 2px 4px auto;

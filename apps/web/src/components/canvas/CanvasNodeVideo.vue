@@ -5,7 +5,7 @@ import NodeTaskCornerActions from '@/components/canvas/NodeTaskCornerActions.vue
 import NodeStatusInfoButton from '@/components/canvas/NodeStatusInfoButton.vue'
 import VideoTimelineCard from '@/components/canvas/VideoTimelineCard.vue'
 import VideoTimelineEditorOverlay from '@/components/canvas/VideoTimelineEditorOverlay.vue'
-import { submitTimelineOps } from '@/composables/useVideoTimelineEdit'
+import { fetchTimelineSources, submitTimelineOps, type TimelineSource } from '@/composables/useVideoTimelineEdit'
 import type { TimelineOp } from '@lnkpi/shared'
 import { api } from '@/services/api'
 import type { VideoTimeline } from '@lnkpi/shared'
@@ -90,6 +90,8 @@ const renderEnabled = computed(() => import.meta.env.VITE_VIDEO_TIMELINE_RENDER_
 /** P1.4：就地浮层编辑态。 */
 const timelineEditorOpen = ref(false)
 const timelineSaveError = ref('')
+/** P2.5：打开浮层前拉画布素材源，供 add_audio 等 op 校验真实节点。 */
+const timelineSources = ref<TimelineSource[]>([])
 
 /** P1.3：竖屏节点（h>w）让卡片时间线片段纵向堆叠，避免横线挤压。 */
 const timelinePortrait = computed(() => displaySize.value.height > displaySize.value.width)
@@ -105,8 +107,9 @@ async function commitTimelineOps(ops: TimelineOp[]) {
   timelineEditorOpen.value = false // 服务端回读为准；画布经 WS 刷新节点
 }
 
-function openTimelineEditor() {
+async function openTimelineEditor() {
   timelineSaveError.value = ''
+  timelineSources.value = await fetchTimelineSources(sessionId.value ?? '')
   timelineEditorOpen.value = true
 }
 
@@ -385,6 +388,7 @@ function openMediaInspector(e?: Event) {
     v-if="timelineEditorOpen && timelineCard"
     :node-id="id"
     :timeline="timelineCard"
+    :sources="timelineSources"
     :save-error="timelineSaveError"
     @close="timelineEditorOpen = false"
     @commit="commitTimelineOps"

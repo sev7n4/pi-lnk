@@ -6,7 +6,10 @@ const editor = { openMediaPreview: vi.fn() }
 vi.mock('@/stores/canvasEditor', () => ({ useCanvasEditorStore: () => editor }))
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { sessionId: 'sess-1' } }) }))
 const submitOps = vi.fn().mockResolvedValue({ ok: true })
-vi.mock('@/composables/useVideoTimelineEdit', () => ({ submitTimelineOps: (...a: unknown[]) => submitOps(...a) }))
+vi.mock('@/composables/useVideoTimelineEdit', () => ({
+  submitTimelineOps: (...a: unknown[]) => submitOps(...a),
+  fetchTimelineSources: () => Promise.resolve([]),
+}))
 
 import MobileVideoTimelineTile from './MobileVideoTimelineTile.vue'
 

@@ -151,3 +151,58 @@ describe('VideoTimelineEditorOverlay（P2.3 贯穿播放头 + 横滑 + 坐标转
     w.unmount()
   })
 })
+
+describe('VideoTimelineEditorOverlay（P2.5 音频编辑）', () => {
+  const sources = [
+    { nodeId: 'bgm1', type: 'audio', title: '配乐', url: '/u/bgm.wav' },
+    { nodeId: 'v2', type: 'video', title: '镜头2', url: '/u/v2.mp4' },
+  ]
+
+  function mountWithSources() {
+    const w = mount(VideoTimelineEditorOverlay, {
+      props: { nodeId: 'vt_1', timeline: base(), sources },
+      attachTo: document.body,
+    })
+    const q = (sel: string) => document.querySelector(sel) as HTMLElement | null
+    const qa = (sel: string) => Array.from(document.querySelectorAll(sel)) as HTMLElement[]
+    return { w, q, qa }
+  }
+
+  it('+音频：从画布 source 加入 A1，ops 含 add_audio（不再是 unknown_source_node）', async () => {
+    const h = mountWithSources()
+    expect((h.q('[data-vt-audio-add]') as HTMLButtonElement).disabled).toBe(false)
+    h.q('[data-vt-audio-add]')!.click()
+    await tick()
+    expect(h.qa('[data-tl-audio-clip]')).toHaveLength(1)
+    h.q('[data-vt-commit]')!.click()
+    await tick()
+    const ops = h.w.emitted('commit')![0]![0] as Array<Record<string, unknown>>
+    expect(ops).toContainEqual({ op: 'add_audio', node_id: 'bgm1', audio_track_index: 0, start_sec: 0 })
+    h.w.unmount()
+  })
+
+  it('音频选中后音量/静音/裁剪按钮可用，发对应 op', async () => {
+    const h = mountWithSources()
+    // 初始无音频选中 ⇒ 控件禁用
+    expect((h.q('[data-vt-audio-vol-up]') as HTMLButtonElement).disabled).toBe(true)
+    h.q('[data-vt-audio-add]')!.click()
+    await tick()
+    // addAudio 后自动选中该音频
+    expect((h.q('[data-vt-audio-vol-up]') as HTMLButtonElement).disabled).toBe(false)
+    h.q('[data-vt-audio-vol-up]')!.click()
+    h.q('[data-vt-audio-mute]')!.click()
+    await tick()
+    h.q('[data-vt-commit]')!.click()
+    await tick()
+    const ops = h.w.emitted('commit')![0]![0] as Array<Record<string, unknown>>
+    expect(ops.some((o) => o.op === 'set_volume' && o.node_id === 'bgm1' && o.volume === 1.1)).toBe(true)
+    expect(ops.some((o) => o.op === 'set_volume' && o.muted === true)).toBe(true)
+    h.w.unmount()
+  })
+
+  it('无音频 source 时 +音频 禁用（不造裸 URL）', () => {
+    const w = mount(VideoTimelineEditorOverlay, { props: { nodeId: 'vt_1', timeline: base() }, attachTo: document.body })
+    expect((document.querySelector('[data-vt-audio-add]') as HTMLButtonElement).disabled).toBe(true)
+    w.unmount()
+  })
+})

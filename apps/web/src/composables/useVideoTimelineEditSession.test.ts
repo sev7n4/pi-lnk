@@ -58,4 +58,15 @@ describe('useVideoTimelineEditSession（P1.4 浮层独立历史栈）', () => {
     s.undo(); s.redo()
     expect(s.preview.value.timeline!.trackOrder[1]).toBe(id1)
   })
+
+  it('P2.5 setSources 回填后 add_audio 不再 unknown_source_node', () => {
+    const s = createEditSession(base()) // 初始无 sources
+    expect(s.applyOp({ op: 'add_audio', node_id: 'bgm', audio_track_index: 0, start_sec: 0 })).toBe(false)
+    expect(s.preview.value.error).toContain('unknown_source_node')
+    // 异步 sources 到达后回填并重放：已记录的 op 现在可执行
+    s.setSources([{ nodeId: 'bgm', type: 'audio', title: '配乐', url: '/u/bgm.wav' }])
+    expect(s.preview.value.ok).toBe(true)
+    expect(s.preview.value.timeline!.tracks.some((t) => t.nodeId === 'bgm')).toBe(true)
+    expect(s.commitOps()).toEqual([{ op: 'add_audio', node_id: 'bgm', audio_track_index: 0, start_sec: 0 }])
+  })
 })
