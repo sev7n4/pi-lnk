@@ -17,7 +17,8 @@ import {
   resolveImageNodeDisplaySize,
   resolveVideoNodeDisplaySize,
 } from '@/components/canvas/mediaNodeDisplaySize'
-import { htmlNodeSummary, resolveTextNodeFormat, stripHtmlTags } from '@lnkpi/shared'
+import { htmlNodeSummary, resolveTextNodeFormat, stripHtmlTags, type VideoTimeline } from '@lnkpi/shared'
+import MobileVideoTimelineTile from '@/components/mobile/MobileVideoTimelineTile.vue'
 
 /**
  * 共享节点瓦片（presentation/）。
@@ -64,6 +65,8 @@ const props = defineProps<{
     imageAspect?: string
     imageResolution?: string
     videoSettings?: unknown
+    /** P1.5：视频时间线草稿数据（create 时写入，保存≠渲染）；有则走列表式 tile。 */
+    timeline?: unknown
     /**
      * 媒体属性摘要（走查②，2026-10-24）：PC 三卡由 `MediaInfoSummary`
      * 渲染「尺寸/分辨率 · 比例 · 大小」（视频另有时长/格式），移动端瓦片
@@ -393,6 +396,20 @@ const tileStyle = computed(() => ({
 const placeholderLabel = computed(() => getNeoNodeMeta(props.type).label)
 
 /**
+ * P1.5：视频时间线守卫。与 PC `CanvasNodeVideo.isVideoTimeline` / 服务端 reducer
+ * 同一结构判据（version===1 + trackOrder/tracks 数组 + export），只认显式合法数据，
+ * 不猜不占位。草稿时间线节点无 `data.url`，必须在 video 媒体分支前拦下，否则落空占位。
+ */
+function isVideoTimeline(value: unknown): value is VideoTimeline {
+  if (!value || typeof value !== 'object') return false
+  const t = value as Partial<VideoTimeline>
+  return t.version === 1 && Array.isArray(t.trackOrder) && Array.isArray(t.tracks) && !!t.export
+}
+const timelineCard = computed(() => (props.type === 'video' && isVideoTimeline(props.data?.timeline) ? props.data!.timeline as VideoTimeline : null))
+/** 竖屏时间线：列表在 tile 内按高度方向堆叠（与 PC 收起态同一判据）。 */
+const timelinePortrait = computed(() => tileSize.value.height > tileSize.value.width)
+
+/**
  * R4-T4：多选勾选徽标。
  *
  * ⭐ 断链修复：PC 的勾选徽标是 `.neo-node-multi-badge`（`NeoBaseNode.vue:175`），
@@ -645,6 +662,18 @@ defineExpose({ showHint })
     </div>
     <div v-else-if="type === 'image' && data?.url" class="mobile-node-media-box">
       <img :src="data.url" class="mobile-node-media" alt="" />
+    </div>
+    <!--
+      P1.5：视频时间线草稿（data.timeline，无 data.url）走列表式 tile。
+      自包含组件自行持有播放/编辑/op 提交；本瓦片保持纯渲染、零 store/router 依赖。
+      外框仍由 tileStyle（resolveVideoNodeDisplaySize）钉死，不撑破比例。
+    -->
+    <div v-else-if="timelineCard" class="mobile-node-timeline-box">
+      <MobileVideoTimelineTile
+        :node-id="id ?? ''"
+        :timeline="timelineCard"
+        :portrait="timelinePortrait"
+      />
     </div>
     <div v-else-if="type === 'video' && data?.url" class="mobile-node-media-box">
       <video
