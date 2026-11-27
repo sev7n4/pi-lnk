@@ -74,7 +74,7 @@ function requestRender() {
 </script>
 
 <template>
-  <section class="vt-card nodrag" :class="{ 'vt-card--portrait': portrait }">
+  <section class="vt-card" :class="{ 'vt-card--portrait': portrait }">
     <header class="vt-card__header">
       <span class="vt-card__title">{{ timeline.export.fileName }}</span>
       <span class="vt-card__time">{{ mmss(totalSec) }}/{{ mmss(totalSec) }}</span>
@@ -156,7 +156,10 @@ function requestRender() {
   background: var(--lnk-surface-raised);
   color: var(--lnk-text-primary);
   font-size: 12px;
+  /* P2.4：整卡可拖（去根 nodrag）+ grab 提示；功能按钮各自 nodrag + pointerdown.stop 防误触。 */
+  cursor: grab;
 }
+.vt-card:active { cursor: grabbing; }
 .vt-card__header,
 .vt-card__footer,
 .vt-card__ruler {
