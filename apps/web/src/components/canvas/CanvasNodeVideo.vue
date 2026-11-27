@@ -84,6 +84,21 @@ function isVideoTimeline(value: unknown): value is VideoTimeline {
 }
 const timelineCard = computed(() => (isVideoTimeline(props.data.timeline) ? props.data.timeline : null))
 const renderEnabled = computed(() => import.meta.env.VITE_VIDEO_TIMELINE_RENDER_ENABLED === 'true')
+const emit = defineEmits<{ 'request-timeline-edit': [] }>()
+
+/** P1.3：竖屏节点（h>w）让卡片时间线片段纵向堆叠，避免横线挤压。 */
+const timelinePortrait = computed(() => displaySize.value.height > displaySize.value.width)
+
+/** P1.3：播放取片段真实 url（create 时从上游复制），复用现有沉浸式预览壳，不造播放器。 */
+function requestTimelinePlay(payload: { url: string; title: string; estimated: boolean }) {
+  if (!payload.url) return
+  editor.openMediaPreview({
+    url: resolveMediaUrl(payload.url),
+    kind: 'video',
+    label: payload.title,
+    nodeId: props.id,
+  })
+}
 
 async function requestTimelineRender() {
   if (!timelineCard.value || !sessionId.value || !renderEnabled.value) return
@@ -180,7 +195,10 @@ function openMediaInspector(e?: Event) {
       :timeline="timelineCard"
       :status="data.status"
       :render-enabled="renderEnabled"
+      :portrait="timelinePortrait"
       @request-render="requestTimelineRender"
+      @request-edit="emit('request-timeline-edit')"
+      @request-play="requestTimelinePlay"
     />
     <div
       v-if="!timelineCard"

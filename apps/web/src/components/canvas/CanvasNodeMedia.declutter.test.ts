@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, type Component } from 'vue'
 import { createPinia } from 'pinia'
 
 /**
@@ -92,7 +92,7 @@ const baseData = {
   prompt: '皮克斯风格蚂蚁短剧音频设计：多角色对话 + 环境音 + BGM',
 }
 
-function mountNode(comp: typeof CanvasNodeAudio, data: Record<string, unknown>) {
+function mountNode(comp: Component, data: Record<string, unknown>) {
   return mount(comp, {
     props: { id: 'node-1', data: data as never },
     global: { plugins: [createPinia()] },
