@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, ServiceUnavailableException } from '@nestjs/common'
 import { randomUUID } from 'crypto'
 import {
+  applyTimelineOps,
   validateTimeline,
   visualDurationSec,
   type TimelineOp,
@@ -119,74 +120,40 @@ export class VideoTimelineService {
     ok: boolean
     timeline?: VideoTimeline
     epoch?: number
+    nodes?: CanvasLike['nodes']
     error?: string
   }> {
     const session = await this.ownedSession(sessionId, userId)
-    const node = parseCanvas(session.canvasData).nodes.find((n) => n.id === nodeId)
+    const canvas = parseCanvas(session.canvasData)
+    const node = canvas.nodes.find((n) => n.id === nodeId)
     if (!node || node.type !== 'video' || !node.data.timeline) return { ok: false, error: 'timeline_draft_not_found' }
     return {
       ok: true,
       timeline: node.data.timeline as VideoTimeline,
       epoch: Number(node.data.proposalEpoch ?? 0),
+      nodes: canvas.nodes,
     }
   }
 
   async edit(input: { sessionId: string; userId: string; nodeId: string; ops: TimelineOp[]; save?: boolean }): Promise<TimelineResult> {
     const read = await this.readDraft(input.sessionId, input.userId, input.nodeId)
     if (!read.ok) return read
-    const timeline = structuredClone(read.timeline!)
-    for (let i = 0; i < input.ops.length; i += 1) {
-      const op = input.ops[i]!
-      if (op.op === 'request_render') continue
-      if (op.op === 'remove') {
-        timeline.tracks = timeline.tracks.filter((t) => t.nodeId !== op.node_id)
-        timeline.trackOrder = timeline.trackOrder.filter((id) => id !== op.node_id)
-      }
-      if (op.op === 'set_volume') {
-        const track = timeline.tracks.find((x) => x.nodeId === op.node_id)
-        if (!track) return { ok: false, error: `unknown_track:${op.node_id}`, opIndex: i }
-        track.volume = op.volume
-        if (op.muted !== undefined) track.muted = op.muted
-      }
-      if (op.op === 'set_export') {
-        // 首期 allowlist（计划 Global Constraints）：MOV/2K/4K 未经 spike 取证，禁止写入草稿。
-        // 资源约束：4K 在 CVM 扩容前由 worker 直接拒绝；这里更早失败，避免生成不可渲染的草稿。
-        const resolution = op.resolution ?? timeline.export.resolution
-        const format = op.format ?? timeline.export.format
-        if (!['720p', '1080p'].includes(resolution)) {
-          return { ok: false, error: `unsupported_resolution:${resolution}`, opIndex: i }
-        }
-        if (format !== 'mp4') {
-          return { ok: false, error: `unsupported_format:${format}`, opIndex: i }
-        }
-        Object.assign(timeline.export, {
-          fileName: op.file_name ?? timeline.export.fileName,
-          resolution,
-          format,
-          volume: op.volume ?? timeline.export.volume,
-          muted: op.muted ?? timeline.export.muted,
-          keepFullAudioTail: op.keep_full_audio_tail ?? timeline.export.keepFullAudioTail,
-        })
-      }
-      if (op.op === 'move_visual') {
-        const [item] = timeline.trackOrder.splice(op.from, 1)
-        if (!item) return { ok: false, error: 'invalid_move_index', opIndex: i }
-        timeline.trackOrder.splice(op.to, 0, item)
-      }
-      if (op.op === 'trim') {
-        const track = timeline.tracks.find((x) => x.nodeId === op.node_id)
-        if (!track) return { ok: false, error: `unknown_track:${op.node_id}`, opIndex: i }
-        track.sourceInSec = op.source_in_sec
-        track.sourceOutSec = op.source_out_sec
-        if (op.duration_sec !== undefined) track.durationSec = op.duration_sec
-        else track.durationSec = op.source_out_sec - op.source_in_sec
-      }
-    }
-    timeline.clipCount = timeline.trackOrder.length
-    const errors = validateTimeline(timeline)
-    if (errors.length) return { ok: false, error: errors.join(','), opIndex: Math.max(0, input.ops.length - 1) }
+    // 双通道同构：所有 op 语义下沉到 @lnkpi/shared 的 applyTimelineOps，浮层预览与服务端写回同一份。
+    // sources 供 add_visual/add_audio 校验 node_id 真实存在且类型合法（禁裸 URL 注入）。
+    const sources = (read.nodes ?? []).map((n) => ({
+      nodeId: n.id,
+      type: n.type,
+      title: String(n.data.title ?? ''),
+      url: String(n.data.url ?? ''),
+    }))
+    const reduced = applyTimelineOps(read.timeline!, input.ops, {
+      sources,
+      nextId: () => `vtseg_${randomUUID()}`,
+    })
+    if (!reduced.ok) return { ok: false, error: reduced.error, opIndex: reduced.opIndex }
+    const timeline = reduced.timeline!
     const patch: Record<string, unknown> = { timeline }
-    if (input.ops.some((op) => op.op === 'request_render')) {
+    if (reduced.requestsRender) {
       Object.assign(patch, {
         status: 'pending_confirm',
         proposalKind: 'video_timeline_render',
