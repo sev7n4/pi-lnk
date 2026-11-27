@@ -107,9 +107,9 @@ describe('applyTimelineOps（双通道共享 reducer，服务端 edit 与浮层�
     expect(validateTimeline(r.timeline!)).toEqual([])
   })
 
-  it('split 拒绝音频轨与区间外分割点', () => {
+  it('split 拒绝不存在节点与区间外分割点', () => {
     const t = base()
-    expect(applyTimelineOps(t, [{ op: 'split', node_id: 'a1', at_sec: 2 }]).error).toBe('unsupported_split_audio')
+    expect(applyTimelineOps(t, [{ op: 'split', node_id: 'nope', at_sec: 2 }]).error).toBe('unsupported_split_audio')
     expect(applyTimelineOps(t, [{ op: 'split', node_id: 'i1', at_sec: 99 }]).error).toBe('invalid_split_point')
     expect(applyTimelineOps(t, [{ op: 'split', node_id: 'i1', at_sec: -1 }]).error).toBe('invalid_split_point')
   })
@@ -146,6 +146,82 @@ describe('applyTimelineOps（双通道共享 reducer，服务端 edit 与浮层�
     expect(added.type).toBe('audio')
     expect(added.audioTrackIndex).toBe(1)
     expect(applyTimelineOps(t, [{ op: 'add_audio', node_id: 'a2', audio_track_index: 0, start_sec: 0 }], { sources }).error).toContain('overlap')
+  })
+
+  it('P2.1 audio split：源内坐标切成两段、同轨不进 trackOrder、startSec 按可视时长偏移、时长守恒', () => {
+    const t = base()
+    // a1: durationSec=8, startSec=1, 无显式 sourceIn/out → in=0, out=8
+    const r = applyTimelineOps(t, [{ op: 'split', node_id: 'a1', at_sec: 3 }], { nextId: () => 'a1_right' })
+    expect(r.ok).toBe(true)
+    expect(r.timeline!.tracks).toHaveLength(4)
+    const left = r.timeline!.tracks.find((x) => x.nodeId === 'a1')!
+    const right = r.timeline!.tracks.find((x) => x.nodeId === 'a1_right')!
+    expect(left.sourceOutSec).toBe(3)
+    expect(left.durationSec).toBe(3)
+    expect(left.startSec).toBe(1)
+    expect(right.sourceInSec).toBe(3)
+    expect(right.sourceOutSec).toBe(8)
+    expect(right.durationSec).toBe(5)
+    expect(right.startSec).toBe(4) // 左段 start 1 + 可视 3
+    expect(right.audioTrackIndex).toBe(0)
+    expect(right.volume).toBe(0.5)
+    expect(r.timeline!.trackOrder).toEqual(['v1', 'i1']) // audio 不进 trackOrder
+    expect(validateTimeline(r.timeline!)).toEqual([]) // 相邻不重叠
+  })
+
+  it('P2.1 audio split：显式裁剪区间按源内坐标切，startSec 偏移用可视时长', () => {
+    const t = base()
+    const a1 = t.tracks.find((x) => x.nodeId === 'a1')!
+    a1.sourceInSec = 2; a1.sourceOutSec = 10; a1.durationSec = 8; a1.startSec = 6
+    const r = applyTimelineOps(t, [{ op: 'split', node_id: 'a1', at_sec: 5 }], { nextId: () => 'a1b' })
+    expect(r.ok).toBe(true)
+    const left = r.timeline!.tracks.find((x) => x.nodeId === 'a1')!
+    const right = r.timeline!.tracks.find((x) => x.nodeId === 'a1b')!
+    expect(left.sourceOutSec).toBe(5)
+    expect(left.durationSec).toBe(3) // 5 - 2
+    expect(right.sourceInSec).toBe(5)
+    expect(right.durationSec).toBe(5) // 10 - 5
+    expect(right.startSec).toBe(9) // 6 + 3
+    expect(validateTimeline(r.timeline!)).toEqual([])
+  })
+
+  it('P2.1 audio split：区间外点拒绝，非法裁剪区间返回 unsupported_split_audio', () => {
+    const t = base()
+    expect(applyTimelineOps(t, [{ op: 'split', node_id: 'a1', at_sec: 99 }]).error).toBe('invalid_split_point')
+    const bad = base()
+    const a1 = bad.tracks.find((x) => x.nodeId === 'a1')!
+    a1.sourceInSec = 5; a1.sourceOutSec = 4 // 非法区间
+    expect(applyTimelineOps(bad, [{ op: 'split', node_id: 'a1', at_sec: 4 }]).error).toBe('unsupported_split_audio')
+  })
+
+  it('P2.1 duplicate visual：新 id 插相邻位、clipCount 同步、时长守恒', () => {
+    const t = base()
+    const before = visualDurationSec(t)
+    const r = applyTimelineOps(t, [{ op: 'duplicate', node_id: 'i1' }], { nextId: () => 'i1_copy' })
+    expect(r.ok).toBe(true)
+    expect(r.timeline!.trackOrder).toEqual(['v1', 'i1', 'i1_copy']) // 插到相邻位（i1 在 index 1 → pos+1=2）
+    expect(r.timeline!.clipCount).toBe(3)
+    expect(visualDurationSec(r.timeline!)).toBeCloseTo(before + 3)
+    expect(r.timeline!.tracks.find((x) => x.nodeId === 'i1_copy')!.title).toContain('副本')
+    expect(validateTimeline(r.timeline!)).toEqual([])
+  })
+
+  it('P2.1 duplicate audio：同轨找空位插入、不进 trackOrder', () => {
+    const t = base()
+    const r = applyTimelineOps(t, [{ op: 'duplicate', node_id: 'a1' }], { nextId: () => 'a1_copy' })
+    expect(r.ok).toBe(true)
+    const copy = r.timeline!.tracks.find((x) => x.nodeId === 'a1_copy')!
+    expect(copy.type).toBe('audio')
+    expect(copy.audioTrackIndex).toBe(0)
+    // a1 占 [1,9]，空位从 9 起
+    expect(copy.startSec).toBe(9)
+    expect(r.timeline!.trackOrder).toEqual(['v1', 'i1'])
+    expect(validateTimeline(r.timeline!)).toEqual([])
+  })
+
+  it('P2.1 duplicate：未知节点拒绝', () => {
+    const t = base()
+    expect(applyTimelineOps(t, [{ op: 'duplicate', node_id: 'nope' }]).error).toBe('unknown_track:nope')
   })
 
   it('既有 op（remove/move/trim/set_export）保持 P0 语义不变', () => {
