@@ -25,8 +25,8 @@ const timeline: VideoTimeline = {
   export: { fileName: '成片.mp4', resolution: '720p', format: 'mp4', volume: 1, muted: false, keepFullAudioTail: false },
 }
 
-function mountTile() {
-  return mount(MobileVideoTimelineTile, { props: { nodeId: 'vt_1', timeline }, attachTo: document.body })
+function mountTile(aspectRatio?: string) {
+  return mount(MobileVideoTimelineTile, { props: { nodeId: 'vt_1', timeline, aspectRatio }, attachTo: document.body })
 }
 
 // 浮层 Teleport 到 body：用例间清理，避免残留 DOM 污染下一个用例。
@@ -84,12 +84,21 @@ describe('MobileVideoTimelineTile（P1.5 移动端列表式时间线）', () => 
     w.unmount()
   })
 
-  it('点编辑发 request-edit 并展开复用浮层（VideoTimelineEditorOverlay）', async () => {
+  it('点编辑发 request-edit 并展开 P2.6 全屏编辑器（VideoTimelineStudio）', async () => {
     const w = mountTile()
     await w.get('[data-mvt-edit]').trigger('click')
     expect(w.emitted('request-edit')).toHaveLength(1)
-    // 浮层 Teleport 到 body，须在 document.body 查（wrapper 查不到）。
-    expect(document.body.querySelector('[data-vt-commit]')).not.toBeNull() // 浮层真实挂载，非死按钮
+    // 全屏壳 Teleport 到 body，须在 document.body 查（wrapper 查不到）。
+    expect(document.body.querySelector('[data-vts-studio]')).not.toBeNull()
+    expect(document.body.querySelector('[data-vts-commit]')).not.toBeNull() // 浮层真实挂载，非死按钮
+    w.unmount()
+  })
+
+  it('P2.6：tile 把 aspectRatio 透传全屏壳，9:16 预览区按竖屏比例渲染', async () => {
+    const w = mountTile('9:16')
+    await w.get('[data-mvt-edit]').trigger('click')
+    await new Promise((r) => setTimeout(r, 0))
+    expect(document.body.querySelector('[data-vts-preview-area]')!.getAttribute('style')).toContain('0.5625')
     w.unmount()
   })
 

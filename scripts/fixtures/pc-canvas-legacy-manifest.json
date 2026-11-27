@@ -92,7 +92,7 @@
       "prod_refs": [
         "components/mobile/MobileNodeTile.vue"
       ],
-      "lines": 1448
+      "lines": 1455
     },
     {
       "name": "CanvasPage.vue",
