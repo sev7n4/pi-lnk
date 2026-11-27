@@ -81,8 +81,31 @@ describe('VideoTimelineCard', () => {
     expect(clip.attributes('style')).toContain('--vt-pct')
   })
 
-  it('保持根节点 nodrag（卡片区不拖节点，防误触）', () => {
-    expect(mountCard().classes()).toContain('nodrag')
+  it('P2.4 整卡可拖：根节点无 nodrag，主体区（ruler/track/footer）可拖', () => {
+    const w = mountCard()
+    expect(w.classes()).not.toContain('nodrag')
+    for (const sel of ['.vt-card__ruler', '[data-timeline-clip]', '.vt-card__footer']) {
+      const el = w.get(sel)
+      expect(el.classes()).not.toContain('nodrag')
+      // 主体区不挂 pointerdown.stop ⇒ Vue Flow 可接收拖拽
+      let bubbled = false
+      el.element.addEventListener('pointerdown', () => { bubbled = true })
+      el.trigger('pointerdown')
+      expect(bubbled, `${sel} 应允许 pointerdown 冒泡到节点`).toBe(true)
+    }
+    w.unmount()
+  })
+
+  it('P2.4 防误触：3 个功能按钮 pointerdown 不冒泡，保留局部 nodrag', () => {
+    const w = mountCard()
+    for (const sel of ['[data-timeline-edit]', '[data-timeline-play]', '[data-timeline-export]']) {
+      const el = w.get(sel)
+      let bubbled = false
+      w.element.addEventListener('pointerdown', () => { bubbled = true })
+      el.trigger('pointerdown')
+      expect(bubbled, `${sel} 的 pointerdown 须被 .stop 拦截，不触发节点拖动`).toBe(false)
+    }
+    w.unmount()
   })
 
   it('渲染未启用时导出按钮禁用并说明原因', () => {
