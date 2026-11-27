@@ -84,6 +84,38 @@ describe('VideoTimelineService', () => {
     }
   })
 
+  it('edit add_visual 补齐假接线：从画布 source 节点入轨，缺省 5s 标 estimated', async () => {
+    const timeline = {
+      version: 1 as const, clipCount: 1, trackOrder: ['v1'],
+      tracks: [{ nodeId: 'v1', type: 'video' as const, title: 'v', url: 'u', durationSec: 5, startSec: 0 }],
+      export: { fileName: 'x.mp4', resolution: '1080p' as const, format: 'mp4' as const, volume: 1, muted: false, keepFullAudioTail: false },
+    }
+    const { service, state } = fakeDeps([
+      { id: 'vt_1', type: 'video', data: { status: 'draft', timeline } },
+      { id: 'v2', type: 'video', data: { title: '镜头2', url: '/api/uploads/u1/v2.mp4' } },
+    ])
+    const res = await service.edit({ sessionId: 's1', userId: 'u1', nodeId: 'vt_1', ops: [{ op: 'add_visual', node_id: 'v2' }] })
+    expect(res.ok).toBe(true)
+    const saved = state.nodes[0]!.data.timeline as typeof timeline
+    expect(saved.trackOrder).toEqual(['v1', 'v2'])
+    expect(saved.tracks.find((t) => t.nodeId === 'v2')?.durationEstimated).toBe(true)
+  })
+
+  it('edit split 切分视觉轨：tracks+1、trackOrder 插入、时长守恒', async () => {
+    const timeline = {
+      version: 1 as const, clipCount: 1, trackOrder: ['v1'],
+      tracks: [{ nodeId: 'v1', type: 'video' as const, title: 'v', url: 'u', durationSec: 5, startSec: 0, sourceInSec: 0, sourceOutSec: 5 }],
+      export: { fileName: 'x.mp4', resolution: '1080p' as const, format: 'mp4' as const, volume: 1, muted: false, keepFullAudioTail: false },
+    }
+    const { service, state } = fakeDeps([{ id: 'vt_1', type: 'video', data: { status: 'draft', timeline } }])
+    const res = await service.edit({ sessionId: 's1', userId: 'u1', nodeId: 'vt_1', ops: [{ op: 'split', node_id: 'v1', at_sec: 2 }] })
+    expect(res.ok).toBe(true)
+    const saved = state.nodes[0]!.data.timeline as typeof timeline
+    expect(saved.tracks).toHaveLength(2)
+    expect(saved.trackOrder).toHaveLength(2)
+    expect(saved.tracks.reduce((s, t) => s + (t.sourceOutSec ?? t.durationSec) - (t.sourceInSec ?? 0), 0)).toBeCloseTo(5)
+  })
+
   it('render 无确认事实时拒绝且不建任务', async () => {
     process.env.VIDEO_TIMELINE_RENDER_ENABLED = 'true'
     const timeline = {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applyTimelineOps,
   clipDurationSec,
   compileTimelineToEditly,
   sanitizeTimelineFileName,
@@ -92,3 +93,71 @@ describe('裁剪时长口径一致性（visualDurationSec ≡ 编译器 clips �
   })
 })
 it('文件名清洗', () => expect(sanitizeTimelineFileName('../a:b/成片.mp4', 'mp4')).toBe('a_b_成片.mp4'))
+
+describe('applyTimelineOps（双通道共享 reducer，服务端 edit 与浮层预览同一份）', () => {
+  it('split 视觉片段：区间内切成两条、时长守恒、trackOrder 插入、clipCount 同步', () => {
+    const t = base()
+    const before = visualDurationSec(t)
+    const r = applyTimelineOps(t, [{ op: 'split', node_id: 'i1', at_sec: 1.5 }], { nextId: () => 'vtseg_new1' })
+    expect(r.ok).toBe(true)
+    expect(r.timeline!.tracks).toHaveLength(4) // 原 3 + 1（i1 拆二）
+    expect(r.timeline!.trackOrder).toEqual(['v1', 'i1', 'vtseg_new1'])
+    expect(r.timeline!.clipCount).toBe(3)
+    expect(visualDurationSec(r.timeline!)).toBeCloseTo(before) // 1.5+1.5 = 3
+    expect(validateTimeline(r.timeline!)).toEqual([])
+  })
+
+  it('split 拒绝音频轨与区间外分割点', () => {
+    const t = base()
+    expect(applyTimelineOps(t, [{ op: 'split', node_id: 'a1', at_sec: 2 }]).error).toBe('unsupported_split_audio')
+    expect(applyTimelineOps(t, [{ op: 'split', node_id: 'i1', at_sec: 99 }]).error).toBe('invalid_split_point')
+    expect(applyTimelineOps(t, [{ op: 'split', node_id: 'i1', at_sec: -1 }]).error).toBe('invalid_split_point')
+  })
+
+  it('split 后 visualDurationSec ≡ 编译 clips 总长（时长口径不分叉）', () => {
+    const t = base()
+    const r = applyTimelineOps(t, [{ op: 'split', node_id: 'v1', at_sec: 2 }], { nextId: () => 'vtseg_x' })
+    const spec = compileTimelineToEditly(r.timeline!, { v1: 'v', i1: 'i', a1: 'a', vtseg_x: 'vx' })
+    expect(visualDurationSec(r.timeline!)).toBeCloseTo(spec.clips.reduce((s, c) => s + c.duration, 0))
+  })
+
+  it('add_visual 补齐假接线：校验 source 存在且类型合法，缺省时长 5s 标 estimated', () => {
+    const t = base()
+    const sources = [
+      { nodeId: 'v2', type: 'video', title: '镜头2', url: '/api/uploads/u1/v2.mp4' },
+      { nodeId: 'bad', type: 'agent', title: 'x', url: 'u' },
+    ]
+    const ok = applyTimelineOps(t, [{ op: 'add_visual', node_id: 'v2', at: 1 }], { sources })
+    expect(ok.ok).toBe(true)
+    expect(ok.timeline!.trackOrder).toEqual(['v1', 'v2', 'i1'])
+    const added = ok.timeline!.tracks.find((x) => x.nodeId === 'v2')!
+    expect(added.durationSec).toBe(5)
+    expect(added.durationEstimated).toBe(true)
+    expect(applyTimelineOps(t, [{ op: 'add_visual', node_id: 'bad' }], { sources }).error).toBe('unsupported_add_visual:bad')
+    expect(applyTimelineOps(t, [{ op: 'add_visual', node_id: 'missing' }], { sources }).error).toBe('unknown_source_node')
+  })
+
+  it('add_audio 补齐假接线：校验 audio index 上限与 source 类型', () => {
+    const t = base()
+    const sources = [{ nodeId: 'a2', type: 'audio', title: '音效', url: '/api/uploads/u1/a2.wav' }]
+    const ok = applyTimelineOps(t, [{ op: 'add_audio', node_id: 'a2', audio_track_index: 1, start_sec: 0 }], { sources })
+    expect(ok.ok).toBe(true)
+    const added = ok.timeline!.tracks.find((x) => x.nodeId === 'a2')!
+    expect(added.type).toBe('audio')
+    expect(added.audioTrackIndex).toBe(1)
+    expect(applyTimelineOps(t, [{ op: 'add_audio', node_id: 'a2', audio_track_index: 0, start_sec: 0 }], { sources }).error).toContain('overlap')
+  })
+
+  it('既有 op（remove/move/trim/set_export）保持 P0 语义不变', () => {
+    const t = base()
+    const r = applyTimelineOps(t, [
+      { op: 'move_visual', from: 0, to: 1 },
+      { op: 'trim', node_id: 'v1', source_in_sec: 0, source_out_sec: 2 },
+      { op: 'set_export', resolution: '720p' },
+    ])
+    expect(r.ok).toBe(true)
+    expect(r.timeline!.trackOrder).toEqual(['i1', 'v1'])
+    expect(r.timeline!.export.resolution).toBe('720p')
+    expect(r.timeline!.tracks.find((x) => x.nodeId === 'v1')!.sourceOutSec).toBe(2)
+  })
+})

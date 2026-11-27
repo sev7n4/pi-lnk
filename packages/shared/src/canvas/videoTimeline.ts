@@ -44,10 +44,176 @@ export type TimelineOp =
   | { op: 'add_audio'; node_id: string; audio_track_index: 0 | 1; start_sec: number; source_in_sec?: number; source_out_sec?: number; volume?: number; muted?: boolean }
   | { op: 'move_visual'; from: number; to: number }
   | { op: 'trim'; node_id: string; source_in_sec: number; source_out_sec: number; duration_sec?: number }
+  | { op: 'split'; node_id: string; at_sec: number }
   | { op: 'set_volume'; node_id: string; volume: number; muted?: boolean }
   | { op: 'remove'; node_id: string }
   | { op: 'set_export'; file_name?: string; resolution?: TimelineResolution; format?: 'mp4' | 'mov'; volume?: number; muted?: boolean; keep_full_audio_tail?: boolean }
   | { op: 'request_render' }
+
+/** applyTimelineOps 的上下文：仅注入校验所需的外部事实，reducer 本身保持纯函数。 */
+export interface ApplyTimelineOpsContext {
+  /**
+   * 当前 session 内可作为素材源的画布节点（服务端从 canvas.nodes 注入，浮层从画布快照注入）。
+   * add_visual/add_audio 必须据此校验 node_id 存在、类型合法、url 真实——禁止裸 URL 注入。
+   */
+  sources?: Array<{ nodeId: string; type: string; title?: string; url?: string }>
+  /** split 生成新片段 id 的工厂（服务端用 randomUUID，浮层用确定性 id 便于预览稳定）。 */
+  nextId?: () => string
+}
+
+export interface ApplyTimelineOpsResult {
+  ok: boolean
+  timeline?: VideoTimeline
+  error?: string
+  opIndex?: number
+  /** 本批是否包含 request_render（确认门打点由 service 层消费，reducer 不改 timeline 内容）。 */
+  requestsRender?: boolean
+}
+
+/**
+ * 双通道唯一的 op reducer：服务端 edit() 与浮层预览都调用这一份，杜绝语义分叉。
+ * 语义对齐既有 service.edit()：remove/set_volume/set_export/move_visual/trim；
+ * 补齐 add_visual/add_audio（P0 假接线）与 split（P1 新增）。
+ * 输入 timeline 不被修改（structuredClone）。
+ */
+export function applyTimelineOps(
+  input: VideoTimeline,
+  ops: TimelineOp[],
+  ctx: ApplyTimelineOpsContext = {},
+): ApplyTimelineOpsResult {
+  const timeline: VideoTimeline = structuredClone(input)
+  let requestsRender = false
+  for (let i = 0; i < ops.length; i += 1) {
+    const op = ops[i]!
+    if (op.op === 'request_render') { requestsRender = true; continue }
+    if (op.op === 'remove') {
+      timeline.tracks = timeline.tracks.filter((t) => t.nodeId !== op.node_id)
+      timeline.trackOrder = timeline.trackOrder.filter((id) => id !== op.node_id)
+      continue
+    }
+    if (op.op === 'set_volume') {
+      const track = timeline.tracks.find((x) => x.nodeId === op.node_id)
+      if (!track) return { ok: false, error: `unknown_track:${op.node_id}`, opIndex: i }
+      track.volume = op.volume
+      if (op.muted !== undefined) track.muted = op.muted
+      continue
+    }
+    if (op.op === 'set_export') {
+      // 首期 allowlist：MOV/2K/4K 未经 spike 取证，禁止写入草稿（与 P0 service 一致）。
+      const resolution = op.resolution ?? timeline.export.resolution
+      const format = op.format ?? timeline.export.format
+      if (!['720p', '1080p'].includes(resolution)) return { ok: false, error: `unsupported_resolution:${resolution}`, opIndex: i }
+      if (format !== 'mp4') return { ok: false, error: `unsupported_format:${format}`, opIndex: i }
+      Object.assign(timeline.export, {
+        fileName: op.file_name ?? timeline.export.fileName,
+        resolution,
+        format,
+        volume: op.volume ?? timeline.export.volume,
+        muted: op.muted ?? timeline.export.muted,
+        keepFullAudioTail: op.keep_full_audio_tail ?? timeline.export.keepFullAudioTail,
+      })
+      continue
+    }
+    if (op.op === 'move_visual') {
+      const [item] = timeline.trackOrder.splice(op.from, 1)
+      if (!item) return { ok: false, error: 'invalid_move_index', opIndex: i }
+      timeline.trackOrder.splice(op.to, 0, item)
+      continue
+    }
+    if (op.op === 'trim') {
+      const track = timeline.tracks.find((x) => x.nodeId === op.node_id)
+      if (!track) return { ok: false, error: `unknown_track:${op.node_id}`, opIndex: i }
+      track.sourceInSec = op.source_in_sec
+      track.sourceOutSec = op.source_out_sec
+      if (op.duration_sec !== undefined) track.durationSec = op.duration_sec
+      else track.durationSec = op.source_out_sec - op.source_in_sec
+      continue
+    }
+    if (op.op === 'split') {
+      const track = timeline.tracks.find((x) => x.nodeId === op.node_id)
+      if (!track || (track.type !== 'video' && track.type !== 'image')) {
+        return { ok: false, error: 'unsupported_split_audio', opIndex: i }
+      }
+      const inSec = track.sourceInSec ?? 0
+      const outSec = track.sourceOutSec ?? track.durationSec
+      if (!(op.at_sec > inSec && op.at_sec < outSec)) {
+        return { ok: false, error: 'invalid_split_point', opIndex: i }
+      }
+      const newId = ctx.nextId?.() ?? `vtseg_${op.node_id}_${op.at_sec}`
+      const right: TimelineTrack = {
+        ...structuredClone(track),
+        nodeId: newId,
+        title: `${track.title}·后`,
+        sourceInSec: op.at_sec,
+        sourceOutSec: outSec,
+        durationSec: outSec - op.at_sec,
+        durationEstimated: false,
+      }
+      track.sourceOutSec = op.at_sec
+      track.durationSec = op.at_sec - inSec
+      track.durationEstimated = false
+      const pos = timeline.trackOrder.indexOf(op.node_id)
+      timeline.tracks.push(right)
+      timeline.trackOrder.splice(pos + 1, 0, newId)
+      continue
+    }
+    if (op.op === 'add_visual') {
+      const source = ctx.sources?.find((s) => s.nodeId === op.node_id)
+      if (!source) return { ok: false, error: 'unknown_source_node', opIndex: i }
+      if (source.type !== 'video' && source.type !== 'image') {
+        return { ok: false, error: `unsupported_add_visual:${op.node_id}`, opIndex: i }
+      }
+      if (timeline.tracks.some((t) => t.nodeId === op.node_id)) {
+        return { ok: false, error: `duplicate_node:${op.node_id}`, opIndex: i }
+      }
+      const inSec = op.source_in_sec ?? 0
+      const outSec = op.source_out_sec ?? (op.duration_sec !== undefined ? inSec + op.duration_sec : inSec + 5)
+      const track: TimelineTrack = {
+        nodeId: op.node_id,
+        type: source.type,
+        title: String(source.title ?? op.node_id).slice(0, 48),
+        url: String(source.url ?? ''),
+        durationSec: op.duration_sec ?? outSec - inSec,
+        startSec: 0,
+        sourceInSec: op.source_in_sec,
+        sourceOutSec: op.source_out_sec,
+        durationEstimated: op.duration_sec === undefined,
+      }
+      timeline.tracks.push(track)
+      const at = Math.max(0, Math.min(op.at ?? timeline.trackOrder.length, timeline.trackOrder.length))
+      timeline.trackOrder.splice(at, 0, op.node_id)
+      continue
+    }
+    if (op.op === 'add_audio') {
+      const source = ctx.sources?.find((s) => s.nodeId === op.node_id)
+      if (!source) return { ok: false, error: 'unknown_source_node', opIndex: i }
+      if (source.type !== 'audio') return { ok: false, error: `unsupported_add_audio:${op.node_id}`, opIndex: i }
+      if (timeline.tracks.some((t) => t.nodeId === op.node_id)) {
+        return { ok: false, error: `duplicate_node:${op.node_id}`, opIndex: i }
+      }
+      const head = op.source_in_sec ?? 0
+      const tail = op.source_out_sec ?? head + 3
+      timeline.tracks.push({
+        nodeId: op.node_id,
+        type: 'audio',
+        title: String(source.title ?? op.node_id).slice(0, 48),
+        url: String(source.url ?? ''),
+        durationSec: tail - head,
+        startSec: op.start_sec,
+        sourceInSec: op.source_in_sec,
+        sourceOutSec: op.source_out_sec,
+        audioTrackIndex: op.audio_track_index,
+        volume: op.volume,
+        muted: op.muted,
+        durationEstimated: true,
+      })
+    }
+  }
+  timeline.clipCount = timeline.trackOrder.length
+  const errors = validateTimeline(timeline)
+  if (errors.length) return { ok: false, error: errors.join(','), opIndex: Math.max(0, ops.length - 1) }
+  return { ok: true, timeline, requestsRender }
+}
 
 /**
  * 单个片段的实际渲染时长（单一真相源）。
