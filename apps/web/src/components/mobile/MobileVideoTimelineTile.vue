@@ -4,7 +4,7 @@ import { useRoute } from 'vue-router'
 import { clipDurationSec, visualDurationSec, type TimelineOp, type VideoTimeline } from '@lnkpi/shared'
 import { useLongPress } from '@/composables/useLongPress'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
-import { submitTimelineOps } from '@/composables/useVideoTimelineEdit'
+import { fetchTimelineSources, submitTimelineOps, type TimelineSource } from '@/composables/useVideoTimelineEdit'
 import { resolveMediaUrl } from '@/services/api-base'
 import VideoTimelineEditorOverlay from '@/components/canvas/VideoTimelineEditorOverlay.vue'
 
@@ -96,9 +96,12 @@ function remove(index: number) {
 // 编辑浮层：复用 PC 的 VideoTimelineEditorOverlay（分割/裁剪/删除/undo/redo/commit）。
 const editorOpen = ref(false)
 const saveError = ref('')
-function openEditor() {
+/** P2.5：打开浮层前拉画布素材源，供 add_audio 等 op 校验真实节点。 */
+const editorSources = ref<TimelineSource[]>([])
+async function openEditor() {
   saveError.value = ''
   sortMode.value = false // 形态复位：进编辑态先退出排序模式
+  editorSources.value = await fetchTimelineSources(sessionId.value ?? '')
   editorOpen.value = true
   emit('request-edit')
 }
@@ -165,6 +168,7 @@ async function commitOps(ops: TimelineOp[]) {
       v-if="editorOpen"
       :node-id="nodeId"
       :timeline="timeline"
+      :sources="editorSources"
       :save-error="saveError"
       @close="editorOpen = false"
       @commit="commitOps"

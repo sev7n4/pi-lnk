@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { VideoTimeline } from '@lnkpi/shared'
-import { submitTimelineOps } from './useVideoTimelineEdit'
+import { fetchTimelineSources, submitTimelineOps } from './useVideoTimelineEdit'
 
 const postMock = vi.hoisted(() => vi.fn())
 const getMock = vi.hoisted(() => vi.fn())
@@ -14,7 +14,7 @@ const timeline: VideoTimeline = {
   export: { fileName: 'x.mp4', resolution: '720p', format: 'mp4', volume: 1, muted: false, keepFullAudioTail: false },
 }
 
-function canvasEnvelope(nodes: Array<{ id: string; data: Record<string, unknown> }>) {
+function canvasEnvelope(nodes: Array<{ id: string; type?: string; data: Record<string, unknown> }>) {
   return { data: { canvasData: JSON.stringify({ nodes, edges: [] }) } }
 }
 
@@ -73,5 +73,41 @@ describe('submitTimelineOps（P1.2 前端写回以服务端回读为准）', () 
     expect((await submitTimelineOps({ sessionId: '', nodeId: 'vt_1', ops: [] })).ok).toBe(false)
     expect((await submitTimelineOps({ sessionId: 's1', nodeId: 'vt_1', ops: 'bad' as never })).ok).toBe(false)
     expect(postMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('fetchTimelineSources（P2.5 素材源注入，add_* 硬前置）', () => {
+  beforeEach(() => {
+    postMock.mockReset()
+    getMock.mockReset()
+  })
+
+  it('拉画布 video/image/audio 节点为 sources，过滤非媒体/无 url 节点', async () => {
+    getMock.mockResolvedValueOnce({
+      data: canvasEnvelope([
+        { id: 'v1', data: { type: 'video', url: '/u/a.mp4', label: '镜头1' } },
+        { id: 'a1', data: { type: 'audio', url: '/u/bgm.wav', label: '配乐' } },
+        { id: 'i1', type: 'image', data: { url: '/u/c.png' } },
+        { id: 't1', data: { type: 'text', url: '' } },       // 非媒体
+        { id: 'a2', data: { type: 'audio', url: '' } },      // 无 url
+      ]),
+    })
+    const sources = await fetchTimelineSources('s1')
+    expect(sources).toEqual([
+      { nodeId: 'v1', type: 'video', title: '镜头1', url: '/u/a.mp4' },
+      { nodeId: 'a1', type: 'audio', title: '配乐', url: '/u/bgm.wav' },
+      { nodeId: 'i1', type: 'image', title: undefined, url: '/u/c.png' },
+    ])
+    const cfg = getMock.mock.calls[0]![1] as { headers: Record<string, string> }
+    expect(cfg.headers['Cache-Control']).toBe('no-cache')
+  })
+
+  it('GET 失败/坏 canvas 返回空 sources（不编造、不裸 URL 注入）', async () => {
+    getMock.mockRejectedValueOnce(new Error('network'))
+    expect(await fetchTimelineSources('s1')).toEqual([])
+    getMock.mockResolvedValueOnce({ data: { data: { canvasData: '{bad json' } } })
+    expect(await fetchTimelineSources('s1')).toEqual([])
+    expect(await fetchTimelineSources('')).toEqual([])
+    expect(getMock).toHaveBeenCalledTimes(2)
   })
 })

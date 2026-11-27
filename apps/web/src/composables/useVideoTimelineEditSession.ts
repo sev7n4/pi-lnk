@@ -23,6 +23,8 @@ export interface VideoTimelineEditSession {
   redo: () => boolean
   commitOps: () => TimelineOp[]
   reset: (base: VideoTimeline) => void
+  /** P2.5：异步拉取画布素材源后回填；重放已执行 op（打开浮层时 sources 尚未到达）。 */
+  setSources: (next: Array<{ nodeId: string; type: string; title?: string; url?: string }> | undefined) => void
 }
 
 export function createEditSession(
@@ -31,6 +33,7 @@ export function createEditSession(
 ): VideoTimelineEditSession {
   // 组件传入的 props 是 Vue 响应式 Proxy，structuredClone 无法克隆 ⇒ toRaw 解包。
   let base = structuredClone(toRaw(initialBase))
+  let currentSources = sources
   let ops: TimelineOp[] = []
   let cursor = 0
 
@@ -43,7 +46,7 @@ export function createEditSession(
     // 注意：前端预览的 id 与服务端最终 id 不同，但提交后以服务端回读为准（P1.2 submitTimelineOps）。
     let seq = 0
     preview.value = applyTimelineOps(base, ops.slice(0, cursor), {
-      sources,
+      sources: currentSources,
       nextId: () => `vtseg_prev_${seq++}`,
     })
     state.value = { cursor, total: ops.length }
@@ -87,5 +90,10 @@ export function createEditSession(
     replay()
   }
 
-  return { preview, canUndo, canRedo, opCount: computed(() => state.value.cursor), applyOp, undo, redo, commitOps, reset }
+  function setSources(next: Array<{ nodeId: string; type: string; title?: string; url?: string }> | undefined) {
+    currentSources = next
+    replay()
+  }
+
+  return { preview, canUndo, canRedo, opCount: computed(() => state.value.cursor), applyOp, undo, redo, commitOps, reset, setSources }
 }
