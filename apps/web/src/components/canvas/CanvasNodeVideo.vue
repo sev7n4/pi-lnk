@@ -4,13 +4,16 @@ import NodePendingPrompt from '@/components/canvas/NodePendingPrompt.vue'
 import NodeTaskCornerActions from '@/components/canvas/NodeTaskCornerActions.vue'
 import NodeStatusInfoButton from '@/components/canvas/NodeStatusInfoButton.vue'
 import VideoTimelineCard from '@/components/canvas/VideoTimelineCard.vue'
+import VideoTimelineEditorOverlay from '@/components/canvas/VideoTimelineEditorOverlay.vue'
+import { submitTimelineOps } from '@/composables/useVideoTimelineEdit'
+import type { TimelineOp } from '@lnkpi/shared'
 import { api } from '@/services/api'
 import type { VideoTimeline } from '@lnkpi/shared'
 import { resolveVideoNodeDisplaySize } from '@/components/canvas/mediaNodeDisplaySize'
 import MediaInfoSummary from '@/components/media/MediaInfoSummary.vue'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
 import { isPartAnchoredNode } from '@/composables/useProposeAnchor'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { resolveMediaUrl } from '@/services/api-base'
 import { useNodeMediaUpload } from '@/composables/useNodeMediaUpload'
@@ -84,10 +87,28 @@ function isVideoTimeline(value: unknown): value is VideoTimeline {
 }
 const timelineCard = computed(() => (isVideoTimeline(props.data.timeline) ? props.data.timeline : null))
 const renderEnabled = computed(() => import.meta.env.VITE_VIDEO_TIMELINE_RENDER_ENABLED === 'true')
-const emit = defineEmits<{ 'request-timeline-edit': [] }>()
+/** P1.4：就地浮层编辑态。 */
+const timelineEditorOpen = ref(false)
+const timelineSaveError = ref('')
 
 /** P1.3：竖屏节点（h>w）让卡片时间线片段纵向堆叠，避免横线挤压。 */
 const timelinePortrait = computed(() => displaySize.value.height > displaySize.value.width)
+
+async function commitTimelineOps(ops: TimelineOp[]) {
+  if (!sessionId.value || !timelineCard.value) return
+  const res = await submitTimelineOps({ sessionId: sessionId.value, nodeId: props.id, ops })
+  if (!res.ok) {
+    timelineSaveError.value = res.error ?? '保存失败'
+    return // 保留浮层编辑态，不静默丢弃
+  }
+  timelineSaveError.value = ''
+  timelineEditorOpen.value = false // 服务端回读为准；画布经 WS 刷新节点
+}
+
+function openTimelineEditor() {
+  timelineSaveError.value = ''
+  timelineEditorOpen.value = true
+}
 
 /** P1.3：播放取片段真实 url（create 时从上游复制），复用现有沉浸式预览壳，不造播放器。 */
 function requestTimelinePlay(payload: { url: string; title: string; estimated: boolean }) {
@@ -197,7 +218,7 @@ function openMediaInspector(e?: Event) {
       :render-enabled="renderEnabled"
       :portrait="timelinePortrait"
       @request-render="requestTimelineRender"
-      @request-edit="emit('request-timeline-edit')"
+      @request-edit="openTimelineEditor"
       @request-play="requestTimelinePlay"
     />
     <div
@@ -360,4 +381,13 @@ function openMediaInspector(e?: Event) {
       />
     </div>
   </NeoBaseNode>
+  <VideoTimelineEditorOverlay
+    v-if="timelineEditorOpen && timelineCard"
+    :node-id="id"
+    :timeline="timelineCard"
+    :save-error="timelineSaveError"
+    @close="timelineEditorOpen = false"
+    @commit="commitTimelineOps"
+    @preview="requestTimelinePlay"
+  />
 </template>
