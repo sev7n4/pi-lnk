@@ -34,6 +34,7 @@ function mmss(sec: number) {
     class="tl-clip"
     :class="{ 'is-selected': selected }"
     data-tl-clip
+    data-vt-clip
     :data-node-id="track.nodeId"
     :style="{ left: leftPx, width: `${widthPx}px` }"
     :title="`${index + 1}. ${track.title} · ${mmss(clipDurationSec(track))}`"

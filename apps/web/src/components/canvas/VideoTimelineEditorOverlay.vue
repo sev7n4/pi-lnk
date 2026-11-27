@@ -2,6 +2,11 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { clipDurationSec, visualDurationSec, type TimelineOp, type VideoTimeline } from '@lnkpi/shared'
 import { createEditSession, type VideoTimelineEditSession } from '@/composables/useVideoTimelineEditSession'
+import { useTimelineAxis } from '@/components/timeline/useTimelineAxis'
+import TimelineRuler from '@/components/timeline/TimelineRuler.vue'
+import TimelinePlayhead from '@/components/timeline/TimelinePlayhead.vue'
+import TimelineClip from '@/components/timeline/TimelineClip.vue'
+import TimelineAudioLane from '@/components/timeline/TimelineAudioLane.vue'
 
 const props = defineProps<{
   nodeId: string
@@ -24,6 +29,7 @@ const emit = defineEmits<{
 
 const session: VideoTimelineEditSession = createEditSession(props.timeline, props.sources)
 const previewTimeline = computed(() => session.preview.value.timeline ?? props.timeline)
+/** 播放头：全局视觉轴坐标（0..visualDurationSec），与 ruler/竖线/range 共享。 */
 const playheadSec = ref(0)
 const selectedNodeId = ref<string | null>(null)
 
@@ -36,24 +42,53 @@ const visualTracks = computed(() => {
 })
 const audioTracks = computed(() => previewTimeline.value.tracks.filter((x) => x.type === 'audio'))
 const totalSec = computed(() => visualDurationSec(previewTimeline.value))
+
+/** 共享坐标系：总时长变化时同步给 axis（纯 UI 态，不写 op）。 */
+const axis = useTimelineAxis({ totalSec: () => totalSec.value, viewportWidth: () => 720 })
+
+/** 每个视觉片段在全局轴上的起点（累计前面片段时长）。 */
+const visualStarts = computed(() => {
+  const starts = new Map<string, number>()
+  let acc = 0
+  for (const t of visualTracks.value) {
+    starts.set(t.nodeId, acc)
+    acc += clipDurationSec(t)
+  }
+  return starts
+})
+
+/** 吸附候选：片段边界 + 两端（剪映「吸附到剪辑点」范式）。 */
+const snapEdges = computed(() => {
+  const edges = [0, totalSec.value]
+  for (const t of visualTracks.value) {
+    const start = visualStarts.value.get(t.nodeId) ?? 0
+    edges.push(start, start + clipDurationSec(t))
+  }
+  return edges
+})
+
 const opSummary = computed(() => session.opCount.value ? `${session.opCount.value} 项待提交操作` : '暂无未提交操作')
 
 function mmss(sec: number) {
   const v = Math.max(0, Math.round(sec))
   return `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`
 }
-function widthPct(sec: number) {
-  return totalSec.value ? `${(sec / totalSec.value) * 100}%` : '0%'
-}
 function apply(op: TimelineOp) {
   session.applyOp(op)
 }
 
-/** 分割：播放头必须落在选中片段当前有效区间内（reducer 再校验一次）。 */
+/**
+ * 分割：竖线是全局视觉轴坐标，reducer.split 用源内坐标。
+ * 先定位选中片段的全局起点，再换算：at_sec = sourceInSec + (playhead - 全局起点)。
+ */
 function splitSelected() {
   const id = selectedNodeId.value
   if (!id) return
-  apply({ op: 'split', node_id: id, at_sec: playheadSec.value })
+  const track = previewTimeline.value.tracks.find((x) => x.nodeId === id)
+  if (!track) return
+  const inSec = track.sourceInSec ?? 0
+  const visualStart = visualStarts.value.get(id) ?? 0
+  apply({ op: 'split', node_id: id, at_sec: inSec + (playheadSec.value - visualStart) })
 }
 function removeSelected() {
   if (!selectedNodeId.value) return
@@ -73,6 +108,17 @@ function trimSelectedHead() {
   const track = previewTimeline.value.tracks.find((x) => x.nodeId === id)
   if (!track) return
   apply({ op: 'trim', node_id: id, source_in_sec: (track.sourceInSec ?? 0) + 0.5, source_out_sec: track.sourceOutSec ?? track.durationSec })
+}
+function onTrim(payload: { nodeId: string; edge: 'in' | 'out'; deltaSec: number }) {
+  const track = previewTimeline.value.tracks.find((x) => x.nodeId === payload.nodeId)
+  if (!track) return
+  const inSec = track.sourceInSec ?? 0
+  const outSec = track.sourceOutSec ?? track.durationSec
+  if (payload.edge === 'in') {
+    apply({ op: 'trim', node_id: payload.nodeId, source_in_sec: Math.max(0, inSec + payload.deltaSec), source_out_sec: outSec })
+  } else {
+    apply({ op: 'trim', node_id: payload.nodeId, source_in_sec: inSec, source_out_sec: Math.max(inSec + 0.1, outSec + payload.deltaSec) })
+  }
 }
 function previewSelected() {
   if (!selectedNodeId.value) return
@@ -115,48 +161,57 @@ const panelStyle = computed(() => {
         <div class="vtm-transport">
           <button type="button" class="vtm-btn" data-vt-preview title="播放选中片段" :disabled="!selectedNodeId" @click="previewSelected">▶ 播放</button>
           <span class="vtm-time" data-vt-time>{{ mmss(playheadSec) }}/{{ mmss(totalSec) }}</span>
+          <!-- 精确输入滑杆：与贯穿竖线绑定同一 playheadSec（剪映：滑杆精调 + 竖线拖拽） -->
           <input
             class="vtm-playhead"
             data-vt-playhead
             type="range"
             min="0"
-            :max="Math.max(1, Math.ceil(totalSec))"
-            step="0.5"
+            :max="Math.max(1, totalSec)"
+            step="0.1"
             :value="playheadSec"
             @input="playheadSec = Number(($event.target as HTMLInputElement).value)"
           />
+          <button type="button" class="vtm-btn" data-vt-zoom-out title="缩小时间轴" @click="axis.zoomOut()">−</button>
+          <span class="vtm-zoom">{{ axis.zoom.value.toFixed(1) }}×</span>
+          <button type="button" class="vtm-btn" data-vt-zoom-in title="放大时间轴" @click="axis.zoomIn()">＋</button>
         </div>
 
-        <div class="vtm-timeline">
-          <div class="vtm-ruler">
-            <span v-for="tick in 6" :key="tick">{{ mmss((totalSec / 5) * (tick - 1)) }}</span>
-          </div>
-          <div class="vtm-track" data-vt-visual-track>
-            <button
-              v-for="(track, i) in visualTracks"
-              :key="track.nodeId"
-              type="button"
-              class="vtm-clip"
-              :class="{ 'is-selected': selectedNodeId === track.nodeId }"
-              data-vt-clip
-              :style="{ width: widthPct(clipDurationSec(track)) }"
-              :title="`${track.title} · ${mmss(clipDurationSec(track))}`"
-              @click="selectedNodeId = track.nodeId; playheadSec = (track.sourceInSec ?? 0)"
-            >
-              <span class="vtm-clip-title">{{ i + 1 }}. {{ track.title }}</span>
-            </button>
-          </div>
-          <div v-for="idx in [0, 1]" :key="idx" class="vtm-audio-row">
-            <span class="vtm-audio-label">A{{ idx + 1 }}</span>
-            <div class="vtm-audio-lane">
-              <span
-                v-for="track in audioTracks.filter((x) => x.audioTrackIndex === idx)"
+        <!-- 共享滚动容器：ruler / 视觉轨 / 音轨 / 播放头在同一内容坐标系，横滑不错位 -->
+        <div class="vtm-timeline-scroll" data-vt-timeline-scroll>
+          <div class="vtm-timeline-content" :style="{ width: `${axis.contentWidth.value}px` }">
+            <TimelineRuler :axis="axis" @seek="playheadSec = $event" />
+
+            <div class="vtm-track" data-vt-visual-track>
+              <TimelineClip
+                v-for="(track, i) in visualTracks"
                 :key="track.nodeId"
-                class="vtm-audio-clip"
-                :title="`${track.title} · ${mmss(track.startSec)}`"
-                :style="{ left: widthPct(track.startSec), width: widthPct(track.durationSec) }"
+                :axis="axis"
+                :track="track"
+                :start-sec="visualStarts.get(track.nodeId) ?? 0"
+                :index="i"
+                :selected="selectedNodeId === track.nodeId"
+                @select="selectedNodeId = $event; playheadSec = visualStarts.get($event) ?? 0"
+                @trim="onTrim"
               />
             </div>
+
+            <TimelineAudioLane
+              v-for="idx in [0, 1] as const"
+              :key="idx"
+              :axis="axis"
+              :index="idx"
+              :tracks="audioTracks"
+            />
+
+            <!-- 贯穿竖线：覆盖 ruler + 视觉轨 + 音轨；拖动/点击定位 + 6px 吸附 -->
+            <TimelinePlayhead
+              :axis="axis"
+              :sec="playheadSec"
+              :snap-edges="snapEdges"
+              :height="160"
+              @seek="playheadSec = $event"
+            />
           </div>
         </div>
 
@@ -204,9 +259,7 @@ const panelStyle = computed(() => {
 .vtm-header,
 .vtm-transport,
 .vtm-actions,
-.vtm-footer,
-.vtm-ruler,
-.vtm-audio-row {
+.vtm-footer {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -225,24 +278,10 @@ const panelStyle = computed(() => {
 .vtm-btn--primary { color: var(--lnk-accent-text); border-color: var(--lnk-accent-border); }
 .vtm-time { font-variant-numeric: tabular-nums; color: var(--lnk-text-secondary); }
 .vtm-playhead { flex: 1; accent-color: var(--lnk-accent-text); }
-.vtm-ruler { justify-content: space-between; margin: 10px 0 4px; font-size: 10px; font-variant-numeric: tabular-nums; color: var(--lnk-text-secondary); }
-.vtm-track { display: flex; height: 52px; overflow: hidden; border-radius: 5px; background: var(--lnk-surface-sunken); }
-.vtm-clip {
-  position: relative;
-  flex-shrink: 0;
-  border: none;
-  border-right: 1px solid var(--lnk-border-subtle);
-  background: var(--lnk-accent-subtle);
-  color: var(--lnk-text-primary);
-  cursor: pointer;
-  overflow: hidden;
-}
-.vtm-clip.is-selected { outline: 2px solid var(--lnk-accent-text); outline-offset: -2px; }
-.vtm-clip-title { position: absolute; inset: 4px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.vtm-audio-row { margin-top: 6px; }
-.vtm-audio-label { width: 20px; font-size: 10px; color: var(--lnk-text-secondary); }
-.vtm-audio-lane { position: relative; flex: 1; height: 10px; border-radius: 3px; background: var(--lnk-surface-sunken); }
-.vtm-audio-clip { position: absolute; top: 0; height: 100%; border-radius: 3px; background: var(--lnk-accent-border); }
+.vtm-zoom { font-variant-numeric: tabular-nums; color: var(--lnk-text-secondary); min-width: 32px; text-align: center; }
+.vtm-timeline-scroll { overflow-x: auto; overflow-y: hidden; margin: 10px 0; }
+.vtm-timeline-content { position: relative; }
+.vtm-track { position: relative; height: 52px; overflow: hidden; border-radius: 5px; background: var(--lnk-surface-sunken); }
 .vtm-actions { margin-top: 12px; flex-wrap: wrap; }
 .vtm-summary { margin-top: 10px; color: var(--lnk-text-secondary); font-variant-numeric: tabular-nums; }
 .vtm-error { margin-top: 6px; color: var(--lnk-accent-text); }
