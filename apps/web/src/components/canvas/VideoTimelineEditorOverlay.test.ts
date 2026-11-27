@@ -98,3 +98,56 @@ describe('VideoTimelineEditorOverlay（P1.4 就地浮层）', () => {
     h.w.unmount()
   })
 })
+
+describe('VideoTimelineEditorOverlay（P2.3 贯穿播放头 + 横滑 + 坐标转换）', () => {
+  it('贯穿竖线存在、位置随 playheadSec、点击 ruler 定位', async () => {
+    const h = mountOverlay()
+    const ph = h.q('[data-tl-playhead]')!
+    expect(ph).not.toBeNull()
+    expect((ph as HTMLElement).style.left).toBe('0px') // playheadSec 初始 0
+    const head = h.q('[data-vt-playhead]') as HTMLInputElement
+    head.value = '3'
+    head.dispatchEvent(new Event('input', { bubbles: true }))
+    await tick()
+    expect((h.q('[data-tl-playhead]') as HTMLElement).style.left).toBe('72px') // 3*24
+    expect(h.q('[data-vt-time]')!.textContent).toContain('00:03')
+    h.w.unmount()
+  })
+
+  it('横滑容器存在，缩放按钮改 contentWidth（纯 UI 态不改 op）', async () => {
+    const t = base()
+    t.tracks[0]!.durationSec = 40; t.tracks[0]!.sourceOutSec = 40 // 总长 43s → 43*24=1032 > 视口 720
+    const w = mount(VideoTimelineEditorOverlay, { props: { nodeId: 'vt_1', timeline: t }, attachTo: document.body })
+    const q = (sel: string) => document.querySelector(sel) as HTMLElement | null
+    expect(q('[data-vt-timeline-scroll]')).not.toBeNull()
+    const content = q('.vtm-timeline-content') as HTMLElement
+    const w0 = content.style.width
+    q('[data-vt-zoom-in]')!.click()
+    await tick()
+    expect((q('.vtm-timeline-content') as HTMLElement).style.width).not.toBe(w0)
+    expect(q('[data-vt-summary]')!.textContent).toContain('暂无') // 缩放不写 op
+    w.unmount()
+  })
+
+  it('完成后提交的 split op 的 at_sec 是源内坐标（非全局）', async () => {
+    const t = base()
+    t.tracks[1]!.sourceInSec = 2; t.tracks[1]!.sourceOutSec = 6; t.tracks[1]!.durationSec = 4
+    const w = mount(VideoTimelineEditorOverlay, { props: { nodeId: 'vt_1', timeline: t }, attachTo: document.body })
+    const q = (sel: string) => document.querySelector(sel) as HTMLElement | null
+    const qa = (sel: string) => Array.from(document.querySelectorAll(sel)) as HTMLElement[]
+    qa('[data-vt-clip]')[1]!.click()
+    await tick()
+    const head = q('[data-vt-playhead]') as HTMLInputElement
+    head.value = '6' // 全局 6 = i1 全局起点 4 + 偏移 2 → 源内 2+2=4
+    head.dispatchEvent(new Event('input', { bubbles: true }))
+    await tick()
+    q('[data-vt-split]')!.click()
+    await tick()
+    expect(qa('[data-tl-clip]')).toHaveLength(3) // split 成功（若传全局 6 会 > sourceOut 6 被拒）
+    q('[data-vt-commit]')!.click()
+    await tick()
+    const ops = w.emitted('commit')![0]![0] as Array<Record<string, unknown>>
+    expect(ops).toContainEqual({ op: 'split', node_id: 'i1', at_sec: 4 })
+    w.unmount()
+  })
+})
