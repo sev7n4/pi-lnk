@@ -21,6 +21,8 @@ const ALLOWED_MOBILE = new Set([
   'MobileTabBar', 'MobileTaskSheet', 'MobileTopBar', 'MobileUndoToast', 'MobileViewerChrome',
   'MobileVideoTimelineTile', // P1.5 评审通过：列表式/44px 热区/长按排序为移动端专有交互，
                              // PC 端用 VideoTimelineCard + 浮层，非共享内容，不提升 presentation/
+  'VideoTimelineStudio',     // P2.6 评审通过：移动端全屏编辑壳（fixed inset 0 + 底部两级工具栏）
+                             // 为移动端专有交互，PC 端用居中浮层，非共享内容，不提升 presentation/
   'ProfilePane',
 ])
 

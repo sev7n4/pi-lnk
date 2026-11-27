@@ -406,6 +406,12 @@ function isVideoTimeline(value: unknown): value is VideoTimeline {
   return t.version === 1 && Array.isArray(t.trackOrder) && Array.isArray(t.tracks) && !!t.export
 }
 const timelineCard = computed(() => (props.type === 'video' && isVideoTimeline(props.data?.timeline) ? props.data!.timeline as VideoTimeline : null))
+/** P2.6：全屏编辑器预览区复用节点请求的 videoSettings.aspectRatio，非法值不猜不占位。 */
+const timelineAspectRatio = computed(() => {
+  const settings = (props.data?.videoSettings ?? {}) as { aspectRatio?: unknown }
+  const ratio = settings.aspectRatio
+  return typeof ratio === 'string' && /^\d+\s*:\s*\d+$/.test(ratio.trim()) ? ratio.trim() : undefined
+})
 /** 竖屏时间线：列表在 tile 内按高度方向堆叠（与 PC 收起态同一判据）。 */
 const timelinePortrait = computed(() => tileSize.value.height > tileSize.value.width)
 
@@ -673,6 +679,7 @@ defineExpose({ showHint })
         :node-id="id ?? ''"
         :timeline="timelineCard"
         :portrait="timelinePortrait"
+        :aspect-ratio="timelineAspectRatio"
       />
     </div>
     <div v-else-if="type === 'video' && data?.url" class="mobile-node-media-box">

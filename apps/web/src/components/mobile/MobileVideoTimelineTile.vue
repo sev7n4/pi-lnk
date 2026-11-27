@@ -6,15 +6,15 @@ import { useLongPress } from '@/composables/useLongPress'
 import { useCanvasEditorStore } from '@/stores/canvasEditor'
 import { fetchTimelineSources, submitTimelineOps, type TimelineSource } from '@/composables/useVideoTimelineEdit'
 import { resolveMediaUrl } from '@/services/api-base'
-import VideoTimelineEditorOverlay from '@/components/canvas/VideoTimelineEditorOverlay.vue'
+import VideoTimelineStudio from '@/components/mobile/VideoTimelineStudio.vue'
 
 /**
  * P1.5 移动端列表式时间线 tile。
  *
  * ⭐ 自包含：NodeTileView 是纯渲染共享瓦片（零 store/router 依赖），本组件作为
  *   `components/mobile/` 下的呈现，自行持有交互逻辑——播放走 canvasEditor store
- *   的 `openMediaPreview`（复用 P1.3 沉浸式预览壳，不造播放器）；编辑复用 PC 的
- *   `VideoTimelineEditorOverlay`（Teleport 到 body，不撑破 320px 外框）；op 提交
+ *   的 `openMediaPreview`（复用 P1.3 沉浸式预览壳，不造播放器）；编辑打开 P2.6 的
+ *   `VideoTimelineStudio` 全屏壳（Teleport 到 body，不撑破 320px 外框）；op 提交
  *   走 `submitTimelineOps`（双通道同一写治理，服务端回读为准）。
  *
  * ⚠️ 手势隔离：本 tile 内嵌在 `MobileNodeTile` 壳的 touch/click 监听域内。根 section
@@ -26,6 +26,8 @@ const props = defineProps<{
   nodeId: string
   timeline: VideoTimeline
   portrait?: boolean
+  /** P2.6：来自节点 data.videoSettings.aspectRatio，透传给全屏编辑器预览区。 */
+  aspectRatio?: string
 }>()
 
 const emit = defineEmits<{
@@ -93,7 +95,7 @@ function remove(index: number) {
   void applyTileOp({ op: 'remove', node_id: track.nodeId })
 }
 
-// 编辑浮层：复用 PC 的 VideoTimelineEditorOverlay（分割/裁剪/删除/undo/redo/commit）。
+// 编辑态：P2.6 打开移动端全屏编辑器（分割/裁剪/删除/undo/redo/commit）。
 const editorOpen = ref(false)
 const saveError = ref('')
 /** P2.5：打开浮层前拉画布素材源，供 add_audio 等 op 校验真实节点。 */
@@ -164,15 +166,17 @@ async function commitOps(ops: TimelineOp[]) {
       </span>
     </div>
 
-    <VideoTimelineEditorOverlay
+    <VideoTimelineStudio
       v-if="editorOpen"
       :node-id="nodeId"
       :timeline="timeline"
       :sources="editorSources"
+      :aspect-ratio="aspectRatio"
       :save-error="saveError"
       @close="editorOpen = false"
       @commit="commitOps"
       @preview="requestPlay"
+      @request-render="editorOpen = false"
     />
   </section>
 </template>

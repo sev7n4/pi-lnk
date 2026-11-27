@@ -8,6 +8,7 @@ vi.mock('@/stores/canvasEditor', () => ({ useCanvasEditorStore: () => ({ openMed
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { sessionId: 's1' } }) }))
 vi.mock('@/composables/useVideoTimelineEdit', () => ({ submitTimelineOps: vi.fn().mockResolvedValue({ ok: true }) }))
 
+import MobileVideoTimelineTile from '@/components/mobile/MobileVideoTimelineTile.vue'
 import NodeTileView from './NodeTileView.vue'
 
 const timeline: VideoTimeline = {
@@ -30,6 +31,17 @@ describe('NodeTileView timeline 分支（P1.5 移动端接入）', () => {
     expect(w.text()).toContain('镜头A')
     expect(w.find('video.mobile-node-media').exists()).toBe(false)
     expect(w.find('.mobile-node-placeholder').exists()).toBe(false)
+  })
+
+  it('P2.6：节点 videoSettings.aspectRatio 透传给全屏编辑器（不用 16:9 兜底）', () => {
+    const w = mount(NodeTileView, {
+      props: {
+        id: 'vt_1', type: 'video',
+        data: { timeline, status: 'completed', videoSettings: { aspectRatio: '9:16' } },
+      },
+    })
+    expect(w.findComponent(MobileVideoTimelineTile).props('aspectRatio')).toBe('9:16')
+    w.unmount()
   })
 
   it('video 节点无 timeline（普通成片）⇒ 仍走 video 媒体分支，不回归', () => {
