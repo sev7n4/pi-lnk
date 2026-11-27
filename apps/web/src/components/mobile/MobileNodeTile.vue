@@ -59,6 +59,8 @@ const props = defineProps<{
     imageAspect?: string
     imageResolution?: string
     videoSettings?: unknown
+    /** P1.5：视频时间线草稿数据（create 时写入，保存≠渲染）；有则走列表式 tile。 */
+    timeline?: unknown
     /**
      * 媒体属性摘要（走查②，2026-10-24）：PC 三卡由 `MediaInfoSummary`
      * 渲染「尺寸/分辨率 · 比例 · 大小」（视频另有时长/格式），移动端瓦片

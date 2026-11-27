@@ -115,6 +115,11 @@
       "prod_refs": []
     },
     {
+      "name": "NodeTileView.timeline.test.ts",
+      "kind": "test",
+      "prod_refs": []
+    },
+    {
       "name": "NodeTileView.vue",
       "kind": "vue",
       "prod_refs": [

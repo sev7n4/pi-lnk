@@ -19,6 +19,8 @@ const ALLOWED_MOBILE = new Set([
   'MobileNodeViewer',
   'MobileNodeWaveform', 'MobileReadingSurface', 'MobileSaveStatus', 'MobileSheet',
   'MobileTabBar', 'MobileTaskSheet', 'MobileTopBar', 'MobileUndoToast', 'MobileViewerChrome',
+  'MobileVideoTimelineTile', // P1.5 评审通过：列表式/44px 热区/长按排序为移动端专有交互，
+                             // PC 端用 VideoTimelineCard + 浮层，非共享内容，不提升 presentation/
   'ProfilePane',
 ])
 

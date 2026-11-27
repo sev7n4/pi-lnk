@@ -84,7 +84,7 @@
       "prod_refs": [
         "components/canvas/NodeRenderer.vue"
       ],
-      "lines": 303
+      "lines": 305
     },
     {
       "name": "NodeTileView.vue",
@@ -92,7 +92,7 @@
       "prod_refs": [
         "components/mobile/MobileNodeTile.vue"
       ],
-      "lines": 1419
+      "lines": 1448
     },
     {
       "name": "CanvasPage.vue",
