@@ -80,7 +80,7 @@ function requestRender() {
       <span class="vt-card__time">{{ mmss(totalSec) }}/{{ mmss(totalSec) }}</span>
       <button
         type="button"
-        class="vt-card__icon"
+        class="vt-card__icon nodrag"
         data-timeline-edit
         title="编辑时间线（与 agent 共用同一套操作）"
         @pointerdown.stop
@@ -89,7 +89,7 @@ function requestRender() {
       <button
         v-if="playableTrack"
         type="button"
-        class="vt-card__play"
+        class="vt-card__play nodrag"
         data-timeline-play
         :title="playTitle()"
         @pointerdown.stop
@@ -97,7 +97,7 @@ function requestRender() {
       >▶</button>
       <button
         type="button"
-        class="vt-card__export"
+        class="vt-card__export nodrag"
         data-timeline-export
         :disabled="!renderEnabled || status === 'queued' || status === 'rendering'"
         :title="exportTitle()"

@@ -100,6 +100,9 @@ describe('VideoTimelineCard', () => {
     const w = mountCard()
     for (const sel of ['[data-timeline-edit]', '[data-timeline-play]', '[data-timeline-export]']) {
       const el = w.get(sel)
+      // ⭐ 仅靠 @pointerdown.stop 挡不住 Vue Flow 的 d3-drag（真实浏览器实证
+      //   CDP 拖按钮仍移动节点）⇒ 必须同时挂 nodrag 类，由 Vue Flow 自己跳过。
+      expect(el.classes(), `${sel} 须有 nodrag 类`).toContain('nodrag')
       let bubbled = false
       w.element.addEventListener('pointerdown', () => { bubbled = true })
       el.trigger('pointerdown')
