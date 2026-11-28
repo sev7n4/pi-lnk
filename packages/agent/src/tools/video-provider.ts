@@ -466,7 +466,8 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms))
 }
 
-function isAgnesBaseUrl(baseUrl?: string): boolean {
+/** agnes 网关判定（studio 侧队列满重提也用；导出避免 host 判定逻辑被复制）。 */
+export function isAgnesBaseUrl(baseUrl?: string): boolean {
   const hostname = hostnameFromBaseUrl(baseUrl)
   return Boolean(hostname && isGatewayHost(hostname, ['agnes-ai.com', 'agnes-ai.cn']))
 }
