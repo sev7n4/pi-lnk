@@ -40,7 +40,10 @@ const AGNES_PROFILE: Omit<ImageModelProfile, 'gatewayModelId'> = {
   sizeWire: 'pixel',
   responseMode: 'sync_url',
   maxRefs: 16,
-  maxN: 4,
+  // 2026-11-28 生产取证（会话 cmx05m9d2）：agnes-image-2.1-flash 上游对 n>1 一律
+  // `Image API 400: n must be 1`，23/23 生图全失败。旧值 4 是猜测、上游真实约束为 1。
+  // 收敛到 1 后 clampImageGenerationInput 会写 droppedFields 记录用户原始 count 意图。
+  maxN: 1,
   allowedResolutions: RATIO_RESOLUTIONS,
   resolutionCase: 'lower',
   pollIntervalMs: 0,

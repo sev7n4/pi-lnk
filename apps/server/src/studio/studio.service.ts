@@ -1109,11 +1109,6 @@ export class StudioService {
     // P1 扣费接管（spec §P1.5）：先解析模型再报价——quote 带 modelKey 才能命中主体行
     // （成本×利润价），否则落 legacy 家族行导致展示≠扣费。
     const resolved = await this.resolver.resolveForGeneration(userId, model, 'image')
-    const quote = await this.pricing.quote(
-      { capability: 'image', count: n, resolution, modelKey: resolved.modelName },
-      userId,
-    )
-    const cost = quote.credits
     const { mergedText, skippedMerge, mergeDegraded, referenceImages } = await this.resolveMergedPrompt(
       prompt,
       refs,
@@ -1135,6 +1130,15 @@ export class StudioService {
       // B2 S2-1c：注入 DB 目录缓存 rows，admin 新增模型不再被常量目录静默 fallback。
       catalogRows: currentCatalogEntries(),
     })
+    // ⭐ 2026-11-28 生图 n=1 约束：报价与记账都用 profile clamp 后的 built.n，
+    // 而不是用户请求的 n。否则 agnes 上游强制 n=1 时会「按 3 张收费、只出 1 张」。
+    // built.meta.droppedFields 已记录 requested→effective 的降级，无需新字段。
+    const effectiveN = built.n
+    const quote = await this.pricing.quote(
+      { capability: 'image', count: effectiveN, resolution, modelKey: resolved.modelName },
+      userId,
+    )
+    const cost = quote.credits
     const modelId = resolved.source === 'user' ? resolved.modelName : built.modelId
     const storeModel =
       resolved.source === 'user' ? model ?? built.meta.modelKey : built.meta.modelKey
@@ -1162,7 +1166,7 @@ export class StudioService {
               modelId,
               aspectRatio,
               resolution,
-              count: n,
+              count: effectiveN,
               size: built.size,
               pixelSize,
               referenceImages,

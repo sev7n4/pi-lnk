@@ -114,7 +114,7 @@ describe('P1.5 计费侧 quote 参数契约（漏参 ⇒ 展示≠扣费）', ()
     svc = moduleRef.get(StudioService)
   })
 
-  it('generateImage：quote 必须带 modelKey（命中图像主体行），且先解析模型后报价', async () => {
+  it('generateImage：quote 必须带 modelKey（命中图像主体行），且按 profile clamp 后的实际张数计费', async () => {
     await svc.generateImage('u1', '一张图', IMAGE_MODEL, '1:1', [], [], '2K', 2, {})
 
     expect(quoteMock).toHaveBeenCalledTimes(1)
@@ -122,7 +122,22 @@ describe('P1.5 计费侧 quote 参数契约（漏参 ⇒ 展示≠扣费）', ()
     expect(q.capability).toBe('image')
     expect(q.modelKey).toBe(IMAGE_MODEL)
     expect(q.resolution).toBe('2K')
-    expect(q.count).toBe(2)
+    // seedream 的 maxN=1：用户请求 2 张但上游只出 1 张，按实际 1 张计费。
+    // 2026-11-28 起 generateImage 统一按 built.n（clamp 后）计费，修正旧实现
+    // 「按请求数收费、按能力上限产出」的多收费（agnes 的 n must be 1 事故同族）。
+    expect(q.count).toBe(1)
+  })
+
+  it('generateImage：agnes 模型 count=3 ⇒ quote/metadata/provider 全部按 clamp 后 n=1 计费与生成', async () => {
+    // 2026-11-28 生产取证：agnes 上游强制 n=1，旧实现按用户 count=3 收费却只出 1 张。
+    await svc.generateImage('u1', '一张图', 'agnes-image-2.1-flash', '16:9', [], [], '1K', 3, {})
+
+    const q = quoteMock.mock.calls[0]![0] as PricingQuery & { modelKey?: string }
+    expect(q.count).toBe(1)
+    expect(q.modelKey).toBe('agnes-image-2.1-flash')
+
+    const providerOptions = imageGenerate.mock.calls[0]?.[1] as { n?: number } | undefined
+    expect(providerOptions?.n).toBe(1)
   })
 
   it('generateImageVariation：quote 必须带 modelKey（变体主体行 spec="*"）', async () => {

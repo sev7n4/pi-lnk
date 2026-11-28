@@ -57,6 +57,25 @@ describe('resolveImageModelProfile', () => {
     expect(p.responseMode).toBe('sync_url')
   })
 
+  // 2026-11-28 生产取证：会话 cmx05m9d2 的 23 张图全失败于
+  // `Image API 400: n must be 1`，nativeParams.n=3。agnes 上游真实约束是 n=1，
+  // 旧 profile.maxN=4 是猜测值 ⇒ 强制收敛并记录降级（复用既有 droppedFields 数据面）。
+  it('clamps agnes image count to n=1 (upstream requires n must be 1)', () => {
+    for (const model of ['agnes-image-2.0-flash', 'agnes-image-2.1-flash', 'agnes-image-2.5-flash']) {
+      const p = resolveImageModelProfile(model, model)
+      expect(p.maxN).toBe(1)
+      const r = clampImageGenerationInput(p, {
+        n: 3,
+        resolution: '1K',
+        referenceImages: [],
+      })
+      expect(r.n).toBe(1)
+      expect(r.droppedFields).toEqual(
+        expect.arrayContaining([expect.objectContaining({ field: 'n' })]),
+      )
+    }
+  })
+
   it('maps agnes-image-2.5-flash to the same extra_body wire as 2.1', () => {
     const p = resolveImageModelProfile('agnes-image-2.5-flash', 'agnes-image-2.5-flash')
     expect(p.refWire).toBe('agnes_extra_body')
