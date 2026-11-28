@@ -142,3 +142,27 @@ describe('mapMessageToErrorCode · rate_limited（信号层 P1 配套工单，sp
     expect(mapMessageToErrorCode('GoUsageLimitError: free tier quota exhausted')).toBe('unknown')
   })
 })
+
+describe('mapMessageToErrorCode · video_queue_full（2026-11-28 生产取证）', () => {
+  it('agnes 503 queue_full 原文 → rate_limited（此前 15/17 全落 unknown）', () => {
+    // 生产原文，未造样本：Agnes video create 503 + code/message 双字段
+    expect(
+      mapMessageToErrorCode(
+        'Agnes video create 503: {"code":"video_queue_full","message":"video queue is full, please retry later (request id: 20261102174520474936102GP5DQImi)","data":null}',
+      ),
+    ).toBe('rate_limited')
+  })
+
+  it('无状态码的队列满文案 → rate_limited（两种分隔符都覆盖）', () => {
+    expect(mapMessageToErrorCode('video queue is full, please retry later')).toBe('rate_limited')
+    expect(mapMessageToErrorCode('video_queue_full')).toBe('rate_limited')
+  })
+
+  it('优先级保持：timeout + queue_full 混合文本仍归 upstream_timeout', () => {
+    expect(mapMessageToErrorCode('timeout waiting, then video_queue_full')).toBe('upstream_timeout')
+  })
+
+  it('不误伤：无 queue_full 字面量的普通 503 保持 unknown', () => {
+    expect(mapMessageToErrorCode('Agnes video create 503: internal error')).toBe('unknown')
+  })
+})
