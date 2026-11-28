@@ -35,6 +35,7 @@ function makeController(overrides: Partial<Record<string, unknown>> = {}) {
   const agentService = {
     checkIdempotencyKey: vi.fn().mockResolvedValue(null),
     findDuplicateIntent: vi.fn().mockResolvedValue(null),
+    getDuplicateIntent: vi.fn().mockResolvedValue(null),
     startConversationRun: vi
       .fn()
       .mockResolvedValue({ accepted: true, threadId: 'T1', sinceSeq: 7 }),

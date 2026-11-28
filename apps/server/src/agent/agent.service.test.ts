@@ -392,6 +392,34 @@ create: agentMessageCreate,
     await expect(drain()).rejects.toThrow(BadRequestException)
     await expect(drain()).rejects.toThrow(/最多添加/)
   })
+
+  it('失败轮写 error 而非 completed（失败不污染近窗去重）', async () => {
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([
+      piEvent('error', {
+        error: { message: '400 invalid_request_error: messages[55] missing tool_call_id' },
+      }),
+    ])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+
+    for await (const _event of service.streamConversation(
+      's1',
+      '继续推进',
+      'u1',
+      't1',
+      'ik-failed-turn',
+    )) {
+      // drain
+    }
+
+    expect(idempotencyRecordUpdateMany).toHaveBeenCalledWith({
+      where: { idempotencyKey: 'ik-failed-turn', status: 'processing' },
+      data: { status: 'error', resultSummary: expect.stringContaining('400') },
+    })
+    expect(idempotencyRecordUpdateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: 'completed' }) }),
+    )
+  })
 })
 
 describe('AgentService idempotency', () => {
@@ -516,6 +544,14 @@ create: agentMessageCreate,
     await service.completeIdempotencyKey('ik-123', longText)
     const call = idempotencyRecordUpdateMany.mock.calls[0][0] as { data: { resultSummary: string } }
     expect(call.data.resultSummary.length).toBe(500)
+  })
+
+  it('failIdempotencyKey writes error status with truncated reason', async () => {
+    await service.failIdempotencyKey('ik-123', 'x'.repeat(600))
+    expect(idempotencyRecordUpdateMany).toHaveBeenCalledWith({
+      where: { idempotencyKey: 'ik-123', status: 'processing' },
+      data: { status: 'error', resultSummary: 'x'.repeat(500) },
+    })
   })
 })
 

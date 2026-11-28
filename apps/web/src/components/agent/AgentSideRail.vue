@@ -1830,7 +1830,17 @@ function onRetryTurn() {
  * @param branchFromEntryId ③ 重跑：pi 会话内目标消息的 entryId。提供时后端先 fork 出
  *   「截断到该消息之前」的新分支线程，再在新线程上跑本轮（真正的后端线程截断）。
  */
-async function sendMessage(message: string, branchFromEntryId?: string, isRetry = false) {
+let lastSubmittedMessage = ''
+
+/** 去重拒绝后的显式逃生口：用被拒原话强制重发一次（随机幂等键仍由服务端校验）。 */
+function resendRefused() {
+  const msg = agent.turnRefusalDetail?.message
+  agent.setTurnRefusal(null)
+  if (msg) void sendMessage(msg, undefined, true, true)
+}
+
+async function sendMessage(message: string, branchFromEntryId?: string, isRetry = false, force = false) {
+  lastSubmittedMessage = message
   // §5.3（③ 已确认）：pending 期间对话输入一律按 answer，自由文本填充首个未答问题。
   // 简化：B-6 卡片在答满后已自动提交消失，pending 存在 = 至少一题未答 → 首个问题即目标。
   // 单一真相 = 时间线 question part（pending_answer），不再读组件级 ref。
@@ -1963,6 +1973,8 @@ async function sendMessage(message: string, branchFromEntryId?: string, isRetry 
             mentionedKeys,
             // ③ 重跑：后端线程截断切点（缺省 = 普通发送，不 fork）
             branchFromEntryId: branchFromEntryId || undefined,
+            // 2026-11-28：显式强制重发只跳过近窗意图去重，随机幂等键仍生效。
+            force: force || undefined,
           },
           { signal: streamAbortController.signal, idempotencyKey },
         )
@@ -2768,8 +2780,21 @@ function handleEvent(event: { type: string; data: unknown }) {
     // 而不是让界面停在转圈、最后冒出一个别人的回答（这正是漂移事故下用户侧的困惑来源）。
     // 拒绝**不得**退化成新开一轮（对齐 Codex NotSubmittedReason）：不落库、不新建气泡。
     case 'turn_not_submitted': {
-      const d = event.data as { reason?: 'not_idle' | 'not_steerable' }
-      agent.setTurnRefusal(d.reason === 'not_steerable' ? 'not_steerable' : 'not_idle')
+      const d = event.data as {
+        reason?: 'not_idle' | 'not_steerable' | 'duplicate_intent'
+        detail?: { status?: string; createdAt?: string; hasResult?: boolean }
+      }
+      if (d.reason === 'duplicate_intent') {
+        // 真实原因已由服务端 text_delta 落在气泡里；这里只负责保留被拒原话与重发出口。
+        agent.setTurnRefusal('duplicate_intent', {
+          message: lastSubmittedMessage,
+          status: d.detail?.status,
+          createdAt: d.detail?.createdAt,
+          hasResult: d.detail?.hasResult,
+        })
+      } else {
+        agent.setTurnRefusal(d.reason === 'not_steerable' ? 'not_steerable' : 'not_idle')
+      }
       break
     }
     // P3 D4：回合裁定终态（终态收口由 isTurnTerminal 统一走）。此处补 queued 徽标
@@ -3915,11 +3940,26 @@ defineExpose({
               data-testid="turn-refusal-callout"
             >
               <p class="font-medium text-warning">
-                {{ agent.turnRefusal === 'not_steerable' ? '当前任务无法插话' : '你的消息已并入进行中的任务' }}
+                {{
+                  agent.turnRefusal === 'duplicate_intent'
+                    ? '这条内容未重复提交'
+                    : agent.turnRefusal === 'not_steerable'
+                      ? '当前任务无法插话'
+                      : '你的消息已并入进行中的任务'
+                }}
               </p>
-              <p class="mt-0.5 opacity-80">
+              <p v-if="agent.turnRefusal !== 'duplicate_intent'" class="mt-0.5 opacity-80">
                 {{ agent.turnRefusal === 'not_steerable' ? '请等待其完成后再试。' : '无需重复发送，进度会随当前回合继续。' }}
               </p>
+              <button
+                v-if="agent.turnRefusal === 'duplicate_intent'"
+                type="button"
+                class="mt-1 mr-1 rounded border border-warning-border bg-elevated px-2 py-0.5 text-[11px] font-medium text-warning hover:bg-warning-bg-hover"
+                data-testid="turn-refusal-force-resend"
+                @click="resendRefused()"
+              >
+                仍要发送
+              </button>
               <button
                 type="button"
                 class="mt-1 rounded border border-warning-border bg-elevated px-2 py-0.5 text-[11px] font-medium text-warning hover:bg-warning-bg-hover"

@@ -450,3 +450,13 @@ test("P3 subagent report kind：synthesis/partial/empty 分键累加渲染", () 
 	assert.match(out, /pi_runtime_subagent_report_total\{kind="partial"\} 2/);
 	assert.match(out, /pi_runtime_subagent_report_total\{kind="empty"\} 1/);
 });
+
+test("tool_call_sanitizer：剔除计数累计，未打点输出 0", () => {
+	const m = new Metrics();
+	m.observeToolCallSanitization(2, 3);
+	m.observeToolCallSanitization(1, 0);
+	const out = m.render(0, "test");
+	assert.match(out, /pi_runtime_tool_call_sanitized_calls_total 3/);
+	assert.match(out, /pi_runtime_tool_call_sanitized_results_total 3/);
+	assert.match(new Metrics().render(0, "test"), /pi_runtime_tool_call_sanitized_calls_total 0/);
+});

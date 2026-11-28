@@ -336,6 +336,7 @@ export type PiRunErrorKind =
 	| 'rate_limit'
 	| 'auth'
 	| 'context_overflow'
+	| 'invalid_input'
 	| 'unknown'
 
 export interface PiRunErrorInfo {
@@ -386,6 +387,12 @@ export function classifyPiRunError(event: PiRuntimeEvent): PiRunErrorInfo | null
 		lower.includes('maximum context')
 	) {
 		kind = 'context_overflow'
+	} else if (/invalid_request/i.test(text)) {
+		// 2026-11-28：与 shared/generationDiagnostics 的 invalid_input 规则同字面族，
+		// 但不带 \b —— 生产文本是 `invalid_request_error`，词边界会被下划线吃掉。
+		// 400 + invalid_request（含 json_parse_error / missing tool_call_id）是请求结构问题，
+		// 不是限流/超时；落 unknown 会让前端拿过期卡文案冒充失败原因。
+		kind = 'invalid_input'
 	}
 
 	let retry_hint: string | undefined
@@ -395,6 +402,8 @@ export function classifyPiRunError(event: PiRuntimeEvent): PiRunErrorInfo | null
 		retry_hint = '模型渠道限流，请稍后重试或切换渠道。'
 	} else if (kind === 'context_overflow') {
 		retry_hint = '本轮上下文超出模型窗口，请开启新对话或精简素材后重试。'
+	} else if (kind === 'invalid_input') {
+		retry_hint = '本轮请求结构不被模型支持，请开启新对话后重试；若仍失败请联系管理员。'
 	}
 
 	return { kind, message: text.slice(0, 400), retry_hint }

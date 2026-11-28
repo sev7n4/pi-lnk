@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   normalizeIntent,
   isRegenerationIntent,
+  isDedupEligibleIntent,
   INTENT_DEDUP_WINDOW_MS,
 } from './intent-dedup'
 
@@ -73,6 +74,34 @@ describe('isRegenerationIntent（P4 再生成语义放行）', () => {
 
   it('空串返回 false', () => {
     expect(isRegenerationIntent('')).toBe(false)
+  })
+})
+
+describe('isDedupEligibleIntent（P5 去重资格：只有生成意图参与近窗去重）', () => {
+  it('控制/继续类语句不参与（失败后必须能立即重发）', () => {
+    expect(isDedupEligibleIntent('继续推进')).toBe(false)
+    expect(isDedupEligibleIntent('继续')).toBe(false)
+    expect(isDedupEligibleIntent('下一步')).toBe(false)
+    expect(isDedupEligibleIntent('然后呢')).toBe(false)
+    expect(isDedupEligibleIntent('重试')).toBe(false)
+    expect(isDedupEligibleIntent('再试一次')).toBe(false)
+    expect(isDedupEligibleIntent('continue')).toBe(false)
+    expect(isDedupEligibleIntent('继续推进EP02分镜生成')).toBe(false)
+  })
+
+  it('明确生成/创作动作参与去重（保住红车双图防护面）', () => {
+    expect(isDedupEligibleIntent('生成红色的小汽车')).toBe(true)
+    expect(isDedupEligibleIntent('画一个logo')).toBe(true)
+    expect(isDedupEligibleIntent('制作一条视频')).toBe(true)
+    expect(isDedupEligibleIntent('帮我做一张海报')).toBe(true)
+    expect(isDedupEligibleIntent('generate a red car')).toBe(true)
+  })
+
+  it('再生成语义与闲聊都不参与', () => {
+    expect(isDedupEligibleIntent('再生成一张')).toBe(false)
+    expect(isDedupEligibleIntent('描述你的想法')).toBe(false)
+    expect(isDedupEligibleIntent('你好')).toBe(false)
+    expect(isDedupEligibleIntent('')).toBe(false)
   })
 })
 

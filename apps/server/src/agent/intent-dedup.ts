@@ -58,3 +58,56 @@ export function isRegenerationIntent(prompt: string): boolean {
   if (!prompt) return false
   return REGENERATION_PATTERNS.some((re) => re.test(prompt))
 }
+
+/**
+ * 控制/继续类语句：失败后恰恰最需要重发，绝不能进近窗去重。
+ * 优先级高于生成词（「继续推进EP02分镜生成」仍按控制语句放行）。
+ */
+const CONTROL_INTENT_PATTERNS: RegExp[] = [
+  /继续/,
+  /下一步/,
+  /然后/,
+  /接着/,
+  /往下/,
+  /重试/,
+  /再试/,
+  /retry/i,
+  /continue/i,
+  /go on/i,
+]
+
+/** 明确生成/创作动作：只有这一类才需要「同句重发至多产一份」的兜底。 */
+const GENERATION_INTENT_PATTERNS: RegExp[] = [
+  /生成/,
+  /绘制/,
+  /画/,
+  /创作/,
+  /制作/,
+  /出图/,
+  /生图/,
+  /做一[张个幅部条]/,
+  /视频/,
+  /海报/,
+  /插画/,
+  /图片/,
+  /image/i,
+  /generate/i,
+  /draw/i,
+  /paint/i,
+  /create/i,
+  /render/i,
+]
+
+/**
+ * 是否具备参与近窗意图去重的资格（2026-11-28 cmx05m9d2 误杀修复）。
+ *
+ * 原实现拿任意 prompt 的文本指纹做去重键，导致「继续推进」这类控制语句在
+ * 首轮失败后被当成「同句重发」挡掉，用户既看不到真实错误也无法重试。
+ * 本判定只放行明确生成意图；控制语句、再生成语义、闲聊一律不参与。
+ */
+export function isDedupEligibleIntent(prompt: string): boolean {
+  if (!prompt?.trim()) return false
+  if (isRegenerationIntent(prompt)) return false
+  if (CONTROL_INTENT_PATTERNS.some((re) => re.test(prompt))) return false
+  return GENERATION_INTENT_PATTERNS.some((re) => re.test(prompt))
+}

@@ -101,4 +101,31 @@ describe('AgentService.findDuplicateIntent（P4 意图级去重查询）', () =>
     const where = idempotencyRecordFindFirst.mock.calls[0][0].where
     expect(where.createdAt.gte.getTime()).toBeGreaterThanOrEqual(Date.now() - 30_000 - 1000)
   })
+
+  it('getDuplicateIntent 返回真实状态与摘要，供前端展示而非编造「已复用」', async () => {
+    const createdAt = new Date('2026-11-28T10:41:59.000Z')
+    idempotencyRecordFindFirst.mockResolvedValue({
+      id: 'rec-1',
+      status: 'completed',
+      resultSummary: null,
+      createdAt,
+    })
+
+    const hit = await service.getDuplicateIntent('t1', '生成红色的小汽车')
+
+    expect(hit).toEqual({
+      status: 'completed',
+      resultSummary: null,
+      createdAt,
+    })
+  })
+
+  it('getDuplicateIntent 未命中返回 null，不查库也返回 null', async () => {
+    idempotencyRecordFindFirst.mockResolvedValue(null)
+    expect(await service.getDuplicateIntent('t1', '生成红色的小汽车')).toBeNull()
+
+    idempotencyRecordFindFirst.mockClear()
+    expect(await service.getDuplicateIntent('t1', '')).toBeNull()
+    expect(idempotencyRecordFindFirst).not.toHaveBeenCalled()
+  })
 })

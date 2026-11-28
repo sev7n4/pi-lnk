@@ -280,12 +280,22 @@ export const useAgentStore = defineStore('agent', () => {
    *
    * 瞬时态：新回合开始（`addUserMessage`）时清位，不会跨回合误显示。
    */
-  const turnRefusal = ref<'not_idle' | 'not_steerable' | null>(null)
+  type TurnRefusalReason = 'not_idle' | 'not_steerable' | 'duplicate_intent'
+  /** 2026-11-28：服务端去重命中的真实事实（含被拒原话，供「仍要发送」复用）。 */
+  type TurnRefusalDetail = {
+    message?: string
+    status?: string
+    createdAt?: string
+    hasResult?: boolean
+  }
+  const turnRefusal = ref<TurnRefusalReason | null>(null)
+  const turnRefusalDetail = ref<TurnRefusalDetail | null>(null)
   /** P1 状态行：本回合错误原文（渲染层经 failureReason 映射为人话，禁用 JSON 工具摘要） */
   const turnError = ref<unknown>(null)
 
-  function setTurnRefusal(reason: 'not_idle' | 'not_steerable' | null) {
+  function setTurnRefusal(reason: TurnRefusalReason | null, detail?: TurnRefusalDetail | null) {
     turnRefusal.value = reason
+    turnRefusalDetail.value = detail ?? null
   }
   /**
    * PR1「让 Agent 诊断」：诊断抽屉点按钮后由 CanvasPage provide 写入预填文案，
@@ -372,6 +382,7 @@ export const useAgentStore = defineStore('agent', () => {
     turnError.value = null
     // TURN-IDENTITY PR3：新回合开始清掉「发言被拒」瞬时态，避免跨回合误显示
     turnRefusal.value = null
+    turnRefusalDetail.value = null
     messages.value.push({
       id: nextLocalMessageId(),
       role: 'user',
@@ -897,6 +908,7 @@ export const useAgentStore = defineStore('agent', () => {
     recovering.value = false
     // TURN-IDENTITY PR3：发言被拒的瞬时态也不跨回合残留
     turnRefusal.value = null
+    turnRefusalDetail.value = null
   }
 
 
@@ -1187,6 +1199,7 @@ export const useAgentStore = defineStore('agent', () => {
     lastTextDeltaAt.value = 0
     turnError.value = null
     turnRefusal.value = null
+    turnRefusalDetail.value = null
     // Epic 1（2026-11-03）：新会话重置本会话累计；幂等集 seenTxIds 保留（跨会话不误杀新交易）
     creditTxSpend.value = 0
     creditTxSeen.value = false
@@ -1235,6 +1248,7 @@ export const useAgentStore = defineStore('agent', () => {
     lastTextDeltaAt,
     turnError,
     turnRefusal,
+    turnRefusalDetail,
     setTurnRefusal,
     consumeQueued,
     markMessageUtteranceConsumed,

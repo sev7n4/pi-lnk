@@ -21,7 +21,7 @@ import { SessionsService } from '../sessions/sessions.service'
 import { AgentCanvasToolsService } from './agent-canvas-tools.service'
 import { AgentMemoryService } from './agent-memory.service'
 import { AgentService } from './agent.service'
-import { normalizeIntent, isRegenerationIntent } from './intent-dedup'
+import { normalizeIntent, isRegenerationIntent, isDedupEligibleIntent } from './intent-dedup'
 import { recordSessionSeen } from './generation-recovery/presence'
 import {
   loadRegistry,
@@ -78,6 +78,14 @@ class ConversationDto {
 
   @IsString()
   message!: string
+
+  /**
+   * 显式强制重发：仅跳过「同 thread + 同意图 + 近窗」这层兜底门。
+   * 随机幂等键（防网络重试重放）照旧生效，不由前端绕过。
+   */
+  @IsOptional()
+  @IsBoolean()
+  force?: boolean
 
   /** LangGraph thread；新建对话时前端换新 id，与画布 sessionId 解耦 */
   @IsOptional()
@@ -859,22 +867,41 @@ export class AgentController {
     const threadKey = dto.threadId || dto.sessionId
     const normalizedIntent = normalizeIntent(dto.message)
     if (
+      isDedupEligibleIntent(dto.message) &&
       normalizedIntent &&
       !isRegenerationIntent(dto.message) &&
-      (await this.agentService.findDuplicateIntent(threadKey, normalizedIntent))
+      !dto.force
     ) {
-      res.write(
-        `data: ${JSON.stringify({ type: 'turn_not_submitted', data: { reason: 'not_idle' } })}\n\n`,
-      )
-      res.write(
-        `data: ${JSON.stringify({
-          type: 'text_delta',
-          data: { text: '检测到相同内容已在生成 / 已生成，已为你复用，无需重复发送。' },
-        })}\n\n`,
-      )
-      res.write('data: [DONE]\n\n')
-      res.end()
-      return
+      const duplicate = await this.agentService.getDuplicateIntent(threadKey, normalizedIntent)
+      if (duplicate) {
+        // 2026-11-28：只陈述账本里真实存在的事实；没有产物就绝不声称「已为你复用」。
+        const hasResult = Boolean(duplicate.resultSummary?.trim())
+        res.write(
+          `data: ${JSON.stringify({
+            type: 'turn_not_submitted',
+            data: {
+              reason: 'duplicate_intent',
+              detail: {
+                status: duplicate.status,
+                createdAt: duplicate.createdAt.toISOString(),
+                hasResult,
+              },
+            },
+          })}\n\n`,
+        )
+        const text =
+          duplicate.status === 'processing'
+            ? '这条内容仍在处理中，未重复提交。'
+            : hasResult
+              ? `相同内容刚已完成：${duplicate.resultSummary}；未重复提交。`
+              : '相同内容在 1 分钟内已提交，但未找到可复用结果；如需重新生成请点「仍要发送」。'
+        res.write(
+          `data: ${JSON.stringify({ type: 'text_delta', data: { text } })}\n\n`,
+        )
+        res.write('data: [DONE]\n\n')
+        res.end()
+        return
+      }
     }
 
     try {

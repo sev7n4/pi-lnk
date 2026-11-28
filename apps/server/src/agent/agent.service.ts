@@ -36,7 +36,7 @@ import {
 import { buildSidebarBlock, buildImageRecoveryHint, buildImageInjectedNotice } from './pi-runtime/sidebar-block'
 import { decodeCursor, paginateVisibleRows } from './messages-cursor'
 import { runWithMessageSeq } from './agent-message-seq'
-import { normalizeIntent } from './intent-dedup'
+import { normalizeIntent, isDedupEligibleIntent } from './intent-dedup'
 // D1（2026-11-11）：回合终态单一判据。SSE 下发 / 计费 / 落库同源消费。
 import {
   classifyTurnEnd, deriveSignalsFromStream, outstandingToolCallIds,
@@ -1003,7 +1003,10 @@ export class AgentService implements OnModuleInit {
   ): AsyncGenerator<AgentStreamEvent> {
     // P4 意图级去重（根治规格 §8.3）：预计算归一化意图指纹，供 registerIdempotencyKey 落库 +
     // 控制器入口 findDuplicateIntent 近窗去重。与 HTTP 随机幂等键解耦。
-    const normalizedIntent = normalizeIntent(userMessage)
+    // 2026-11-28：只有生成意图才写指纹；控制/继续类语句留 null，失败后立即可重试。
+    const normalizedIntent = isDedupEligibleIntent(userMessage)
+      ? normalizeIntent(userMessage)
+      : undefined
 
     // Register idempotency key (if provided) before starting
     if (idempotencyKey) {
@@ -1068,7 +1071,7 @@ export class AgentService implements OnModuleInit {
             },
           }
           yield { type: 'done', data: {} }
-          if (idempotencyKey) await this.completeIdempotencyKey(idempotencyKey, '')
+          if (idempotencyKey) await this.failIdempotencyKey(idempotencyKey, 'fork_failed')
           return
         }
       } else {
@@ -1139,40 +1142,62 @@ export class AgentService implements OnModuleInit {
           yield event
         }
         if (idempotencyKey) {
-          await this.completeIdempotencyKey(idempotencyKey, '')
+          await this.failIdempotencyKey(idempotencyKey, 'runtime_unavailable')
         }
         return
       }
       // P0-①：会话跨轮常驻，为「每轮重建 / 防迟到删除」而生的进程内串行锁一并退役
       // （pi-runtime 侧已有 busy 409 守卫同键并发轮次）。
-      for await (const event of this.streamFromPiRuntime(
-        client,
-        sessionId,
-        userMessage,
-        userId,
-        // ③ 重跑：fork 后这就是新分支 threadId（未 fork 时 = 原 threadId || sessionId）
-        effectiveThreadId,
-        piContext,
-        { thinking, thinkingEffort },
-        // P1：dock 技能选择器 skillId 转接 pi-runtime forceSkills
-        skillId,
-        // K-1：dock 模型选择（BYOK 渠道）经 resolvePiSessionLlm 注入 pi 会话
-        model,
-        // P2 T6：run 发起方标识透传（预扣失败的用户 run 拒绝 / automation run 降级）
-        billingSource,
-        // 2026-11-04 实时补桥：drain 模式下 turn_settled 经 SessionEventBus 注入
-        // runEventStream（见 streamOpts.bridgeSettledToBus 注释；结算块在本方法内）
-        streamOpts,
-        // P3 多胶囊（末位追加，禁中段插参）
-        skillIds,
-      )) {
-        if (event.type === 'text_delta') {
-          assistantText += (event.data as { text: string }).text
+      // 2026-11-28：本轮是否以 error 收束决定幂等键写 completed 还是 error。
+      // 失败轮写 completed 会污染 60s 近窗去重，让用户 retry 同句时被误判「已复用」。
+      let turnFailure: string | undefined
+      try {
+        for await (const event of this.streamFromPiRuntime(
+          client,
+          sessionId,
+          userMessage,
+          userId,
+          // ③ 重跑：fork 后这就是新分支 threadId（未 fork 时 = 原 threadId || sessionId）
+          effectiveThreadId,
+          piContext,
+          { thinking, thinkingEffort },
+          // P1：dock 技能选择器 skillId 转接 pi-runtime forceSkills
+          skillId,
+          // K-1：dock 模型选择（BYOK 渠道）经 resolvePiSessionLlm 注入 pi 会话
+          model,
+          // P2 T6：run 发起方标识透传（预扣失败的用户 run 拒绝 / automation run 降级）
+          billingSource,
+          // 2026-11-04 实时补桥：drain 模式下 turn_settled 经 SessionEventBus 注入
+          // runEventStream（见 streamOpts.bridgeSettledToBus 注释；结算块在本方法内）
+          streamOpts,
+          // P3 多胶囊（末位追加，禁中段插参）
+          skillIds,
+        )) {
+          if (event.type === 'text_delta') {
+            assistantText += (event.data as { text: string }).text
+          }
+          if (event.type === 'error') {
+            const d = event.data as { message?: unknown; error_message?: unknown } | undefined
+            const msg =
+              typeof d?.message === 'string'
+                ? d.message.trim()
+                : typeof d?.error_message === 'string'
+                  ? d.error_message.trim()
+                  : ''
+            // 同一失败可能投影出多帧 error；保留最早的非空原因，不被后续空帧覆盖成 "turn failed"。
+            if (msg) turnFailure = msg
+            else if (!turnFailure) turnFailure = 'turn failed'
+          }
+          yield event
         }
-        yield event
+      } catch (err) {
+        turnFailure = err instanceof Error ? err.message : String(err)
+        if (idempotencyKey) await this.failIdempotencyKey(idempotencyKey, turnFailure)
+        throw err
       }
       if (idempotencyKey) {
-        await this.completeIdempotencyKey(idempotencyKey, assistantText)
+        if (turnFailure) await this.failIdempotencyKey(idempotencyKey, turnFailure)
+        else await this.completeIdempotencyKey(idempotencyKey, assistantText)
       }
       return
     }
@@ -1181,7 +1206,7 @@ export class AgentService implements OnModuleInit {
       yield event
     }
     if (idempotencyKey) {
-      await this.completeIdempotencyKey(idempotencyKey, '')
+      await this.failIdempotencyKey(idempotencyKey, 'runtime_unavailable')
     }
   }
 
@@ -1252,7 +1277,19 @@ export class AgentService implements OnModuleInit {
     normalizedIntent: string,
     windowMs = 60_000,
   ): Promise<boolean> {
-    if (!normalizedIntent) return false
+    return (await this.getDuplicateIntent(threadId, normalizedIntent, windowMs)) !== null
+  }
+
+  /**
+   * 去重命中的真实事实（2026-11-28）：调用方据此展示真相，不编造「已为你复用」。
+   * 只认 processing/completed —— 失败轮已写 error，天然立即可重试。
+   */
+  async getDuplicateIntent(
+    threadId: string,
+    normalizedIntent: string,
+    windowMs = 60_000,
+  ): Promise<{ status: string; resultSummary: string | null; createdAt: Date } | null> {
+    if (!normalizedIntent) return null
     const now = Date.now()
     const hit = await this.prisma.idempotencyRecord.findFirst({
       where: {
@@ -1262,10 +1299,15 @@ export class AgentService implements OnModuleInit {
         expiresAt: { gt: new Date(now) },
         createdAt: { gte: new Date(now - windowMs) },
       },
-      select: { id: true },
+      select: { status: true, resultSummary: true, createdAt: true },
       orderBy: { createdAt: 'desc' },
     })
-    return hit !== null
+    if (!hit) return null
+    return {
+      status: hit.status,
+      resultSummary: hit.resultSummary ?? null,
+      createdAt: hit.createdAt,
+    }
   }
 
   /** Mark idempotency key as completed with optional result summary. */
@@ -1274,6 +1316,19 @@ export class AgentService implements OnModuleInit {
       .updateMany({
         where: { idempotencyKey: key, status: 'processing' },
         data: { status: 'completed', resultSummary: resultSummary?.slice(0, 500) || null },
+      })
+      .catch(() => {})
+  }
+
+  /**
+   * 失败/中断收口：写 error（schema 早已允许，但此前零写入方）。
+   * 关键：失败的「继续推进」不能再以 completed 身份污染 60s 近窗去重。
+   */
+  async failIdempotencyKey(key: string, reason: string): Promise<void> {
+    await this.prisma.idempotencyRecord
+      .updateMany({
+        where: { idempotencyKey: key, status: 'processing' },
+        data: { status: 'error', resultSummary: reason.slice(0, 500) || null },
       })
       .catch(() => {})
   }
