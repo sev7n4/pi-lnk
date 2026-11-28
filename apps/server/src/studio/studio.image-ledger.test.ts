@@ -137,10 +137,13 @@ describe('generateImage 账本对账（记录先行）', () => {
     expect(generationCreate).toHaveBeenCalledTimes(1)
   })
 
-  it('n>1 时成本按 10×n 且 generationId 仍指向同一记录', async () => {
+  it('count>1 但模型 maxN=1 时按实际 1 张计费（10 分），generationId 仍指向同一记录', async () => {
+    // 默认模型 seedream-5.0-pro 的 maxN=1：用户请求 2 张，上游只出 1 张。
+    // 2026-11-28 起 generateImage 按 profile clamp 后的 built.n 计费，
+    // 修正旧实现「按请求数收费、按能力上限产出」的多收费（agnes n must be 1 同族）。
     await svc.generateImage('u1', '一张图', undefined, '1:1', [], [], '1K', 2, { sessionId: 's1' })
 
-    expect(pointsConsume.mock.calls[0][1]).toBe(20)
+    expect(pointsConsume.mock.calls[0][1]).toBe(10)
     expect(pointsConsume.mock.calls[0][3].generationId).toBe('g1')
   })
 

@@ -196,3 +196,40 @@ describe('isVideoQueueFullError（队列满延迟重提刀的形态判定，spec
     expect(mapMessageToErrorCode(msg)).toBe('rate_limited')
   })
 })
+
+// 2026-11-28 生产取证：会话 cmx05m9d2 的 23 张图全失败于参数类 400，
+// 但 mapMessageToErrorCode 无 invalid_request 规则 ⇒ 全落 unknown，用户无有效文案。
+describe('mapMessageToErrorCode · invalid_request（参数类 4xx，2026-11-28 生产取证）', () => {
+  const N_MUST_BE_1 =
+    'Image API 400: {"error":{"message":"n must be 1 (request id: 20261128084117814104848rqGYtTfA)","type":"invalid_request","param":"","code":"invalid_request"}}'
+
+  it('n must be 1 生产原文 → invalid_input（此前落 unknown）', () => {
+    expect(mapMessageToErrorCode(N_MUST_BE_1)).toBe('invalid_input')
+  })
+
+  it('裸 invalid_request 字面量 → invalid_input', () => {
+    expect(mapMessageToErrorCode('Image API 400: {"code":"invalid_request","message":"bad param"}')).toBe(
+      'invalid_input',
+    )
+  })
+
+  it('不误伤：普通 400 / 其它错误仍保持 unknown', () => {
+    expect(mapMessageToErrorCode('Image API 400: something else')).toBe('unknown')
+    expect(mapMessageToErrorCode('Agnes video create 503: internal error')).toBe('unknown')
+  })
+
+  it('优先级保持：429/timeout/queue_full 混合参数串不被 invalid_input 抢走', () => {
+    expect(mapMessageToErrorCode('429 rate limit, invalid_request')).toBe('rate_limited')
+    expect(mapMessageToErrorCode('timeout then invalid_request')).toBe('upstream_timeout')
+  })
+})
+
+describe('translateUpstreamFailure · invalid_request 文案', () => {
+  it('n must be 1 生产原文 → 可理解中文文案（不再回落技术原文）', () => {
+    const msg =
+      'Image API 400: {"error":{"message":"n must be 1","type":"invalid_request","code":"invalid_request"}}'
+    const copy = translateUpstreamFailure(msg)
+    expect(copy).toBeDefined()
+    expect(copy).toMatch(/参数|张数|模型/)
+  })
+})

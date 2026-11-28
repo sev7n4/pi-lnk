@@ -144,6 +144,11 @@ export function mapMessageToErrorCode(message: string): ErrorCode {
   if (text.includes('已取消')) return 'cancelled'
   if (text.includes('参考图尚未上传')) return 'upload_required'
   if (text.includes('模型') && text.includes('停用')) return 'model_unavailable'
+  // 参数类 4xx（2026-11-28 生产取证：会话 cmx05m9d2 的 23 张图全失败于
+  // `Image API 400: n must be 1`（type/code 均为 invalid_request），却全落 unknown）。
+  // 排在限流/超时/无可用渠道之后：这些更早的规则语义更强，不被参数类抢走。
+  // ⚠️ 只认明确的 invalid_request 字面量或 n must be 1，普通 400 仍保持 unknown。
+  if (/\binvalid_request\b/i.test(text) || /n must be 1/i.test(text)) return 'invalid_input'
 
   return 'unknown'
 }
@@ -179,6 +184,12 @@ export function translateUpstreamFailure(message: string): string | undefined {
   // 与 mapMessageToErrorCode 的 model_unavailable 规则同字面量族（\b 防止误伤 model_not_found_x）
   if (/model_not_found\b|No available channel/i.test(text)) {
     return '平台暂未开通该模型（上游无可用渠道），请换个模型或联系管理员'
+  }
+  // 参数类 4xx（与 mapMessageToErrorCode 的 invalid_input 规则同字面量族）：
+  // 主要是 agnes-image 的 `n must be 1` —— 用户可见文案要说明是模型张数限制，
+  // 而不是把上游技术原文直接抛给用户。
+  if (/\binvalid_request\b/i.test(text) || /n must be 1/i.test(text)) {
+    return '生成参数不被该模型支持（如一次只能生成 1 张），请按模型限制调整后重试'
   }
   return undefined
 }
