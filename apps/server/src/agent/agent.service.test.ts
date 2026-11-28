@@ -943,6 +943,34 @@ describe('AgentService turn billing (P2 T6)', () => {
     expect(settled?.data).toEqual({ holdId: 'hold-1', released: true })
   })
 
+  it('③a agent_end=failed（0 tokens 上游 400）→ release 全退，不再扣 1 积分', async () => {
+    process.env.TEXT_TOKEN_BILLING = 'on'
+    process.env.PI_RUNTIME_URL = 'http://127.0.0.1:8100'
+    const pi = stubPiClient([
+      piEvent('agent_end', {
+        status: 'failed',
+        stopReason: 'error',
+        errorMessage: '400 invalid_request_error: messages[55]: missing field tool_call_id',
+      }),
+    ])
+    vi.spyOn(service, 'createPiRuntimeClient').mockReturnValue(pi)
+
+    const events: Array<{ type: string; data?: unknown }> = []
+    for await (const event of service.streamConversation('s1', 'hi', 'u1', 's1:thread-a')) {
+      events.push(event)
+    }
+
+    expect(events.some((e) => (e.data as { error_type?: string } | undefined)?.error_type === 'invalid_input')).toBe(true)
+    expect(settleFromHold).not.toHaveBeenCalled()
+    expect(release).toHaveBeenCalledTimes(1)
+    expect(release).toHaveBeenCalledWith('hold-1', '对话回合异常全退')
+    const meta = assistantMetadata()
+    const settled = (meta.executionEvents as Array<{ type: string; data: unknown }>)?.find(
+      (e) => e.type === 'turn_settled',
+    )
+    expect(settled?.data).toEqual({ holdId: 'hold-1', released: true })
+  })
+
   it('③b settle 抛 409 → release 兜底 + turn_settled {released: true}', async () => {
     process.env.TEXT_TOKEN_BILLING = 'on'
     settleFromHold.mockRejectedValue(new ConflictException('积分状态异常，结算中止'))

@@ -1,3 +1,5 @@
+import { matchesProviderPattern } from './providerError'
+
 export type ErrorCode =
   | 'insufficient_points'
   | 'upstream_timeout'
@@ -125,7 +127,7 @@ export function mapMessageToErrorCode(message: string): ErrorCode {
   if (!text) return 'unknown'
 
   if (text.includes('积分不足')) return 'insufficient_points'
-  if (/timeout/i.test(text) || text.includes('ETIMEDOUT')) return 'upstream_timeout'
+  if (matchesProviderPattern('timeout', text)) return 'upstream_timeout'
   // 限流（2026-10-12 信号层 P1 配套工单，spec §6）：此前 429 全落 unknown ⇒ pi-runtime
   // 信号层只能 hedge。归类 rate_limited 后错误文本含 "rate_limited"，vendor 分类器
   // （RETRYABLE_PROVIDER_ERROR_PATTERN 的 "rate.?limit"）自动判 retryable:true → 退避提示。
@@ -136,19 +138,16 @@ export function mapMessageToErrorCode(message: string): ErrorCode {
   // 全落 unknown ⇒ UI 与信号层都看不到可重试信号。队列满本质是上游容量限流，
   // 复用 rate_limited（UI 文案 / vendor 分类器 / hint 均已接好），不新增错误码。
   // ⚠️ 排在 timeout 之后：混合文本保持既有 upstream_timeout 分类不变。
-  if (/\b429\b|rate.?limit|too many requests/i.test(text) || isVideoQueueFullMessage(text)) {
-    return 'rate_limited'
-  }
+  if (matchesProviderPattern('rate_limit', text)) return 'rate_limited'
   // 分发渠道无可用渠道（2026-10-09 生产 503 model_not_found 事故）：\b 防止误伤 model_not_found_x 类近似串
-  if (/model_not_found\b|No available channel/i.test(text)) return 'model_unavailable'
+  if (matchesProviderPattern('model_unavailable', text)) return 'model_unavailable'
   if (text.includes('已取消')) return 'cancelled'
   if (text.includes('参考图尚未上传')) return 'upload_required'
-  if (text.includes('模型') && text.includes('停用')) return 'model_unavailable'
   // 参数类 4xx（2026-11-28 生产取证：会话 cmx05m9d2 的 23 张图全失败于
   // `Image API 400: n must be 1`（type/code 均为 invalid_request），却全落 unknown）。
   // 排在限流/超时/无可用渠道之后：这些更早的规则语义更强，不被参数类抢走。
   // ⚠️ 只认明确的 invalid_request 字面量或 n must be 1，普通 400 仍保持 unknown。
-  if (/\binvalid_request\b/i.test(text) || /n must be 1/i.test(text)) return 'invalid_input'
+  if (matchesProviderPattern('invalid_input', text)) return 'invalid_input'
 
   return 'unknown'
 }
@@ -175,20 +174,20 @@ export function translateUpstreamFailure(message: string): string | undefined {
   if (/\b401\b/.test(text) || /unauthorized|invalid api key/i.test(text)) {
     return '上游生成服务鉴权失败，请检查服务配置'
   }
-  if (/fetch failed|UND_ERR_CONNECT_TIMEOUT|ECONNREFUSED|ENOTFOUND|EAI_AGAIN/i.test(text)) {
+  if (matchesProviderPattern('network', text)) {
     return '无法连接上游生成服务（网络异常），请稍后重试'
   }
-  if (/\b429\b/.test(text) || /rate limit|too many requests/i.test(text)) {
+  if (matchesProviderPattern('rate_limit', text)) {
     return '上游生成服务限流，请稍后重试'
   }
   // 与 mapMessageToErrorCode 的 model_unavailable 规则同字面量族（\b 防止误伤 model_not_found_x）
-  if (/model_not_found\b|No available channel/i.test(text)) {
+  if (matchesProviderPattern('model_unavailable', text)) {
     return '平台暂未开通该模型（上游无可用渠道），请换个模型或联系管理员'
   }
   // 参数类 4xx（与 mapMessageToErrorCode 的 invalid_input 规则同字面量族）：
   // 主要是 agnes-image 的 `n must be 1` —— 用户可见文案要说明是模型张数限制，
   // 而不是把上游技术原文直接抛给用户。
-  if (/\binvalid_request\b/i.test(text) || /n must be 1/i.test(text)) {
+  if (matchesProviderPattern('invalid_input', text)) {
     return '生成参数不被该模型支持（如一次只能生成 1 张），请按模型限制调整后重试'
   }
   return undefined
