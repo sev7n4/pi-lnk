@@ -260,3 +260,11 @@ describe("turnBudget（C2）", () => {
 		assert.equal(loadRuntimeConfig({ PI_RUNTIME_TURN_BUDGET: "off" }).turnBudget, "off");
 	});
 });
+
+describe("toolCallSanitization（畸形 toolCall 清洗开关）", () => {
+	it("默认开启，off 关闭，非法值回落开启", () => {
+		assert.equal(loadRuntimeConfig({}).toolCallSanitization, true);
+		assert.equal(loadRuntimeConfig({ PI_RUNTIME_TOOL_CALL_SANITIZATION: "off" }).toolCallSanitization, false);
+		assert.equal(loadRuntimeConfig({ PI_RUNTIME_TOOL_CALL_SANITIZATION: "bogus" }).toolCallSanitization, true);
+	});
+});

@@ -149,6 +149,8 @@ export class Metrics {
 	private acceptanceKinds = new Map<string, number>(); // key: generation|canvas_state
 	private transformContextRuns = new Map<string, number>(); // key: goal (on|off)——是否注入了目标复述
 	private transformAnnotated = 0; // 信任标注覆盖的 toolResult 条数累计
+	private sanitizedCalls = 0; // 畸形 toolCall 剔除累计（cmx05m9d2 根因修复）
+	private sanitizedResults = 0; // 关联 toolResult 剔除累计
 	private dynamicBudgetDrops = new Map<string, number>(); // key: kind (canvas|vision|sidebar|general)——发生截断的块数
 	private unknownBlockKind = 0; // 块首标记未识别（约定漂移告警）
 	private systemPromptBytes = 0; // 最近一次 systemPrompt 总长（gauge，水位观测）
@@ -593,6 +595,12 @@ export class Metrics {
 		if (annotated > 0) this.transformAnnotated += annotated;
 	}
 
+	/** 畸形 toolCall / 关联 toolResult 剔除计数（2026-11-28 根因修复）。 */
+	observeToolCallSanitization(removedCalls: number, removedResults: number): void {
+		this.sanitizedCalls += removedCalls;
+		this.sanitizedResults += removedResults;
+	}
+
 	/** 压缩摘要必需段缺失观测（审计 #6）：section 取 REQUIRED_SECTIONS 原文；纯告警不阻断。 */
 	observeCompactionSummaryGap(sections: string[]): void {
 		for (const s of sections) {
@@ -970,6 +978,13 @@ export class Metrics {
 	lines.push("# HELP pi_runtime_transform_context_annotated_total Tool results wrapped with a trust-boundary source header (cumulative count).");
 	lines.push("# TYPE pi_runtime_transform_context_annotated_total counter");
 	lines.push(`pi_runtime_transform_context_annotated_total ${this.transformAnnotated}`);
+
+	lines.push("# HELP pi_runtime_tool_call_sanitized_calls_total Malformed toolCall blocks dropped before LLM requests.");
+	lines.push("# TYPE pi_runtime_tool_call_sanitized_calls_total counter");
+	lines.push(`pi_runtime_tool_call_sanitized_calls_total ${this.sanitizedCalls}`);
+	lines.push("# HELP pi_runtime_tool_call_sanitized_results_total toolResult messages dropped with malformed calls.");
+	lines.push("# TYPE pi_runtime_tool_call_sanitized_results_total counter");
+	lines.push(`pi_runtime_tool_call_sanitized_results_total ${this.sanitizedResults}`);
 
 		lines.push("# HELP pi_runtime_http_requests_total HTTP requests processed.");
 		lines.push("# TYPE pi_runtime_http_requests_total counter");

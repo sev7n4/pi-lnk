@@ -22,6 +22,7 @@ import { SubagentCoordinator } from "./gate/subagent.js";
 import { SubtaskLedger } from "./gate/subtask-ledger.js";
 import { PendingToolRegistry } from "./pending-registry.js";
 import { applyTrustBoundary, countTrustBoundaryActions } from "./trust-boundary.js";
+import { sanitizeMalformedToolCalls } from "./tool-call-sanitizer.js";
 import { registerResultSignalListener } from "./result-signal-wiring.js";
 import { governImagePayload } from "./payload-images.js";
 import { readRecord, readStringField, readBooleanField } from "./hook-contract.js";
@@ -169,6 +170,26 @@ const manager = new SessionManager(
 			// 「正文→截断→信号」依赖此顺序。kill switch 在 wiring 内判定
 			// （hookCfg.resultSignals === false 不注册，回滚 = 环境变量一行）。
 			registerResultSignalListener(harness.hooks, hookCfg, { tiers: toolTiers, metrics });
+			// 2026-11-28 根因修复（cmx05m9d2）：畸形 toolCall 结构卫生，必须注册在 trust boundary
+			// **之前**——HookMap 多 listener 链式 replace，后注册者看到前者 patch，复述与来源标注
+			// 才不会给即将被剔除的坏 toolResult 加头。纯函数 fail-soft；off = 逐字节旧行为。
+			if (hookCfg.toolCallSanitization !== false) {
+				harness.hooks.on("transform_context", async (event) => {
+					try {
+						const out = sanitizeMalformedToolCalls(event.messages);
+						if (!out) return undefined;
+						console.warn(
+							`[pi-runtime] transform_context 剔除畸形工具调用：toolCall=${out.removedCalls} toolResult=${out.removedResults}`,
+						);
+						metrics.observeToolCallSanitization(out.removedCalls, out.removedResults);
+						return { messages: out.messages };
+					} catch (err) {
+						// 结构卫生失败不得阻断会话：坏消息最坏退回旧行为（上游 400 可判读）。
+						console.warn("[pi-runtime] tool-call sanitizer failed (fail-soft):", err);
+						return undefined;
+					}
+				});
+			}
 			// 审计 #8：trust boundary（目标复述 + 工具结果来源标注）。
 			// 纯文本模式也注册（无 toolResult 时复述仍有价值）；off = 逐字节旧行为。
 			// fail-soft：纯函数不 throw；压缩摘要走 generateSummary 独立请求路径，不经本 hook。

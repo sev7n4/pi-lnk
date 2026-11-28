@@ -59,6 +59,12 @@ export interface RuntimeConfig {
 	 */
 	trustBoundary?: boolean;
 	/**
+	 * 畸形 toolCall 清洗开关（2026-11-28 会话 cmx05m9d2 根因修复）。off = 不注册
+	 * transform_context 清洗 listener，空 id/name 的 toolCall 原样发给上游（旧行为）。
+	 * 缺省 true。关闭后上游 400 会复现，属已知风险开关，仅用于回滚取证。
+	 */
+	toolCallSanitization?: boolean;
+	/**
 	 * dynamicBlocks 预算开关（T3）。off = composeSystemPrompt 不做预算截断
 	 * （行为与本开关引入前逐字节一致）。缺省 true。
 	 */
@@ -217,6 +223,7 @@ export function loadRuntimeConfig(env: Record<string, string | undefined>): Runt
 	compactionContextWindow: parsePositiveInt(env.PI_RUNTIME_COMPACTION_CONTEXT_WINDOW, 0) || undefined,
 	toolTiering: parseBool(env.PI_RUNTIME_TOOL_TIERING, true),
 	trustBoundary: parseBool(env.PI_RUNTIME_TRUST_BOUNDARY, true),
+	toolCallSanitization: parseBool(env.PI_RUNTIME_TOOL_CALL_SANITIZATION, true),
 	dynamicBudget: parseBool(env.PI_RUNTIME_DYNAMIC_BUDGET, true),
 	directImages: parseBool(env.PI_RUNTIME_DIRECT_IMAGES, true),
 	directImageHistoryRounds: parsePositiveInt(env.PI_RUNTIME_DIRECT_IMAGE_HISTORY_ROUNDS, 2),
