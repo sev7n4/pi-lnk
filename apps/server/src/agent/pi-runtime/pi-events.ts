@@ -9,7 +9,7 @@
  */
 
 import { Logger } from "@nestjs/common";
-import { CanvasActionSchema, NODE_TYPES, type CanvasAction } from "@lnkpi/shared";
+import { CanvasActionSchema, NODE_TYPES, matchesProviderPattern, type CanvasAction } from "@lnkpi/shared";
 import { z } from "zod";
 import { stripPlanMarkers } from "../planMarkers";
 
@@ -372,24 +372,19 @@ export function classifyPiRunError(event: PiRuntimeEvent): PiRunErrorInfo | null
 	if (!isErrTurn) return null
 
 	const text = (errText || status || 'unknown error').toString()
-	const lower = text.toLowerCase()
 
 	let kind: PiRunErrorKind = 'unknown'
-	if (lower.includes('insufficient') || lower.includes('402') || lower.includes('balance')) {
+	// 2026-11-28：字面识别统一走 shared/providerError 的 SSOT；这里只保留
+	// 对话侧自己的优先级与输出枚举，避免三套分类器各自复制正则后漂移。
+	if (matchesProviderPattern('insufficient_balance', text)) {
 		kind = 'insufficient_balance'
-	} else if (lower.includes('429') || lower.includes('rate') || lower.includes('too many requests')) {
+	} else if (matchesProviderPattern('rate_limit', text)) {
 		kind = 'rate_limit'
-	} else if (lower.includes('401') || lower.includes('unauthorized') || lower.includes('api key') || lower.includes('invalid key')) {
+	} else if (matchesProviderPattern('auth', text)) {
 		kind = 'auth'
-	} else if (
-		lower.includes('context length') ||
-		(lower.includes('token') && lower.includes('exceed')) ||
-		lower.includes('maximum context')
-	) {
+	} else if (matchesProviderPattern('context_overflow', text)) {
 		kind = 'context_overflow'
-	} else if (/invalid_request/i.test(text)) {
-		// 2026-11-28：与 shared/generationDiagnostics 的 invalid_input 规则同字面族，
-		// 但不带 \b —— 生产文本是 `invalid_request_error`，词边界会被下划线吃掉。
+	} else if (matchesProviderPattern('invalid_input', text)) {
 		// 400 + invalid_request（含 json_parse_error / missing tool_call_id）是请求结构问题，
 		// 不是限流/超时；落 unknown 会让前端拿过期卡文案冒充失败原因。
 		kind = 'invalid_input'

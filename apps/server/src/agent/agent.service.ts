@@ -3947,7 +3947,11 @@ export class AgentService implements OnModuleInit {
         if (firstSeq === undefined && typeof event.seq === 'number') firstSeq = event.seq
         if (event.type === 'agent_end' || event.type === 'error') {
           done = true
-          runFailed = event.type === 'error'
+          // 生产失败终态常以 `agent_end{status:'failed'}` 到达（如 agnes 400 missing
+          // tool_call_id），不是顶层 `error` 事件。只认 error 会让 0-token 失败轮
+          // 走成功结算分支并被 Math.max(1, ceil(0)) 扣 1 积分——复用既有分类器
+          // 把两种失败形态归一，无需另造计费路径。
+          runFailed = event.type === 'error' || classifyPiRunError(event) !== null
           // D2（Task 2）：权威收束事件到了 ⇒ 这轮在 pi 侧已结束 ⇒ 本流看到的是全部。
           // ⚠️ `error` 也算收束（run 失败**也是**结束，不是「尾部缺失」）。
           sawTerminalEvent = true
