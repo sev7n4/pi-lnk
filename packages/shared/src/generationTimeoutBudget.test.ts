@@ -10,6 +10,9 @@ import {
   VIDEO_CREATE_RETRY_BASE_DELAY_MS,
   VIDEO_CREATE_RETRY_WORST_MS,
   VIDEO_POLL_DEADLINE_MS,
+  VIDEO_QUEUE_RETRY_INTERVAL_MS,
+  VIDEO_QUEUE_RETRY_MAX_ATTEMPTS,
+  VIDEO_QUEUE_RETRY_WINDOW_MS,
   VIDEO_SERVER_WORST_MS,
 } from './generationTimeoutBudget'
 
@@ -49,5 +52,20 @@ describe('generationTimeoutBudget（跨层超时预算单一来源）', () => {
     expect(DEFAULT_VIDEO_REAP_MINUTES * 60_000).toBeGreaterThanOrEqual(
       VIDEO_SERVER_WORST_MS + 5 * 60_000,
     )
+  })
+
+  it('队列满重提窗口 = 间隔 × 重提次数（不把首次调用计入窗口）', () => {
+    expect(VIDEO_QUEUE_RETRY_WINDOW_MS).toBe(
+      VIDEO_QUEUE_RETRY_INTERVAL_MS * VIDEO_QUEUE_RETRY_MAX_ATTEMPTS,
+    )
+  })
+
+  it('队列满重提窗口必须整体小于 reaper video 阈值（重提期间被回收退款=漏扣费，历史教训）', () => {
+    // agnes 轮询典型 ~7min（2026-11-28 实测 6.6min）：窗口 + 典型轮询也须 < 30min。
+    expect(VIDEO_QUEUE_RETRY_WINDOW_MS + 7 * 60_000).toBeLessThan(
+      DEFAULT_VIDEO_REAP_MINUTES * 60_000,
+    )
+    // 硬不等式：窗口本身绝不越过 reaper 阈值。
+    expect(VIDEO_QUEUE_RETRY_WINDOW_MS).toBeLessThan(DEFAULT_VIDEO_REAP_MINUTES * 60_000)
   })
 })

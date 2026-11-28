@@ -85,3 +85,25 @@ export const DEFAULT_SETTLE_TIMEOUT_MS = 1_460_000
  * 当前 30min = 服务端最坏 ≈22.3min + ~7.7min 缓冲（PR #305 行为保持）。
  */
 export const DEFAULT_VIDEO_REAP_MINUTES = 30
+
+/* ── 队列满延迟重提（2026-11-28 工程刀，spec：docs/superpowers/specs/
+ *    2026-11-28-video-queue-full-delayed-resubmit-design.md）──────────────
+ *
+ * agnes 免费池队列满是**分钟级间歇容量信号**（官方 `please retry later`、无
+ * Retry-After；生产 10 轮实证 9 拒 1 成、成功者 6.6min 出片）。provider 内层
+ * 秒级退避（VIDEO_CREATE_RETRY_*）救不了 ⇒ completeVideo 失败路径按分钟级
+ * 间隔重提创建，窗口内记录保持 generating、积分不退。
+ *
+ * ⚠️ 安全不等式（锁测试钉死）：窗口必须 < reaper video 阈值（30min）——
+ * 重提期间被 reaper 回收退款、迟到成功被 exactly-once 守卫丢弃 = 漏扣费。
+ * 典型最坏 = 窗口 15min + agnes 轮询 ~7min ≈ 22min < 30min ✓。
+ * agnes 病理轮询 ≈70min 越阈值属**既有已知例外**（见文件头），本刀不改。
+ * server 侧 env 可覆盖：LNKPI_VIDEO_QUEUE_RETRY_INTERVAL_MS / _MAX_ATTEMPTS。
+ */
+/** 重提间隔（ms）。 */
+export const VIDEO_QUEUE_RETRY_INTERVAL_MS = 90_000
+/** 失败后的最大重提次数（不含首次调用；10 × 90s = 15min 窗口）。 */
+export const VIDEO_QUEUE_RETRY_MAX_ATTEMPTS = 10
+/** 重提窗口总长（派生）。 */
+export const VIDEO_QUEUE_RETRY_WINDOW_MS =
+  VIDEO_QUEUE_RETRY_INTERVAL_MS * VIDEO_QUEUE_RETRY_MAX_ATTEMPTS

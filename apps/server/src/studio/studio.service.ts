@@ -30,6 +30,7 @@ import {
   generateTextForRefs,
   generateVisionQaJson,
   imageRefDescriptorsFromRefs,
+  isAgnesBaseUrl,
   mergeRefsToPrompt,
   Seedance1xUnsupportedError,
   StepFunDesignProvider,
@@ -42,7 +43,10 @@ import {
 import {
   BYOK_FALLBACK_CONFIRM_MESSAGE,
   evaluateMediaRefPreflight,
+  isVideoQueueFullError,
   mapMessageToErrorCode,
+  VIDEO_QUEUE_RETRY_INTERVAL_MS,
+  VIDEO_QUEUE_RETRY_MAX_ATTEMPTS,
   P1_IMAGE_EDIT_MODEL_KEY,
   BYOK_IMAGE_EDIT_PROFILE,
   IMAGE_EDIT_MODEL_KEYS,
@@ -345,6 +349,17 @@ function errMessage(err: unknown): string {
   }
   if (err instanceof Error) return err.message
   return '生成失败'
+}
+
+/** 解析非负整数 env；缺失/非法回落默认值（'0' 合法 = 禁用，不回落）。 */
+function nonNegativeIntEnv(raw: string | undefined, fallback: number): number {
+  if (raw == null || raw.trim() === '') return fallback
+  const n = Number(raw)
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : fallback
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function applyFailureDiagnosticMeta(
@@ -3210,6 +3225,23 @@ export class StudioService {
     })
   }
 
+  /**
+   * 视频生成 detached 收尾。
+   *
+   * ⭐ 2026-11-28 队列满延迟重提（spec：docs/superpowers/specs/
+   * 2026-11-28-video-queue-full-delayed-resubmit-design.md）：agnes 免费池
+   * 503 `video_queue_full` 是分钟级间歇容量信号（生产 10 轮实证 9 拒 1 成、
+   * 成功者 6.6min 出片），provider 内层秒级退避救不了 ⇒ 创建失败后在
+   * **本函数内**按分钟级间隔重提，窗口内记录保持 `generating`、积分不退，
+   * UI 现有轮询/spinner 语义不变。窗口耗尽才走既有失败路径。
+   *
+   * ⚠️ 安全约束（generationTimeoutBudget 锁测试钉死）：重提窗口（10×90s=
+   * 15min）必须 < reaper video 阈值 30min——重提期间被回收退款、迟到成功被
+   * exactly-once 守卫丢弃 = 漏扣费（历史教训）。故只对**平台渠道 + agnes
+   * 网关**启用：队列满实证仅见 agnes，且避开有 deadline 的 provider
+   * （最长 20min 轮询 + 15min 窗口会越 30min 阈值）。BYOK 保持
+   * fallback_pending 语义不动。
+   */
   private async completeVideo(
     id: string,
     userId: string,
@@ -3219,92 +3251,147 @@ export class StudioService {
     options: import('@lnkpi/agent').VideoProviderGenerateOptions,
     resolved: ResolvedGenerationProvider,
   ) {
-    try {
-      if (resolved.source === 'user' && !resolved.credentials.apiKey) {
-        throw new Error('missing api key')
-      }
-      const { url, lastFrameUrl } = await createVideoProvider({
-        ...providerOpts(resolved),
-        model: resolved.modelName,
-      }).generate(
-        prompt,
-        options,
-      )
-      const existing = await this.prisma.generationRecord.findFirst({ where: { id } })
-      if (!existing || existing.status !== 'generating') return
-      const meta = parseMeta(existing.metadata)
-      if (isCancelledMeta(meta) || alreadyRefunded(meta)) return
-      const referenceUrls = [
-        ...(Array.isArray(meta.referenceImages) ? (meta.referenceImages as string[]) : []),
-        ...(Array.isArray(meta.referenceVideos) ? (meta.referenceVideos as string[]) : []),
-        ...(Array.isArray(meta.referenceAudios) ? (meta.referenceAudios as string[]) : []),
-      ].filter((u): u is string => typeof u === 'string' && u.trim().length > 0)
-      // ⭐ U6 判定收归 Nest（同 completeImage）：completed 无产物 ⇒ 走失败链。
-      if (!url) {
-        throw new Error('视频生成完成但没有产物（缺少视频文件地址）')
-      }
-      const mediaInfo = await this.enrichVideoMediaInfoDimensions(
-        await this.buildMediaInfo(url, referenceUrls),
-        lastFrameUrl,
-      )
-      const updated = await this.prisma.generationRecord.updateMany({
-        where: { id, status: 'generating' },
-        data: {
-          url,
-          status: 'completed',
-          metadata: JSON.stringify({
-            ...meta,
-            ...(lastFrameUrl ? { lastFrameUrl } : {}),
-            mediaInfo,
-          }),
-        },
-      })
-      if (updated.count === 0) return
-    } catch (err) {
-      console.error('Video generation failed:', err)
-      const existing = await this.prisma.generationRecord.findFirst({ where: { id } })
-      if (!existing || existing.status !== 'generating') return
-      const meta = parseMeta(existing.metadata)
-      if (isCancelledMeta(meta) || alreadyRefunded(meta)) return
-      if (resolved.source === 'user') {
+    // env 可覆盖（测试注入 1ms / 小值）；'0' = 禁用重提。
+    const retryIntervalMs = nonNegativeIntEnv(
+      process.env.LNKPI_VIDEO_QUEUE_RETRY_INTERVAL_MS,
+      VIDEO_QUEUE_RETRY_INTERVAL_MS,
+    )
+    const retryMaxAttempts = nonNegativeIntEnv(
+      process.env.LNKPI_VIDEO_QUEUE_RETRY_MAX_ATTEMPTS,
+      VIDEO_QUEUE_RETRY_MAX_ATTEMPTS,
+    )
+    const queueRetryEligible =
+      resolved.source !== 'user' && isAgnesBaseUrl(resolved.credentials.baseUrl)
+
+    for (let resubmit = 0; ; resubmit += 1) {
+      try {
+        if (resolved.source === 'user' && !resolved.credentials.apiKey) {
+          throw new Error('missing api key')
+        }
+        const { url, lastFrameUrl } = await createVideoProvider({
+          ...providerOpts(resolved),
+          model: resolved.modelName,
+        }).generate(
+          prompt,
+          options,
+        )
+        const existing = await this.prisma.generationRecord.findFirst({ where: { id } })
+        if (!existing || existing.status !== 'generating') return
+        const meta = parseMeta(existing.metadata)
+        if (isCancelledMeta(meta) || alreadyRefunded(meta)) return
+        const referenceUrls = [
+          ...(Array.isArray(meta.referenceImages) ? (meta.referenceImages as string[]) : []),
+          ...(Array.isArray(meta.referenceVideos) ? (meta.referenceVideos as string[]) : []),
+          ...(Array.isArray(meta.referenceAudios) ? (meta.referenceAudios as string[]) : []),
+        ].filter((u): u is string => typeof u === 'string' && u.trim().length > 0)
+        // ⭐ U6 判定收归 Nest（同 completeImage）：completed 无产物 ⇒ 走失败链。
+        if (!url) {
+          throw new Error('视频生成完成但没有产物（缺少视频文件地址）')
+        }
+        const mediaInfo = await this.enrichVideoMediaInfoDimensions(
+          await this.buildMediaInfo(url, referenceUrls),
+          lastFrameUrl,
+        )
+        const updated = await this.prisma.generationRecord.updateMany({
+          where: { id, status: 'generating' },
+          data: {
+            url,
+            status: 'completed',
+            metadata: JSON.stringify({
+              ...meta,
+              ...(lastFrameUrl ? { lastFrameUrl } : {}),
+              mediaInfo,
+            }),
+          },
+        })
+        if (updated.count === 0) return
+        return
+      } catch (err) {
+        console.error('Video generation failed:', err)
+        const existing = await this.prisma.generationRecord.findFirst({ where: { id } })
+        if (!existing || existing.status !== 'generating') return
+        const meta = parseMeta(existing.metadata)
+        if (isCancelledMeta(meta) || alreadyRefunded(meta)) return
+        if (resolved.source === 'user') {
+          await this.points.refund(
+            userId,
+            cost,
+            `${chargeReason}-BYOK失败退款`,
+            refundMeta('video', 'byok_refund', {
+              model: resolved.modelName,
+              generationId: id,
+            }),
+          )
+          await this.prisma.generationRecord.update({
+            where: { id },
+            data: {
+              status: 'fallback_pending',
+              metadata: JSON.stringify(this.byokPendingMeta(resolved, err, cost, meta)),
+            },
+          })
+          return
+        }
+        // ⭐ 队列满延迟重提：仅 agnes 网关 + queue_full 形态 + 窗口未耗尽。
+        // 429 RPM / 轮询超时 / 普通 503 不进本刀（形态判定 SSOT 在 shared 谓词）。
+        if (
+          queueRetryEligible &&
+          resubmit < retryMaxAttempts &&
+          retryIntervalMs > 0 &&
+          isVideoQueueFullError(err)
+        ) {
+          const nextRetryAt = new Date(Date.now() + retryIntervalMs).toISOString()
+          const lastError = errMessage(err).slice(0, 300)
+          await this.prisma.generationRecord
+            .update({
+              where: { id },
+              data: {
+                metadata: JSON.stringify({
+                  ...meta,
+                  queuedRetryAttempt: resubmit + 1,
+                  queuedRetryNextAt: nextRetryAt,
+                  queuedRetryLastError: lastError,
+                }),
+              },
+            })
+            .catch(() => undefined)
+          console.warn(
+            `[completeVideo] 上游队列满，第 ${resubmit + 1}/${retryMaxAttempts} 次重提 scheduled at ${nextRetryAt} record=${id}`,
+          )
+          await sleepMs(retryIntervalMs)
+          // 醒后复核：记录已终态（取消/回收/并发结算）即静默退出，退款由对方路径负责。
+          const woke = await this.prisma.generationRecord.findFirst({ where: { id } })
+          if (!woke || woke.status !== 'generating') return
+          const wokeMeta = parseMeta(woke.metadata)
+          if (isCancelledMeta(wokeMeta) || alreadyRefunded(wokeMeta)) return
+          continue
+        }
         await this.points.refund(
           userId,
           cost,
-          `${chargeReason}-BYOK失败退款`,
-          refundMeta('video', 'byok_refund', {
+          `${chargeReason}-失败退款`,
+          refundMeta('video', 'failed_refund', {
             model: resolved.modelName,
             generationId: id,
           }),
         )
+        const failedMeta = applyFailureDiagnosticMeta(
+          applyRefundMeta(meta, cost, 'platform_failed'),
+          err,
+        )
+        // 重提耗尽的终态标注：区分「一次即败」与「窗口内始终无空位」（后者可错峰重试）。
+        if (queueRetryEligible && resubmit > 0) {
+          failedMeta.queueRetryExhausted = true
+          failedMeta.queueRetryAttempt = resubmit
+        }
         await this.prisma.generationRecord.update({
           where: { id },
           data: {
-            status: 'fallback_pending',
-            metadata: JSON.stringify(this.byokPendingMeta(resolved, err, cost, meta)),
+            status: 'failed',
+            metadata: JSON.stringify(failedMeta),
           },
         })
         return
       }
-      await this.points.refund(
-        userId,
-        cost,
-        `${chargeReason}-失败退款`,
-        refundMeta('video', 'failed_refund', {
-          model: resolved.modelName,
-          generationId: id,
-        }),
-      )
-      const failedMeta = applyFailureDiagnosticMeta(
-        applyRefundMeta(meta, cost, 'platform_failed'),
-        err,
-      )
-      await this.prisma.generationRecord.update({
-        where: { id },
-        data: {
-          status: 'failed',
-          metadata: JSON.stringify(failedMeta),
-        },
-      })
     }
   }
 

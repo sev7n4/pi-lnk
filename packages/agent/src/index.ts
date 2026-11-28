@@ -16,6 +16,7 @@ export {
   resolveVideoParams,
   isFalVideoModel,
   isFalBaseUrl,
+  isAgnesBaseUrl,
 } from './tools/video-provider'
 export { FalH3MaxVideoProvider, FAL_H3_MAX_ENDPOINTS } from './tools/fal-h3-max-video-provider'
 export {

@@ -4,6 +4,7 @@ import {
   redactProviderSnippet,
   mapMessageToErrorCode,
   translateUpstreamFailure,
+  isVideoQueueFullError,
 } from './generationDiagnostics'
 
 describe('redactProviderSnippet', () => {
@@ -164,5 +165,34 @@ describe('mapMessageToErrorCode · video_queue_full（2026-11-28 生产取证）
 
   it('不误伤：无 queue_full 字面量的普通 503 保持 unknown', () => {
     expect(mapMessageToErrorCode('Agnes video create 503: internal error')).toBe('unknown')
+  })
+})
+
+describe('isVideoQueueFullError（队列满延迟重提刀的形态判定，spec §3）', () => {
+  it('生产原文 JSON 形态命中（未造样本）', () => {
+    expect(
+      isVideoQueueFullError(
+        new Error(
+          'Agnes video create 503: {"code":"video_queue_full","message":"video queue is full, please retry later (request id: 20261102174520474936102GP5DQImi)","data":null}',
+        ),
+      ),
+    ).toBe(true)
+  })
+
+  it('裸文案与下划线形态命中', () => {
+    expect(isVideoQueueFullError(new Error('video queue is full, please retry later'))).toBe(true)
+    expect(isVideoQueueFullError(new Error('video_queue_full'))).toBe(true)
+  })
+
+  it('非 Error / 空串 / 普通错误不命中', () => {
+    expect(isVideoQueueFullError(undefined)).toBe(false)
+    expect(isVideoQueueFullError(new Error('Agnes video create 503: internal error'))).toBe(false)
+    expect(isVideoQueueFullError('video queue is full')).toBe(true) // 字符串形态也支持
+  })
+
+  it('与 mapMessageToErrorCode 同源：命中谓词的文本归类 rate_limited（除 timeout 混合）', () => {
+    const msg = 'Agnes video create 503: {"code":"video_queue_full"}'
+    expect(isVideoQueueFullError(new Error(msg))).toBe(true)
+    expect(mapMessageToErrorCode(msg)).toBe('rate_limited')
   })
 })
