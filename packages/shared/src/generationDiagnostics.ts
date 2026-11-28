@@ -113,7 +113,16 @@ export function mapMessageToErrorCode(message: string): ErrorCode {
   // （RETRYABLE_PROVIDER_ERROR_PATTERN 的 "rate.?limit"）自动判 retryable:true → 退避提示。
   // ⚠️ 排在 timeout 之后：'timeout waiting, then 429' 混合文本保持既有 upstream_timeout
   // 分类不变（vendor 看全文仍判可重试，行为不受影响）。
-  if (/\b429\b|rate.?limit|too many requests/i.test(text)) return 'rate_limited'
+  // 2026-11-28 生产取证：agnes-video-2.5-flash 近 30 天 15 次 503 队列满
+  // （`{"code":"video_queue_full","message":"video queue is full, please retry later"}`）
+  // 全落 unknown ⇒ UI 与信号层都看不到可重试信号。队列满本质是上游容量限流，
+  // 复用 rate_limited（UI 文案 / vendor 分类器 / hint 均已接好），不新增错误码。
+  // ⚠️ 排在 timeout 之后：混合文本保持既有 upstream_timeout 分类不变。
+  if (
+    /\b429\b|rate.?limit|too many requests|video[_ ]queue[_ ]full|video queue is full/i.test(text)
+  ) {
+    return 'rate_limited'
+  }
   // 分发渠道无可用渠道（2026-10-09 生产 503 model_not_found 事故）：\b 防止误伤 model_not_found_x 类近似串
   if (/model_not_found\b|No available channel/i.test(text)) return 'model_unavailable'
   if (text.includes('已取消')) return 'cancelled'
